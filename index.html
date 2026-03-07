@@ -407,32 +407,23 @@
        Replace "YOUR_FORM_ID" in the form action URLs above with your Formspree ID.
        Until then, this shows the success state locally without actually submitting. */
     function handleSubmit(event) {
-      const formId = event.target.action.includes("YOUR_FORM_ID");
-
-      if (formId) {
-        // No Formspree ID set yet — show success locally, don't actually submit
-        event.preventDefault();
-        document.getElementById("success-msg").classList.add("visible");
-        if (document.getElementById("success-msg-2")) {
-          document.getElementById("success-msg-2").classList.add("visible");
-        }
-        event.target.style.display = "none";
-        return false;
-      }
-      // Formspree ID is set — let the form submit normally, then show success
       event.preventDefault();
-      fetch(event.target.action, {
+
+      // Show success immediately for instant UX
+      const form = event.target;
+      form.style.display = "none";
+      document.getElementById("success-msg").classList.add("visible");
+      if (document.getElementById("success-msg-2")) {
+        document.getElementById("success-msg-2").classList.add("visible");
+      }
+
+      // Send to Formspree in the background
+      fetch("https://formspree.io/f/xjgakyap", {
         method: "POST",
-        body: new FormData(event.target),
+        body: new FormData(form),
         headers: { "Accept": "application/json" }
-      }).then(res => {
-        if (res.ok) {
-          document.getElementById("success-msg").classList.add("visible");
-          if (document.getElementById("success-msg-2")) {
-            document.getElementById("success-msg-2").classList.add("visible");
-          }
-          event.target.style.display = "none";
-        }
+      }).catch(function(err) {
+        console.error("Formspree error:", err);
       });
     }
 
