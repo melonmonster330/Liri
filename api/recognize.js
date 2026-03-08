@@ -100,6 +100,9 @@ module.exports = async (req, res) => {
       formBody
     );
 
+    // Log ACRCloud's response so we can debug in Vercel logs
+    console.log("ACRCloud response:", JSON.stringify(result));
+
     res.status(200).json(result);
 
   } catch (err) {
