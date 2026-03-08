@@ -19,6 +19,7 @@ function httpsPost(hostname, path, headers, body) {
         res.on("end", () => {
           try {
             resolve(JSON.parse(Buffer.concat(chunks).toString()));
+          } catch (e) {
             reject(new Error("ACRCloud returned non-JSON response"));
           }
         });
