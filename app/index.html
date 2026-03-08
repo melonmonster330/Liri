@@ -30,6 +30,8 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
   <title>Liri — Lyrics for Vinyl</title>
+  <link rel="preload" href="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js" as="script">
+  <link rel="preload" href="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js" as="script">
   <style>
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
     body { background: #0a0a14; color: #f0e6d3; font-family: Georgia, 'Times New Roman', serif; overflow: hidden; }
@@ -41,22 +43,18 @@
   </style>
 </head>
 <body>
-  <div id="root"></div>
+  <!-- Instant splash shown before JS loads, React replaces it -->
+  <div id="root">
+    <div style="min-height:100vh;background:#0a0a14;display:flex;flex-direction:column;align-items:center;justify-content:center;font-family:Georgia,serif">
+      <div style="font-size:22px;letter-spacing:12px;color:#d4a846;font-weight:300">LIRI</div>
+      <div style="font-size:11px;color:#2a2a4a;letter-spacing:3px;margin-top:8px;text-transform:uppercase">Lyrics for Vinyl</div>
+    </div>
+  </div>
 
   <script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.2/babel.min.js"></script>
-  <!-- Supabase: tries local copy first (bundled for iOS), falls back to CDN -->
-  <script>
-    // Try to load local supabase.min.js (copied into app/ folder for iOS)
-    // If missing, the CDN script below will load it instead
-  </script>
-  <script src="supabase.min.js" onerror="window._supabaseLocalFailed=true"></script>
-  <script>
-    if (window._supabaseLocalFailed || typeof supabase === 'undefined') {
-      document.write('<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"><\/script>');
-    }
-  </script>
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
 
   <script type="text/babel">
     const { useState, useEffect, useRef, useCallback } = React;
@@ -75,7 +73,7 @@
 
     /* Proxy URL works on web (relative) and iOS native app (absolute) */
     const PROXY_URL = (window.Capacitor)
-      ? "https://getliri.com/api/recognize"
+      ? "https://liri-vert.vercel.app/api/recognize"
       : "/api/recognize";
 
     /* ══════════════════════════════════════════════════════
