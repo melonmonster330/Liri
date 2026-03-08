@@ -181,6 +181,15 @@
       const autoAdvanceFiredRef               = useRef(false);
       const autoRetryCountRef                 = useRef(0);
 
+      // ── Nudge expand ──
+      const [nudgeMenu, setNudgeMenu]         = useState(null); // null | "left" | "right"
+      const nudgeMenuTimerRef                 = useRef(null);
+
+      // ── Onboarding ──
+      const [showOnboarding, setShowOnboarding] = useState(true); // forced true for testing
+      const [onboardingStep, setOnboardingStep] = useState(0);
+      const ONBOARDING_STEPS = 5;
+
       // ── Cast ──
       const [showCast, setShowCast]           = useState(false);
       const roomCode = user?.id ? user.id.replace(/-/g, "").slice(0, 6).toUpperCase() : null;
@@ -485,6 +494,14 @@
         }
       };
 
+      const handleNudge = (s) => {
+        nudge(s);
+        const side = s < 0 ? "left" : "right";
+        clearTimeout(nudgeMenuTimerRef.current);
+        setNudgeMenu(side);
+        nudgeMenuTimerRef.current = setTimeout(() => setNudgeMenu(null), 2500);
+      };
+
       const reset = () => {
         clearInterval(syncIntervalRef.current); clearInterval(progressTimerRef.current);
         streamRef.current?.getTracks().forEach(t => t.stop());
@@ -554,6 +571,126 @@
             <div style={{ position:"fixed", inset:"-20px", zIndex:0, backgroundImage:`url(${artwork})`, backgroundSize:"cover", backgroundPosition:"center", filter:"blur(80px) brightness(0.15) saturate(2)", transition:"opacity 1s ease", opacity: isSyncing ? 1 : 0.4 }} />
           )}
           <div style={{ position:"fixed", inset:0, zIndex:1, background:"linear-gradient(to bottom, rgba(8,8,16,0.6) 0%, rgba(8,8,16,0.3) 40%, rgba(8,8,16,0.7) 100%)", pointerEvents:"none" }} />
+
+          {/* ── ONBOARDING OVERLAY ── */}
+          {showOnboarding && (
+            <div style={{ position:"fixed", inset:0, zIndex:500, background:"rgba(8,8,16,0.96)", backdropFilter:"blur(12px)", display:"flex", flexDirection:"column", alignItems:"center", justifyContent:"center", padding:"40px 32px" }}>
+
+              {/* Skip button */}
+              {onboardingStep < ONBOARDING_STEPS - 1 && (
+                <button onClick={() => setShowOnboarding(false)} style={{ position:"absolute", top:"max(24px, calc(env(safe-area-inset-top) + 12px))", right:"24px", background:"none", border:"none", color:"rgba(255,255,255,0.25)", cursor:"pointer", fontSize:"14px", fontFamily:"inherit" }}>Skip</button>
+              )}
+
+              {/* Step 0: Welcome */}
+              {onboardingStep === 0 && (
+                <div style={{ textAlign:"center", animation:"fade-up 0.4s ease both" }}>
+                  <Vinyl size={120} spinning={false} />
+                  <div style={{ marginTop:"28px", fontSize:"13px", letterSpacing:"4px", color:"#d4a846", textTransform:"uppercase", marginBottom:"8px" }}>Welcome to</div>
+                  <div style={{ fontSize:"40px", letterSpacing:"16px", color:"#d4a846", fontWeight:"300", marginBottom:"12px" }}>LIRI</div>
+                  <div style={{ fontSize:"16px", color:"rgba(255,255,255,0.35)", letterSpacing:"2px", marginBottom:"40px" }}>Lyrics for Vinyl</div>
+                  <p style={{ fontSize:"17px", color:"rgba(255,255,255,0.6)", lineHeight:"1.8", maxWidth:"280px", margin:"0 auto 48px" }}>
+                    Put on a record. Hold your phone near the speakers. Watch the lyrics appear — in perfect sync.
+                  </p>
+                  <button onClick={() => setOnboardingStep(1)} style={{ background:"linear-gradient(135deg, #d4a846, #c9807a)", color:"#080810", border:"none", borderRadius:"50px", padding:"18px 52px", fontSize:"15px", fontWeight:"700", cursor:"pointer", fontFamily:"inherit", letterSpacing:"1px", boxShadow:"0 8px 32px rgba(212,168,70,0.3)" }}>
+                    Let's go →
+                  </button>
+                </div>
+              )}
+
+              {/* Step 1: How to Listen */}
+              {onboardingStep === 1 && (
+                <div style={{ textAlign:"center", animation:"fade-up 0.4s ease both" }}>
+                  <div style={{ marginBottom:"32px" }}><WaveAnimation active={true} size={1.2} /></div>
+                  <div style={{ fontSize:"26px", fontWeight:"700", color:"#f0e6d3", marginBottom:"16px" }}>Hold it close</div>
+                  <p style={{ fontSize:"15px", color:"rgba(255,255,255,0.5)", lineHeight:"1.9", maxWidth:"280px", margin:"0 auto 48px" }}>
+                    When your record is playing, tap <strong style={{ color:"#d4a846" }}>Listen</strong> and hold your phone near the speakers. Liri identifies the song and syncs the words in real time.
+                  </p>
+                  <div style={{ display:"flex", gap:"16px", justifyContent:"center", alignItems:"center" }}>
+                    <button onClick={() => setOnboardingStep(0)} style={{ background:"none", border:"1px solid rgba(255,255,255,0.1)", color:"rgba(255,255,255,0.3)", borderRadius:"50px", padding:"12px 24px", fontSize:"13px", cursor:"pointer", fontFamily:"inherit" }}>← Back</button>
+                    <button onClick={() => setOnboardingStep(2)} style={{ background:"linear-gradient(135deg, #d4a846, #c9807a)", color:"#080810", border:"none", borderRadius:"50px", padding:"14px 36px", fontSize:"14px", fontWeight:"700", cursor:"pointer", fontFamily:"inherit" }}>Next →</button>
+                  </div>
+                </div>
+              )}
+
+              {/* Step 2: History */}
+              {onboardingStep === 2 && (
+                <div style={{ textAlign:"center", animation:"fade-up 0.4s ease both" }}>
+                  <div style={{ fontSize:"72px", marginBottom:"24px", filter:"drop-shadow(0 0 20px rgba(212,168,70,0.4))" }}>⏱</div>
+                  <div style={{ fontSize:"26px", fontWeight:"700", color:"#f0e6d3", marginBottom:"16px" }}>Your listening history</div>
+                  <p style={{ fontSize:"15px", color:"rgba(255,255,255,0.5)", lineHeight:"1.9", maxWidth:"280px", margin:"0 auto 32px" }}>
+                    Every song you identify gets saved automatically. Tap the <strong style={{ color:"#d4a846" }}>clock icon</strong> anytime to see what's been spinning on your turntable.
+                  </p>
+                  {/* Mini history preview */}
+                  <div style={{ background:"rgba(255,255,255,0.04)", border:"1px solid rgba(255,255,255,0.08)", borderRadius:"16px", padding:"12px 16px", maxWidth:"280px", margin:"0 auto 40px", textAlign:"left" }}>
+                    {[{title:"Blue in Green", artist:"Miles Davis"}, {title:"God Only Knows", artist:"The Beach Boys"}, {title:"In the Aeroplane", artist:"Neutral Milk Hotel"}].map((s,i) => (
+                      <div key={i} style={{ display:"flex", alignItems:"center", gap:"12px", padding:"8px 0", borderBottom: i < 2 ? "1px solid rgba(255,255,255,0.05)" : "none" }}>
+                        <div style={{ width:"36px", height:"36px", borderRadius:"6px", background:"rgba(212,168,70,0.15)", flexShrink:0, display:"flex", alignItems:"center", justifyContent:"center", fontSize:"14px" }}>♪</div>
+                        <div>
+                          <div style={{ fontSize:"13px", fontWeight:"600", color:"#f0e6d3" }}>{s.title}</div>
+                          <div style={{ fontSize:"11px", color:"rgba(255,255,255,0.35)" }}>{s.artist}</div>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                  <div style={{ display:"flex", gap:"16px", justifyContent:"center", alignItems:"center" }}>
+                    <button onClick={() => setOnboardingStep(1)} style={{ background:"none", border:"1px solid rgba(255,255,255,0.1)", color:"rgba(255,255,255,0.3)", borderRadius:"50px", padding:"12px 24px", fontSize:"13px", cursor:"pointer", fontFamily:"inherit" }}>← Back</button>
+                    <button onClick={() => setOnboardingStep(3)} style={{ background:"linear-gradient(135deg, #d4a846, #c9807a)", color:"#080810", border:"none", borderRadius:"50px", padding:"14px 36px", fontSize:"14px", fontWeight:"700", cursor:"pointer", fontFamily:"inherit" }}>Next →</button>
+                  </div>
+                </div>
+              )}
+
+              {/* Step 3: Vinyl Auto Mode */}
+              {onboardingStep === 3 && (
+                <div style={{ textAlign:"center", animation:"fade-up 0.4s ease both" }}>
+                  <div style={{ display:"flex", alignItems:"center", justifyContent:"center", gap:"16px", marginBottom:"28px" }}>
+                    <Vinyl size={80} spinning={false} />
+                    <div style={{ width:"52px", height:"30px", borderRadius:"15px", background:"linear-gradient(135deg, #d4a846, #c9807a)", position:"relative", flexShrink:0 }}>
+                      <div style={{ position:"absolute", top:"5px", right:"5px", width:"20px", height:"20px", borderRadius:"50%", background:"white", boxShadow:"0 1px 4px rgba(0,0,0,0.3)" }} />
+                    </div>
+                  </div>
+                  <div style={{ fontSize:"26px", fontWeight:"700", color:"#f0e6d3", marginBottom:"16px" }}>Vinyl Auto Mode</div>
+                  <p style={{ fontSize:"15px", color:"rgba(255,255,255,0.5)", lineHeight:"1.9", maxWidth:"280px", margin:"0 auto 32px" }}>
+                    Turn on <strong style={{ color:"#d4a846" }}>Auto Mode</strong> in Settings and Liri will automatically listen for the next track as each song ends — no tapping needed.
+                  </p>
+                  <div style={{ background:"rgba(212,168,70,0.07)", border:"1px solid rgba(212,168,70,0.15)", borderRadius:"14px", padding:"12px 16px", maxWidth:"260px", margin:"0 auto 40px", fontSize:"13px", color:"rgba(255,255,255,0.35)", lineHeight:"1.7" }}>
+                    ✦ Detects end of side after two failed listens
+                  </div>
+                  <div style={{ display:"flex", gap:"16px", justifyContent:"center", alignItems:"center" }}>
+                    <button onClick={() => setOnboardingStep(2)} style={{ background:"none", border:"1px solid rgba(255,255,255,0.1)", color:"rgba(255,255,255,0.3)", borderRadius:"50px", padding:"12px 24px", fontSize:"13px", cursor:"pointer", fontFamily:"inherit" }}>← Back</button>
+                    <button onClick={() => setOnboardingStep(4)} style={{ background:"linear-gradient(135deg, #d4a846, #c9807a)", color:"#080810", border:"none", borderRadius:"50px", padding:"14px 36px", fontSize:"14px", fontWeight:"700", cursor:"pointer", fontFamily:"inherit" }}>Next →</button>
+                  </div>
+                </div>
+              )}
+
+              {/* Step 4: Cast to TV */}
+              {onboardingStep === 4 && (
+                <div style={{ textAlign:"center", animation:"fade-up 0.4s ease both" }}>
+                  <div style={{ fontSize:"72px", marginBottom:"24px", filter:"drop-shadow(0 0 24px rgba(200,120,120,0.4))" }}>📺</div>
+                  <div style={{ fontSize:"26px", fontWeight:"700", color:"#f0e6d3", marginBottom:"16px" }}>See it on the big screen</div>
+                  <p style={{ fontSize:"15px", color:"rgba(255,255,255,0.5)", lineHeight:"1.9", maxWidth:"280px", margin:"0 auto 32px" }}>
+                    While lyrics are syncing, tap <strong style={{ color:"#d4a846" }}>📺</strong> to cast to any TV browser. Scan the QR code or type the URL — no app needed.
+                  </p>
+                  <div style={{ background:"rgba(255,255,255,0.04)", border:"1px solid rgba(255,255,255,0.08)", borderRadius:"16px", padding:"16px", maxWidth:"240px", margin:"0 auto 40px" }}>
+                    <div style={{ fontSize:"11px", color:"rgba(255,255,255,0.2)", letterSpacing:"2px", marginBottom:"8px" }}>ROOM CODE</div>
+                    <div style={{ fontSize:"36px", fontWeight:"800", letterSpacing:"10px", color:"#d4a846" }}>ABCDEF</div>
+                  </div>
+                  <button onClick={() => setShowOnboarding(false)} style={{ background:"linear-gradient(135deg, #d4a846, #c9807a)", color:"#080810", border:"none", borderRadius:"50px", padding:"18px 52px", fontSize:"15px", fontWeight:"700", cursor:"pointer", fontFamily:"inherit", letterSpacing:"1px", boxShadow:"0 8px 32px rgba(212,168,70,0.3)" }}>
+                    Start listening ✓
+                  </button>
+                  <div style={{ marginTop:"16px" }}>
+                    <button onClick={() => setOnboardingStep(3)} style={{ background:"none", border:"none", color:"rgba(255,255,255,0.2)", cursor:"pointer", fontSize:"13px", fontFamily:"inherit" }}>← Back</button>
+                  </div>
+                </div>
+              )}
+
+              {/* Pagination dots */}
+              <div style={{ position:"absolute", bottom:"max(40px, calc(env(safe-area-inset-bottom) + 24px))", left:0, right:0, display:"flex", justifyContent:"center", gap:"8px" }}>
+                {Array.from({ length: ONBOARDING_STEPS }).map((_, i) => (
+                  <div key={i} onClick={() => setOnboardingStep(i)} style={{ width: i === onboardingStep ? "20px" : "6px", height:"6px", borderRadius:"3px", background: i === onboardingStep ? "#d4a846" : "rgba(255,255,255,0.15)", transition:"all 0.3s ease", cursor:"pointer" }} />
+                ))}
+              </div>
+            </div>
+          )}
 
           {/* ── CAST MODAL ── */}
           {showCast && (
@@ -732,14 +869,36 @@
               </div>
 
               <div className="safe-bottom" style={{ padding:"12px 20px 0", flexShrink:0 }}>
+                {/* Nudge hint label */}
+                <div style={{ textAlign:"center", fontSize:"10px", color:"rgba(255,255,255,0.18)", letterSpacing:"2px", textTransform:"uppercase", marginBottom:"8px" }}>
+                  {nudgeMenu ? "tap to adjust more" : "tap ± to sync lyrics"}
+                </div>
                 <div style={{ display:"flex", justifyContent:"center", alignItems:"center", gap:"8px", marginBottom:"12px" }}>
-                  {[["−5s",-5],["−2s",-2],["−1s",-1]].map(([label,s]) => (
-                    <button key={label} onClick={() => nudge(s)} style={{ background:"rgba(255,255,255,0.07)", border:"1px solid rgba(255,255,255,0.1)", color:"rgba(255,255,255,0.5)", padding:"8px 14px", borderRadius:"20px", cursor:"pointer", fontSize:"12px", fontFamily:"inherit" }}>{label}</button>
-                  ))}
-                  <button onClick={reset} style={{ background:"rgba(212,168,70,0.12)", border:"1px solid rgba(212,168,70,0.3)", color:"#d4a846", padding:"8px 20px", borderRadius:"20px", cursor:"pointer", fontSize:"12px", fontFamily:"inherit", fontWeight:"600" }}>Stop</button>
-                  {[["1s+",1],["2s+",2],["5s+",5]].map(([label,s]) => (
-                    <button key={label} onClick={() => nudge(s)} style={{ background:"rgba(255,255,255,0.07)", border:"1px solid rgba(255,255,255,0.1)", color:"rgba(255,255,255,0.5)", padding:"8px 14px", borderRadius:"20px", cursor:"pointer", fontSize:"12px", fontFamily:"inherit" }}>{label}</button>
-                  ))}
+
+                  {/* Left cluster: extra options appear to the left when expanded */}
+                  <div style={{ display:"flex", gap:"6px", alignItems:"center", transition:"all 0.2s ease" }}>
+                    {nudgeMenu === "left" && (
+                      <>
+                        <button onClick={() => handleNudge(-5)} style={{ background:"rgba(255,255,255,0.06)", border:"1px solid rgba(255,255,255,0.08)", color:"rgba(255,255,255,0.35)", padding:"8px 11px", borderRadius:"20px", cursor:"pointer", fontSize:"11px", fontFamily:"inherit", animation:"fade-up 0.15s ease" }}>−5s</button>
+                        <button onClick={() => handleNudge(-2)} style={{ background:"rgba(255,255,255,0.06)", border:"1px solid rgba(255,255,255,0.08)", color:"rgba(255,255,255,0.35)", padding:"8px 11px", borderRadius:"20px", cursor:"pointer", fontSize:"11px", fontFamily:"inherit", animation:"fade-up 0.15s ease" }}>−2s</button>
+                      </>
+                    )}
+                    <button onClick={() => handleNudge(-1)} style={{ background: nudgeMenu === "left" ? "rgba(255,255,255,0.12)" : "rgba(255,255,255,0.07)", border:"1px solid rgba(255,255,255,0.15)", color:"rgba(255,255,255,0.7)", padding:"10px 20px", borderRadius:"20px", cursor:"pointer", fontSize:"14px", fontFamily:"inherit", fontWeight:"600", transition:"background 0.2s" }}>−1s</button>
+                  </div>
+
+                  {/* Stop */}
+                  <button onClick={reset} style={{ background:"rgba(212,168,70,0.12)", border:"1px solid rgba(212,168,70,0.3)", color:"#d4a846", padding:"10px 20px", borderRadius:"20px", cursor:"pointer", fontSize:"12px", fontFamily:"inherit", fontWeight:"600" }}>Stop</button>
+
+                  {/* Right cluster: extra options appear to the right when expanded */}
+                  <div style={{ display:"flex", gap:"6px", alignItems:"center", transition:"all 0.2s ease" }}>
+                    <button onClick={() => handleNudge(1)} style={{ background: nudgeMenu === "right" ? "rgba(255,255,255,0.12)" : "rgba(255,255,255,0.07)", border:"1px solid rgba(255,255,255,0.15)", color:"rgba(255,255,255,0.7)", padding:"10px 20px", borderRadius:"20px", cursor:"pointer", fontSize:"14px", fontFamily:"inherit", fontWeight:"600", transition:"background 0.2s" }}>+1s</button>
+                    {nudgeMenu === "right" && (
+                      <>
+                        <button onClick={() => handleNudge(2)} style={{ background:"rgba(255,255,255,0.06)", border:"1px solid rgba(255,255,255,0.08)", color:"rgba(255,255,255,0.35)", padding:"8px 11px", borderRadius:"20px", cursor:"pointer", fontSize:"11px", fontFamily:"inherit", animation:"fade-up 0.15s ease" }}>+2s</button>
+                        <button onClick={() => handleNudge(5)} style={{ background:"rgba(255,255,255,0.06)", border:"1px solid rgba(255,255,255,0.08)", color:"rgba(255,255,255,0.35)", padding:"8px 11px", borderRadius:"20px", cursor:"pointer", fontSize:"11px", fontFamily:"inherit", animation:"fade-up 0.15s ease" }}>+5s</button>
+                      </>
+                    )}
+                  </div>
                 </div>
                 <div style={{ textAlign:"center" }}>
                   <button onClick={reset} style={{ background:"none", border:"none", color:"rgba(255,255,255,0.2)", cursor:"pointer", fontSize:"12px", fontFamily:"inherit" }}>Wrong song? Try again</button>
