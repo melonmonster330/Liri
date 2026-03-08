@@ -28,7 +28,7 @@
 -->
 <head>
   <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
   <title>Liri — Lyrics for Vinyl</title>
   <style>
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
@@ -85,6 +85,7 @@
       @keyframes wave-1 { from { transform: scaleY(0.5); } to { transform: scaleY(1); } }
       @keyframes wave-2 { from { transform: scaleY(0.2); } to { transform: scaleY(0.9); } }
       @keyframes wave-3 { from { transform: scaleY(0.6); } to { transform: scaleY(1); } }
+      .liri-topbar { padding: env(safe-area-inset-top, 18px) 24px 12px !important; padding-top: max(18px, env(safe-area-inset-top)) !important; }
     `;
     document.head.appendChild(styleEl);
 
@@ -379,7 +380,7 @@
           {hasBg && <div style={{ position: "fixed", inset: 0, zIndex: 0, backgroundImage: `url(${detectedSong.artwork})`, backgroundSize: "cover", backgroundPosition: "center", filter: "blur(60px) brightness(0.18) saturate(1.5)", transform: "scale(1.1)" }} />}
 
           {/* Top bar */}
-          <div style={{ position: "fixed", top: 0, left: 0, right: 0, zIndex: 50, padding: "18px 24px", display: "flex", justifyContent: "space-between", alignItems: "center", background: "linear-gradient(to bottom, rgba(10,10,20,0.9), transparent)" }}>
+          <div className="liri-topbar" style={{ position: "fixed", top: 0, left: 0, right: 0, zIndex: 50, display: "flex", justifyContent: "space-between", alignItems: "center", background: "linear-gradient(to bottom, rgba(10,10,20,0.9), transparent)" }}>
             <div style={{ fontSize: "18px", letterSpacing: "10px", color: gold, fontWeight: "300" }}>LIRI</div>
             <button onClick={() => setShowSettings(!showSettings)} style={{ background: "none", border: "none", color: gold, cursor: "pointer", fontSize: "18px", opacity: 0.6 }}>⚙</button>
           </div>
