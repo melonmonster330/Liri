@@ -374,10 +374,8 @@
           const data = await res.json();
 
           if (data.status?.code === 0 && data.metadata?.music?.length > 0) {
-            const m      = data.metadata.music[0];
-            const score  = m.score || 0;
-            // Early check: only proceed if confidence is high enough
-            if (isEarlyCheck && score < 70) return false;
+            const m = data.metadata.music[0];
+            // ACRCloud returning code 0 already means it's confident — trust it
             const title   = m.title;
             const artist  = m.artists?.[0]?.name || "Unknown Artist";
             const album   = m.album?.name || "";
