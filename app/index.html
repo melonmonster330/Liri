@@ -368,7 +368,11 @@
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({ audio, mimeType: blob.type || "audio/webm" }),
           });
-          if (!res.ok) throw new Error(`HTTP ${res.status}`);
+          if (!res.ok) {
+            let detail = `HTTP ${res.status}`;
+            try { const e = await res.json(); detail += e.message ? `: ${e.message}` : e.error ? `: ${e.error}` : ""; } catch {}
+            throw new Error(detail);
+          }
           const data = await res.json();
 
           if (data.status?.code === 0 && data.metadata?.music?.length > 0) {
