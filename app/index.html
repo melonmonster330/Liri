@@ -174,7 +174,9 @@
       const [playbackTime, setPlaybackTime] = useState(0);
       const [error, setError] = useState(null);
       const [listenProgress, setListenProgress] = useState(0);
-      const [apiKey, setApiKey] = useState("");
+      const [acrHost,   setAcrHost]   = useState(() => localStorage.getItem("liri_acr_host")   || "");
+      const [acrKey,    setAcrKey]    = useState(() => localStorage.getItem("liri_acr_key")    || "");
+      const [acrSecret, setAcrSecret] = useState(() => localStorage.getItem("liri_acr_secret") || "");
       const [showSettings, setShowSettings] = useState(false);
 
       const mediaRecorderRef = useRef(null);
@@ -248,35 +250,54 @@
         }
       };
 
-      /* ── STEP 2: Identify song via AudD (works for ALL artists) ──
-         AudD returns:
-           - title, artist, album
-           - timecode: where in the song we are (e.g. "2:34")
-           - artwork via spotify/apple_music links
-         The timecode is what makes mid-song detection work. ── */
+      /* ── STEP 2: Identify song via ACRCloud ──
+         ACRCloud returns:
+           - title, artists, album
+           - play_offset_ms: where in the song we are
+           - artwork via spotify external metadata
+         Requests use HMAC-SHA1 signing via Web Crypto API. ── */
       const detectSong = async (blob) => {
         try {
+          const host    = acrHost   || "identify-us-west-2.acrcloud.com";
+          const key     = acrKey;
+          const secret  = acrSecret;
+          const ts      = Math.floor(Date.now() / 1000);
+          const toSign  = `POST\n/v1/identify\n${key}\naudio\n1\n${ts}`;
+          const enc     = new TextEncoder();
+          const cryptoKey = await crypto.subtle.importKey("raw", enc.encode(secret), { name: "HMAC", hash: "SHA-1" }, false, ["sign"]);
+          const sigBuf  = await crypto.subtle.sign("HMAC", cryptoKey, enc.encode(toSign));
+          const sig     = btoa(String.fromCharCode(...new Uint8Array(sigBuf)));
           const fd = new FormData();
-          fd.append("file", blob, "sample.webm");
-          fd.append("return", "timecode,spotify,apple_music");
-          if (apiKey) fd.append("api_token", apiKey);
-          const res = await fetch("https://api.audd.io/", { method: "POST", body: fd });
+          fd.append("access_key", key);
+          fd.append("data_type", "audio");
+          fd.append("signature_version", "1");
+          fd.append("timestamp", ts);
+          fd.append("signature", sig);
+          fd.append("sample", blob, "sample.webm");
+          fd.append("sample_bytes", blob.size);
+          const res = await fetch(`https://${host}/v1/identify`, { method: "POST", body: fd });
           if (!res.ok) throw new Error(`HTTP ${res.status}`);
           const data = await res.json();
-          if (data.status === "success" && data.result) {
-            const r = data.result;
-            const artwork = r.spotify?.album?.images?.[0]?.url || r.apple_music?.artwork?.url?.replace("{w}x{h}", "300x300") || null;
-            const tcParts = (r.timecode || "0:00").split(":");
-            const tcSecs = parseInt(tcParts[0] || 0) * 60 + parseFloat(tcParts[1] || 0);
+          if (data.status?.code === 0 && data.metadata?.music?.length > 0) {
+            const m       = data.metadata.music[0];
+            const title   = m.title;
+            const artist  = m.artists?.[0]?.name || "Unknown Artist";
+            const album   = m.album?.name || "";
+            const tcSecs  = (m.play_offset_ms || 0) / 1000;
+            const artwork = m.external_metadata?.spotify?.album?.images?.[0]?.url || null;
+            const tcStr   = `${Math.floor(tcSecs / 60)}:${Math.floor(tcSecs % 60).toString().padStart(2, "0")}`;
             detectedAtRef.current = Date.now();
             initialPosRef.current = tcSecs;
-            const song = { title: r.title, artist: r.artist, album: r.album, artwork, timecode: r.timecode || "0:00" };
+            const song = { title, artist, album, artwork, timecode: tcStr };
             setDetectedSong(song);
-            const found = await loadLyrics(r.title, r.artist);
+            const found = await loadLyrics(title, artist);
             setHasLyrics(found);
             setMode("confirmed");
-          } else if (data.error?.error_code === 901) {
-            setError("Daily recognition limit reached. Add a free AudD API key in Settings ⚙ to continue.");
+          } else if (data.status?.code === 1001) {
+            setError("Couldn't identify the song. Make sure your record is playing clearly and try again.");
+            setMode("error");
+          } else if (data.status?.code === 3003 || data.status?.code === 3015) {
+            setError("Recognition limit reached. Check your ACRCloud account at acrcloud.com.");
             setMode("error");
           } else {
             setError("Couldn't identify the song. Make sure your record is playing clearly and try again.");
@@ -363,13 +384,22 @@
             <button onClick={() => setShowSettings(!showSettings)} style={{ background: "none", border: "none", color: gold, cursor: "pointer", fontSize: "18px", opacity: 0.6 }}>⚙</button>
           </div>
 
-          {/* Settings: AudD API key (get yours free at audd.io) */}
+          {/* Settings: ACRCloud credentials */}
           {showSettings && (
             <div style={{ position: "fixed", top: "60px", right: "20px", background: "#111124", border: "1px solid #2a2a3e", borderRadius: "14px", padding: "20px", width: "300px", zIndex: 100 }}>
-              <div style={{ fontSize: "11px", letterSpacing: "2px", color: gold, marginBottom: "10px", textTransform: "uppercase" }}>AudD API Key</div>
-              <input value={apiKey} onChange={e => setApiKey(e.target.value)} placeholder="Paste your key here..." style={{ width: "100%", background: "#0a0a14", border: "1px solid #2a2a3e", color: cream, padding: "10px 12px", borderRadius: "8px", fontSize: "13px", fontFamily: "monospace" }} />
-              <div style={{ fontSize: "11px", color: "#4a4a5e", marginTop: "8px", lineHeight: "1.6" }}>
-                Free keys at <span style={{ color: gold }}>audd.io</span>. Without a key: ~10 recognitions/day. With a key: unlimited.
+              <div style={{ fontSize: "11px", letterSpacing: "2px", color: gold, marginBottom: "14px", textTransform: "uppercase" }}>ACRCloud Settings</div>
+              {[
+                ["Host",          acrHost,   setAcrHost,   "liri_acr_host",   "identify-us-west-2.acrcloud.com"],
+                ["Access Key",    acrKey,    setAcrKey,    "liri_acr_key",    "Your access key..."],
+                ["Access Secret", acrSecret, setAcrSecret, "liri_acr_secret", "Your access secret..."],
+              ].map(([label, val, setter, lsKey, ph]) => (
+                <div key={lsKey} style={{ marginBottom: "12px" }}>
+                  <div style={{ fontSize: "10px", letterSpacing: "2px", color: "#6a6a8a", marginBottom: "5px", textTransform: "uppercase" }}>{label}</div>
+                  <input value={val} onChange={e => { setter(e.target.value); localStorage.setItem(lsKey, e.target.value); }} placeholder={ph} style={{ width: "100%", background: "#0a0a14", border: "1px solid #2a2a3e", color: cream, padding: "9px 12px", borderRadius: "8px", fontSize: "12px", fontFamily: "monospace" }} />
+                </div>
+              ))}
+              <div style={{ fontSize: "11px", color: "#4a4a5e", marginTop: "4px", lineHeight: "1.6" }}>
+                Free at <span style={{ color: gold }}>acrcloud.com</span> — 3,000 recognitions/month free.
               </div>
             </div>
           )}
@@ -412,7 +442,13 @@
           {mode === "error" && (
             <div style={{ textAlign: "center", maxWidth: "320px", position: "relative", zIndex: 10, padding: "24px" }}>
               <div style={{ fontSize: "36px", marginBottom: "20px" }}>🎵</div>
-              <div style={{ color: rose, marginBottom: "28px", lineHeight: "1.7", fontSize: "15px" }}>{error}</div>
+              <div style={{ color: rose, marginBottom: "24px", lineHeight: "1.7", fontSize: "15px" }}>{error}</div>
+              {error && error.includes("limit") && (
+                <div style={{ background: "rgba(212,168,70,0.08)", border: "1px solid rgba(212,168,70,0.3)", borderRadius: "12px", padding: "16px", marginBottom: "24px", textAlign: "left" }}>
+                  <div style={{ fontSize: "11px", letterSpacing: "2px", color: gold, marginBottom: "6px", textTransform: "uppercase" }}>Check your ACRCloud account</div>
+                  <div style={{ fontSize: "12px", color: "#6a6a8a", lineHeight: "1.6" }}>Visit <span style={{ color: gold }}>acrcloud.com</span> to review your usage and plan.</div>
+                </div>
+              )}
               <Btn onClick={reset} variant="ghost">Try Again</Btn>
             </div>
           )}
