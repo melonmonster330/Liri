@@ -46,12 +46,27 @@
   <script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.2/babel.min.js"></script>
-  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
+  <!-- Supabase: tries local copy first (bundled for iOS), falls back to CDN -->
+  <script>
+    // Try to load local supabase.min.js (copied into app/ folder for iOS)
+    // If missing, the CDN script below will load it instead
+  </script>
+  <script src="supabase.min.js" onerror="window._supabaseLocalFailed=true"></script>
+  <script>
+    if (window._supabaseLocalFailed || typeof supabase === 'undefined') {
+      document.write('<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"><\/script>');
+    }
+  </script>
 
   <script type="text/babel">
     const { useState, useEffect, useRef, useCallback } = React;
 
     /* ── Supabase client ── */
+    // Guard: if the supabase library didn't load at all, show a clear error
+    if (typeof supabase === 'undefined') {
+      document.getElementById('root').innerHTML = '<div style="min-height:100vh;background:#0a0a14;color:#e8a0a8;display:flex;align-items:center;justify-content:center;font-family:Georgia,serif;text-align:center;padding:32px"><div><div style="font-size:22px;letter-spacing:12px;color:#d4a846;margin-bottom:16px">LIRI</div><div>Could not load authentication library.</div><div style="font-size:12px;color:#4a4a6a;margin-top:12px">Check your internet connection and reload.</div></div></div>';
+      throw new Error('Supabase library not loaded');
+    }
     const { createClient } = supabase;
     const sb = createClient(
       "https://xjdjpaxgymgbvcwmvorc.supabase.co",
@@ -98,7 +113,7 @@
       @keyframes wave-1 { from { transform: scaleY(0.5); } to { transform: scaleY(1); } }
       @keyframes wave-2 { from { transform: scaleY(0.2); } to { transform: scaleY(0.9); } }
       @keyframes wave-3 { from { transform: scaleY(0.6); } to { transform: scaleY(1); } }
-      .liri-topbar { padding-left: 24px; padding-right: 24px; padding-bottom: 12px; padding-top: max(54px, calc(env(safe-area-inset-top) + 12px)) !important; }
+      .liri-topbar { padding-left: 24px; padding-right: 24px; padding-bottom: 12px; padding-top: max(80px, calc(env(safe-area-inset-top) + 20px)) !important; }
     `;
     document.head.appendChild(styleEl);
 
