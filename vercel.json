@@ -1,7 +1,4 @@
 {
-  "buildCommand": "",
-  "outputDirectory": ".",
-  "installCommand": "npm install --ignore-scripts",
   "rewrites": [
     { "source": "/app", "destination": "/app/index.html" }
   ]

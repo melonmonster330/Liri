@@ -1,31 +1,5 @@
 <!DOCTYPE html>
 <html lang="en">
-<!--
-  ╔══════════════════════════════════════════════════════════════╗
-  ║  LIRI — Real-Time Lyric Sync for Vinyl                      ║
-  ║  Version: 0.2  |  All Artists Edition                        ║
-  ║                                                              ║
-  ║  CHANGELOG v0.2:                                             ║
-  ║  - Removed Taylor Swift restriction; works for all artists   ║
-  ║  - Artist detected automatically via AudD                    ║
-  ║  - Lyrics fetched from lrclib.net for any recognized song    ║
-  ║                                                              ║
-  ║  How it works (high level):                                  ║
-  ║  1. Captures 8 seconds of audio via the device microphone    ║
-  ║  2. Sends audio to AudD API → returns song title + timecode  ║
-  ║  3. Fetches timestamped (LRC format) lyrics from lrclib.net  ║
-  ║  4. Runs a timer-based sync engine to display the right      ║
-  ║     lyric line at the right moment, accounting for where     ║
-  ║     in the song the record was playing when detected         ║
-  ║                                                              ║
-  ║  External APIs used:                                         ║
-  ║  - AudD  (https://audd.io)     — song identification         ║
-  ║  - lrclib.net                  — timestamped lyrics          ║
-  ║                                                              ║
-  ║  To get your free AudD API key: https://audd.io              ║
-  ║  Paste it in the ⚙ settings panel inside the app            ║
-  ╚══════════════════════════════════════════════════════════════╝
--->
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
@@ -34,20 +8,19 @@
   <link rel="preload" href="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js" as="script">
   <style>
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
-    body { background: #0a0a14; color: #f0e6d3; font-family: Georgia, 'Times New Roman', serif; overflow: hidden; }
+    html, body { height: 100%; }
+    body { background: #080810; color: #f0e6d3; font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Display', 'Helvetica Neue', sans-serif; overflow: hidden; }
     #root { min-height: 100vh; }
-    input:focus { outline: 2px solid #d4a846; }
-    ::-webkit-scrollbar { width: 4px; }
-    ::-webkit-scrollbar-track { background: transparent; }
-    ::-webkit-scrollbar-thumb { background: #2a2a3e; border-radius: 2px; }
+    input { outline: none; }
+    input:focus { border-color: rgba(212,168,70,0.6) !important; }
+    ::-webkit-scrollbar { display: none; }
   </style>
 </head>
 <body>
-  <!-- Instant splash shown before JS loads, React replaces it -->
   <div id="root">
-    <div style="min-height:100vh;background:#0a0a14;display:flex;flex-direction:column;align-items:center;justify-content:center;font-family:Georgia,serif">
-      <div style="font-size:22px;letter-spacing:12px;color:#d4a846;font-weight:300">LIRI</div>
-      <div style="font-size:11px;color:#2a2a4a;letter-spacing:3px;margin-top:8px;text-transform:uppercase">Lyrics for Vinyl</div>
+    <div style="min-height:100vh;background:#080810;display:flex;align-items:center;justify-content:center">
+      <div style="width:40px;height:40px;border-radius:50%;border:2px solid #1a1a2e;border-top-color:#d4a846;animation:spin 0.8s linear infinite"></div>
+      <style>@keyframes spin{to{transform:rotate(360deg)}}</style>
     </div>
   </div>
 
@@ -59,159 +32,126 @@
   <script type="text/babel">
     const { useState, useEffect, useRef, useCallback } = React;
 
-    /* ── Supabase client ── */
-    // Guard: if the supabase library didn't load at all, show a clear error
     if (typeof supabase === 'undefined') {
-      document.getElementById('root').innerHTML = '<div style="min-height:100vh;background:#0a0a14;color:#e8a0a8;display:flex;align-items:center;justify-content:center;font-family:Georgia,serif;text-align:center;padding:32px"><div><div style="font-size:22px;letter-spacing:12px;color:#d4a846;margin-bottom:16px">LIRI</div><div>Could not load authentication library.</div><div style="font-size:12px;color:#4a4a6a;margin-top:12px">Check your internet connection and reload.</div></div></div>';
-      throw new Error('Supabase library not loaded');
+      document.getElementById('root').innerHTML = '<div style="min-height:100vh;background:#080810;display:flex;align-items:center;justify-content:center;font-family:system-ui;color:#e8a0a8;text-align:center;padding:32px">Could not load auth library.<br><small style="color:#333;margin-top:8px;display:block">Check your connection and reload</small></div>';
+      throw new Error('Supabase not loaded');
     }
-    const { createClient } = supabase;
-    const sb = createClient(
+
+    const sb = supabase.createClient(
       "https://xjdjpaxgymgbvcwmvorc.supabase.co",
       "sb_publishable_C-NBnfg0ltAoUi46XQTUjA_ozjZW_Nd"
     );
 
-    /* Proxy URL works on web (relative) and iOS native app (absolute) */
-    const PROXY_URL = (window.Capacitor)
+    const PROXY_URL = window.Capacitor
       ? "https://liri-vert.vercel.app/api/recognize"
       : "/api/recognize";
 
-    /* ══════════════════════════════════════════════════════
-       LRC FORMAT PARSER
-       Converts timestamped lyric text like [01:23.45]Hello
-       into an array of { time (seconds), text } objects.
-       ══════════════════════════════════════════════════════ */
     function parseLRC(lrc) {
-      const lines = lrc.split("\n");
-      const result = [];
       const re = /\[(\d{2}):(\d{2})[.:](\d{2,3})\](.*)/;
-      for (const line of lines) {
+      return lrc.split("\n").reduce((acc, line) => {
         const m = line.match(re);
-        if (m) {
-          const ms = m[3].padEnd(3, "0").slice(0, 3);
-          const t = parseInt(m[1]) * 60 + parseInt(m[2]) + parseInt(ms) / 1000;
-          const text = m[4].trim();
-          if (text) result.push({ time: t, text });
-        }
-      }
-      return result.sort((a, b) => a.time - b.time);
+        if (!m) return acc;
+        const t = parseInt(m[1]) * 60 + parseInt(m[2]) + parseInt(m[3].padEnd(3,"0").slice(0,3)) / 1000;
+        const text = m[4].trim();
+        if (text) acc.push({ time: t, text });
+        return acc;
+      }, []).sort((a, b) => a.time - b.time);
     }
 
     function formatTime(s) {
-      const m = Math.floor(s / 60);
-      const sec = Math.floor(s % 60);
-      return `${m}:${sec.toString().padStart(2, "0")}`;
+      return `${Math.floor(s/60)}:${Math.floor(s%60).toString().padStart(2,"0")}`;
     }
 
-    /* CSS animations injected as a style tag */
     const styleEl = document.createElement("style");
     styleEl.textContent = `
-      @keyframes vinyl-spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
+      @keyframes vinyl-spin { to { transform: rotate(360deg); } }
+      @keyframes pulse-ring  { 0%,100% { opacity: 0.4; transform: scale(1); } 50% { opacity: 0.8; transform: scale(1.05); } }
       @keyframes wave-0 { from { transform: scaleY(0.3); } to { transform: scaleY(1); } }
       @keyframes wave-1 { from { transform: scaleY(0.5); } to { transform: scaleY(1); } }
       @keyframes wave-2 { from { transform: scaleY(0.2); } to { transform: scaleY(0.9); } }
       @keyframes wave-3 { from { transform: scaleY(0.6); } to { transform: scaleY(1); } }
-      .liri-topbar { padding-left: 24px; padding-right: 24px; padding-bottom: 12px; padding-top: max(80px, calc(env(safe-area-inset-top) + 20px)) !important; }
+      @keyframes fade-up  { from { opacity: 0; transform: translateY(12px); } to { opacity: 1; transform: translateY(0); } }
+      .safe-top { padding-top: max(56px, calc(env(safe-area-inset-top) + 16px)) !important; }
+      .safe-bottom { padding-bottom: max(32px, calc(env(safe-area-inset-bottom) + 16px)) !important; }
     `;
     document.head.appendChild(styleEl);
 
-    /* ── Animated sound wave bars (recording indicator) ── */
-    function WaveAnimation({ active }) {
-      const heights = [24, 38, 52, 44, 32, 48, 36, 52, 40, 28, 44, 34];
+    // ── Vinyl record SVG ──
+    function Vinyl({ size = 120, spinning = false }) {
       return (
-        <div style={{ display: "flex", gap: "5px", alignItems: "center", height: "56px", justifyContent: "center" }}>
-          {heights.map((h, i) => (
+        <div style={{ width:size, height:size, margin:"0 auto", animation: spinning ? "vinyl-spin 2s linear infinite" : "none", flexShrink:0 }}>
+          <svg viewBox="0 0 100 100" style={{ width:"100%", height:"100%" }}>
+            <defs>
+              <radialGradient id="vg2" cx="50%" cy="50%" r="50%">
+                <stop offset="0%" stopColor="#1e1828" />
+                <stop offset="70%" stopColor="#0a0812" />
+                <stop offset="100%" stopColor="#050508" />
+              </radialGradient>
+            </defs>
+            <circle cx="50" cy="50" r="49" fill="url(#vg2)" />
+            {[46,42,38,34,30,26,22].map((r,i) => (
+              <circle key={i} cx="50" cy="50" r={r} fill="none" stroke="rgba(255,255,255,0.04)" strokeWidth="0.8" />
+            ))}
+            <circle cx="50" cy="50" r="10" fill="#d4a846" opacity="0.85" />
+            <circle cx="50" cy="50" r="3.5" fill="#080810" />
+          </svg>
+        </div>
+      );
+    }
+
+    // ── Wave bars ──
+    function WaveAnimation({ active, size = 1 }) {
+      return (
+        <div style={{ display:"flex", gap:`${4*size}px`, alignItems:"center", height:`${52*size}px`, justifyContent:"center" }}>
+          {[20,34,48,40,28,44,32,48,36,24,40,30].map((h, i) => (
             <div key={i} style={{
-              width: "4px", borderRadius: "3px",
-              background: "linear-gradient(to top, #d4a846, #e8a0a8)",
-              height: active ? `${h}px` : "4px",
-              animation: active ? `wave-${i % 4} ${0.6 + i * 0.08}s ease-in-out infinite alternate` : "none",
-              transition: "height 0.4s ease",
-              opacity: active ? 1 : 0.35,
+              width:`${3*size}px`, borderRadius:"2px",
+              background:"linear-gradient(to top, #d4a846, #e8a0a8)",
+              height: active ? `${h*size}px` : `${3*size}px`,
+              animation: active ? `wave-${i%4} ${0.5+i*0.07}s ease-in-out infinite alternate` : "none",
+              transition:"height 0.3s ease",
+              opacity: active ? 1 : 0.3,
             }} />
           ))}
         </div>
       );
     }
 
-    /* ── Spinning vinyl record (detection indicator) ── */
-    function VinylSpinner({ spinning }) {
+    // ── Circular progress ring ──
+    function ProgressRing({ progress, size = 96 }) {
+      const r = size/2 - 5, circ = 2 * Math.PI * r;
       return (
-        <div style={{ width: "88px", height: "88px", margin: "0 auto", animation: spinning ? "vinyl-spin 1.8s linear infinite" : "none" }}>
-          <svg viewBox="0 0 100 100" style={{ width: "100%", height: "100%" }}>
-            <defs>
-              <radialGradient id="vg" cx="50%" cy="50%" r="50%">
-                <stop offset="0%" stopColor="#2a2438" />
-                <stop offset="100%" stopColor="#0d0a14" />
-              </radialGradient>
-            </defs>
-            <circle cx="50" cy="50" r="49" fill="url(#vg)" stroke="#2a2438" strokeWidth="1.5" />
-            {[44, 38, 32, 26, 20].map((r, i) => (
-              <circle key={i} cx="50" cy="50" r={r} fill="none" stroke="#1e1a2a" strokeWidth="1" />
-            ))}
-            <circle cx="50" cy="50" r="11" fill="#d4a846" opacity="0.9" />
-            <circle cx="50" cy="50" r="4" fill="#0a0a14" />
-          </svg>
-        </div>
-      );
-    }
-
-    /* ── Progress ring (fills over 8-second recording) ── */
-    function ProgressRing({ progress }) {
-      const r = 38;
-      const circ = 2 * Math.PI * r;
-      const dash = circ * progress;
-      return (
-        <svg width="96" height="96" style={{ transform: "rotate(-90deg)" }}>
-          <circle cx="48" cy="48" r={r} fill="none" stroke="#1e1a2e" strokeWidth="4" />
-          <circle cx="48" cy="48" r={r} fill="none" stroke="url(#pg)"
-            strokeWidth="4" strokeLinecap="round"
-            strokeDasharray={`${dash} ${circ}`}
-            style={{ transition: "stroke-dasharray 0.1s linear" }}
-          />
+        <svg width={size} height={size} style={{ transform:"rotate(-90deg)" }}>
+          <circle cx={size/2} cy={size/2} r={r} fill="none" stroke="rgba(255,255,255,0.06)" strokeWidth="3" />
+          <circle cx={size/2} cy={size/2} r={r} fill="none" strokeWidth="3" strokeLinecap="round"
+            stroke="url(#pg2)" strokeDasharray={`${circ*progress} ${circ}`}
+            style={{ transition:"stroke-dasharray 0.1s linear" }} />
           <defs>
-            <linearGradient id="pg" x1="0%" y1="0%" x2="100%" y2="0%">
-              <stop offset="0%" stopColor="#d4a846" />
-              <stop offset="100%" stopColor="#e8a0a8" />
+            <linearGradient id="pg2" x1="0%" y1="0%" x2="100%" y2="0%">
+              <stop offset="0%" stopColor="#d4a846" /><stop offset="100%" stopColor="#e8a0a8" />
             </linearGradient>
           </defs>
         </svg>
       );
     }
 
-    /* ── Reusable button component ── */
-    function Btn({ onClick, children, variant = "primary", style: extra = {} }) {
-      const base = { border: "none", borderRadius: "50px", cursor: "pointer", fontFamily: "inherit", letterSpacing: "2px", textTransform: "uppercase", fontSize: "13px", fontWeight: "600" };
-      if (variant === "primary") return <button onClick={onClick} style={{ ...base, background: "linear-gradient(135deg, #d4a846, #e8a0a8)", color: "#0a0a14", padding: "14px 44px", ...extra }}>{children}</button>;
-      if (variant === "ghost")   return <button onClick={onClick} style={{ ...base, background: "none", border: "1px solid #d4a846", color: "#d4a846", padding: "10px 28px", ...extra }}>{children}</button>;
-      return <button onClick={onClick} style={{ ...base, background: "none", border: "none", color: "#555", fontSize: "12px", padding: "8px 16px", letterSpacing: "1px", ...extra }}>{children}</button>;
-    }
-
-    /* ══════════════════════════════════════════════════════
-       MAIN LIRI APP
-       State machine: idle → listening → detecting → confirmed → syncing
-                                                   ↘ error ↗
-       ══════════════════════════════════════════════════════ */
     function Liri() {
-      const [mode, setMode] = useState("idle");
-      const [detectedSong, setDetectedSong] = useState(null);
-      const [lyrics, setLyrics] = useState([]);
-      const [hasLyrics, setHasLyrics] = useState(true);
-      const [currentIndex, setCurrentIndex] = useState(0);
-      const [playbackTime, setPlaybackTime] = useState(0);
-      const [error, setError] = useState(null);
+      const [mode, setMode]                   = useState("idle");
+      const [detectedSong, setDetectedSong]   = useState(null);
+      const [lyrics, setLyrics]               = useState([]);
+      const [currentIndex, setCurrentIndex]   = useState(0);
+      const [playbackTime, setPlaybackTime]   = useState(0);
+      const [error, setError]                 = useState(null);
       const [listenProgress, setListenProgress] = useState(0);
-      const [showSettings, setShowSettings] = useState(false);
-      const [user,         setUser]         = useState(null);
-      const [authLoading,  setAuthLoading]  = useState(true);
-      const [authMode,     setAuthMode]     = useState("signin"); // "signin" | "signup"
-      const [authEmail,    setAuthEmail]    = useState("");
-      const [authPassword, setAuthPassword] = useState("");
-      const [authError,    setAuthError]    = useState(null);
-      const [authWorking,  setAuthWorking]  = useState(false);
+      const [showSettings, setShowSettings]   = useState(false);
+      const [user, setUser]                   = useState(null);
+      const [authLoading, setAuthLoading]     = useState(true);
+      const [authMode, setAuthMode]           = useState("signin");
+      const [authEmail, setAuthEmail]         = useState("");
+      const [authPassword, setAuthPassword]   = useState("");
+      const [authError, setAuthError]         = useState(null);
+      const [authWorking, setAuthWorking]     = useState(false);
 
-      const mediaRecorderRef = useRef(null);
-      const audioChunksRef   = useRef([]);
       const streamRef        = useRef(null);
       const syncIntervalRef  = useRef(null);
       const syncStartRef     = useRef(null);
@@ -223,21 +163,14 @@
 
       useEffect(() => { lyricsRef.current = lyrics; }, [lyrics]);
 
-      /* ── Auth: check session on mount, listen for changes ── */
       useEffect(() => {
-        sb.auth.getSession().then(({ data: { session } }) => {
-          setUser(session?.user || null);
-          setAuthLoading(false);
-        });
-        const { data: { subscription } } = sb.auth.onAuthStateChange((_e, session) => {
-          setUser(session?.user || null);
-        });
+        sb.auth.getSession().then(({ data: { session } }) => { setUser(session?.user || null); setAuthLoading(false); });
+        const { data: { subscription } } = sb.auth.onAuthStateChange((_e, s) => setUser(s?.user || null));
         return () => subscription.unsubscribe();
       }, []);
 
       const handleAuth = async () => {
-        setAuthError(null);
-        setAuthWorking(true);
+        setAuthError(null); setAuthWorking(true);
         try {
           if (authMode === "signup") {
             const { error } = await sb.auth.signUp({ email: authEmail, password: authPassword });
@@ -248,446 +181,343 @@
             const { error } = await sb.auth.signInWithPassword({ email: authEmail, password: authPassword });
             if (error) throw error;
           }
-        } catch (e) {
-          setAuthError(e.message);
-        } finally {
-          setAuthWorking(false);
-        }
+        } catch (e) { setAuthError(e.message); }
+        finally { setAuthWorking(false); }
       };
 
-      const handleSignOut = async () => {
-        await sb.auth.signOut();
-        setShowSettings(false);
-        reset();
-      };
+      const handleSignOut = async () => { await sb.auth.signOut(); setShowSettings(false); reset(); };
 
-      // Auto-start sync immediately after song is detected — no confirmation tap needed
-      useEffect(() => {
-        if (mode === "confirmed" && detectedSong) {
-          startSync();
-        }
-      }, [mode, detectedSong]);
+      useEffect(() => { if (mode === "confirmed" && detectedSong) startSync(); }, [mode, detectedSong]);
 
       useEffect(() => {
-        if (currentLineRef.current && mode === "syncing") {
-          currentLineRef.current.scrollIntoView({ behavior: "smooth", block: "center" });
-        }
+        if (currentLineRef.current && mode === "syncing")
+          currentLineRef.current.scrollIntoView({ behavior:"smooth", block:"center" });
       }, [currentIndex, mode]);
 
       useEffect(() => () => {
-        if (syncIntervalRef.current) clearInterval(syncIntervalRef.current);
-        if (progressTimerRef.current) clearInterval(progressTimerRef.current);
-        if (streamRef.current) streamRef.current.getTracks().forEach(t => t.stop());
+        clearInterval(syncIntervalRef.current);
+        clearInterval(progressTimerRef.current);
+        streamRef.current?.getTracks().forEach(t => t.stop());
       }, []);
 
-      /* ── STEP 1: Listen for up to 8 seconds, but cut early at 4s if ACRCloud
-         is already confident (score ≥ 70). This gives a much faster response
-         when the song is obvious, while falling back to a longer sample for
-         quieter or harder-to-identify tracks. ── */
       const startListening = async () => {
-        setError(null);
-        setMode("listening");
-        setListenProgress(0);
+        setError(null); setMode("listening"); setListenProgress(0);
         try {
           const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
           streamRef.current = stream;
-          let mimeType = "audio/webm";
-          if (!MediaRecorder.isTypeSupported("audio/webm")) {
-            mimeType = MediaRecorder.isTypeSupported("audio/ogg") ? "audio/ogg" : "";
-          }
+          const mimeType = MediaRecorder.isTypeSupported("audio/webm") ? "audio/webm"
+                         : MediaRecorder.isTypeSupported("audio/ogg")  ? "audio/ogg" : "";
           const recorder = mimeType ? new MediaRecorder(stream, { mimeType }) : new MediaRecorder(stream);
-          mediaRecorderRef.current = recorder;
           const chunks = [];
-          audioChunksRef.current = chunks;
           recorder.ondataavailable = e => { if (e.data.size > 0) chunks.push(e.data); };
-          recorder.onstop = () => { stream.getTracks().forEach(t => t.stop()); };
+          recorder.onstop = () => stream.getTracks().forEach(t => t.stop());
           recorder.start(200);
 
           let elapsed = 0;
-          // Use plain objects (not state) for flags so async callbacks see latest values
           const flags = { done: false, earlyInFlight: false };
-
           progressTimerRef.current = setInterval(() => {
             elapsed += 100;
             setListenProgress(Math.min(elapsed / 8000, 1));
 
-            // ── Early check at 4 seconds ──
-            // Try quietly in the background — stays in "listening" mode visually.
-            // If ACRCloud is ≥70% confident, stop recording immediately.
             if (elapsed === 4000 && !flags.done && !flags.earlyInFlight) {
               flags.earlyInFlight = true;
-              const earlyBlob = new Blob([...chunks], { type: recorder.mimeType || "audio/webm" });
-              detectSong(earlyBlob, true).then(detected => {
+              const blob = new Blob([...chunks], { type: recorder.mimeType || "audio/webm" });
+              detectSong(blob, true).then(ok => {
                 flags.earlyInFlight = false;
-                if (detected && !flags.done) {
-                  flags.done = true;
-                  clearInterval(progressTimerRef.current);
-                  if (recorder.state === "recording") recorder.stop();
-                }
+                if (ok && !flags.done) { flags.done = true; clearInterval(progressTimerRef.current); if (recorder.state === "recording") recorder.stop(); }
               });
             }
 
-            // ── Final check at 8 seconds ──
             if (elapsed >= 8000 && !flags.done) {
-              flags.done = true;
-              clearInterval(progressTimerRef.current);
+              flags.done = true; clearInterval(progressTimerRef.current);
               if (recorder.state === "recording") recorder.stop();
-              const finalBlob = new Blob(chunks, { type: recorder.mimeType || "audio/webm" });
-              detectSong(finalBlob, false);
+              detectSong(new Blob(chunks, { type: recorder.mimeType || "audio/webm" }), false);
             }
           }, 100);
-        } catch (err) {
-          setError("Microphone access denied. Please allow microphone access in your browser settings.");
-          setMode("error");
-        }
+        } catch { setError("Microphone access denied."); setMode("error"); }
       };
 
-      /* ── STEP 2: Identify song via Liri proxy → ACRCloud ──
-         isEarlyCheck=true: called mid-recording at 4s. Returns true/false silently —
-           only proceeds if score ≥ 70, never shows errors (keeps recording going).
-         isEarlyCheck=false: called at 8s. Shows detecting spinner and all error states.
-
-         The btoa encoding uses 8KB chunks to avoid a JS call-stack crash that
-         happens when you spread a large Uint8Array into String.fromCharCode. ── */
-      const detectSong = async (blob, isEarlyCheck = false) => {
-        if (!isEarlyCheck) setMode("detecting");
+      const detectSong = async (blob, early = false) => {
+        if (!early) setMode("detecting");
         try {
-          // Safe chunked base64 encoding (avoids stack overflow on large audio files)
-          const arrayBuf   = await blob.arrayBuffer();
-          const uint8Array = new Uint8Array(arrayBuf);
+          const uint8 = new Uint8Array(await blob.arrayBuffer());
           let binary = "";
-          for (let i = 0; i < uint8Array.length; i += 8192) {
-            binary += String.fromCharCode(...uint8Array.subarray(i, i + 8192));
-          }
-          const audio = btoa(binary);
+          for (let i = 0; i < uint8.length; i += 8192)
+            binary += String.fromCharCode(...uint8.subarray(i, i + 8192));
 
           const res = await fetch(PROXY_URL, {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ audio, mimeType: blob.type || "audio/webm" }),
+            method:"POST", headers:{"Content-Type":"application/json"},
+            body: JSON.stringify({ audio: btoa(binary), mimeType: blob.type || "audio/webm" }),
           });
           if (!res.ok) {
-            let detail = `HTTP ${res.status}`;
-            try { const e = await res.json(); detail += e.message ? `: ${e.message}` : e.error ? `: ${e.error}` : ""; } catch {}
-            throw new Error(detail);
+            let msg = `HTTP ${res.status}`;
+            try { const e = await res.json(); msg += e.message ? `: ${e.message}` : e.error ? `: ${e.error}` : ""; } catch {}
+            throw new Error(msg);
           }
           const data = await res.json();
 
           if (data.status?.code === 0 && data.metadata?.music?.length > 0) {
             const m = data.metadata.music[0];
-            // ACRCloud returning code 0 already means it's confident — trust it
-            const title   = m.title;
-            const artist  = m.artists?.[0]?.name || "Unknown Artist";
-            const album   = m.album?.name || "";
-            const tcSecs  = (m.play_offset_ms || 0) / 1000;
-            const artwork = m.external_metadata?.spotify?.album?.images?.[0]?.url || null;
-            const tcStr   = `${Math.floor(tcSecs / 60)}:${Math.floor(tcSecs % 60).toString().padStart(2, "0")}`;
+            const tcSecs = (m.play_offset_ms || 0) / 1000;
             detectedAtRef.current = Date.now();
             initialPosRef.current = tcSecs;
-            const song = { title, artist, album, artwork, timecode: tcStr };
-            setDetectedSong(song);
-            const found = await loadLyrics(title, artist);
-            setHasLyrics(found);
+            setDetectedSong({
+              title:   m.title,
+              artist:  m.artists?.[0]?.name || "Unknown Artist",
+              album:   m.album?.name || "",
+              artwork: m.external_metadata?.spotify?.album?.images?.[0]?.url || null,
+            });
+            await loadLyrics(m.title, m.artists?.[0]?.name || "");
             setMode("confirmed");
             return true;
-          } else if (data.status?.code === 1001) {
-            if (isEarlyCheck) return false;
-            setError("Couldn't identify the song. Make sure your record is playing clearly and try again.");
-            setMode("error");
-          } else if (data.status?.code === 3003 || data.status?.code === 3015) {
-            setError("Recognition limit reached. Check your ACRCloud account at acrcloud.com.");
-            setMode("error");
-          } else {
-            if (isEarlyCheck) return false;
-            setError("Couldn't identify the song. Make sure your record is playing clearly and try again.");
-            setMode("error");
           }
+          if (data.status?.code === 3003 || data.status?.code === 3015) {
+            setError("Recognition limit reached. Visit acrcloud.com."); setMode("error"); return false;
+          }
+          if (!early) { setError("Couldn't identify the song. Make sure your record is playing clearly and try again."); setMode("error"); }
+          return false;
         } catch (err) {
-          if (isEarlyCheck) return false;
-          setError(`Connection failed: ${err.message}. Check your internet and try again.`);
-          setMode("error");
+          if (!early) { setError(`Connection failed: ${err.message}`); setMode("error"); }
+          return false;
         }
-        return false;
       };
 
-      /* ── STEP 3: Fetch synced lyrics from lrclib.net ──
-         Two-pass search: exact artist+title, then fuzzy.
-         Falls back to plain (unsynced) lyrics if needed.
-         Works for any artist in the lrclib database. ── */
       const loadLyrics = async (title, artist) => {
         try {
-          const r1 = await fetch(`https://lrclib.net/api/search?artist_name=${encodeURIComponent(artist)}&track_name=${encodeURIComponent(title)}`);
-          const list1 = await r1.json();
-          const exact = list1.find(x => x.syncedLyrics);
-          if (exact) { setLyrics(parseLRC(exact.syncedLyrics)); return true; }
-          const r2 = await fetch(`https://lrclib.net/api/search?q=${encodeURIComponent(artist + " " + title)}`);
-          const list2 = await r2.json();
-          const fuzzy = list2.find(x => x.syncedLyrics);
-          if (fuzzy) { setLyrics(parseLRC(fuzzy.syncedLyrics)); return true; }
-          const plain = [...list1, ...list2].find(x => x.plainLyrics);
-          if (plain) {
-            const lines = plain.plainLyrics.split("\n").filter(l => l.trim()).map((text, i) => ({ time: i * 4, text }));
-            setLyrics(lines);
-            return true;
-          }
-          return false;
-        } catch { return false; }
+          const [a, b] = await Promise.all([
+            fetch(`https://lrclib.net/api/search?artist_name=${encodeURIComponent(artist)}&track_name=${encodeURIComponent(title)}`).then(r => r.json()),
+            fetch(`https://lrclib.net/api/search?q=${encodeURIComponent(artist + " " + title)}`).then(r => r.json()),
+          ]);
+          const synced = [...a, ...b].find(x => x.syncedLyrics);
+          if (synced) { setLyrics(parseLRC(synced.syncedLyrics)); return; }
+          const plain = [...a, ...b].find(x => x.plainLyrics);
+          if (plain) setLyrics(plain.plainLyrics.split("\n").filter(l => l.trim()).map((text, i) => ({ time: i * 4, text })));
+        } catch {}
       };
 
-      /* ── STEP 4: Sync engine ──
-         startPosition = detectedTimecode + (time elapsed since detection)
-         This accounts for the user reading the confirmation card before tapping Start.
-         Every 80ms, advances through the lyric array and highlights the current line. ── */
       const startSync = useCallback(() => {
         const delay = detectedAtRef.current ? (Date.now() - detectedAtRef.current) / 1000 : 0;
-        initialPosRef.current = initialPosRef.current + delay;
+        initialPosRef.current += delay;
         syncStartRef.current = Date.now();
-        setMode("syncing");
-        setCurrentIndex(0);
-        if (syncIntervalRef.current) clearInterval(syncIntervalRef.current);
+        setMode("syncing"); setCurrentIndex(0);
+        clearInterval(syncIntervalRef.current);
         syncIntervalRef.current = setInterval(() => {
-          const elapsed = (Date.now() - syncStartRef.current) / 1000;
-          const t = initialPosRef.current + elapsed;
+          const t = initialPosRef.current + (Date.now() - syncStartRef.current) / 1000;
           setPlaybackTime(t);
           const lrc = lyricsRef.current;
           if (!lrc.length) return;
           let idx = 0;
-          for (let i = 0; i < lrc.length; i++) {
-            if (lrc[i].time <= t) idx = i;
-            else break;
-          }
+          for (let i = 0; i < lrc.length; i++) { if (lrc[i].time <= t) idx = i; else break; }
           setCurrentIndex(idx);
         }, 80);
       }, []);
 
-      /* nudge: correct drift — positive moves lyrics backward, negative moves them forward */
-      const nudge = (secs) => { initialPosRef.current = Math.max(0, initialPosRef.current + secs); };
+      const nudge = (s) => { initialPosRef.current = Math.max(0, initialPosRef.current + s); };
 
       const reset = () => {
-        if (syncIntervalRef.current) clearInterval(syncIntervalRef.current);
-        if (progressTimerRef.current) clearInterval(progressTimerRef.current);
-        if (streamRef.current) streamRef.current.getTracks().forEach(t => t.stop());
-        setMode("idle"); setDetectedSong(null); setLyrics([]); setCurrentIndex(0); setError(null); setListenProgress(0); setHasLyrics(true);
+        clearInterval(syncIntervalRef.current); clearInterval(progressTimerRef.current);
+        streamRef.current?.getTracks().forEach(t => t.stop());
+        setMode("idle"); setDetectedSong(null); setLyrics([]); setCurrentIndex(0); setError(null); setListenProgress(0);
       };
 
-      const gold = "#d4a846", rose = "#e8a0a8", cream = "#f0e6d3";
-      const hasBg = !!detectedSong?.artwork;
-
-      /* ── AUTH LOADING ── */
+      // ─────────────────────────────────────────
+      // AUTH LOADING
+      // ─────────────────────────────────────────
       if (authLoading) return (
-        <div style={{ minHeight: "100vh", background: "#0a0a14", display: "flex", alignItems: "center", justifyContent: "center" }}>
-          <VinylSpinner spinning={true} />
+        <div style={{ minHeight:"100vh", background:"#080810", display:"flex", alignItems:"center", justifyContent:"center" }}>
+          <Vinyl spinning={true} size={80} />
         </div>
       );
 
-      /* ── AUTH SCREEN ── */
-      if (!user) return (
-        <div style={{ minHeight: "100vh", background: "#0a0a14", color: "#f0e6d3", fontFamily: "Georgia, 'Times New Roman', serif", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", padding: "32px 24px" }}>
-          <div style={{ fontSize: "22px", letterSpacing: "12px", color: "#d4a846", fontWeight: "300", marginBottom: "8px" }}>LIRI</div>
-          <div style={{ fontSize: "12px", color: "#4a4a6a", letterSpacing: "3px", textTransform: "uppercase", marginBottom: "48px" }}>Lyrics for Vinyl</div>
+      // ─────────────────────────────────────────
+      // AUTH SCREEN
+      // ─────────────────────────────────────────
+      if (!user) {
+        const inp = { width:"100%", background:"rgba(255,255,255,0.05)", border:"1px solid rgba(255,255,255,0.1)", color:"#f0e6d3", padding:"16px 18px", borderRadius:"14px", fontSize:"16px", fontFamily:"inherit", transition:"border-color 0.2s" };
+        return (
+          <div style={{ minHeight:"100vh", background:"#080810", display:"flex", flexDirection:"column", alignItems:"center", justifyContent:"center", padding:"40px 28px" }}>
+            <Vinyl size={72} spinning={false} />
+            <div style={{ marginTop:"20px", fontSize:"28px", letterSpacing:"14px", color:"#d4a846", fontWeight:"300" }}>LIRI</div>
+            <div style={{ fontSize:"11px", color:"#2a2a4a", letterSpacing:"4px", textTransform:"uppercase", marginTop:"6px", marginBottom:"52px" }}>Lyrics for Vinyl</div>
 
-          <div style={{ width: "100%", maxWidth: "340px" }}>
-            <div style={{ fontSize: "20px", color: "#f0e6d3", marginBottom: "6px", textAlign: "center" }}>
-              {authMode === "signin" ? "Welcome back" : "Create your account"}
-            </div>
-            <div style={{ fontSize: "13px", color: "#4a4a6a", textAlign: "center", marginBottom: "32px" }}>
-              {authMode === "signin" ? "Sign in to start listening" : "Join Liri — it's free to start"}
-            </div>
-
-            <div style={{ marginBottom: "14px" }}>
-              <input
-                type="email"
-                placeholder="your@email.com"
-                value={authEmail}
-                onChange={e => setAuthEmail(e.target.value)}
-                onKeyDown={e => e.key === "Enter" && handleAuth()}
-                style={{ width: "100%", background: "#111124", border: "1px solid #2a2a3e", color: "#f0e6d3", padding: "14px 16px", borderRadius: "12px", fontSize: "15px", fontFamily: "inherit" }}
-              />
-            </div>
-            <div style={{ marginBottom: "24px" }}>
-              <input
-                type="password"
-                placeholder="Password"
-                value={authPassword}
-                onChange={e => setAuthPassword(e.target.value)}
-                onKeyDown={e => e.key === "Enter" && handleAuth()}
-                style={{ width: "100%", background: "#111124", border: "1px solid #2a2a3e", color: "#f0e6d3", padding: "14px 16px", borderRadius: "12px", fontSize: "15px", fontFamily: "inherit" }}
-              />
-            </div>
-
-            {authError && (
-              <div style={{ fontSize: "13px", color: authError.includes("Check your email") ? "#6aaa8a" : "#e8a0a8", textAlign: "center", marginBottom: "20px", lineHeight: "1.6" }}>
-                {authError}
+            <div style={{ width:"100%", maxWidth:"360px", animation:"fade-up 0.4s ease both" }}>
+              <h2 style={{ fontSize:"22px", fontWeight:"500", color:"#f0e6d3", textAlign:"center", marginBottom:"8px" }}>
+                {authMode === "signin" ? "Welcome back" : "Create your account"}
+              </h2>
+              <p style={{ fontSize:"14px", color:"#3a3a5a", textAlign:"center", marginBottom:"32px" }}>
+                {authMode === "signin" ? "Sign in to continue" : "It's free to start"}
+              </p>
+              <div style={{ display:"flex", flexDirection:"column", gap:"12px" }}>
+                <input type="email" placeholder="Email" value={authEmail} onChange={e => setAuthEmail(e.target.value)} onKeyDown={e => e.key === "Enter" && handleAuth()} style={inp} />
+                <input type="password" placeholder="Password" value={authPassword} onChange={e => setAuthPassword(e.target.value)} onKeyDown={e => e.key === "Enter" && handleAuth()} style={inp} />
               </div>
-            )}
-
-            <button
-              onClick={handleAuth}
-              disabled={authWorking}
-              style={{ width: "100%", background: "linear-gradient(135deg, #d4a846, #e8a0a8)", color: "#0a0a14", border: "none", borderRadius: "50px", padding: "16px", fontSize: "13px", fontWeight: "700", letterSpacing: "2px", textTransform: "uppercase", cursor: authWorking ? "wait" : "pointer", opacity: authWorking ? 0.7 : 1, fontFamily: "inherit" }}
-            >
-              {authWorking ? "..." : authMode === "signin" ? "Sign In" : "Create Account"}
-            </button>
-
-            <div style={{ textAlign: "center", marginTop: "20px" }}>
-              <button
-                onClick={() => { setAuthMode(authMode === "signin" ? "signup" : "signin"); setAuthError(null); }}
-                style={{ background: "none", border: "none", color: "#4a4a6a", cursor: "pointer", fontSize: "13px", fontFamily: "inherit", textDecoration: "underline" }}
-              >
-                {authMode === "signin" ? "New here? Create an account" : "Already have an account? Sign in"}
+              {authError && (
+                <div style={{ fontSize:"13px", color: authError.includes("Check") ? "#6aaa8a" : "#e8a0a8", textAlign:"center", margin:"16px 0", lineHeight:"1.6" }}>{authError}</div>
+              )}
+              <button onClick={handleAuth} disabled={authWorking} style={{ width:"100%", marginTop:"20px", background:"linear-gradient(135deg, #d4a846, #c9807a)", color:"#080810", border:"none", borderRadius:"14px", padding:"18px", fontSize:"15px", fontWeight:"700", letterSpacing:"1px", cursor: authWorking ? "wait" : "pointer", opacity: authWorking ? 0.6 : 1, fontFamily:"inherit", transition:"opacity 0.2s" }}>
+                {authWorking ? "…" : authMode === "signin" ? "Sign In" : "Create Account"}
               </button>
+              <div style={{ textAlign:"center", marginTop:"20px" }}>
+                <button onClick={() => { setAuthMode(m => m === "signin" ? "signup" : "signin"); setAuthError(null); }} style={{ background:"none", border:"none", color:"#3a3a5a", cursor:"pointer", fontSize:"14px", fontFamily:"inherit" }}>
+                  {authMode === "signin" ? "New here? Create an account →" : "Already have an account? Sign in →"}
+                </button>
+              </div>
             </div>
           </div>
-        </div>
-      );
+        );
+      }
+
+      // ─────────────────────────────────────────
+      // MAIN APP
+      // ─────────────────────────────────────────
+      const isSyncing = mode === "syncing";
+      const artwork = detectedSong?.artwork;
 
       return (
-        <div style={{ minHeight: "100vh", background: "#0a0a14", color: cream, fontFamily: "Georgia, 'Times New Roman', serif", position: "relative", overflow: "hidden", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center" }}>
+        <div style={{ minHeight:"100vh", background:"#080810", color:"#f0e6d3", fontFamily:"-apple-system,BlinkMacSystemFont,'SF Pro Display','Helvetica Neue',sans-serif", position:"relative", overflow:"hidden" }}>
 
-          {/* Blurred album art backdrop — pulls color from the current album */}
-          {hasBg && <div style={{ position: "fixed", inset: 0, zIndex: 0, backgroundImage: `url(${detectedSong.artwork})`, backgroundSize: "cover", backgroundPosition: "center", filter: "blur(60px) brightness(0.18) saturate(1.5)", transform: "scale(1.1)" }} />}
+          {/* Full-screen blurred album art background */}
+          {artwork && (
+            <div style={{ position:"fixed", inset:"-20px", zIndex:0, backgroundImage:`url(${artwork})`, backgroundSize:"cover", backgroundPosition:"center", filter:"blur(80px) brightness(0.15) saturate(2)", transition:"opacity 1s ease", opacity: isSyncing ? 1 : 0.4 }} />
+          )}
+          {/* Base dark layer so it never looks washed out */}
+          <div style={{ position:"fixed", inset:0, zIndex:1, background:"linear-gradient(to bottom, rgba(8,8,16,0.6) 0%, rgba(8,8,16,0.3) 40%, rgba(8,8,16,0.7) 100%)", pointerEvents:"none" }} />
 
-          {/* Top bar */}
-          <div className="liri-topbar" style={{ position: "fixed", top: 0, left: 0, right: 0, zIndex: 50, display: "flex", justifyContent: "space-between", alignItems: "center", background: "linear-gradient(to bottom, rgba(10,10,20,0.9), transparent)" }}>
-            <div style={{ fontSize: "18px", letterSpacing: "10px", color: gold, fontWeight: "300" }}>LIRI</div>
-            <button onClick={() => setShowSettings(!showSettings)} style={{ background: "none", border: "none", color: gold, cursor: "pointer", fontSize: "18px", opacity: 0.6 }}>⚙</button>
-          </div>
-
-          {/* Settings panel */}
+          {/* ── SETTINGS PANEL ── */}
           {showSettings && (
-            <div style={{ position: "fixed", top: "60px", right: "20px", background: "#111124", border: "1px solid #2a2a3e", borderRadius: "14px", padding: "20px", width: "280px", zIndex: 100 }}>
-              <div style={{ fontSize: "11px", letterSpacing: "2px", color: gold, marginBottom: "10px", textTransform: "uppercase" }}>Liri Settings</div>
-              <div style={{ fontSize: "13px", color: "#5a5a7a", lineHeight: "1.7", marginBottom: "4px" }}>
-                Signed in as
+            <div onClick={() => setShowSettings(false)} style={{ position:"fixed", inset:0, zIndex:200 }}>
+              <div onClick={e => e.stopPropagation()} style={{ position:"absolute", top:"max(72px, calc(env(safe-area-inset-top) + 60px))", right:"16px", background:"rgba(16,16,28,0.96)", backdropFilter:"blur(20px)", border:"1px solid rgba(255,255,255,0.08)", borderRadius:"18px", padding:"20px", width:"260px" }}>
+                <div style={{ fontSize:"11px", letterSpacing:"3px", color:"#d4a846", marginBottom:"16px", textTransform:"uppercase" }}>Account</div>
+                <div style={{ fontSize:"13px", color:"#4a4a6a", marginBottom:"4px" }}>Signed in as</div>
+                <div style={{ fontSize:"14px", color:"#f0e6d3", marginBottom:"20px", wordBreak:"break-all" }}>{user?.email}</div>
+                <button onClick={handleSignOut} style={{ width:"100%", background:"rgba(255,255,255,0.05)", border:"1px solid rgba(255,255,255,0.08)", color:"#8a8aaa", borderRadius:"10px", padding:"12px", fontSize:"13px", cursor:"pointer", fontFamily:"inherit" }}>Sign Out</button>
+                <div style={{ marginTop:"16px", fontSize:"11px", color:"#222236", textAlign:"center" }}>Liri v0.3 · getliri.com</div>
               </div>
-              <div style={{ fontSize: "13px", color: cream, marginBottom: "16px", wordBreak: "break-all" }}>{user?.email}</div>
-              <button onClick={handleSignOut} style={{ width: "100%", background: "none", border: "1px solid #3a3a5e", color: "#8a8aaa", borderRadius: "8px", padding: "10px", fontSize: "12px", letterSpacing: "1px", textTransform: "uppercase", cursor: "pointer", fontFamily: "inherit" }}>
-                Sign Out
-              </button>
-              <div style={{ marginTop: "14px", fontSize: "11px", color: "#3a3a5a" }}>v0.3 · getliri.com</div>
             </div>
           )}
 
-          {/* ── IDLE ── */}
-          {mode === "idle" && (
-            <div style={{ textAlign: "center", position: "relative", zIndex: 10, padding: "24px" }}>
-              <VinylSpinner spinning={false} />
-              <div style={{ marginTop: "28px", fontSize: "11px", letterSpacing: "4px", color: gold, textTransform: "uppercase" }}>Lyrics for Vinyl</div>
-              <div style={{ color: "#3a3a50", fontSize: "22px", margin: "6px 0 12px", letterSpacing: "1px" }}>· · ·</div>
-              <div style={{ fontSize: "14px", color: "#5a5a7a", margin: "0 auto 44px", maxWidth: "260px", lineHeight: "1.8" }}>
-                Put on a record, then tap Listen and hold your device near the speakers.
-              </div>
-              <Btn onClick={startListening} variant="primary">Listen</Btn>
-            </div>
-          )}
+          {/* ── SYNCING SCREEN ── */}
+          {isSyncing && (
+            <div style={{ position:"fixed", inset:0, zIndex:10, display:"flex", flexDirection:"column" }}>
 
-          {/* ── LISTENING ── */}
-          {mode === "listening" && (
-            <div style={{ textAlign: "center", position: "relative", zIndex: 10, padding: "24px" }}>
-              <div style={{ position: "relative", width: "96px", height: "96px", margin: "0 auto 24px" }}>
-                <div style={{ position: "absolute", inset: 0 }}><ProgressRing progress={listenProgress} /></div>
-                <div style={{ position: "absolute", inset: 0, display: "flex", alignItems: "center", justifyContent: "center" }}><WaveAnimation active={true} /></div>
-              </div>
-              <div style={{ fontSize: "20px", marginBottom: "8px", color: cream }}>Listening…</div>
-              <div style={{ fontSize: "13px", color: "#4a4a6a" }}>Hold your device near the speakers</div>
-            </div>
-          )}
-
-          {/* ── DETECTING ── */}
-          {mode === "detecting" && (
-            <div style={{ textAlign: "center", position: "relative", zIndex: 10, padding: "24px" }}>
-              <VinylSpinner spinning={true} />
-              <div style={{ marginTop: "24px", fontSize: "18px", color: cream }}>Matching song…</div>
-              <div style={{ fontSize: "12px", color: "#4a4a6a", marginTop: "8px", letterSpacing: "1px" }}>Just a moment</div>
-            </div>
-          )}
-
-          {/* ── ERROR ── */}
-          {mode === "error" && (
-            <div style={{ textAlign: "center", maxWidth: "320px", position: "relative", zIndex: 10, padding: "24px" }}>
-              <div style={{ fontSize: "36px", marginBottom: "20px" }}>🎵</div>
-              <div style={{ color: rose, marginBottom: "24px", lineHeight: "1.7", fontSize: "15px" }}>{error}</div>
-              {error && error.includes("limit") && (
-                <div style={{ background: "rgba(212,168,70,0.08)", border: "1px solid rgba(212,168,70,0.3)", borderRadius: "12px", padding: "16px", marginBottom: "24px", textAlign: "left" }}>
-                  <div style={{ fontSize: "11px", letterSpacing: "2px", color: gold, marginBottom: "6px", textTransform: "uppercase" }}>Check your ACRCloud account</div>
-                  <div style={{ fontSize: "12px", color: "#6a6a8a", lineHeight: "1.6" }}>Visit <span style={{ color: gold }}>acrcloud.com</span> to review your usage and plan.</div>
+              {/* Top: song info + settings */}
+              <div className="safe-top" style={{ padding:"0 20px 16px", display:"flex", alignItems:"center", justifyContent:"space-between", flexShrink:0 }}>
+                <div style={{ display:"flex", alignItems:"center", gap:"10px", flex:1, minWidth:0 }}>
+                  {artwork && <img src={artwork} alt="" style={{ width:"36px", height:"36px", borderRadius:"8px", flexShrink:0, boxShadow:"0 4px 16px rgba(0,0,0,0.5)" }} />}
+                  <div style={{ minWidth:0 }}>
+                    <div style={{ fontSize:"14px", fontWeight:"600", color:"#f0e6d3", overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>{detectedSong?.title}</div>
+                    <div style={{ fontSize:"12px", color:"rgba(255,255,255,0.4)", overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>{detectedSong?.artist}</div>
+                  </div>
                 </div>
-              )}
-              <Btn onClick={reset} variant="ghost">Try Again</Btn>
-            </div>
-          )}
-
-          {/* ── CONFIRMED ── */}
-          {mode === "confirmed" && detectedSong && (
-            <div style={{ textAlign: "center", maxWidth: "380px", position: "relative", zIndex: 10, padding: "24px" }}>
-              {detectedSong.artwork && <img src={detectedSong.artwork} alt="album art" style={{ width: "130px", height: "130px", borderRadius: "10px", boxShadow: "0 12px 48px rgba(0,0,0,0.7)", display: "block", margin: "0 auto 24px" }} />}
-              <div style={{ fontSize: "10px", letterSpacing: "4px", color: gold, marginBottom: "10px", textTransform: "uppercase" }}>✦ Identified ✦</div>
-              <div style={{ fontSize: "26px", fontWeight: "bold", color: "#fff", marginBottom: "6px", lineHeight: "1.2" }}>{detectedSong.title}</div>
-              <div style={{ color: "#7a7a9a", marginBottom: "4px", fontSize: "14px" }}>{detectedSong.artist}</div>
-              <div style={{ color: "#4a4a6a", fontSize: "12px", marginBottom: "16px" }}>{detectedSong.album}</div>
-              <div style={{ fontSize: "12px", marginBottom: "32px", display: "flex", justifyContent: "center", gap: "16px", flexWrap: "wrap" }}>
-                <span style={{ color: gold }}>Detected at {detectedSong.timecode}</span>
-                {hasLyrics ? <span style={{ color: "#6aaa8a" }}>· Synced lyrics ready ✓</span> : <span style={{ color: "#8a6a4a" }}>· No synced lyrics found</span>}
-              </div>
-              <Btn onClick={startSync} variant="primary" style={{ display: "inline-block", marginBottom: "12px" }}>Start Lyrics</Btn>
-              <div style={{ marginTop: "12px" }}><Btn onClick={reset} variant="text">Not this song? Try again</Btn></div>
-            </div>
-          )}
-
-          {/* ── SYNCING — the main lyric display ──
-              Visual hierarchy: current line is bright + large.
-              Adjacent lines fade and shrink by distance. ── */}
-          {mode === "syncing" && (
-            <div style={{ position: "fixed", inset: 0, display: "flex", flexDirection: "column", zIndex: 10 }}>
-              <div style={{ paddingTop: "70px", paddingBottom: "12px", textAlign: "center", flexShrink: 0, background: "linear-gradient(to bottom, rgba(10,10,20,0.95) 60%, transparent)" }}>
-                <div style={{ display: "inline-flex", alignItems: "center", gap: "10px", background: "rgba(255,255,255,0.05)", padding: "8px 16px", borderRadius: "50px", border: "1px solid rgba(255,255,255,0.08)" }}>
-                  {detectedSong?.artwork && <img src={detectedSong.artwork} alt="" style={{ width: "24px", height: "24px", borderRadius: "4px" }} />}
-                  <span style={{ fontSize: "12px", color: cream, letterSpacing: "1px" }}>{detectedSong?.title}</span>
-                  <span style={{ fontSize: "11px", color: "#4a4a6a" }}>{formatTime(playbackTime)}</span>
+                <div style={{ display:"flex", alignItems:"center", gap:"12px", marginLeft:"12px", flexShrink:0 }}>
+                  <div style={{ fontSize:"12px", color:"rgba(255,255,255,0.3)", fontVariantNumeric:"tabular-nums" }}>{formatTime(playbackTime)}</div>
+                  <button onClick={() => setShowSettings(!showSettings)} style={{ background:"none", border:"none", color:"rgba(255,255,255,0.3)", cursor:"pointer", fontSize:"16px", padding:"4px" }}>⚙</button>
                 </div>
               </div>
 
-              <div style={{ flex: 1, overflow: "hidden", position: "relative", display: "flex", flexDirection: "column", justifyContent: "center" }}>
-                <div style={{ overflowY: "auto", padding: "10vh 24px", scrollBehavior: "smooth", height: "100%" }}>
-                  {lyrics.length > 0 ? (
-                    lyrics.map((line, i) => {
-                      const dist = i - currentIndex;
-                      if (dist < -6 || dist > 6) return null;
-                      const isCurrent = dist === 0;
-                      let fontSize, color, opacity, weight, scale;
-                      if      (isCurrent)          { fontSize="28px"; color="#fff"; opacity=1;    weight="700"; scale=1;    }
-                      else if (Math.abs(dist)===1)  { fontSize="19px"; color=cream;  opacity=0.55; weight="400"; scale=0.97; }
-                      else if (Math.abs(dist)===2)  { fontSize="15px"; color=cream;  opacity=0.28; weight="400"; scale=0.94; }
-                      else                          { fontSize="13px"; color=cream;  opacity=0.12; weight="400"; scale=0.92; }
-                      return (
-                        <div key={i} ref={isCurrent ? currentLineRef : null} style={{ textAlign: "center", padding: "10px 16px", fontSize, fontWeight: weight, color, opacity, transform: `scale(${scale})`, transition: "all 0.35s cubic-bezier(0.4,0,0.2,1)", lineHeight: "1.45", letterSpacing: isCurrent ? "0.4px" : "0", textShadow: isCurrent ? "0 0 40px rgba(212,168,70,0.3)" : "none" }}>
-                          {line.text}
-                        </div>
-                      );
-                    })
-                  ) : (
-                    <div style={{ textAlign: "center", color: "#3a3a5a", fontSize: "15px" }}>
-                      <div style={{ marginBottom: "8px" }}>No synced lyrics found for this track</div>
-                      <div style={{ fontSize: "12px", color: "#2a2a4a" }}>Detected at {detectedSong?.timecode}</div>
-                    </div>
+              {/* Center: lyrics */}
+              <div style={{ flex:1, overflow:"hidden", position:"relative" }}>
+                <div style={{ overflowY:"auto", height:"100%", padding:"8vh 28px 0" }}>
+                  {lyrics.length > 0 ? lyrics.map((line, i) => {
+                    const dist = i - currentIndex;
+                    if (dist < -5 || dist > 8) return null;
+                    const cur = dist === 0;
+                    const upcoming = dist > 0;
+                    return (
+                      <div key={i} ref={cur ? currentLineRef : null} style={{
+                        textAlign:"center", padding:"6px 0",
+                        fontSize: cur ? "32px" : Math.abs(dist) <= 1 ? "20px" : "16px",
+                        fontWeight: cur ? "700" : "400",
+                        color: cur ? "#ffffff" : upcoming ? "rgba(255,255,255,0.25)" : "rgba(255,255,255,0.15)",
+                        lineHeight: "1.4",
+                        transition: "all 0.4s cubic-bezier(0.4,0,0.2,1)",
+                        textShadow: cur ? "0 0 60px rgba(212,168,70,0.4), 0 2px 20px rgba(0,0,0,0.8)" : "none",
+                        marginBottom: cur ? "4px" : "0",
+                      }}>
+                        {line.text}
+                      </div>
+                    );
+                  }) : (
+                    <div style={{ textAlign:"center", color:"rgba(255,255,255,0.2)", fontSize:"16px", paddingTop:"30vh" }}>No lyrics found for this track</div>
                   )}
                 </div>
-                <div style={{ position: "absolute", top: 0, left: 0, right: 0, height: "120px", background: "linear-gradient(to bottom, rgba(10,10,20,0.98), transparent)", pointerEvents: "none" }} />
-                <div style={{ position: "absolute", bottom: "80px", left: 0, right: 0, height: "120px", background: "linear-gradient(to top, rgba(10,10,20,0.98), transparent)", pointerEvents: "none" }} />
+                {/* Fade-out gradients top & bottom */}
+                <div style={{ position:"absolute", top:0, left:0, right:0, height:"15vh", background:"linear-gradient(to bottom, rgba(8,8,16,0.9), transparent)", pointerEvents:"none" }} />
+                <div style={{ position:"absolute", bottom:0, left:0, right:0, height:"20vh", background:"linear-gradient(to top, rgba(8,8,16,1), transparent)", pointerEvents:"none" }} />
               </div>
 
-              {/* Drift correction: nudge lyrics ±2s or ±5s to correct for turntable speed variation */}
-              <div style={{ padding: "16px 24px 8px", display: "flex", justifyContent: "center", alignItems: "center", gap: "12px", flexShrink: 0, background: "linear-gradient(to top, rgba(10,10,20,1) 70%, transparent)" }}>
-                {[["← 5s", -5], ["← 2s", -2]].map(([label, secs]) => (
-                  <button key={label} onClick={() => nudge(secs)} style={{ background: "rgba(255,255,255,0.06)", border: "1px solid rgba(255,255,255,0.1)", color: cream, padding: "9px 16px", borderRadius: "20px", cursor: "pointer", fontSize: "12px", letterSpacing: "1px", fontFamily: "inherit" }}>{label}</button>
-                ))}
-                <button onClick={reset} style={{ background: "rgba(212,168,70,0.12)", border: `1px solid ${gold}`, color: gold, padding: "9px 22px", borderRadius: "20px", cursor: "pointer", fontSize: "12px", letterSpacing: "1.5px", fontFamily: "inherit", textTransform: "uppercase" }}>■ Stop</button>
-                {[["2s →", 2], ["5s →", 5]].map(([label, secs]) => (
-                  <button key={label} onClick={() => nudge(secs)} style={{ background: "rgba(255,255,255,0.06)", border: "1px solid rgba(255,255,255,0.1)", color: cream, padding: "9px 16px", borderRadius: "20px", cursor: "pointer", fontSize: "12px", letterSpacing: "1px", fontFamily: "inherit" }}>{label}</button>
-                ))}
+              {/* Bottom: controls */}
+              <div className="safe-bottom" style={{ padding:"12px 20px 0", flexShrink:0 }}>
+                <div style={{ display:"flex", justifyContent:"center", alignItems:"center", gap:"8px", marginBottom:"12px" }}>
+                  {[["−5s",-5],["−2s",-2]].map(([label,s]) => (
+                    <button key={label} onClick={() => nudge(s)} style={{ background:"rgba(255,255,255,0.07)", border:"1px solid rgba(255,255,255,0.1)", color:"rgba(255,255,255,0.5)", padding:"8px 14px", borderRadius:"20px", cursor:"pointer", fontSize:"12px", fontFamily:"inherit" }}>{label}</button>
+                  ))}
+                  <button onClick={reset} style={{ background:"rgba(212,168,70,0.12)", border:"1px solid rgba(212,168,70,0.3)", color:"#d4a846", padding:"8px 20px", borderRadius:"20px", cursor:"pointer", fontSize:"12px", fontFamily:"inherit", fontWeight:"600" }}>Stop</button>
+                  {[["2s+",2],["5s+",5]].map(([label,s]) => (
+                    <button key={label} onClick={() => nudge(s)} style={{ background:"rgba(255,255,255,0.07)", border:"1px solid rgba(255,255,255,0.1)", color:"rgba(255,255,255,0.5)", padding:"8px 14px", borderRadius:"20px", cursor:"pointer", fontSize:"12px", fontFamily:"inherit" }}>{label}</button>
+                  ))}
+                </div>
+                <div style={{ textAlign:"center" }}>
+                  <button onClick={reset} style={{ background:"none", border:"none", color:"rgba(255,255,255,0.2)", cursor:"pointer", fontSize:"12px", fontFamily:"inherit" }}>Wrong song? Try again</button>
+                </div>
               </div>
-              <div style={{ paddingBottom: "28px", display: "flex", justifyContent: "center", background: "rgba(10,10,20,1)" }}>
-                <button onClick={reset} style={{ background: "none", border: "none", color: "#4a4a6a", cursor: "pointer", fontSize: "12px", letterSpacing: "1.5px", fontFamily: "inherit", textTransform: "uppercase", textDecoration: "underline", textDecorationColor: "#2a2a4a" }}>Wrong song? Try again</button>
+            </div>
+          )}
+
+          {/* ── NON-SYNCING SCREENS ── */}
+          {!isSyncing && (
+            <div style={{ position:"relative", zIndex:10, minHeight:"100vh", display:"flex", flexDirection:"column" }}>
+
+              {/* Top bar */}
+              <div className="safe-top" style={{ padding:"0 20px 16px", display:"flex", justifyContent:"space-between", alignItems:"center", flexShrink:0 }}>
+                <div style={{ fontSize:"16px", letterSpacing:"10px", color:"#d4a846", fontWeight:"300" }}>LIRI</div>
+                <button onClick={() => setShowSettings(!showSettings)} style={{ background:"none", border:"none", color:"rgba(255,255,255,0.3)", cursor:"pointer", fontSize:"16px" }}>⚙</button>
+              </div>
+
+              {/* Center content */}
+              <div style={{ flex:1, display:"flex", flexDirection:"column", alignItems:"center", justifyContent:"center", padding:"24px 32px", textAlign:"center" }}>
+
+                {/* IDLE */}
+                {mode === "idle" && (
+                  <div style={{ animation:"fade-up 0.5s ease both" }}>
+                    <Vinyl size={140} spinning={false} />
+                    <div style={{ marginTop:"36px", fontSize:"13px", color:"rgba(255,255,255,0.25)", letterSpacing:"3px", textTransform:"uppercase", marginBottom:"16px" }}>Ready to listen</div>
+                    <p style={{ fontSize:"15px", color:"rgba(255,255,255,0.35)", maxWidth:"240px", margin:"0 auto 40px", lineHeight:"1.7" }}>Put on a record and hold your phone near the speakers</p>
+                    <button onClick={startListening} style={{ background:"linear-gradient(135deg, #d4a846, #c9807a)", color:"#080810", border:"none", borderRadius:"50px", padding:"18px 52px", fontSize:"15px", fontWeight:"700", letterSpacing:"1px", cursor:"pointer", fontFamily:"inherit", boxShadow:"0 8px 32px rgba(212,168,70,0.3)" }}>
+                      Listen
+                    </button>
+                  </div>
+                )}
+
+                {/* LISTENING */}
+                {mode === "listening" && (
+                  <div style={{ animation:"fade-up 0.3s ease both" }}>
+                    <div style={{ position:"relative", width:"120px", height:"120px", margin:"0 auto 32px" }}>
+                      <div style={{ position:"absolute", inset:0 }}><ProgressRing progress={listenProgress} size={120} /></div>
+                      <div style={{ position:"absolute", inset:0, display:"flex", alignItems:"center", justifyContent:"center" }}><WaveAnimation active={true} /></div>
+                    </div>
+                    <div style={{ fontSize:"22px", fontWeight:"600", color:"#f0e6d3", marginBottom:"10px" }}>Listening…</div>
+                    <div style={{ fontSize:"14px", color:"rgba(255,255,255,0.3)" }}>Hold near your speakers</div>
+                  </div>
+                )}
+
+                {/* DETECTING */}
+                {mode === "detecting" && (
+                  <div style={{ animation:"fade-up 0.3s ease both" }}>
+                    <Vinyl size={100} spinning={true} />
+                    <div style={{ marginTop:"28px", fontSize:"20px", fontWeight:"600", color:"#f0e6d3", marginBottom:"8px" }}>Identifying…</div>
+                    <div style={{ fontSize:"14px", color:"rgba(255,255,255,0.3)" }}>Just a moment</div>
+                  </div>
+                )}
+
+                {/* ERROR */}
+                {mode === "error" && (
+                  <div style={{ maxWidth:"300px", animation:"fade-up 0.3s ease both" }}>
+                    <div style={{ fontSize:"48px", marginBottom:"24px" }}>🎵</div>
+                    <div style={{ color:"#e8a0a8", marginBottom:"32px", lineHeight:"1.7", fontSize:"16px" }}>{error}</div>
+                    <button onClick={reset} style={{ background:"none", border:"1px solid rgba(212,168,70,0.4)", color:"#d4a846", borderRadius:"50px", padding:"12px 32px", fontSize:"14px", cursor:"pointer", fontFamily:"inherit" }}>Try Again</button>
+                  </div>
+                )}
               </div>
             </div>
           )}
