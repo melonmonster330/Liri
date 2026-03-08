@@ -282,7 +282,10 @@
         if (streamRef.current) streamRef.current.getTracks().forEach(t => t.stop());
       }, []);
 
-      /* ── STEP 1: Capture 8 seconds of mic audio ── */
+      /* ── STEP 1: Listen for up to 8 seconds, but cut early at 4s if ACRCloud
+         is already confident (score ≥ 70). This gives a much faster response
+         when the song is obvious, while falling back to a longer sample for
+         quieter or harder-to-identify tracks. ── */
       const startListening = async () => {
         setError(null);
         setMode("listening");
@@ -299,20 +302,40 @@
           const chunks = [];
           audioChunksRef.current = chunks;
           recorder.ondataavailable = e => { if (e.data.size > 0) chunks.push(e.data); };
-          recorder.onstop = async () => {
-            setMode("detecting");
-            const blob = new Blob(chunks, { type: recorder.mimeType || "audio/webm" });
-            stream.getTracks().forEach(t => t.stop());
-            await detectSong(blob);
-          };
+          recorder.onstop = () => { stream.getTracks().forEach(t => t.stop()); };
           recorder.start(200);
+
           let elapsed = 0;
+          // Use plain objects (not state) for flags so async callbacks see latest values
+          const flags = { done: false, earlyInFlight: false };
+
           progressTimerRef.current = setInterval(() => {
             elapsed += 100;
             setListenProgress(Math.min(elapsed / 8000, 1));
-            if (elapsed >= 8000) {
+
+            // ── Early check at 4 seconds ──
+            // Try quietly in the background — stays in "listening" mode visually.
+            // If ACRCloud is ≥70% confident, stop recording immediately.
+            if (elapsed === 4000 && !flags.done && !flags.earlyInFlight) {
+              flags.earlyInFlight = true;
+              const earlyBlob = new Blob([...chunks], { type: recorder.mimeType || "audio/webm" });
+              detectSong(earlyBlob, true).then(detected => {
+                flags.earlyInFlight = false;
+                if (detected && !flags.done) {
+                  flags.done = true;
+                  clearInterval(progressTimerRef.current);
+                  if (recorder.state === "recording") recorder.stop();
+                }
+              });
+            }
+
+            // ── Final check at 8 seconds ──
+            if (elapsed >= 8000 && !flags.done) {
+              flags.done = true;
               clearInterval(progressTimerRef.current);
               if (recorder.state === "recording") recorder.stop();
+              const finalBlob = new Blob(chunks, { type: recorder.mimeType || "audio/webm" });
+              detectSong(finalBlob, false);
             }
           }, 100);
         } catch (err) {
@@ -322,14 +345,23 @@
       };
 
       /* ── STEP 2: Identify song via Liri proxy → ACRCloud ──
-         The app sends audio to our own Netlify function which signs
-         and forwards to ACRCloud. Credentials never appear in the app. ── */
-      const detectSong = async (blob) => {
+         isEarlyCheck=true: called mid-recording at 4s. Returns true/false silently —
+           only proceeds if score ≥ 70, never shows errors (keeps recording going).
+         isEarlyCheck=false: called at 8s. Shows detecting spinner and all error states.
+
+         The btoa encoding uses 8KB chunks to avoid a JS call-stack crash that
+         happens when you spread a large Uint8Array into String.fromCharCode. ── */
+      const detectSong = async (blob, isEarlyCheck = false) => {
+        if (!isEarlyCheck) setMode("detecting");
         try {
-          // Convert audio blob to base64 for JSON transport
+          // Safe chunked base64 encoding (avoids stack overflow on large audio files)
           const arrayBuf   = await blob.arrayBuffer();
           const uint8Array = new Uint8Array(arrayBuf);
-          const audio      = btoa(String.fromCharCode(...uint8Array));
+          let binary = "";
+          for (let i = 0; i < uint8Array.length; i += 8192) {
+            binary += String.fromCharCode(...uint8Array.subarray(i, i + 8192));
+          }
+          const audio = btoa(binary);
 
           const res = await fetch(PROXY_URL, {
             method: "POST",
@@ -338,8 +370,12 @@
           });
           if (!res.ok) throw new Error(`HTTP ${res.status}`);
           const data = await res.json();
+
           if (data.status?.code === 0 && data.metadata?.music?.length > 0) {
-            const m       = data.metadata.music[0];
+            const m      = data.metadata.music[0];
+            const score  = m.score || 0;
+            // Early check: only proceed if confidence is high enough
+            if (isEarlyCheck && score < 70) return false;
             const title   = m.title;
             const artist  = m.artists?.[0]?.name || "Unknown Artist";
             const album   = m.album?.name || "";
@@ -353,20 +389,25 @@
             const found = await loadLyrics(title, artist);
             setHasLyrics(found);
             setMode("confirmed");
+            return true;
           } else if (data.status?.code === 1001) {
+            if (isEarlyCheck) return false;
             setError("Couldn't identify the song. Make sure your record is playing clearly and try again.");
             setMode("error");
           } else if (data.status?.code === 3003 || data.status?.code === 3015) {
             setError("Recognition limit reached. Check your ACRCloud account at acrcloud.com.");
             setMode("error");
           } else {
+            if (isEarlyCheck) return false;
             setError("Couldn't identify the song. Make sure your record is playing clearly and try again.");
             setMode("error");
           }
         } catch (err) {
-          setError("Connection failed. Check your internet connection and try again.");
+          if (isEarlyCheck) return false;
+          setError(`Connection failed: ${err.message}. Check your internet and try again.`);
           setMode("error");
         }
+        return false;
       };
 
       /* ── STEP 3: Fetch synced lyrics from lrclib.net ──
