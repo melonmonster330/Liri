@@ -178,8 +178,29 @@
 
       // ── Vinyl auto mode ──
       const [vinylMode, setVinylMode]         = useState(() => localStorage.getItem("liri_vinyl_mode") === "true");
-      const autoAdvanceFiredRef               = useRef(false); // prevents double-firing
-      const autoRetryCountRef                 = useRef(0);     // tracks failed auto-listens
+      const autoAdvanceFiredRef               = useRef(false);
+      const autoRetryCountRef                 = useRef(0);
+
+      // ── Cast ──
+      const [showCast, setShowCast]           = useState(false);
+      const roomCode = user?.id ? user.id.replace(/-/g, "").slice(0, 6).toUpperCase() : null;
+      const tvUrl = roomCode ? `${location.origin}/tv?room=${roomCode}` : null;
+      const qrUrl = tvUrl ? `https://api.qrserver.com/v1/create-qr-code/?data=${encodeURIComponent(tvUrl)}&size=220x220&bgcolor=0f0f1c&color=d4a846&margin=12&qzone=1` : null;
+
+      const syncCastSession = async (song, lyricsArr, initialPos) => {
+        if (!user || !roomCode) return;
+        await sb.from("cast_sessions").upsert({
+          room_code: roomCode,
+          user_id: user.id,
+          song_title: song.title,
+          song_artist: song.artist,
+          artwork_url: song.artwork || null,
+          lyrics_json: lyricsArr,
+          initial_position: initialPos,
+          detected_at: new Date().toISOString(),
+          is_active: true,
+        });
+      };
 
       // ── Refs ──
       const streamRef        = useRef(null);
@@ -372,9 +393,10 @@
             setSongDuration(duration);
             await loadLyrics(title, artist);
 
-            // Save to history + increment usage
+            // Save to history, sync cast session, increment usage
             saveToHistory(user, song);
-            fetchHistory(user); // refresh history list
+            fetchHistory(user);
+            syncCastSession(song, lyricsRef.current, initialPosRef.current);
             if (!isUnlimited(user)) {
               const newCount = usageCount + 1;
               await sb.from("user_usage").upsert({ user_id: user.id, recognition_count: newCount });
@@ -452,7 +474,16 @@
         }, 80);
       }, []);
 
-      const nudge = (s) => { initialPosRef.current = Math.max(0, initialPosRef.current + s); };
+      const nudge = (s) => {
+        initialPosRef.current = Math.max(0, initialPosRef.current + s);
+        // Push updated position to TV
+        if (roomCode && detectedSong) {
+          sb.from("cast_sessions").update({
+            initial_position: initialPosRef.current,
+            detected_at: new Date().toISOString(),
+          }).eq("room_code", roomCode);
+        }
+      };
 
       const reset = () => {
         clearInterval(syncIntervalRef.current); clearInterval(progressTimerRef.current);
@@ -523,6 +554,33 @@
             <div style={{ position:"fixed", inset:"-20px", zIndex:0, backgroundImage:`url(${artwork})`, backgroundSize:"cover", backgroundPosition:"center", filter:"blur(80px) brightness(0.15) saturate(2)", transition:"opacity 1s ease", opacity: isSyncing ? 1 : 0.4 }} />
           )}
           <div style={{ position:"fixed", inset:0, zIndex:1, background:"linear-gradient(to bottom, rgba(8,8,16,0.6) 0%, rgba(8,8,16,0.3) 40%, rgba(8,8,16,0.7) 100%)", pointerEvents:"none" }} />
+
+          {/* ── CAST MODAL ── */}
+          {showCast && (
+            <div onClick={() => setShowCast(false)} style={{ position:"fixed", inset:0, zIndex:200, background:"rgba(0,0,0,0.6)", backdropFilter:"blur(4px)", display:"flex", alignItems:"flex-end", justifyContent:"center" }}>
+              <div onClick={e => e.stopPropagation()} style={{ background:"#0f0f1c", borderRadius:"24px 24px 0 0", padding:"20px 28px max(32px, calc(env(safe-area-inset-bottom) + 24px))", width:"100%", maxWidth:"480px", animation:"slide-up 0.3s ease", textAlign:"center" }}>
+                <div style={{ width:"40px", height:"4px", borderRadius:"2px", background:"rgba(255,255,255,0.12)", margin:"0 auto 24px" }} />
+                <div style={{ fontSize:"11px", letterSpacing:"3px", color:"#d4a846", textTransform:"uppercase", marginBottom:"6px" }}>Cast to TV</div>
+                <div style={{ fontSize:"14px", color:"rgba(255,255,255,0.3)", marginBottom:"24px" }}>Open on any TV browser to see lyrics on the big screen</div>
+
+                {/* QR code */}
+                {qrUrl && <img src={qrUrl} alt="QR Code" style={{ width:"180px", height:"180px", borderRadius:"16px", marginBottom:"20px" }} />}
+
+                {/* Room code */}
+                <div style={{ fontSize:"11px", color:"rgba(255,255,255,0.25)", letterSpacing:"2px", marginBottom:"8px" }}>ROOM CODE</div>
+                <div style={{ fontSize:"48px", fontWeight:"800", letterSpacing:"12px", color:"#d4a846", marginBottom:"20px" }}>{roomCode}</div>
+
+                {/* URL */}
+                <div style={{ background:"rgba(255,255,255,0.04)", border:"1px solid rgba(255,255,255,0.08)", borderRadius:"12px", padding:"12px 16px", marginBottom:"24px" }}>
+                  <div style={{ fontSize:"13px", color:"rgba(255,255,255,0.35)", wordBreak:"break-all" }}>{tvUrl}</div>
+                </div>
+
+                <div style={{ fontSize:"13px", color:"rgba(255,255,255,0.25)", lineHeight:"1.7" }}>
+                  Scan the QR code with your TV camera, or type the URL in your TV's browser.<br/>Lyrics sync automatically — no app needed.
+                </div>
+              </div>
+            </div>
+          )}
 
           {/* ── SETTINGS PANEL ── */}
           {showSettings && (
@@ -633,6 +691,7 @@
                     </div>
                   )}
                   {!songDuration && <div style={{ fontSize:"12px", color:"rgba(255,255,255,0.3)", fontVariantNumeric:"tabular-nums" }}>{formatTime(playbackTime)}</div>}
+                  <button onClick={() => setShowCast(true)} style={{ background:"none", border:"none", color:"rgba(255,255,255,0.3)", cursor:"pointer", fontSize:"18px", padding:"4px" }} title="Cast to TV">📺</button>
                   <button onClick={() => setShowSettings(!showSettings)} style={{ background:"none", border:"none", color:"rgba(255,255,255,0.3)", cursor:"pointer", fontSize:"16px", padding:"4px" }}>⚙</button>
                 </div>
               </div>
