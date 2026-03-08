@@ -46,9 +46,22 @@
   <script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.2/babel.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
 
   <script type="text/babel">
     const { useState, useEffect, useRef, useCallback } = React;
+
+    /* ── Supabase client ── */
+    const { createClient } = supabase;
+    const sb = createClient(
+      "https://xjdjpaxgymgbvcwmvorc.supabase.co",
+      "sb_publishable_C-NBnfg0ltAoUi46XQTUjA_ozjZW_Nd"
+    );
+
+    /* Proxy URL works on web (relative) and iOS native app (absolute) */
+    const PROXY_URL = (window.Capacitor)
+      ? "https://getliri.com/.netlify/functions/recognize"
+      : "/.netlify/functions/recognize";
 
     /* ══════════════════════════════════════════════════════
        LRC FORMAT PARSER
@@ -175,10 +188,14 @@
       const [playbackTime, setPlaybackTime] = useState(0);
       const [error, setError] = useState(null);
       const [listenProgress, setListenProgress] = useState(0);
-      const [acrHost,   setAcrHost]   = useState(() => localStorage.getItem("liri_acr_host")   || "");
-      const [acrKey,    setAcrKey]    = useState(() => localStorage.getItem("liri_acr_key")    || "");
-      const [acrSecret, setAcrSecret] = useState(() => localStorage.getItem("liri_acr_secret") || "");
       const [showSettings, setShowSettings] = useState(false);
+      const [user,         setUser]         = useState(null);
+      const [authLoading,  setAuthLoading]  = useState(true);
+      const [authMode,     setAuthMode]     = useState("signin"); // "signin" | "signup"
+      const [authEmail,    setAuthEmail]    = useState("");
+      const [authPassword, setAuthPassword] = useState("");
+      const [authError,    setAuthError]    = useState(null);
+      const [authWorking,  setAuthWorking]  = useState(false);
 
       const mediaRecorderRef = useRef(null);
       const audioChunksRef   = useRef([]);
@@ -192,6 +209,44 @@
       const currentLineRef   = useRef(null);
 
       useEffect(() => { lyricsRef.current = lyrics; }, [lyrics]);
+
+      /* ── Auth: check session on mount, listen for changes ── */
+      useEffect(() => {
+        sb.auth.getSession().then(({ data: { session } }) => {
+          setUser(session?.user || null);
+          setAuthLoading(false);
+        });
+        const { data: { subscription } } = sb.auth.onAuthStateChange((_e, session) => {
+          setUser(session?.user || null);
+        });
+        return () => subscription.unsubscribe();
+      }, []);
+
+      const handleAuth = async () => {
+        setAuthError(null);
+        setAuthWorking(true);
+        try {
+          if (authMode === "signup") {
+            const { error } = await sb.auth.signUp({ email: authEmail, password: authPassword });
+            if (error) throw error;
+            setAuthError("Check your email to confirm your account, then sign in.");
+            setAuthMode("signin");
+          } else {
+            const { error } = await sb.auth.signInWithPassword({ email: authEmail, password: authPassword });
+            if (error) throw error;
+          }
+        } catch (e) {
+          setAuthError(e.message);
+        } finally {
+          setAuthWorking(false);
+        }
+      };
+
+      const handleSignOut = async () => {
+        await sb.auth.signOut();
+        setShowSettings(false);
+        reset();
+      };
 
       // Auto-start sync immediately after song is detected — no confirmation tap needed
       useEffect(() => {
@@ -261,7 +316,7 @@
           const uint8Array = new Uint8Array(arrayBuf);
           const audio      = btoa(String.fromCharCode(...uint8Array));
 
-          const res = await fetch("/.netlify/functions/recognize", {
+          const res = await fetch(PROXY_URL, {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({ audio, mimeType: blob.type || "audio/webm" }),
@@ -362,6 +417,74 @@
       const gold = "#d4a846", rose = "#e8a0a8", cream = "#f0e6d3";
       const hasBg = !!detectedSong?.artwork;
 
+      /* ── AUTH LOADING ── */
+      if (authLoading) return (
+        <div style={{ minHeight: "100vh", background: "#0a0a14", display: "flex", alignItems: "center", justifyContent: "center" }}>
+          <VinylSpinner spinning={true} />
+        </div>
+      );
+
+      /* ── AUTH SCREEN ── */
+      if (!user) return (
+        <div style={{ minHeight: "100vh", background: "#0a0a14", color: "#f0e6d3", fontFamily: "Georgia, 'Times New Roman', serif", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", padding: "32px 24px" }}>
+          <div style={{ fontSize: "22px", letterSpacing: "12px", color: "#d4a846", fontWeight: "300", marginBottom: "8px" }}>LIRI</div>
+          <div style={{ fontSize: "12px", color: "#4a4a6a", letterSpacing: "3px", textTransform: "uppercase", marginBottom: "48px" }}>Lyrics for Vinyl</div>
+
+          <div style={{ width: "100%", maxWidth: "340px" }}>
+            <div style={{ fontSize: "20px", color: "#f0e6d3", marginBottom: "6px", textAlign: "center" }}>
+              {authMode === "signin" ? "Welcome back" : "Create your account"}
+            </div>
+            <div style={{ fontSize: "13px", color: "#4a4a6a", textAlign: "center", marginBottom: "32px" }}>
+              {authMode === "signin" ? "Sign in to start listening" : "Join Liri — it's free to start"}
+            </div>
+
+            <div style={{ marginBottom: "14px" }}>
+              <input
+                type="email"
+                placeholder="your@email.com"
+                value={authEmail}
+                onChange={e => setAuthEmail(e.target.value)}
+                onKeyDown={e => e.key === "Enter" && handleAuth()}
+                style={{ width: "100%", background: "#111124", border: "1px solid #2a2a3e", color: "#f0e6d3", padding: "14px 16px", borderRadius: "12px", fontSize: "15px", fontFamily: "inherit" }}
+              />
+            </div>
+            <div style={{ marginBottom: "24px" }}>
+              <input
+                type="password"
+                placeholder="Password"
+                value={authPassword}
+                onChange={e => setAuthPassword(e.target.value)}
+                onKeyDown={e => e.key === "Enter" && handleAuth()}
+                style={{ width: "100%", background: "#111124", border: "1px solid #2a2a3e", color: "#f0e6d3", padding: "14px 16px", borderRadius: "12px", fontSize: "15px", fontFamily: "inherit" }}
+              />
+            </div>
+
+            {authError && (
+              <div style={{ fontSize: "13px", color: authError.includes("Check your email") ? "#6aaa8a" : "#e8a0a8", textAlign: "center", marginBottom: "20px", lineHeight: "1.6" }}>
+                {authError}
+              </div>
+            )}
+
+            <button
+              onClick={handleAuth}
+              disabled={authWorking}
+              style={{ width: "100%", background: "linear-gradient(135deg, #d4a846, #e8a0a8)", color: "#0a0a14", border: "none", borderRadius: "50px", padding: "16px", fontSize: "13px", fontWeight: "700", letterSpacing: "2px", textTransform: "uppercase", cursor: authWorking ? "wait" : "pointer", opacity: authWorking ? 0.7 : 1, fontFamily: "inherit" }}
+            >
+              {authWorking ? "..." : authMode === "signin" ? "Sign In" : "Create Account"}
+            </button>
+
+            <div style={{ textAlign: "center", marginTop: "20px" }}>
+              <button
+                onClick={() => { setAuthMode(authMode === "signin" ? "signup" : "signin"); setAuthError(null); }}
+                style={{ background: "none", border: "none", color: "#4a4a6a", cursor: "pointer", fontSize: "13px", fontFamily: "inherit", textDecoration: "underline" }}
+              >
+                {authMode === "signin" ? "New here? Create an account" : "Already have an account? Sign in"}
+              </button>
+            </div>
+          </div>
+        </div>
+      );
+
       return (
         <div style={{ minHeight: "100vh", background: "#0a0a14", color: cream, fontFamily: "Georgia, 'Times New Roman', serif", position: "relative", overflow: "hidden", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center" }}>
 
@@ -374,13 +497,17 @@
             <button onClick={() => setShowSettings(!showSettings)} style={{ background: "none", border: "none", color: gold, cursor: "pointer", fontSize: "18px", opacity: 0.6 }}>⚙</button>
           </div>
 
-          {/* Settings panel — credentials now live server-side */}
+          {/* Settings panel */}
           {showSettings && (
             <div style={{ position: "fixed", top: "60px", right: "20px", background: "#111124", border: "1px solid #2a2a3e", borderRadius: "14px", padding: "20px", width: "280px", zIndex: 100 }}>
               <div style={{ fontSize: "11px", letterSpacing: "2px", color: gold, marginBottom: "10px", textTransform: "uppercase" }}>Liri Settings</div>
-              <div style={{ fontSize: "13px", color: "#5a5a7a", lineHeight: "1.7" }}>
-                Song recognition runs securely on our servers. No setup needed.
+              <div style={{ fontSize: "13px", color: "#5a5a7a", lineHeight: "1.7", marginBottom: "4px" }}>
+                Signed in as
               </div>
+              <div style={{ fontSize: "13px", color: cream, marginBottom: "16px", wordBreak: "break-all" }}>{user?.email}</div>
+              <button onClick={handleSignOut} style={{ width: "100%", background: "none", border: "1px solid #3a3a5e", color: "#8a8aaa", borderRadius: "8px", padding: "10px", fontSize: "12px", letterSpacing: "1px", textTransform: "uppercase", cursor: "pointer", fontFamily: "inherit" }}>
+                Sign Out
+              </button>
               <div style={{ marginTop: "14px", fontSize: "11px", color: "#3a3a5a" }}>v0.3 · getliri.com</div>
             </div>
           )}
