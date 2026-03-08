@@ -151,6 +151,10 @@
       const [authPassword, setAuthPassword]   = useState("");
       const [authError, setAuthError]         = useState(null);
       const [authWorking, setAuthWorking]     = useState(false);
+      const [usageCount, setUsageCount]       = useState(0);
+
+      const FREE_LIMIT = 10;
+      const isUnlimited = (u) => u?.email === "test@test.com";
 
       const streamRef        = useRef(null);
       const syncIntervalRef  = useRef(null);
@@ -163,9 +167,24 @@
 
       useEffect(() => { lyricsRef.current = lyrics; }, [lyrics]);
 
+      const fetchUsage = async (u) => {
+        if (!u || isUnlimited(u)) return;
+        const { data } = await sb.from("user_usage").select("recognition_count").eq("user_id", u.id).single();
+        if (data) { setUsageCount(data.recognition_count); }
+        else { await sb.from("user_usage").insert({ user_id: u.id, recognition_count: 0 }); setUsageCount(0); }
+      };
+
       useEffect(() => {
-        sb.auth.getSession().then(({ data: { session } }) => { setUser(session?.user || null); setAuthLoading(false); });
-        const { data: { subscription } } = sb.auth.onAuthStateChange((_e, s) => setUser(s?.user || null));
+        sb.auth.getSession().then(({ data: { session } }) => {
+          const u = session?.user || null;
+          setUser(u); setAuthLoading(false);
+          if (u) fetchUsage(u);
+        });
+        const { data: { subscription } } = sb.auth.onAuthStateChange((_e, s) => {
+          const u = s?.user || null;
+          setUser(u);
+          if (u) fetchUsage(u);
+        });
         return () => subscription.unsubscribe();
       }, []);
 
@@ -201,6 +220,7 @@
       }, []);
 
       const startListening = async () => {
+        if (!isUnlimited(user) && usageCount >= FREE_LIMIT) { setMode("limit"); return; }
         setError(null); setMode("listening"); setListenProgress(0);
         try {
           const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
@@ -276,6 +296,12 @@
 
             setDetectedSong({ title, artist, album: m.album?.name || "", artwork });
             await loadLyrics(title, artist);
+            // Increment usage count
+            if (!isUnlimited(user)) {
+              const newCount = usageCount + 1;
+              await sb.from("user_usage").upsert({ user_id: user.id, recognition_count: newCount });
+              setUsageCount(newCount);
+            }
             setMode("confirmed");
             return true;
           }
@@ -494,6 +520,11 @@
                     <button onClick={startListening} style={{ background:"linear-gradient(135deg, #d4a846, #c9807a)", color:"#080810", border:"none", borderRadius:"50px", padding:"18px 52px", fontSize:"15px", fontWeight:"700", letterSpacing:"1px", cursor:"pointer", fontFamily:"inherit", boxShadow:"0 8px 32px rgba(212,168,70,0.3)" }}>
                       Listen
                     </button>
+                    {!isUnlimited(user) && (
+                      <div style={{ marginTop:"20px", fontSize:"12px", color:"rgba(255,255,255,0.2)" }}>
+                        {FREE_LIMIT - usageCount} free {FREE_LIMIT - usageCount === 1 ? "song" : "songs"} remaining
+                      </div>
+                    )}
                   </div>
                 )}
 
@@ -524,6 +555,22 @@
                     <div style={{ fontSize:"48px", marginBottom:"24px" }}>🎵</div>
                     <div style={{ color:"#e8a0a8", marginBottom:"32px", lineHeight:"1.7", fontSize:"16px" }}>{error}</div>
                     <button onClick={reset} style={{ background:"none", border:"1px solid rgba(212,168,70,0.4)", color:"#d4a846", borderRadius:"50px", padding:"12px 32px", fontSize:"14px", cursor:"pointer", fontFamily:"inherit" }}>Try Again</button>
+                  </div>
+                )}
+
+                {/* LIMIT */}
+                {mode === "limit" && (
+                  <div style={{ maxWidth:"300px", animation:"fade-up 0.3s ease both", textAlign:"center" }}>
+                    <Vinyl size={100} spinning={false} />
+                    <div style={{ marginTop:"32px", fontSize:"22px", fontWeight:"700", color:"#f0e6d3", marginBottom:"12px" }}>You've played 10 records</div>
+                    <div style={{ color:"rgba(255,255,255,0.4)", marginBottom:"36px", lineHeight:"1.8", fontSize:"15px" }}>
+                      Your 10 free songs are up.<br/>Liri Pro is coming soon — stay tuned.
+                    </div>
+                    <div style={{ fontSize:"12px", color:"rgba(255,255,255,0.2)", marginBottom:"24px" }}>
+                      Want early access? Email<br/>
+                      <span style={{ color:"#d4a846" }}>hello@getliri.com</span>
+                    </div>
+                    <button onClick={() => { setMode("idle"); }} style={{ background:"none", border:"1px solid rgba(255,255,255,0.1)", color:"rgba(255,255,255,0.3)", borderRadius:"50px", padding:"10px 28px", fontSize:"13px", cursor:"pointer", fontFamily:"inherit" }}>Back</button>
                   </div>
                 )}
               </div>
