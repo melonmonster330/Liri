@@ -46,6 +46,9 @@
       ? "https://liri-vert.vercel.app/api/recognize"
       : "/api/recognize";
 
+    // How many seconds we add to ACRCloud's offset to correct for processing lag
+    const PLAYBACK_OFFSET_CORRECTION = 2;
+
     function parseLRC(lrc) {
       const re = /\[(\d{2}):(\d{2})[.:](\d{2,3})\](.*)/;
       return lrc.split("\n").reduce((acc, line) => {
@@ -62,21 +65,28 @@
       return `${Math.floor(s/60)}:${Math.floor(s%60).toString().padStart(2,"0")}`;
     }
 
+    function timeAgo(iso) {
+      const diff = (Date.now() - new Date(iso)) / 1000;
+      if (diff < 60) return "just now";
+      if (diff < 3600) return `${Math.floor(diff/60)}m ago`;
+      if (diff < 86400) return `${Math.floor(diff/3600)}h ago`;
+      return `${Math.floor(diff/86400)}d ago`;
+    }
+
     const styleEl = document.createElement("style");
     styleEl.textContent = `
       @keyframes vinyl-spin { to { transform: rotate(360deg); } }
-      @keyframes pulse-ring  { 0%,100% { opacity: 0.4; transform: scale(1); } 50% { opacity: 0.8; transform: scale(1.05); } }
       @keyframes wave-0 { from { transform: scaleY(0.3); } to { transform: scaleY(1); } }
       @keyframes wave-1 { from { transform: scaleY(0.5); } to { transform: scaleY(1); } }
       @keyframes wave-2 { from { transform: scaleY(0.2); } to { transform: scaleY(0.9); } }
       @keyframes wave-3 { from { transform: scaleY(0.6); } to { transform: scaleY(1); } }
       @keyframes fade-up  { from { opacity: 0; transform: translateY(12px); } to { opacity: 1; transform: translateY(0); } }
+      @keyframes slide-up { from { transform: translateY(100%); } to { transform: translateY(0); } }
       .safe-top { padding-top: max(56px, calc(env(safe-area-inset-top) + 16px)) !important; }
       .safe-bottom { padding-bottom: max(32px, calc(env(safe-area-inset-bottom) + 16px)) !important; }
     `;
     document.head.appendChild(styleEl);
 
-    // ── Vinyl record SVG ──
     function Vinyl({ size = 120, spinning = false }) {
       return (
         <div style={{ width:size, height:size, margin:"0 auto", animation: spinning ? "vinyl-spin 2s linear infinite" : "none", flexShrink:0 }}>
@@ -99,7 +109,6 @@
       );
     }
 
-    // ── Wave bars ──
     function WaveAnimation({ active, size = 1 }) {
       return (
         <div style={{ display:"flex", gap:`${4*size}px`, alignItems:"center", height:`${52*size}px`, justifyContent:"center" }}>
@@ -117,7 +126,6 @@
       );
     }
 
-    // ── Circular progress ring ──
     function ProgressRing({ progress, size = 96 }) {
       const r = size/2 - 5, circ = 2 * Math.PI * r;
       return (
@@ -136,14 +144,21 @@
     }
 
     function Liri() {
+      // ── Core state ──
       const [mode, setMode]                   = useState("idle");
       const [detectedSong, setDetectedSong]   = useState(null);
+      const [songDuration, setSongDuration]   = useState(null); // seconds
       const [lyrics, setLyrics]               = useState([]);
       const [currentIndex, setCurrentIndex]   = useState(0);
       const [playbackTime, setPlaybackTime]   = useState(0);
       const [error, setError]                 = useState(null);
       const [listenProgress, setListenProgress] = useState(0);
+
+      // ── UI panels ──
       const [showSettings, setShowSettings]   = useState(false);
+      const [showHistory, setShowHistory]     = useState(false);
+
+      // ── Auth ──
       const [user, setUser]                   = useState(null);
       const [authLoading, setAuthLoading]     = useState(true);
       const [authMode, setAuthMode]           = useState("signin");
@@ -151,11 +166,22 @@
       const [authPassword, setAuthPassword]   = useState("");
       const [authError, setAuthError]         = useState(null);
       const [authWorking, setAuthWorking]     = useState(false);
-      const [usageCount, setUsageCount]       = useState(0);
 
+      // ── Usage ──
+      const [usageCount, setUsageCount]       = useState(0);
       const FREE_LIMIT = 10;
       const isUnlimited = (u) => u?.email === "test@test.com";
 
+      // ── History ──
+      const [history, setHistory]             = useState([]);
+      const [historyLoading, setHistoryLoading] = useState(false);
+
+      // ── Vinyl auto mode ──
+      const [vinylMode, setVinylMode]         = useState(() => localStorage.getItem("liri_vinyl_mode") === "true");
+      const autoAdvanceFiredRef               = useRef(false); // prevents double-firing
+      const autoRetryCountRef                 = useRef(0);     // tracks failed auto-listens
+
+      // ── Refs ──
       const streamRef        = useRef(null);
       const syncIntervalRef  = useRef(null);
       const syncStartRef     = useRef(null);
@@ -167,23 +193,54 @@
 
       useEffect(() => { lyricsRef.current = lyrics; }, [lyrics]);
 
+      // ── Vinyl mode persistence ──
+      const toggleVinylMode = (val) => {
+        setVinylMode(val);
+        localStorage.setItem("liri_vinyl_mode", String(val));
+      };
+
+      // ── Usage fetch ──
       const fetchUsage = async (u) => {
         if (!u || isUnlimited(u)) return;
         const { data } = await sb.from("user_usage").select("recognition_count").eq("user_id", u.id).single();
-        if (data) { setUsageCount(data.recognition_count); }
+        if (data) setUsageCount(data.recognition_count);
         else { await sb.from("user_usage").insert({ user_id: u.id, recognition_count: 0 }); setUsageCount(0); }
       };
 
+      // ── History fetch ──
+      const fetchHistory = async (u) => {
+        if (!u) return;
+        setHistoryLoading(true);
+        const { data } = await sb.from("song_history")
+          .select("*").eq("user_id", u.id)
+          .order("listened_at", { ascending: false }).limit(50);
+        setHistory(data || []);
+        setHistoryLoading(false);
+      };
+
+      // ── Save song to history ──
+      const saveToHistory = async (u, song) => {
+        if (!u) return;
+        await sb.from("song_history").insert({
+          user_id: u.id,
+          title: song.title,
+          artist: song.artist,
+          album: song.album || null,
+          artwork_url: song.artwork || null,
+        });
+      };
+
+      // ── Auth setup ──
       useEffect(() => {
         sb.auth.getSession().then(({ data: { session } }) => {
           const u = session?.user || null;
           setUser(u); setAuthLoading(false);
-          if (u) fetchUsage(u);
+          if (u) { fetchUsage(u); fetchHistory(u); }
         });
         const { data: { subscription } } = sb.auth.onAuthStateChange((_e, s) => {
           const u = s?.user || null;
           setUser(u);
-          if (u) fetchUsage(u);
+          if (u) { fetchUsage(u); fetchHistory(u); }
         });
         return () => subscription.unsubscribe();
       }, []);
@@ -206,22 +263,41 @@
 
       const handleSignOut = async () => { await sb.auth.signOut(); setShowSettings(false); reset(); };
 
+      // ── Auto-start sync after detection ──
       useEffect(() => { if (mode === "confirmed" && detectedSong) startSync(); }, [mode, detectedSong]);
 
+      // ── Scroll to current lyric ──
       useEffect(() => {
         if (currentLineRef.current && mode === "syncing")
           currentLineRef.current.scrollIntoView({ behavior:"smooth", block:"center" });
       }, [currentIndex, mode]);
 
+      // ── Vinyl auto-advance: trigger when song nears its end ──
+      useEffect(() => {
+        if (!vinylMode || mode !== "syncing" || !songDuration) return;
+        // Fire when we're within 2s of the song end
+        if (playbackTime >= songDuration - 2 && !autoAdvanceFiredRef.current) {
+          autoAdvanceFiredRef.current = true;
+          // Short pause then auto-listen for next track
+          setTimeout(() => startListening(true), 3000);
+        }
+      }, [playbackTime, songDuration, vinylMode, mode]);
+
+      // ── Cleanup on unmount ──
       useEffect(() => () => {
         clearInterval(syncIntervalRef.current);
         clearInterval(progressTimerRef.current);
         streamRef.current?.getTracks().forEach(t => t.stop());
       }, []);
 
-      const startListening = async () => {
-        if (!isUnlimited(user) && usageCount >= FREE_LIMIT) { setMode("limit"); return; }
-        setError(null); setMode("listening"); setListenProgress(0);
+      // ── Record audio and detect ──
+      const startListening = async (isAutoAdvance = false) => {
+        if (!isAutoAdvance && !isUnlimited(user) && usageCount >= FREE_LIMIT) { setMode("limit"); return; }
+        setError(null);
+        setMode("listening");
+        setListenProgress(0);
+        clearInterval(syncIntervalRef.current); // stop any active sync
+
         try {
           const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
           streamRef.current = stream;
@@ -234,31 +310,23 @@
           recorder.start(200);
 
           let elapsed = 0;
-          const flags = { done: false, earlyInFlight: false };
+          const flags = { done: false };
           progressTimerRef.current = setInterval(() => {
             elapsed += 100;
             setListenProgress(Math.min(elapsed / 8000, 1));
-
-            if (elapsed === 4000 && !flags.done && !flags.earlyInFlight) {
-              flags.earlyInFlight = true;
-              const blob = new Blob([...chunks], { type: recorder.mimeType || "audio/webm" });
-              detectSong(blob, true).then(ok => {
-                flags.earlyInFlight = false;
-                if (ok && !flags.done) { flags.done = true; clearInterval(progressTimerRef.current); if (recorder.state === "recording") recorder.stop(); }
-              });
-            }
-
             if (elapsed >= 8000 && !flags.done) {
-              flags.done = true; clearInterval(progressTimerRef.current);
+              flags.done = true;
+              clearInterval(progressTimerRef.current);
               if (recorder.state === "recording") recorder.stop();
-              detectSong(new Blob(chunks, { type: recorder.mimeType || "audio/webm" }), false);
+              detectSong(new Blob(chunks, { type: recorder.mimeType || "audio/webm" }), isAutoAdvance);
             }
           }, 100);
         } catch { setError("Microphone access denied."); setMode("error"); }
       };
 
-      const detectSong = async (blob, early = false) => {
-        if (!early) setMode("detecting");
+      // ── Send audio to ACRCloud ──
+      const detectSong = async (blob, isAutoAdvance = false) => {
+        setMode("detecting");
         try {
           const uint8 = new Uint8Array(await blob.arrayBuffer());
           let binary = "";
@@ -278,14 +346,19 @@
 
           if (data.status?.code === 0 && data.metadata?.music?.length > 0) {
             const m = data.metadata.music[0];
-            const tcSecs = (m.play_offset_ms || 0) / 1000;
+            // Apply +2s correction for processing lag
+            const tcSecs = (m.play_offset_ms || 0) / 1000 + PLAYBACK_OFFSET_CORRECTION;
+            const duration = m.duration_ms ? m.duration_ms / 1000 : null;
+
             detectedAtRef.current = Date.now();
             initialPosRef.current = tcSecs;
+            autoAdvanceFiredRef.current = false; // reset for next song
+            autoRetryCountRef.current = 0;
+
             const spotifyArt = m.external_metadata?.spotify?.album?.images?.[0]?.url || null;
             const title  = m.title;
             const artist = m.artists?.[0]?.name || "Unknown Artist";
 
-            // Fetch artwork from iTunes if Spotify didn't provide it
             let artwork = spotifyArt;
             if (!artwork) {
               try {
@@ -294,25 +367,57 @@
               } catch {}
             }
 
-            setDetectedSong({ title, artist, album: m.album?.name || "", artwork });
+            const song = { title, artist, album: m.album?.name || "", artwork };
+            setDetectedSong(song);
+            setSongDuration(duration);
             await loadLyrics(title, artist);
-            // Increment usage count
+
+            // Save to history + increment usage
+            saveToHistory(user, song);
+            fetchHistory(user); // refresh history list
             if (!isUnlimited(user)) {
               const newCount = usageCount + 1;
               await sb.from("user_usage").upsert({ user_id: user.id, recognition_count: newCount });
               setUsageCount(newCount);
             }
+
             setMode("confirmed");
             return true;
           }
+
           if (data.status?.code === 3003 || data.status?.code === 3015) {
             setError("Recognition limit reached. Visit acrcloud.com."); setMode("error"); return false;
           }
-          if (!early) { setError("Couldn't identify the song. Make sure your record is playing clearly and try again."); setMode("error"); }
+
+          // No match
+          if (isAutoAdvance) {
+            autoRetryCountRef.current += 1;
+            if (autoRetryCountRef.current < 2) {
+              // One retry after a short pause (might be mid-gap between tracks)
+              setTimeout(() => startListening(true), 4000);
+            } else {
+              // Two failures = probably end of side
+              autoRetryCountRef.current = 0;
+              setMode("side-end");
+            }
+            return false;
+          }
+
+          setError("Couldn't identify the song. Make sure your record is playing clearly and try again.");
+          setMode("error");
           return false;
         } catch (err) {
-          if (!early) { setError(`Connection failed: ${err.message}`); setMode("error"); }
-          return false;
+          if (isAutoAdvance) {
+            autoRetryCountRef.current += 1;
+            if (autoRetryCountRef.current < 2) {
+              setTimeout(() => startListening(true), 4000);
+            } else {
+              autoRetryCountRef.current = 0;
+              setMode("side-end");
+            }
+            return false;
+          }
+          setError(`Connection failed: ${err.message}`); setMode("error"); return false;
         }
       };
 
@@ -326,7 +431,8 @@
           if (synced) { setLyrics(parseLRC(synced.syncedLyrics)); return; }
           const plain = [...a, ...b].find(x => x.plainLyrics);
           if (plain) setLyrics(plain.plainLyrics.split("\n").filter(l => l.trim()).map((text, i) => ({ time: i * 4, text })));
-        } catch {}
+          else setLyrics([]);
+        } catch { setLyrics([]); }
       };
 
       const startSync = useCallback(() => {
@@ -351,7 +457,10 @@
       const reset = () => {
         clearInterval(syncIntervalRef.current); clearInterval(progressTimerRef.current);
         streamRef.current?.getTracks().forEach(t => t.stop());
-        setMode("idle"); setDetectedSong(null); setLyrics([]); setCurrentIndex(0); setError(null); setListenProgress(0);
+        autoAdvanceFiredRef.current = false;
+        autoRetryCountRef.current = 0;
+        setMode("idle"); setDetectedSong(null); setSongDuration(null); setLyrics([]);
+        setCurrentIndex(0); setError(null); setListenProgress(0); setPlaybackTime(0);
       };
 
       // ─────────────────────────────────────────
@@ -373,7 +482,6 @@
             <Vinyl size={72} spinning={false} />
             <div style={{ marginTop:"20px", fontSize:"28px", letterSpacing:"14px", color:"#d4a846", fontWeight:"300" }}>LIRI</div>
             <div style={{ fontSize:"11px", color:"#2a2a4a", letterSpacing:"4px", textTransform:"uppercase", marginTop:"6px", marginBottom:"52px" }}>Lyrics for Vinyl</div>
-
             <div style={{ width:"100%", maxWidth:"360px", animation:"fade-up 0.4s ease both" }}>
               <h2 style={{ fontSize:"22px", fontWeight:"500", color:"#f0e6d3", textAlign:"center", marginBottom:"8px" }}>
                 {authMode === "signin" ? "Welcome back" : "Create your account"}
@@ -410,19 +518,16 @@
       return (
         <div style={{ minHeight:"100vh", background:"#080810", color:"#f0e6d3", fontFamily:"-apple-system,BlinkMacSystemFont,'SF Pro Display','Helvetica Neue',sans-serif", position:"relative", overflow:"hidden" }}>
 
-          {/* Full-screen blurred album art background */}
+          {/* Blurred album art backdrop */}
           {artwork && (
             <div style={{ position:"fixed", inset:"-20px", zIndex:0, backgroundImage:`url(${artwork})`, backgroundSize:"cover", backgroundPosition:"center", filter:"blur(80px) brightness(0.15) saturate(2)", transition:"opacity 1s ease", opacity: isSyncing ? 1 : 0.4 }} />
           )}
-          {/* Base dark layer so it never looks washed out */}
           <div style={{ position:"fixed", inset:0, zIndex:1, background:"linear-gradient(to bottom, rgba(8,8,16,0.6) 0%, rgba(8,8,16,0.3) 40%, rgba(8,8,16,0.7) 100%)", pointerEvents:"none" }} />
 
-          {/* ── SETTINGS PANEL (bottom sheet) ── */}
+          {/* ── SETTINGS PANEL ── */}
           {showSettings && (
             <div onClick={() => setShowSettings(false)} style={{ position:"fixed", inset:0, zIndex:200, background:"rgba(0,0,0,0.5)", backdropFilter:"blur(4px)" }}>
-              <div onClick={e => e.stopPropagation()} style={{ position:"absolute", bottom:0, left:0, right:0, background:"#0f0f1c", borderRadius:"24px 24px 0 0", padding:"12px 24px max(32px, calc(env(safe-area-inset-bottom) + 24px))", boxShadow:"0 -8px 48px rgba(0,0,0,0.6)" }}>
-
-                {/* Handle */}
+              <div onClick={e => e.stopPropagation()} style={{ position:"absolute", bottom:0, left:0, right:0, background:"#0f0f1c", borderRadius:"24px 24px 0 0", padding:"12px 24px max(32px, calc(env(safe-area-inset-bottom) + 24px))", boxShadow:"0 -8px 48px rgba(0,0,0,0.6)", animation:"slide-up 0.3s ease" }}>
                 <div style={{ width:"40px", height:"4px", borderRadius:"2px", background:"rgba(255,255,255,0.12)", margin:"0 auto 28px" }} />
 
                 {/* Avatar + email */}
@@ -438,32 +543,74 @@
                   </div>
                 </div>
 
-                {/* Usage bar (hidden for unlimited) */}
+                {/* Usage bar */}
                 {!isUnlimited(user) && (
-                  <div style={{ marginBottom:"28px" }}>
+                  <div style={{ marginBottom:"24px" }}>
                     <div style={{ height:"4px", borderRadius:"2px", background:"rgba(255,255,255,0.07)", overflow:"hidden" }}>
                       <div style={{ height:"100%", borderRadius:"2px", background:"linear-gradient(to right, #d4a846, #c9807a)", width:`${Math.min(usageCount / FREE_LIMIT * 100, 100)}%`, transition:"width 0.4s ease" }} />
                     </div>
                     <div style={{ display:"flex", justifyContent:"space-between", marginTop:"6px", fontSize:"11px", color:"rgba(255,255,255,0.2)" }}>
-                      <span>{FREE_LIMIT - usageCount} remaining</span>
-                      <span>{FREE_LIMIT} free</span>
+                      <span>{FREE_LIMIT - usageCount} remaining</span><span>{FREE_LIMIT} free</span>
                     </div>
                   </div>
                 )}
 
+                {/* Vinyl Auto Mode toggle */}
+                <div style={{ background:"rgba(255,255,255,0.03)", border:"1px solid rgba(255,255,255,0.07)", borderRadius:"16px", padding:"16px 18px", marginBottom:"16px" }}>
+                  <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", marginBottom:"8px" }}>
+                    <div style={{ fontSize:"14px", fontWeight:"600", color:"#f0e6d3" }}>Vinyl Auto Mode</div>
+                    {/* Toggle switch */}
+                    <div onClick={() => toggleVinylMode(!vinylMode)} style={{ width:"44px", height:"26px", borderRadius:"13px", background: vinylMode ? "linear-gradient(135deg, #d4a846, #c9807a)" : "rgba(255,255,255,0.1)", cursor:"pointer", position:"relative", transition:"background 0.2s", flexShrink:0 }}>
+                      <div style={{ position:"absolute", top:"3px", left: vinylMode ? "21px" : "3px", width:"20px", height:"20px", borderRadius:"50%", background:"white", transition:"left 0.2s", boxShadow:"0 1px 4px rgba(0,0,0,0.3)" }} />
+                    </div>
+                  </div>
+                  <div style={{ fontSize:"12px", color:"rgba(255,255,255,0.3)", lineHeight:"1.6" }}>
+                    Auto-advance between tracks on a record. Listens at song end to detect the next one. Stops after two failed detections (end of side).
+                  </div>
+                </div>
+
                 {/* Pro section */}
                 <div style={{ background:"rgba(212,168,70,0.07)", border:"1px solid rgba(212,168,70,0.15)", borderRadius:"16px", padding:"16px 18px", marginBottom:"20px" }}>
                   <div style={{ fontSize:"13px", fontWeight:"600", color:"#d4a846", marginBottom:"4px" }}>Liri Pro — Coming Soon</div>
-                  <div style={{ fontSize:"12px", color:"rgba(255,255,255,0.35)", lineHeight:"1.6" }}>Unlimited songs, offline mode, and more. Want early access?</div>
+                  <div style={{ fontSize:"12px", color:"rgba(255,255,255,0.35)", lineHeight:"1.6" }}>Unlimited songs, offline mode, and more.</div>
                   <div style={{ fontSize:"12px", color:"#d4a846", marginTop:"8px" }}>hello@getliri.com</div>
                 </div>
 
-                {/* Sign out */}
-                <button onClick={handleSignOut} style={{ width:"100%", background:"rgba(255,255,255,0.04)", border:"1px solid rgba(255,255,255,0.08)", color:"rgba(255,255,255,0.4)", borderRadius:"14px", padding:"14px", fontSize:"14px", cursor:"pointer", fontFamily:"inherit" }}>
-                  Sign Out
-                </button>
+                <button onClick={handleSignOut} style={{ width:"100%", background:"rgba(255,255,255,0.04)", border:"1px solid rgba(255,255,255,0.08)", color:"rgba(255,255,255,0.4)", borderRadius:"14px", padding:"14px", fontSize:"14px", cursor:"pointer", fontFamily:"inherit" }}>Sign Out</button>
+                <div style={{ textAlign:"center", marginTop:"16px", fontSize:"11px", color:"rgba(255,255,255,0.1)" }}>Liri v0.4 · getliri.com</div>
+              </div>
+            </div>
+          )}
 
-                <div style={{ textAlign:"center", marginTop:"16px", fontSize:"11px", color:"rgba(255,255,255,0.1)" }}>Liri v0.3 · getliri.com</div>
+          {/* ── HISTORY PANEL ── */}
+          {showHistory && (
+            <div onClick={() => setShowHistory(false)} style={{ position:"fixed", inset:0, zIndex:200, background:"rgba(0,0,0,0.5)", backdropFilter:"blur(4px)" }}>
+              <div onClick={e => e.stopPropagation()} style={{ position:"absolute", bottom:0, left:0, right:0, background:"#0f0f1c", borderRadius:"24px 24px 0 0", maxHeight:"80vh", display:"flex", flexDirection:"column", boxShadow:"0 -8px 48px rgba(0,0,0,0.6)", animation:"slide-up 0.3s ease" }}>
+                <div style={{ padding:"12px 24px 0", flexShrink:0 }}>
+                  <div style={{ width:"40px", height:"4px", borderRadius:"2px", background:"rgba(255,255,255,0.12)", margin:"0 auto 20px" }} />
+                  <div style={{ fontSize:"11px", letterSpacing:"3px", color:"#d4a846", textTransform:"uppercase", marginBottom:"16px" }}>Recently Played</div>
+                </div>
+                <div style={{ overflowY:"auto", flex:1, padding:"0 24px max(24px, calc(env(safe-area-inset-bottom) + 16px))" }}>
+                  {historyLoading ? (
+                    <div style={{ textAlign:"center", color:"rgba(255,255,255,0.2)", padding:"32px 0" }}>Loading…</div>
+                  ) : history.length === 0 ? (
+                    <div style={{ textAlign:"center", color:"rgba(255,255,255,0.2)", padding:"32px 0", lineHeight:"1.8" }}>
+                      No songs yet.<br/>Start listening to build your history.
+                    </div>
+                  ) : history.map((item, i) => (
+                    <div key={item.id} style={{ display:"flex", alignItems:"center", gap:"12px", padding:"10px 0", borderBottom: i < history.length-1 ? "1px solid rgba(255,255,255,0.05)" : "none" }}>
+                      {item.artwork_url
+                        ? <img src={item.artwork_url} alt="" style={{ width:"44px", height:"44px", borderRadius:"8px", flexShrink:0, objectFit:"cover" }} />
+                        : <div style={{ width:"44px", height:"44px", borderRadius:"8px", background:"rgba(255,255,255,0.06)", flexShrink:0, display:"flex", alignItems:"center", justifyContent:"center", fontSize:"18px" }}>♪</div>
+                      }
+                      <div style={{ flex:1, minWidth:0 }}>
+                        <div style={{ fontSize:"14px", fontWeight:"600", color:"#f0e6d3", overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>{item.title}</div>
+                        <div style={{ fontSize:"12px", color:"rgba(255,255,255,0.4)", overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>{item.artist}</div>
+                      </div>
+                      <div style={{ fontSize:"11px", color:"rgba(255,255,255,0.2)", flexShrink:0 }}>{timeAgo(item.listened_at)}</div>
+                    </div>
+                  ))}
+                </div>
               </div>
             </div>
           )}
@@ -471,8 +618,6 @@
           {/* ── SYNCING SCREEN ── */}
           {isSyncing && (
             <div style={{ position:"fixed", inset:0, zIndex:10, display:"flex", flexDirection:"column" }}>
-
-              {/* Top: song info + settings */}
               <div className="safe-top" style={{ padding:"0 20px 16px", display:"flex", alignItems:"center", justifyContent:"space-between", flexShrink:0 }}>
                 <div style={{ display:"flex", alignItems:"center", gap:"10px", flex:1, minWidth:0 }}>
                   {artwork && <img src={artwork} alt="" style={{ width:"36px", height:"36px", borderRadius:"8px", flexShrink:0, boxShadow:"0 4px 16px rgba(0,0,0,0.5)" }} />}
@@ -482,12 +627,23 @@
                   </div>
                 </div>
                 <div style={{ display:"flex", alignItems:"center", gap:"12px", marginLeft:"12px", flexShrink:0 }}>
-                  <div style={{ fontSize:"12px", color:"rgba(255,255,255,0.3)", fontVariantNumeric:"tabular-nums" }}>{formatTime(playbackTime)}</div>
+                  {songDuration && (
+                    <div style={{ fontSize:"11px", color:"rgba(255,255,255,0.2)" }}>
+                      {formatTime(playbackTime)} / {formatTime(songDuration)}
+                    </div>
+                  )}
+                  {!songDuration && <div style={{ fontSize:"12px", color:"rgba(255,255,255,0.3)", fontVariantNumeric:"tabular-nums" }}>{formatTime(playbackTime)}</div>}
                   <button onClick={() => setShowSettings(!showSettings)} style={{ background:"none", border:"none", color:"rgba(255,255,255,0.3)", cursor:"pointer", fontSize:"16px", padding:"4px" }}>⚙</button>
                 </div>
               </div>
 
-              {/* Center: lyrics */}
+              {/* Song end progress bar (vinyl mode) */}
+              {vinylMode && songDuration && (
+                <div style={{ height:"2px", background:"rgba(255,255,255,0.05)", flexShrink:0, margin:"0 20px" }}>
+                  <div style={{ height:"100%", background:"linear-gradient(to right, #d4a846, #c9807a)", width:`${Math.min(playbackTime/songDuration*100,100)}%`, transition:"width 0.5s linear" }} />
+                </div>
+              )}
+
               <div style={{ flex:1, overflow:"hidden", position:"relative" }}>
                 <div style={{ overflowY:"auto", height:"100%", padding:"8vh 28px 0" }}>
                   {lyrics.length > 0 ? lyrics.map((line, i) => {
@@ -501,10 +657,9 @@
                         fontSize: cur ? "32px" : Math.abs(dist) <= 1 ? "20px" : "16px",
                         fontWeight: cur ? "700" : "400",
                         color: cur ? "#ffffff" : upcoming ? "rgba(255,255,255,0.25)" : "rgba(255,255,255,0.15)",
-                        lineHeight: "1.4",
-                        transition: "all 0.4s cubic-bezier(0.4,0,0.2,1)",
+                        lineHeight:"1.4",
+                        transition:"all 0.4s cubic-bezier(0.4,0,0.2,1)",
                         textShadow: cur ? "0 0 60px rgba(212,168,70,0.4), 0 2px 20px rgba(0,0,0,0.8)" : "none",
-                        marginBottom: cur ? "4px" : "0",
                       }}>
                         {line.text}
                       </div>
@@ -513,12 +668,10 @@
                     <div style={{ textAlign:"center", color:"rgba(255,255,255,0.2)", fontSize:"16px", paddingTop:"30vh" }}>No lyrics found for this track</div>
                   )}
                 </div>
-                {/* Fade-out gradients top & bottom */}
                 <div style={{ position:"absolute", top:0, left:0, right:0, height:"15vh", background:"linear-gradient(to bottom, rgba(8,8,16,0.9), transparent)", pointerEvents:"none" }} />
                 <div style={{ position:"absolute", bottom:0, left:0, right:0, height:"20vh", background:"linear-gradient(to top, rgba(8,8,16,1), transparent)", pointerEvents:"none" }} />
               </div>
 
-              {/* Bottom: controls */}
               <div className="safe-bottom" style={{ padding:"12px 20px 0", flexShrink:0 }}>
                 <div style={{ display:"flex", justifyContent:"center", alignItems:"center", gap:"8px", marginBottom:"12px" }}>
                   {[["−5s",-5],["−2s",-2]].map(([label,s]) => (
@@ -543,10 +696,12 @@
               {/* Top bar */}
               <div className="safe-top" style={{ padding:"0 20px 16px", display:"flex", justifyContent:"space-between", alignItems:"center", flexShrink:0 }}>
                 <div style={{ fontSize:"16px", letterSpacing:"10px", color:"#d4a846", fontWeight:"300" }}>LIRI</div>
-                <button onClick={() => setShowSettings(!showSettings)} style={{ background:"none", border:"none", color:"rgba(255,255,255,0.3)", cursor:"pointer", fontSize:"16px" }}>⚙</button>
+                <div style={{ display:"flex", gap:"16px", alignItems:"center" }}>
+                  <button onClick={() => { fetchHistory(user); setShowHistory(true); }} style={{ background:"none", border:"none", color:"rgba(255,255,255,0.3)", cursor:"pointer", fontSize:"18px", padding:"2px" }}>⏱</button>
+                  <button onClick={() => setShowSettings(true)} style={{ background:"none", border:"none", color:"rgba(255,255,255,0.3)", cursor:"pointer", fontSize:"16px" }}>⚙</button>
+                </div>
               </div>
 
-              {/* Center content */}
               <div style={{ flex:1, display:"flex", flexDirection:"column", alignItems:"center", justifyContent:"center", padding:"24px 32px", textAlign:"center" }}>
 
                 {/* IDLE */}
@@ -555,11 +710,14 @@
                     <Vinyl size={140} spinning={false} />
                     <div style={{ marginTop:"36px", fontSize:"13px", color:"rgba(255,255,255,0.25)", letterSpacing:"3px", textTransform:"uppercase", marginBottom:"16px" }}>Ready to listen</div>
                     <p style={{ fontSize:"15px", color:"rgba(255,255,255,0.35)", maxWidth:"240px", margin:"0 auto 40px", lineHeight:"1.7" }}>Put on a record and hold your phone near the speakers</p>
-                    <button onClick={startListening} style={{ background:"linear-gradient(135deg, #d4a846, #c9807a)", color:"#080810", border:"none", borderRadius:"50px", padding:"18px 52px", fontSize:"15px", fontWeight:"700", letterSpacing:"1px", cursor:"pointer", fontFamily:"inherit", boxShadow:"0 8px 32px rgba(212,168,70,0.3)" }}>
+                    <button onClick={() => startListening(false)} style={{ background:"linear-gradient(135deg, #d4a846, #c9807a)", color:"#080810", border:"none", borderRadius:"50px", padding:"18px 52px", fontSize:"15px", fontWeight:"700", letterSpacing:"1px", cursor:"pointer", fontFamily:"inherit", boxShadow:"0 8px 32px rgba(212,168,70,0.3)" }}>
                       Listen
                     </button>
+                    {vinylMode && (
+                      <div style={{ marginTop:"16px", fontSize:"12px", color:"rgba(212,168,70,0.5)", letterSpacing:"1px" }}>✦ Vinyl Auto Mode on</div>
+                    )}
                     {!isUnlimited(user) && (
-                      <div style={{ marginTop:"20px", fontSize:"12px", color:"rgba(255,255,255,0.2)" }}>
+                      <div style={{ marginTop:"12px", fontSize:"12px", color:"rgba(255,255,255,0.2)" }}>
                         {FREE_LIMIT - usageCount} free {FREE_LIMIT - usageCount === 1 ? "song" : "songs"} remaining
                       </div>
                     )}
@@ -596,6 +754,18 @@
                   </div>
                 )}
 
+                {/* SIDE END — shown when vinyl auto mode can't find next track */}
+                {mode === "side-end" && (
+                  <div style={{ maxWidth:"300px", animation:"fade-up 0.3s ease both", textAlign:"center" }}>
+                    <Vinyl size={100} spinning={false} />
+                    <div style={{ marginTop:"32px", fontSize:"22px", fontWeight:"700", color:"#f0e6d3", marginBottom:"12px" }}>End of side?</div>
+                    <div style={{ color:"rgba(255,255,255,0.4)", marginBottom:"36px", lineHeight:"1.8", fontSize:"15px" }}>
+                      Couldn't detect another track.<br/>Flip your record and tap Listen to continue.
+                    </div>
+                    <button onClick={reset} style={{ background:"linear-gradient(135deg, #d4a846, #c9807a)", color:"#080810", border:"none", borderRadius:"50px", padding:"14px 36px", fontSize:"14px", fontWeight:"700", cursor:"pointer", fontFamily:"inherit" }}>Start Side B</button>
+                  </div>
+                )}
+
                 {/* LIMIT */}
                 {mode === "limit" && (
                   <div style={{ maxWidth:"300px", animation:"fade-up 0.3s ease both", textAlign:"center" }}>
@@ -605,10 +775,9 @@
                       Your 10 free songs are up.<br/>Liri Pro is coming soon — stay tuned.
                     </div>
                     <div style={{ fontSize:"12px", color:"rgba(255,255,255,0.2)", marginBottom:"24px" }}>
-                      Want early access? Email<br/>
-                      <span style={{ color:"#d4a846" }}>hello@getliri.com</span>
+                      Want early access?<br/><span style={{ color:"#d4a846" }}>hello@getliri.com</span>
                     </div>
-                    <button onClick={() => { setMode("idle"); }} style={{ background:"none", border:"1px solid rgba(255,255,255,0.1)", color:"rgba(255,255,255,0.3)", borderRadius:"50px", padding:"10px 28px", fontSize:"13px", cursor:"pointer", fontFamily:"inherit" }}>Back</button>
+                    <button onClick={() => setMode("idle")} style={{ background:"none", border:"1px solid rgba(255,255,255,0.1)", color:"rgba(255,255,255,0.3)", borderRadius:"50px", padding:"10px 28px", fontSize:"13px", cursor:"pointer", fontFamily:"inherit" }}>Back</button>
                   </div>
                 )}
               </div>
