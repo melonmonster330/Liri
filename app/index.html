@@ -190,6 +190,13 @@
 
       useEffect(() => { lyricsRef.current = lyrics; }, [lyrics]);
 
+      // Auto-start sync immediately after song is detected — no confirmation tap needed
+      useEffect(() => {
+        if (mode === "confirmed" && detectedSong) {
+          startSync();
+        }
+      }, [mode, detectedSong]);
+
       useEffect(() => {
         if (currentLineRef.current && mode === "syncing") {
           currentLineRef.current.scrollIntoView({ behavior: "smooth", block: "center" });
@@ -470,7 +477,7 @@
               </div>
 
               {/* Drift correction: nudge lyrics ±2s or ±5s to correct for turntable speed variation */}
-              <div style={{ padding: "16px 24px 32px", display: "flex", justifyContent: "center", alignItems: "center", gap: "12px", flexShrink: 0, background: "linear-gradient(to top, rgba(10,10,20,1) 70%, transparent)" }}>
+              <div style={{ padding: "16px 24px 8px", display: "flex", justifyContent: "center", alignItems: "center", gap: "12px", flexShrink: 0, background: "linear-gradient(to top, rgba(10,10,20,1) 70%, transparent)" }}>
                 {[["← 5s", -5], ["← 2s", -2]].map(([label, secs]) => (
                   <button key={label} onClick={() => nudge(secs)} style={{ background: "rgba(255,255,255,0.06)", border: "1px solid rgba(255,255,255,0.1)", color: cream, padding: "9px 16px", borderRadius: "20px", cursor: "pointer", fontSize: "12px", letterSpacing: "1px", fontFamily: "inherit" }}>{label}</button>
                 ))}
@@ -478,6 +485,9 @@
                 {[["2s →", 2], ["5s →", 5]].map(([label, secs]) => (
                   <button key={label} onClick={() => nudge(secs)} style={{ background: "rgba(255,255,255,0.06)", border: "1px solid rgba(255,255,255,0.1)", color: cream, padding: "9px 16px", borderRadius: "20px", cursor: "pointer", fontSize: "12px", letterSpacing: "1px", fontFamily: "inherit" }}>{label}</button>
                 ))}
+              </div>
+              <div style={{ paddingBottom: "28px", display: "flex", justifyContent: "center", background: "rgba(10,10,20,1)" }}>
+                <button onClick={reset} style={{ background: "none", border: "none", color: "#4a4a6a", cursor: "pointer", fontSize: "12px", letterSpacing: "1.5px", fontFamily: "inherit", textTransform: "uppercase", textDecoration: "underline", textDecorationColor: "#2a2a4a" }}>Wrong song? Try again</button>
               </div>
             </div>
           )}
