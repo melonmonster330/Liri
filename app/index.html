@@ -417,15 +417,53 @@
           {/* Base dark layer so it never looks washed out */}
           <div style={{ position:"fixed", inset:0, zIndex:1, background:"linear-gradient(to bottom, rgba(8,8,16,0.6) 0%, rgba(8,8,16,0.3) 40%, rgba(8,8,16,0.7) 100%)", pointerEvents:"none" }} />
 
-          {/* ── SETTINGS PANEL ── */}
+          {/* ── SETTINGS PANEL (bottom sheet) ── */}
           {showSettings && (
-            <div onClick={() => setShowSettings(false)} style={{ position:"fixed", inset:0, zIndex:200 }}>
-              <div onClick={e => e.stopPropagation()} style={{ position:"absolute", top:"max(72px, calc(env(safe-area-inset-top) + 60px))", right:"16px", background:"rgba(16,16,28,0.96)", backdropFilter:"blur(20px)", border:"1px solid rgba(255,255,255,0.08)", borderRadius:"18px", padding:"20px", width:"260px" }}>
-                <div style={{ fontSize:"11px", letterSpacing:"3px", color:"#d4a846", marginBottom:"16px", textTransform:"uppercase" }}>Account</div>
-                <div style={{ fontSize:"13px", color:"#4a4a6a", marginBottom:"4px" }}>Signed in as</div>
-                <div style={{ fontSize:"14px", color:"#f0e6d3", marginBottom:"20px", wordBreak:"break-all" }}>{user?.email}</div>
-                <button onClick={handleSignOut} style={{ width:"100%", background:"rgba(255,255,255,0.05)", border:"1px solid rgba(255,255,255,0.08)", color:"#8a8aaa", borderRadius:"10px", padding:"12px", fontSize:"13px", cursor:"pointer", fontFamily:"inherit" }}>Sign Out</button>
-                <div style={{ marginTop:"16px", fontSize:"11px", color:"#222236", textAlign:"center" }}>Liri v0.3 · getliri.com</div>
+            <div onClick={() => setShowSettings(false)} style={{ position:"fixed", inset:0, zIndex:200, background:"rgba(0,0,0,0.5)", backdropFilter:"blur(4px)" }}>
+              <div onClick={e => e.stopPropagation()} style={{ position:"absolute", bottom:0, left:0, right:0, background:"#0f0f1c", borderRadius:"24px 24px 0 0", padding:"12px 24px max(32px, calc(env(safe-area-inset-bottom) + 24px))", boxShadow:"0 -8px 48px rgba(0,0,0,0.6)" }}>
+
+                {/* Handle */}
+                <div style={{ width:"40px", height:"4px", borderRadius:"2px", background:"rgba(255,255,255,0.12)", margin:"0 auto 28px" }} />
+
+                {/* Avatar + email */}
+                <div style={{ display:"flex", alignItems:"center", gap:"14px", marginBottom:"28px" }}>
+                  <div style={{ width:"48px", height:"48px", borderRadius:"50%", background:"linear-gradient(135deg, #d4a846, #c9807a)", display:"flex", alignItems:"center", justifyContent:"center", fontSize:"18px", fontWeight:"700", color:"#080810", flexShrink:0 }}>
+                    {user?.email?.[0]?.toUpperCase() || "?"}
+                  </div>
+                  <div>
+                    <div style={{ fontSize:"15px", fontWeight:"600", color:"#f0e6d3" }}>{user?.email}</div>
+                    <div style={{ fontSize:"12px", color:"rgba(255,255,255,0.3)", marginTop:"2px" }}>
+                      {isUnlimited(user) ? "✦ Unlimited access" : `${usageCount} of ${FREE_LIMIT} free songs used`}
+                    </div>
+                  </div>
+                </div>
+
+                {/* Usage bar (hidden for unlimited) */}
+                {!isUnlimited(user) && (
+                  <div style={{ marginBottom:"28px" }}>
+                    <div style={{ height:"4px", borderRadius:"2px", background:"rgba(255,255,255,0.07)", overflow:"hidden" }}>
+                      <div style={{ height:"100%", borderRadius:"2px", background:"linear-gradient(to right, #d4a846, #c9807a)", width:`${Math.min(usageCount / FREE_LIMIT * 100, 100)}%`, transition:"width 0.4s ease" }} />
+                    </div>
+                    <div style={{ display:"flex", justifyContent:"space-between", marginTop:"6px", fontSize:"11px", color:"rgba(255,255,255,0.2)" }}>
+                      <span>{FREE_LIMIT - usageCount} remaining</span>
+                      <span>{FREE_LIMIT} free</span>
+                    </div>
+                  </div>
+                )}
+
+                {/* Pro section */}
+                <div style={{ background:"rgba(212,168,70,0.07)", border:"1px solid rgba(212,168,70,0.15)", borderRadius:"16px", padding:"16px 18px", marginBottom:"20px" }}>
+                  <div style={{ fontSize:"13px", fontWeight:"600", color:"#d4a846", marginBottom:"4px" }}>Liri Pro — Coming Soon</div>
+                  <div style={{ fontSize:"12px", color:"rgba(255,255,255,0.35)", lineHeight:"1.6" }}>Unlimited songs, offline mode, and more. Want early access?</div>
+                  <div style={{ fontSize:"12px", color:"#d4a846", marginTop:"8px" }}>hello@getliri.com</div>
+                </div>
+
+                {/* Sign out */}
+                <button onClick={handleSignOut} style={{ width:"100%", background:"rgba(255,255,255,0.04)", border:"1px solid rgba(255,255,255,0.08)", color:"rgba(255,255,255,0.4)", borderRadius:"14px", padding:"14px", fontSize:"14px", cursor:"pointer", fontFamily:"inherit" }}>
+                  Sign Out
+                </button>
+
+                <div style={{ textAlign:"center", marginTop:"16px", fontSize:"11px", color:"rgba(255,255,255,0.1)" }}>Liri v0.3 · getliri.com</div>
               </div>
             </div>
           )}
