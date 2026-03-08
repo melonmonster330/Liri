@@ -251,32 +251,21 @@
         }
       };
 
-      /* ── STEP 2: Identify song via ACRCloud ──
-         ACRCloud returns:
-           - title, artists, album
-           - play_offset_ms: where in the song we are
-           - artwork via spotify external metadata
-         Requests use HMAC-SHA1 signing via Web Crypto API. ── */
+      /* ── STEP 2: Identify song via Liri proxy → ACRCloud ──
+         The app sends audio to our own Netlify function which signs
+         and forwards to ACRCloud. Credentials never appear in the app. ── */
       const detectSong = async (blob) => {
         try {
-          const host    = acrHost   || "identify-us-west-2.acrcloud.com";
-          const key     = acrKey;
-          const secret  = acrSecret;
-          const ts      = Math.floor(Date.now() / 1000);
-          const toSign  = `POST\n/v1/identify\n${key}\naudio\n1\n${ts}`;
-          const enc     = new TextEncoder();
-          const cryptoKey = await crypto.subtle.importKey("raw", enc.encode(secret), { name: "HMAC", hash: "SHA-1" }, false, ["sign"]);
-          const sigBuf  = await crypto.subtle.sign("HMAC", cryptoKey, enc.encode(toSign));
-          const sig     = btoa(String.fromCharCode(...new Uint8Array(sigBuf)));
-          const fd = new FormData();
-          fd.append("access_key", key);
-          fd.append("data_type", "audio");
-          fd.append("signature_version", "1");
-          fd.append("timestamp", ts);
-          fd.append("signature", sig);
-          fd.append("sample", blob, "sample.webm");
-          fd.append("sample_bytes", blob.size);
-          const res = await fetch(`https://${host}/v1/identify`, { method: "POST", body: fd });
+          // Convert audio blob to base64 for JSON transport
+          const arrayBuf   = await blob.arrayBuffer();
+          const uint8Array = new Uint8Array(arrayBuf);
+          const audio      = btoa(String.fromCharCode(...uint8Array));
+
+          const res = await fetch("/.netlify/functions/recognize", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ audio, mimeType: blob.type || "audio/webm" }),
+          });
           if (!res.ok) throw new Error(`HTTP ${res.status}`);
           const data = await res.json();
           if (data.status?.code === 0 && data.metadata?.music?.length > 0) {
@@ -385,23 +374,14 @@
             <button onClick={() => setShowSettings(!showSettings)} style={{ background: "none", border: "none", color: gold, cursor: "pointer", fontSize: "18px", opacity: 0.6 }}>⚙</button>
           </div>
 
-          {/* Settings: ACRCloud credentials */}
+          {/* Settings panel — credentials now live server-side */}
           {showSettings && (
-            <div style={{ position: "fixed", top: "60px", right: "20px", background: "#111124", border: "1px solid #2a2a3e", borderRadius: "14px", padding: "20px", width: "300px", zIndex: 100 }}>
-              <div style={{ fontSize: "11px", letterSpacing: "2px", color: gold, marginBottom: "14px", textTransform: "uppercase" }}>ACRCloud Settings</div>
-              {[
-                ["Host",          acrHost,   setAcrHost,   "liri_acr_host",   "identify-us-west-2.acrcloud.com"],
-                ["Access Key",    acrKey,    setAcrKey,    "liri_acr_key",    "Your access key..."],
-                ["Access Secret", acrSecret, setAcrSecret, "liri_acr_secret", "Your access secret..."],
-              ].map(([label, val, setter, lsKey, ph]) => (
-                <div key={lsKey} style={{ marginBottom: "12px" }}>
-                  <div style={{ fontSize: "10px", letterSpacing: "2px", color: "#6a6a8a", marginBottom: "5px", textTransform: "uppercase" }}>{label}</div>
-                  <input value={val} onChange={e => { setter(e.target.value); localStorage.setItem(lsKey, e.target.value); }} placeholder={ph} style={{ width: "100%", background: "#0a0a14", border: "1px solid #2a2a3e", color: cream, padding: "9px 12px", borderRadius: "8px", fontSize: "12px", fontFamily: "monospace" }} />
-                </div>
-              ))}
-              <div style={{ fontSize: "11px", color: "#4a4a5e", marginTop: "4px", lineHeight: "1.6" }}>
-                Free at <span style={{ color: gold }}>acrcloud.com</span> — 3,000 recognitions/month free.
+            <div style={{ position: "fixed", top: "60px", right: "20px", background: "#111124", border: "1px solid #2a2a3e", borderRadius: "14px", padding: "20px", width: "280px", zIndex: 100 }}>
+              <div style={{ fontSize: "11px", letterSpacing: "2px", color: gold, marginBottom: "10px", textTransform: "uppercase" }}>Liri Settings</div>
+              <div style={{ fontSize: "13px", color: "#5a5a7a", lineHeight: "1.7" }}>
+                Song recognition runs securely on our servers. No setup needed.
               </div>
+              <div style={{ marginTop: "14px", fontSize: "11px", color: "#3a3a5a" }}>v0.3 · getliri.com</div>
             </div>
           )}
 
