@@ -1,0 +1,297 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Liri — TV</title>
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    html, body { height: 100%; overflow: hidden; background: #050508; color: #f0e6d3; font-family: -apple-system, BlinkMacSystemFont, 'Helvetica Neue', sans-serif; }
+
+    #backdrop {
+      position: fixed; inset: -40px; z-index: 0;
+      background-size: cover; background-position: center;
+      filter: blur(120px) brightness(0.12) saturate(2.5);
+      transition: background-image 1.5s ease, opacity 1s ease;
+      opacity: 0;
+    }
+    #backdrop.visible { opacity: 1; }
+
+    #overlay {
+      position: fixed; inset: 0; z-index: 1;
+      background: linear-gradient(to bottom, rgba(5,5,8,0.7) 0%, rgba(5,5,8,0.2) 40%, rgba(5,5,8,0.8) 100%);
+      pointer-events: none;
+    }
+
+    /* ── WAITING screen ── */
+    #waiting {
+      position: fixed; inset: 0; z-index: 10;
+      display: flex; flex-direction: column; align-items: center; justify-content: center;
+      gap: 24px; transition: opacity 0.6s ease;
+    }
+    #waiting.hidden { opacity: 0; pointer-events: none; }
+
+    .liri-logo { font-size: 48px; letter-spacing: 24px; color: #d4a846; font-weight: 300; }
+    .tagline { font-size: 18px; color: rgba(255,255,255,0.2); letter-spacing: 4px; text-transform: uppercase; }
+
+    #room-entry { display: flex; flex-direction: column; align-items: center; gap: 16px; margin-top: 40px; }
+    #room-entry p { font-size: 20px; color: rgba(255,255,255,0.35); }
+    #room-input {
+      font-size: 36px; letter-spacing: 10px; text-align: center; text-transform: uppercase;
+      background: rgba(255,255,255,0.06); border: 2px solid rgba(255,255,255,0.1);
+      color: #f0e6d3; padding: 16px 32px; border-radius: 16px; width: 320px;
+      font-family: inherit; outline: none;
+    }
+    #room-input:focus { border-color: rgba(212,168,70,0.5); }
+    #connect-btn {
+      background: linear-gradient(135deg, #d4a846, #c9807a); color: #050508;
+      border: none; border-radius: 50px; padding: 18px 56px;
+      font-size: 20px; font-weight: 700; cursor: pointer; font-family: inherit;
+      letter-spacing: 1px;
+    }
+    #connect-error { color: #e8a0a8; font-size: 16px; }
+
+    #waiting-connected {
+      display: none; flex-direction: column; align-items: center; gap: 16px; margin-top: 40px;
+    }
+    #waiting-connected.show { display: flex; }
+    #waiting-room-code { font-size: 72px; letter-spacing: 16px; color: #d4a846; font-weight: 700; }
+    #waiting-status { font-size: 20px; color: rgba(255,255,255,0.3); }
+
+    /* ── LYRICS screen ── */
+    #lyrics-screen {
+      position: fixed; inset: 0; z-index: 10;
+      display: flex; flex-direction: column;
+      opacity: 0; transition: opacity 0.8s ease; pointer-events: none;
+    }
+    #lyrics-screen.visible { opacity: 1; pointer-events: auto; }
+
+    /* Song info — bottom left */
+    #song-info {
+      position: fixed; bottom: 48px; left: 64px; z-index: 20;
+      display: flex; align-items: center; gap: 20px;
+    }
+    #song-art {
+      width: 80px; height: 80px; border-radius: 12px; object-fit: cover;
+      box-shadow: 0 8px 32px rgba(0,0,0,0.6);
+      display: none;
+    }
+    #song-art.show { display: block; }
+    #song-text {}
+    #song-title { font-size: 24px; font-weight: 700; color: #f0e6d3; }
+    #song-artist { font-size: 18px; color: rgba(255,255,255,0.4); margin-top: 4px; }
+
+    /* Room code — bottom right */
+    #room-badge {
+      position: fixed; bottom: 48px; right: 64px; z-index: 20;
+      font-size: 14px; color: rgba(255,255,255,0.15); letter-spacing: 2px; text-align: right;
+    }
+
+    /* Lyrics container */
+    #lyrics-container {
+      flex: 1; display: flex; flex-direction: column;
+      align-items: center; justify-content: center;
+      padding: 80px 120px 180px;
+      gap: 0;
+    }
+
+    .lyric-line {
+      text-align: center; line-height: 1.3;
+      transition: all 0.45s cubic-bezier(0.4, 0, 0.2, 1);
+      padding: 8px 0;
+    }
+    .lyric-line.current {
+      font-size: 80px; font-weight: 800; color: #ffffff;
+      text-shadow: 0 0 80px rgba(212,168,70,0.5), 0 4px 32px rgba(0,0,0,0.9);
+      padding: 16px 0;
+    }
+    .lyric-line.near {
+      font-size: 48px; font-weight: 400; color: rgba(255,255,255,0.3);
+    }
+    .lyric-line.far {
+      font-size: 32px; font-weight: 300; color: rgba(255,255,255,0.12);
+    }
+
+    #no-lyrics {
+      font-size: 36px; color: rgba(255,255,255,0.2); text-align: center;
+      display: none;
+    }
+    #no-lyrics.show { display: block; }
+  </style>
+</head>
+<body>
+  <div id="backdrop"></div>
+  <div id="overlay"></div>
+
+  <!-- WAITING / ENTRY screen -->
+  <div id="waiting">
+    <div class="liri-logo">LIRI</div>
+    <div class="tagline">Lyrics for Vinyl</div>
+
+    <!-- Room code entry (shown when no URL param) -->
+    <div id="room-entry">
+      <p>Enter your room code to connect</p>
+      <input id="room-input" maxlength="6" placeholder="XXXXXX" spellcheck="false" autocomplete="off" />
+      <button id="connect-btn">Connect</button>
+      <div id="connect-error"></div>
+    </div>
+
+    <!-- Connected, waiting for song -->
+    <div id="waiting-connected">
+      <div id="waiting-room-code"></div>
+      <div id="waiting-status">Waiting for music…</div>
+      <div style="font-size:16px;color:rgba(255,255,255,0.15);margin-top:8px">Open Liri on your phone and start listening</div>
+    </div>
+  </div>
+
+  <!-- LYRICS screen -->
+  <div id="lyrics-screen">
+    <div id="lyrics-container">
+      <div id="no-lyrics">No lyrics available for this track</div>
+    </div>
+    <div id="song-info">
+      <img id="song-art" alt="" />
+      <div id="song-text">
+        <div id="song-title"></div>
+        <div id="song-artist"></div>
+      </div>
+    </div>
+    <div id="room-badge"></div>
+  </div>
+
+  <script>
+    const SB_URL  = "https://xjdjpaxgymgbvcwmvorc.supabase.co";
+    const SB_KEY  = "sb_publishable_C-NBnfg0ltAoUi46XQTUjA_ozjZW_Nd";
+    const sb = supabase.createClient(SB_URL, SB_KEY);
+
+    let syncInterval = null;
+    let currentRoomCode = null;
+    let realtimeChannel = null;
+
+    // ── Read room code from URL ──
+    const params = new URLSearchParams(location.search);
+    const urlRoom = params.get("room")?.toUpperCase().slice(0, 6);
+    if (urlRoom) connectToRoom(urlRoom);
+
+    // ── Connect button ──
+    document.getElementById("connect-btn").addEventListener("click", () => {
+      const val = document.getElementById("room-input").value.trim().toUpperCase();
+      if (val.length < 4) { showError("Enter your room code"); return; }
+      connectToRoom(val);
+    });
+    document.getElementById("room-input").addEventListener("keydown", e => {
+      if (e.key === "Enter") document.getElementById("connect-btn").click();
+    });
+
+    function showError(msg) {
+      document.getElementById("connect-error").textContent = msg;
+    }
+
+    async function connectToRoom(code) {
+      currentRoomCode = code;
+      document.getElementById("connect-error").textContent = "";
+
+      // Hide entry, show waiting-connected
+      document.getElementById("room-entry").style.display = "none";
+      document.getElementById("waiting-room-code").textContent = code;
+      document.getElementById("waiting-connected").classList.add("show");
+      document.getElementById("room-badge").textContent = "Room: " + code;
+
+      // Update URL without reload
+      history.replaceState(null, "", "?room=" + code);
+
+      // Fetch existing session
+      const { data, error } = await sb.from("cast_sessions")
+        .select("*").eq("room_code", code).eq("is_active", true).single();
+
+      if (data) startSession(data);
+
+      // Subscribe to realtime updates
+      if (realtimeChannel) sb.removeChannel(realtimeChannel);
+      realtimeChannel = sb.channel("cast:" + code)
+        .on("postgres_changes", {
+          event: "*", schema: "public", table: "cast_sessions",
+          filter: "room_code=eq." + code
+        }, payload => {
+          if (payload.new && payload.new.is_active) startSession(payload.new);
+        })
+        .subscribe();
+    }
+
+    function startSession(session) {
+      clearInterval(syncInterval);
+
+      const detectedAt  = new Date(session.detected_at).getTime();
+      const initialPos  = session.initial_position || 0;
+      const lyrics      = session.lyrics_json || [];
+
+      // Update backdrop + song info
+      if (session.artwork_url) {
+        const bd = document.getElementById("backdrop");
+        bd.style.backgroundImage = `url(${session.artwork_url})`;
+        bd.classList.add("visible");
+        const art = document.getElementById("song-art");
+        art.src = session.artwork_url;
+        art.classList.add("show");
+      } else {
+        document.getElementById("backdrop").classList.remove("visible");
+        document.getElementById("song-art").classList.remove("show");
+      }
+
+      document.getElementById("song-title").textContent  = session.song_title  || "";
+      document.getElementById("song-artist").textContent = session.song_artist || "";
+
+      // Switch to lyrics screen
+      document.getElementById("waiting").classList.add("hidden");
+      document.getElementById("lyrics-screen").classList.add("visible");
+
+      let lastIdx = -1;
+
+      if (lyrics.length === 0) {
+        document.getElementById("no-lyrics").classList.add("show");
+        document.getElementById("lyrics-container").innerHTML = "";
+        document.getElementById("lyrics-container").appendChild(document.getElementById("no-lyrics"));
+        return;
+      }
+
+      document.getElementById("no-lyrics").classList.remove("show");
+
+      // Sync loop
+      syncInterval = setInterval(() => {
+        const t   = initialPos + (Date.now() - detectedAt) / 1000;
+        let idx   = 0;
+        for (let i = 0; i < lyrics.length; i++) {
+          if (lyrics[i].time <= t) idx = i; else break;
+        }
+        if (idx === lastIdx) return;
+        lastIdx = idx;
+        renderLyrics(lyrics, idx);
+      }, 80);
+    }
+
+    function renderLyrics(lyrics, currentIdx) {
+      const container = document.getElementById("lyrics-container");
+      container.innerHTML = "";
+
+      // Show lines around current index: 2 before, current, 3 after
+      const window = [
+        [currentIdx - 2, "far"],
+        [currentIdx - 1, "near"],
+        [currentIdx,     "current"],
+        [currentIdx + 1, "near"],
+        [currentIdx + 2, "far"],
+        [currentIdx + 3, "far"],
+      ];
+
+      window.forEach(([i, cls]) => {
+        if (i < 0 || i >= lyrics.length) return;
+        const div = document.createElement("div");
+        div.className = "lyric-line " + cls;
+        div.textContent = lyrics[i].text;
+        container.appendChild(div);
+      });
+    }
+  </script>
+</body>
+</html>
