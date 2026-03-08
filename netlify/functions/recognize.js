@@ -2,25 +2,44 @@
 // Keeps API credentials server-side so they never appear in the app.
 // Called by the Liri app at /.netlify/functions/recognize
 //
-// Uses manual multipart/form-data construction with raw Buffers to avoid
-// any dependency on FormData or Blob availability in the Node runtime.
+// Uses Node's built-in https module (no fetch, no dependencies) so it
+// works on any Node runtime Netlify happens to be running.
 
 const crypto = require("crypto");
+const https  = require("https");
+
+// Simple https POST helper — returns parsed JSON
+function httpsPost(hostname, path, headers, body) {
+  return new Promise((resolve, reject) => {
+    const req = https.request(
+      { hostname, path, method: "POST", headers },
+      (res) => {
+        const chunks = [];
+        res.on("data", (c) => chunks.push(c));
+        res.on("end", () => {
+          try {
+            resolve(JSON.parse(Buffer.concat(chunks).toString()));
+            reject(new Error("ACRCloud returned non-JSON response"));
+          }
+        });
+      }
+    );
+    req.on("error", reject);
+    req.write(body);
+    req.end();
+  });
+}
 
 exports.handler = async (event) => {
-  // CORS preflight
-  if (event.httpMethod === "OPTIONS") {
-    return {
-      statusCode: 200,
-      headers: {
-        "Access-Control-Allow-Origin": "*",
-        "Access-Control-Allow-Headers": "Content-Type",
-        "Access-Control-Allow-Methods": "POST, OPTIONS",
-      },
-      body: "",
-    };
-  }
+  const cors = {
+    "Access-Control-Allow-Origin":  "*",
+    "Access-Control-Allow-Headers": "Content-Type",
+    "Access-Control-Allow-Methods": "POST, OPTIONS",
+  };
 
+  if (event.httpMethod === "OPTIONS") {
+    return { statusCode: 200, headers: cors, body: "" };
+  }
   if (event.httpMethod !== "POST") {
     return { statusCode: 405, body: "Method Not Allowed" };
   }
@@ -29,10 +48,9 @@ exports.handler = async (event) => {
     const { audio, mimeType = "audio/webm" } = JSON.parse(event.body);
 
     if (!audio) {
-      return { statusCode: 400, body: JSON.stringify({ error: "No audio provided" }) };
+      return { statusCode: 400, headers: cors, body: JSON.stringify({ error: "No audio provided" }) };
     }
 
-    // Credentials live in Netlify env vars — never in the app
     const host         = process.env.ACR_HOST;
     const accessKey    = process.env.ACR_ACCESS_KEY;
     const accessSecret = process.env.ACR_ACCESS_SECRET;
@@ -40,21 +58,19 @@ exports.handler = async (event) => {
     if (!host || !accessKey || !accessSecret) {
       return {
         statusCode: 500,
-        headers: { "Access-Control-Allow-Origin": "*" },
-        body: JSON.stringify({ error: "Server not configured — check Netlify env vars (ACR_HOST, ACR_ACCESS_KEY, ACR_ACCESS_SECRET)" }),
+        headers: cors,
+        body: JSON.stringify({ error: "Server not configured — Netlify env vars missing" }),
       };
     }
 
-    // Build HMAC-SHA1 signature
+    // HMAC-SHA1 signature
     const timestamp    = Math.floor(Date.now() / 1000);
     const stringToSign = `POST\n/v1/identify\n${accessKey}\naudio\n1\n${timestamp}`;
     const signature    = crypto.createHmac("sha1", accessSecret).update(stringToSign).digest("base64");
 
-    // Decode audio from base64
     const audioBuffer = Buffer.from(audio, "base64");
 
-    // ── Build multipart/form-data manually using Buffers ──
-    // This avoids any FormData/Blob availability issues across Node versions.
+    // Build multipart/form-data using raw Buffers
     const boundary = "LiriBoundary" + crypto.randomBytes(16).toString("hex");
     const CRLF     = "\r\n";
 
@@ -65,10 +81,10 @@ exports.handler = async (event) => {
       Buffer.from(CRLF),
     ]);
 
-    const filePart = (name, filename, contentType, data) => Buffer.concat([
+    const filePart = (name, filename, type, data) => Buffer.concat([
       Buffer.from(`--${boundary}${CRLF}`),
       Buffer.from(`Content-Disposition: form-data; name="${name}"; filename="${filename}"${CRLF}`),
-      Buffer.from(`Content-Type: ${contentType}${CRLF}${CRLF}`),
+      Buffer.from(`Content-Type: ${type}${CRLF}${CRLF}`),
       data,
       Buffer.from(CRLF),
     ]);
@@ -84,31 +100,27 @@ exports.handler = async (event) => {
       Buffer.from(`--${boundary}--${CRLF}`),
     ]);
 
-    const response = await fetch(`https://${host}/v1/identify`, {
-      method: "POST",
-      headers: {
+    const result = await httpsPost(
+      host,
+      "/v1/identify",
+      {
         "Content-Type":   `multipart/form-data; boundary=${boundary}`,
-        "Content-Length": String(formBody.length),
+        "Content-Length": formBody.length,
       },
-      body: formBody,
-    });
-
-    const result = await response.json();
+      formBody
+    );
 
     return {
       statusCode: 200,
-      headers: {
-        "Content-Type": "application/json",
-        "Access-Control-Allow-Origin": "*",
-      },
+      headers: { ...cors, "Content-Type": "application/json" },
       body: JSON.stringify(result),
     };
 
   } catch (err) {
-    console.error("Recognize function error:", err.message, err.stack);
+    console.error("Recognize error:", err.message);
     return {
       statusCode: 500,
-      headers: { "Access-Control-Allow-Origin": "*" },
+      headers: cors,
       body: JSON.stringify({ error: "Recognition failed", message: err.message }),
     };
   }
