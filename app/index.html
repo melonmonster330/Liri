@@ -261,13 +261,21 @@
             const tcSecs = (m.play_offset_ms || 0) / 1000;
             detectedAtRef.current = Date.now();
             initialPosRef.current = tcSecs;
-            setDetectedSong({
-              title:   m.title,
-              artist:  m.artists?.[0]?.name || "Unknown Artist",
-              album:   m.album?.name || "",
-              artwork: m.external_metadata?.spotify?.album?.images?.[0]?.url || null,
-            });
-            await loadLyrics(m.title, m.artists?.[0]?.name || "");
+            const spotifyArt = m.external_metadata?.spotify?.album?.images?.[0]?.url || null;
+            const title  = m.title;
+            const artist = m.artists?.[0]?.name || "Unknown Artist";
+
+            // Fetch artwork from iTunes if Spotify didn't provide it
+            let artwork = spotifyArt;
+            if (!artwork) {
+              try {
+                const itunes = await fetch(`https://itunes.apple.com/search?term=${encodeURIComponent(artist + " " + title)}&entity=song&limit=1`).then(r => r.json());
+                artwork = itunes.results?.[0]?.artworkUrl100?.replace("100x100bb", "600x600bb") || null;
+              } catch {}
+            }
+
+            setDetectedSong({ title, artist, album: m.album?.name || "", artwork });
+            await loadLyrics(title, artist);
             setMode("confirmed");
             return true;
           }
