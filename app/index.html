@@ -47,7 +47,7 @@
       : "/api/recognize";
 
     // How many seconds we add to ACRCloud's offset to correct for processing lag
-    const PLAYBACK_OFFSET_CORRECTION = 2;
+    const PLAYBACK_OFFSET_CORRECTION = 3;
 
     function parseLRC(lrc) {
       const re = /\[(\d{2}):(\d{2})[.:](\d{2,3})\](.*)/;
@@ -674,11 +674,11 @@
 
               <div className="safe-bottom" style={{ padding:"12px 20px 0", flexShrink:0 }}>
                 <div style={{ display:"flex", justifyContent:"center", alignItems:"center", gap:"8px", marginBottom:"12px" }}>
-                  {[["−5s",-5],["−2s",-2]].map(([label,s]) => (
+                  {[["−5s",-5],["−2s",-2],["−1s",-1]].map(([label,s]) => (
                     <button key={label} onClick={() => nudge(s)} style={{ background:"rgba(255,255,255,0.07)", border:"1px solid rgba(255,255,255,0.1)", color:"rgba(255,255,255,0.5)", padding:"8px 14px", borderRadius:"20px", cursor:"pointer", fontSize:"12px", fontFamily:"inherit" }}>{label}</button>
                   ))}
                   <button onClick={reset} style={{ background:"rgba(212,168,70,0.12)", border:"1px solid rgba(212,168,70,0.3)", color:"#d4a846", padding:"8px 20px", borderRadius:"20px", cursor:"pointer", fontSize:"12px", fontFamily:"inherit", fontWeight:"600" }}>Stop</button>
-                  {[["2s+",2],["5s+",5]].map(([label,s]) => (
+                  {[["1s+",1],["2s+",2],["5s+",5]].map(([label,s]) => (
                     <button key={label} onClick={() => nudge(s)} style={{ background:"rgba(255,255,255,0.07)", border:"1px solid rgba(255,255,255,0.1)", color:"rgba(255,255,255,0.5)", padding:"8px 14px", borderRadius:"20px", cursor:"pointer", fontSize:"12px", fontFamily:"inherit" }}>{label}</button>
                   ))}
                 </div>
