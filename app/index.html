@@ -178,6 +178,7 @@
 
       // ── Vinyl auto mode ──
       const [vinylMode, setVinylMode]         = useState(() => localStorage.getItem("liri_vinyl_mode") === "true");
+      const [tracksPerSide, setTracksPerSide] = useState(() => parseInt(localStorage.getItem("liri_tracks_per_side") || "0")); // 0 = auto
       const autoAdvanceFiredRef               = useRef(false);
       const autoRetryCountRef                 = useRef(0);
 
@@ -190,6 +191,7 @@
       // ── Resync / advance flags ──
       const [isResyncing, setIsResyncing]             = useState(false);
       const [shouldAdvanceTrack, setShouldAdvanceTrack] = useState(false);
+      const [sideEndReason, setSideEndReason]         = useState("failed"); // "failed" | "flip" | "album-end"
 
       // ── Nudge expand ──
       const [nudgeMenu, setNudgeMenu]         = useState(null); // null | "left" | "right"
@@ -239,6 +241,10 @@
       const toggleVinylMode = (val) => {
         setVinylMode(val);
         localStorage.setItem("liri_vinyl_mode", String(val));
+      };
+      const updateTracksPerSide = (val) => {
+        setTracksPerSide(val);
+        localStorage.setItem("liri_tracks_per_side", String(val));
       };
 
       // ── Usage fetch ──
@@ -471,6 +477,7 @@
             } else {
               // Two failures = probably end of side
               autoRetryCountRef.current = 0;
+              setSideEndReason("failed");
               setMode("side-end");
             }
             return false;
@@ -486,6 +493,7 @@
               setTimeout(() => startListening(true), 4000);
             } else {
               autoRetryCountRef.current = 0;
+              setSideEndReason("failed");
               setMode("side-end");
             }
             return false;
@@ -561,10 +569,50 @@
         } catch { return []; }
       };
 
+      // ── Determine side-flip points ──
+      // Returns an array of track indices that are the LAST track of each side.
+      // e.g. for 12 tracks / 3 per side → [2, 5, 8, 11]
+      // tracksPerSide=0 means auto-detect via duration (assumes 2 sides).
+      const getSideEndIndices = (tracks, tps) => {
+        if (tracks.length <= 1) return [];
+        if (tps > 0) {
+          // User told us exactly how many tracks per side
+          const ends = [];
+          for (let i = tps - 1; i < tracks.length; i += tps) ends.push(i);
+          // Make sure the last track of the album is always included
+          if (ends[ends.length - 1] !== tracks.length - 1) ends.push(tracks.length - 1);
+          return ends;
+        }
+        // Auto: split into 2 sides by cumulative duration
+        const totalMs = tracks.reduce((s, t) => s + (t.trackTimeMillis || 0), 0);
+        if (!totalMs) return [Math.ceil(tracks.length / 2) - 1, tracks.length - 1];
+        let cumulative = 0;
+        for (let i = 0; i < tracks.length - 1; i++) {
+          cumulative += (tracks[i].trackTimeMillis || 0);
+          if (cumulative >= totalMs / 2) return [i, tracks.length - 1];
+        }
+        return [Math.ceil(tracks.length / 2) - 1, tracks.length - 1];
+      };
+
       // ── Advance to the next track using the known tracklist (no re-listening) ──
       const advanceToNextTrack = async (tracks, idx) => {
         const nextIdx = idx + 1;
-        if (!tracks[nextIdx]) { startListening(true); return; }
+
+        // Check against side-end points
+        const sideEnds = getSideEndIndices(tracks, tracksPerSide);
+        const isLastTrack = idx === tracks.length - 1;
+        const isSideEnd   = sideEnds.includes(idx);
+
+        if (isLastTrack) {
+          setSideEndReason("album-end");
+          setMode("side-end");
+          return;
+        }
+        if (isSideEnd) {
+          setSideEndReason("flip");
+          setMode("side-end");
+          return;
+        }
         const next = tracks[nextIdx];
         const nextTitle  = next.trackName;
         const nextArtist = next.artistName || detectedSong?.artist || "";
@@ -642,7 +690,7 @@
         setMode("idle"); setDetectedSong(null); setSongDuration(null); setLyrics([]);
         setCurrentIndex(0); setError(null); setListenProgress(0); setPlaybackTime(0);
         setAlbumTracks([]); setCurrentTrackIndex(-1);
-        setShouldAdvanceTrack(false); setIsResyncing(false);
+        setShouldAdvanceTrack(false); setIsResyncing(false); setSideEndReason("failed");
       };
 
       // ─────────────────────────────────────────
@@ -894,9 +942,35 @@
                     </div>
                   </div>
                   <div style={{ fontSize:"12px", color:"rgba(255,255,255,0.3)", lineHeight:"1.6" }}>
-                    Auto-advance between tracks on a record. Listens at song end to detect the next one. Stops after two failed detections (end of side).
+                    Auto-advances through the album tracklist without re-listening. Prompts you to flip at side boundaries. Set tracks per side below for multi-sided albums.
                   </div>
                 </div>
+
+                {/* Tracks per side — only shown when vinyl mode is on */}
+                {vinylMode && (
+                  <div style={{ background:"rgba(255,255,255,0.03)", border:"1px solid rgba(255,255,255,0.07)", borderRadius:"16px", padding:"16px 18px", marginBottom:"16px" }}>
+                    <div style={{ fontSize:"14px", fontWeight:"600", color:"#f0e6d3", marginBottom:"6px" }}>Tracks per side</div>
+                    <div style={{ fontSize:"12px", color:"rgba(255,255,255,0.3)", marginBottom:"12px", lineHeight:"1.5" }}>
+                      Set this for multi-sided LPs (4-side, 6-side, etc.). Leave on Auto for standard 2-sided records.
+                    </div>
+                    <div style={{ display:"flex", gap:"8px", flexWrap:"wrap" }}>
+                      {[["Auto", 0], ["2", 2], ["3", 3], ["4", 4], ["5", 5], ["6", 6]].map(([label, val]) => (
+                        <button key={val} onClick={() => updateTracksPerSide(val)} style={{
+                          background: tracksPerSide === val ? "linear-gradient(135deg, #d4a846, #c9807a)" : "rgba(255,255,255,0.06)",
+                          border: tracksPerSide === val ? "none" : "1px solid rgba(255,255,255,0.1)",
+                          color: tracksPerSide === val ? "#080810" : "rgba(255,255,255,0.5)",
+                          borderRadius:"20px", padding:"7px 16px", fontSize:"13px", fontWeight: tracksPerSide === val ? "700" : "400",
+                          cursor:"pointer", fontFamily:"inherit", transition:"all 0.15s"
+                        }}>{label}</button>
+                      ))}
+                    </div>
+                    {tracksPerSide > 0 && (
+                      <div style={{ fontSize:"11px", color:"rgba(212,168,70,0.5)", marginTop:"10px" }}>
+                        ✦ Flip prompt every {tracksPerSide} track{tracksPerSide !== 1 ? "s" : ""}
+                      </div>
+                    )}
+                  </div>
+                )}
 
                 {/* Pro section */}
                 <div style={{ background:"rgba(212,168,70,0.07)", border:"1px solid rgba(212,168,70,0.15)", borderRadius:"16px", padding:"16px 18px", marginBottom:"20px" }}>
@@ -1127,15 +1201,37 @@
                   </div>
                 )}
 
-                {/* SIDE END — shown when vinyl auto mode can't find next track */}
+                {/* SIDE END */}
                 {mode === "side-end" && (
                   <div style={{ maxWidth:"300px", animation:"fade-up 0.3s ease both", textAlign:"center" }}>
                     <Vinyl size={100} spinning={false} />
-                    <div style={{ marginTop:"32px", fontSize:"22px", fontWeight:"700", color:"#f0e6d3", marginBottom:"12px" }}>End of side?</div>
-                    <div style={{ color:"rgba(255,255,255,0.4)", marginBottom:"36px", lineHeight:"1.8", fontSize:"15px" }}>
-                      Couldn't detect another track.<br/>Flip your record and tap Listen to continue.
-                    </div>
-                    <button onClick={reset} style={{ background:"linear-gradient(135deg, #d4a846, #c9807a)", color:"#080810", border:"none", borderRadius:"50px", padding:"14px 36px", fontSize:"14px", fontWeight:"700", cursor:"pointer", fontFamily:"inherit" }}>Start Side B</button>
+                    {sideEndReason === "flip" && (
+                      <>
+                        <div style={{ marginTop:"32px", fontSize:"22px", fontWeight:"700", color:"#f0e6d3", marginBottom:"12px" }}>Time to flip! 💿</div>
+                        <div style={{ color:"rgba(255,255,255,0.4)", marginBottom:"36px", lineHeight:"1.8", fontSize:"15px" }}>
+                          That's the end of Side A.<br/>Flip your record, drop the needle,<br/>then tap Listen.
+                        </div>
+                        <button onClick={() => { reset(); setTimeout(() => startListening(false), 300); }} style={{ background:"linear-gradient(135deg, #d4a846, #c9807a)", color:"#080810", border:"none", borderRadius:"50px", padding:"14px 36px", fontSize:"14px", fontWeight:"700", cursor:"pointer", fontFamily:"inherit" }}>Flip &amp; Listen →</button>
+                      </>
+                    )}
+                    {sideEndReason === "album-end" && (
+                      <>
+                        <div style={{ marginTop:"32px", fontSize:"22px", fontWeight:"700", color:"#f0e6d3", marginBottom:"12px" }}>That's the album ✓</div>
+                        <div style={{ color:"rgba(255,255,255,0.4)", marginBottom:"36px", lineHeight:"1.8", fontSize:"15px" }}>
+                          You've reached the end.<br/>Put on another record to keep going.
+                        </div>
+                        <button onClick={reset} style={{ background:"linear-gradient(135deg, #d4a846, #c9807a)", color:"#080810", border:"none", borderRadius:"50px", padding:"14px 36px", fontSize:"14px", fontWeight:"700", cursor:"pointer", fontFamily:"inherit" }}>New Record →</button>
+                      </>
+                    )}
+                    {sideEndReason === "failed" && (
+                      <>
+                        <div style={{ marginTop:"32px", fontSize:"22px", fontWeight:"700", color:"#f0e6d3", marginBottom:"12px" }}>End of side?</div>
+                        <div style={{ color:"rgba(255,255,255,0.4)", marginBottom:"36px", lineHeight:"1.8", fontSize:"15px" }}>
+                          Couldn't detect another track.<br/>Flip your record and tap Listen to continue.
+                        </div>
+                        <button onClick={reset} style={{ background:"linear-gradient(135deg, #d4a846, #c9807a)", color:"#080810", border:"none", borderRadius:"50px", padding:"14px 36px", fontSize:"14px", fontWeight:"700", cursor:"pointer", fontFamily:"inherit" }}>Start Side B</button>
+                      </>
+                    )}
                   </div>
                 )}
 
