@@ -193,6 +193,12 @@
       const [shouldAdvanceTrack, setShouldAdvanceTrack] = useState(false);
       const [sideEndReason, setSideEndReason]         = useState("failed"); // "failed" | "flip" | "album-end"
 
+      // ── Per-album side learning ──
+      const [albumCollectionId, setAlbumCollectionId] = useState(null);
+      const albumTpsRef                               = useRef(0); // effective tps for current album (0 = use global/auto)
+      const [showSidesModal, setShowSidesModal]       = useState(false);
+      const [flipFeedback, setFlipFeedback]           = useState(null); // null | "confirmed" | "wrong" | "adjusted"
+
       // ── Nudge expand ──
       const [nudgeMenu, setNudgeMenu]         = useState(null); // null | "left" | "right"
       const nudgeMenuTimerRef                 = useRef(null);
@@ -245,6 +251,37 @@
       const updateTracksPerSide = (val) => {
         setTracksPerSide(val);
         localStorage.setItem("liri_tracks_per_side", String(val));
+      };
+
+      // ── Per-album side data (localStorage, keyed by iTunes collectionId) ──
+      const getAlbumSideData = (cid) => {
+        if (!cid) return null;
+        try { return JSON.parse(localStorage.getItem(`liri_album_sides_${cid}`) || "null"); }
+        catch { return null; }
+      };
+      const saveAlbumSideData = (cid, sides, totalTracks) => {
+        if (!cid || !totalTracks) return;
+        const tps = Math.ceil(totalTracks / sides);
+        const existing = getAlbumSideData(cid) || {};
+        const data = { ...existing, tps, sides, totalTracks, confirmed: (existing.confirmed || 0) + 1 };
+        localStorage.setItem(`liri_album_sides_${cid}`, JSON.stringify(data));
+        albumTpsRef.current = tps;
+      };
+      const confirmFlipCorrect = (cid) => {
+        if (!cid) return;
+        const existing = getAlbumSideData(cid);
+        if (!existing) return;
+        const data = { ...existing, confirmed: (existing.confirmed || 0) + 1 };
+        localStorage.setItem(`liri_album_sides_${cid}`, JSON.stringify(data));
+      };
+      const adjustFlipPoint = (cid, delta) => {
+        if (!cid) return;
+        const existing = getAlbumSideData(cid);
+        if (!existing) return;
+        const newTps = Math.max(1, (existing.tps || 1) + delta);
+        const data = { ...existing, tps: newTps };
+        localStorage.setItem(`liri_album_sides_${cid}`, JSON.stringify(data));
+        albumTpsRef.current = newTps;
       };
 
       // ── Usage fetch ──
@@ -455,10 +492,22 @@
 
             // Fetch album tracklist in the background — non-blocking so it
             // never interferes with recognition or sync startup
-            fetchAlbumTracks(title, artist).then(tracks => {
+            fetchAlbumTracks(title, artist).then(({ tracks, collectionId }) => {
               setAlbumTracks(tracks);
+              setAlbumCollectionId(collectionId);
               const tIdx = tracks.findIndex(t => t.trackName?.toLowerCase() === title.toLowerCase());
               setCurrentTrackIndex(tIdx >= 0 ? tIdx : 0);
+              // Check stored side data for this album
+              if (collectionId) {
+                const stored = getAlbumSideData(collectionId);
+                if (stored?.tps) {
+                  albumTpsRef.current = stored.tps; // use known-good data
+                } else if (tracks.length > 1) {
+                  albumTpsRef.current = 0; // will fall back to heuristic
+                  // First time seeing this record — ask after 2s (so recognition UI settles)
+                  setTimeout(() => setShowSidesModal(true), 2000);
+                }
+              }
             }).catch(() => {});
 
             return true;
@@ -553,20 +602,22 @@
       };
 
       // ── Fetch full album tracklist from iTunes ──
+      // Returns { tracks: [...], collectionId: "12345" | null }
       const fetchAlbumTracks = async (title, artist) => {
         try {
           const search = await fetch(
             `https://itunes.apple.com/search?term=${encodeURIComponent(artist + " " + title)}&entity=song&limit=5`
           ).then(r => r.json());
           const hit = search.results?.find(r => r.wrapperType === "track");
-          if (!hit?.collectionId) return [];
+          if (!hit?.collectionId) return { tracks: [], collectionId: null };
           const lookup = await fetch(
             `https://itunes.apple.com/lookup?id=${hit.collectionId}&entity=song`
           ).then(r => r.json());
-          return (lookup.results || [])
+          const tracks = (lookup.results || [])
             .filter(t => t.wrapperType === "track")
             .sort((a, b) => a.trackNumber - b.trackNumber);
-        } catch { return []; }
+          return { tracks, collectionId: String(hit.collectionId) };
+        } catch { return { tracks: [], collectionId: null }; }
       };
 
       // ── Determine side-flip points ──
@@ -598,8 +649,10 @@
       const advanceToNextTrack = async (tracks, idx) => {
         const nextIdx = idx + 1;
 
+        // Use per-album stored tps if available, otherwise global setting
+        const effectiveTps = albumTpsRef.current > 0 ? albumTpsRef.current : tracksPerSide;
         // Check against side-end points
-        const sideEnds = getSideEndIndices(tracks, tracksPerSide);
+        const sideEnds = getSideEndIndices(tracks, effectiveTps);
         const isLastTrack = idx === tracks.length - 1;
         const isSideEnd   = sideEnds.includes(idx);
 
@@ -610,6 +663,7 @@
         }
         if (isSideEnd) {
           setSideEndReason("flip");
+          setFlipFeedback(null); // reset feedback for fresh confirmation each time
           setMode("side-end");
           return;
         }
@@ -691,6 +745,8 @@
         setCurrentIndex(0); setError(null); setListenProgress(0); setPlaybackTime(0);
         setAlbumTracks([]); setCurrentTrackIndex(-1);
         setShouldAdvanceTrack(false); setIsResyncing(false); setSideEndReason("failed");
+        setShowSidesModal(false); setFlipFeedback(null); setAlbumCollectionId(null);
+        albumTpsRef.current = 0;
       };
 
       // ─────────────────────────────────────────
@@ -870,6 +926,29 @@
                 {Array.from({ length: ONBOARDING_STEPS }).map((_, i) => (
                   <div key={i} onClick={() => setOnboardingStep(i)} style={{ width: i === onboardingStep ? "20px" : "6px", height:"6px", borderRadius:"3px", background: i === onboardingStep ? "#d4a846" : "rgba(255,255,255,0.15)", transition:"all 0.3s ease", cursor:"pointer" }} />
                 ))}
+              </div>
+            </div>
+          )}
+
+          {/* ── SIDES MODAL ── */}
+          {showSidesModal && vinylMode && (
+            <div style={{ position:"fixed", inset:0, zIndex:200, background:"rgba(8,8,16,0.85)", backdropFilter:"blur(12px)", display:"flex", alignItems:"flex-end", justifyContent:"center" }}>
+              <div style={{ width:"100%", maxWidth:"420px", background:"#12121e", border:"1px solid rgba(255,255,255,0.08)", borderRadius:"24px 24px 0 0", padding:"20px 24px max(32px,calc(env(safe-area-inset-bottom)+16px))", animation:"slide-up 0.3s ease both" }}>
+                <div style={{ width:"36px", height:"4px", background:"rgba(255,255,255,0.15)", borderRadius:"2px", margin:"0 auto 20px" }} />
+                <div style={{ fontSize:"16px", fontWeight:"700", color:"#f0e6d3", marginBottom:"6px", textAlign:"center" }}>How many sides does this record have?</div>
+                <div style={{ fontSize:"13px", color:"rgba(255,255,255,0.3)", textAlign:"center", marginBottom:"24px", lineHeight:"1.6" }}>Liri will remember this and get better at<br/>detecting when it's time to flip</div>
+                <div style={{ display:"flex", gap:"10px", justifyContent:"center", marginBottom:"16px" }}>
+                  {[1, 2, 3, 4].map(n => (
+                    <button key={n} onClick={() => {
+                      saveAlbumSideData(albumCollectionId, n, albumTracksRef.current.length);
+                      setShowSidesModal(false);
+                    }} style={{ flex:1, maxWidth:"72px", background:"rgba(255,255,255,0.05)", border:"1px solid rgba(255,255,255,0.12)", color:"#f0e6d3", borderRadius:"16px", padding:"18px 8px", fontSize:"22px", fontWeight:"700", cursor:"pointer", fontFamily:"inherit" }}>
+                      {n}
+                    </button>
+                  ))}
+                </div>
+                <div style={{ textAlign:"center", fontSize:"11px", color:"rgba(255,255,255,0.18)", marginBottom:"8px" }}>1 side · 2 sides · 3 sides · 4 sides</div>
+                <button onClick={() => setShowSidesModal(false)} style={{ width:"100%", background:"none", border:"none", color:"rgba(255,255,255,0.2)", padding:"12px", fontSize:"13px", cursor:"pointer", fontFamily:"inherit" }}>Skip for now</button>
               </div>
             </div>
           )}
@@ -1212,6 +1291,36 @@
                           That's the end of Side A.<br/>Flip your record, drop the needle,<br/>then tap Listen.
                         </div>
                         <button onClick={() => { reset(); setTimeout(() => startListening(false), 300); }} style={{ background:"linear-gradient(135deg, #d4a846, #c9807a)", color:"#080810", border:"none", borderRadius:"50px", padding:"14px 36px", fontSize:"14px", fontWeight:"700", cursor:"pointer", fontFamily:"inherit" }}>Flip &amp; Listen →</button>
+
+                        {/* Flip-point feedback — helps Liri learn */}
+                        {albumCollectionId && flipFeedback === null && (
+                          <div style={{ marginTop:"28px" }}>
+                            <div style={{ fontSize:"12px", color:"rgba(255,255,255,0.22)", marginBottom:"12px" }}>Was that the right flip point?</div>
+                            <div style={{ display:"flex", gap:"10px", justifyContent:"center" }}>
+                              <button onClick={() => { confirmFlipCorrect(albumCollectionId); setFlipFeedback("confirmed"); }}
+                                style={{ background:"rgba(106,170,138,0.12)", border:"1px solid rgba(106,170,138,0.3)", color:"#6aaa8a", borderRadius:"50px", padding:"8px 22px", fontSize:"13px", cursor:"pointer", fontFamily:"inherit" }}>✓ Yes</button>
+                              <button onClick={() => setFlipFeedback("wrong")}
+                                style={{ background:"rgba(232,160,168,0.08)", border:"1px solid rgba(232,160,168,0.2)", color:"#e8a0a8", borderRadius:"50px", padding:"8px 22px", fontSize:"13px", cursor:"pointer", fontFamily:"inherit" }}>✗ Not quite</button>
+                            </div>
+                          </div>
+                        )}
+                        {albumCollectionId && flipFeedback === "confirmed" && (
+                          <div style={{ marginTop:"20px", fontSize:"13px", color:"rgba(106,170,138,0.65)" }}>Thanks! Liri gets smarter every time 🎵</div>
+                        )}
+                        {albumCollectionId && flipFeedback === "wrong" && (
+                          <div style={{ marginTop:"28px" }}>
+                            <div style={{ fontSize:"12px", color:"rgba(255,255,255,0.22)", marginBottom:"12px" }}>Did it flip too early or too late?</div>
+                            <div style={{ display:"flex", gap:"10px", justifyContent:"center" }}>
+                              <button onClick={() => { adjustFlipPoint(albumCollectionId, 1); setFlipFeedback("adjusted"); }}
+                                style={{ background:"rgba(255,255,255,0.05)", border:"1px solid rgba(255,255,255,0.1)", color:"rgba(255,255,255,0.55)", borderRadius:"50px", padding:"8px 20px", fontSize:"12px", cursor:"pointer", fontFamily:"inherit" }}>← Too early</button>
+                              <button onClick={() => { adjustFlipPoint(albumCollectionId, -1); setFlipFeedback("adjusted"); }}
+                                style={{ background:"rgba(255,255,255,0.05)", border:"1px solid rgba(255,255,255,0.1)", color:"rgba(255,255,255,0.55)", borderRadius:"50px", padding:"8px 20px", fontSize:"12px", cursor:"pointer", fontFamily:"inherit" }}>Too late →</button>
+                            </div>
+                          </div>
+                        )}
+                        {albumCollectionId && flipFeedback === "adjusted" && (
+                          <div style={{ marginTop:"20px", fontSize:"13px", color:"rgba(212,168,70,0.65)" }}>Got it — I'll adjust next time 🎵</div>
+                        )}
                       </>
                     )}
                     {sideEndReason === "album-end" && (
