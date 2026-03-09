@@ -181,6 +181,16 @@
       const autoAdvanceFiredRef               = useRef(false);
       const autoRetryCountRef                 = useRef(0);
 
+      // ── Album tracklist (for vinyl auto-advance without re-listening) ──
+      const [albumTracks, setAlbumTracks]             = useState([]);
+      const [currentTrackIndex, setCurrentTrackIndex] = useState(-1);
+      const albumTracksRef                            = useRef([]);
+      const currentTrackIndexRef                      = useRef(-1);
+
+      // ── Resync / advance flags ──
+      const [isResyncing, setIsResyncing]             = useState(false);
+      const [shouldAdvanceTrack, setShouldAdvanceTrack] = useState(false);
+
       // ── Nudge expand ──
       const [nudgeMenu, setNudgeMenu]         = useState(null); // null | "left" | "right"
       const nudgeMenuTimerRef                 = useRef(null);
@@ -222,6 +232,8 @@
       const currentLineRef   = useRef(null);
 
       useEffect(() => { lyricsRef.current = lyrics; }, [lyrics]);
+      useEffect(() => { albumTracksRef.current = albumTracks; }, [albumTracks]);
+      useEffect(() => { currentTrackIndexRef.current = currentTrackIndex; }, [currentTrackIndex]);
 
       // ── Vinyl mode persistence ──
       const toggleVinylMode = (val) => {
@@ -305,13 +317,26 @@
       // ── Vinyl auto-advance: trigger when song nears its end ──
       useEffect(() => {
         if (!vinylMode || mode !== "syncing" || !songDuration) return;
-        // Fire when we're within 2s of the song end
         if (playbackTime >= songDuration - 2 && !autoAdvanceFiredRef.current) {
           autoAdvanceFiredRef.current = true;
-          // Short pause then auto-listen for next track
-          setTimeout(() => startListening(true), 3000);
+          // Small pause for the groove gap, then advance
+          setTimeout(() => setShouldAdvanceTrack(true), 3000);
         }
       }, [playbackTime, songDuration, vinylMode, mode]);
+
+      // ── Handle track advance (runs with fresh state) ──
+      useEffect(() => {
+        if (!shouldAdvanceTrack) return;
+        setShouldAdvanceTrack(false);
+        const tracks = albumTracksRef.current;
+        const idx    = currentTrackIndexRef.current;
+        if (tracks.length > 0 && idx >= 0 && idx < tracks.length - 1) {
+          advanceToNextTrack(tracks, idx);
+        } else {
+          // Unknown tracklist — fall back to listening
+          startListening(true);
+        }
+      }, [shouldAdvanceTrack]);
 
       // ── Cleanup on unmount ──
       useEffect(() => () => {
@@ -329,7 +354,11 @@
         clearInterval(syncIntervalRef.current); // stop any active sync
 
         try {
-          const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+          // Disable iOS audio processing — echo cancellation & noise suppression
+          // mangle vinyl audio before ACRCloud sees it
+          const stream = await navigator.mediaDevices.getUserMedia({
+            audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: false }
+          });
           streamRef.current = stream;
           const mimeType = MediaRecorder.isTypeSupported("audio/webm") ? "audio/webm"
                          : MediaRecorder.isTypeSupported("audio/ogg")  ? "audio/ogg" : "";
@@ -401,6 +430,12 @@
             setDetectedSong(song);
             setSongDuration(duration);
             await loadLyrics(title, artist);
+
+            // Fetch album tracklist for vinyl auto-advance
+            const tracks = await fetchAlbumTracks(title, artist);
+            setAlbumTracks(tracks);
+            const tIdx = tracks.findIndex(t => t.trackName?.toLowerCase() === title.toLowerCase());
+            setCurrentTrackIndex(tIdx >= 0 ? tIdx : 0);
 
             // Save to history, sync cast session, increment usage
             saveToHistory(user, song);
@@ -502,6 +537,92 @@
         nudgeMenuTimerRef.current = setTimeout(() => setNudgeMenu(null), 2500);
       };
 
+      // ── Fetch full album tracklist from iTunes ──
+      const fetchAlbumTracks = async (title, artist) => {
+        try {
+          const search = await fetch(
+            `https://itunes.apple.com/search?term=${encodeURIComponent(artist + " " + title)}&entity=song&limit=5`
+          ).then(r => r.json());
+          const hit = search.results?.find(r => r.wrapperType === "track");
+          if (!hit?.collectionId) return [];
+          const lookup = await fetch(
+            `https://itunes.apple.com/lookup?id=${hit.collectionId}&entity=song`
+          ).then(r => r.json());
+          return (lookup.results || [])
+            .filter(t => t.wrapperType === "track")
+            .sort((a, b) => a.trackNumber - b.trackNumber);
+        } catch { return []; }
+      };
+
+      // ── Advance to the next track using the known tracklist (no re-listening) ──
+      const advanceToNextTrack = async (tracks, idx) => {
+        const nextIdx = idx + 1;
+        if (!tracks[nextIdx]) { startListening(true); return; }
+        const next = tracks[nextIdx];
+        const nextTitle  = next.trackName;
+        const nextArtist = next.artistName || detectedSong?.artist || "";
+        const nextArtwork = next.artworkUrl100?.replace("100x100bb", "600x600bb") || detectedSong?.artwork;
+        const nextDuration = next.trackTimeMillis ? next.trackTimeMillis / 1000 : null;
+        const nextSong = { title: nextTitle, artist: nextArtist, album: next.collectionName || "", artwork: nextArtwork };
+
+        setCurrentTrackIndex(nextIdx);
+        autoAdvanceFiredRef.current = false;
+        detectedAtRef.current = Date.now();
+        initialPosRef.current = 0;
+
+        setDetectedSong(nextSong);
+        setSongDuration(nextDuration);
+        await loadLyrics(nextTitle, nextArtist);
+
+        saveToHistory(user, nextSong);
+        fetchHistory(user);
+        syncCastSession(nextSong, lyricsRef.current, 0);
+        if (!isUnlimited(user)) {
+          const newCount = usageCount + 1;
+          await sb.from("user_usage").upsert({ user_id: user.id, recognition_count: newCount });
+          setUsageCount(newCount);
+        }
+        setMode("confirmed"); // triggers startSync via useEffect
+      };
+
+      // ── Resync: re-listen briefly to fix timing without resetting the song ──
+      const resync = async () => {
+        if (isResyncing) return;
+        setIsResyncing(true);
+        try {
+          const stream = await navigator.mediaDevices.getUserMedia({
+            audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: false }
+          });
+          const mimeType = MediaRecorder.isTypeSupported("audio/webm") ? "audio/webm"
+                         : MediaRecorder.isTypeSupported("audio/ogg")  ? "audio/ogg" : "";
+          const recorder = mimeType ? new MediaRecorder(stream, { mimeType }) : new MediaRecorder(stream);
+          const chunks = [];
+          recorder.ondataavailable = e => { if (e.data.size > 0) chunks.push(e.data); };
+          recorder.onstop = () => stream.getTracks().forEach(t => t.stop());
+          recorder.start(200);
+          await new Promise(resolve => setTimeout(resolve, 6000));
+          if (recorder.state === "recording") recorder.stop();
+          const blob = new Blob(chunks, { type: recorder.mimeType || "audio/webm" });
+          const uint8 = new Uint8Array(await blob.arrayBuffer());
+          let binary = "";
+          for (let i = 0; i < uint8.length; i += 8192)
+            binary += String.fromCharCode(...uint8.subarray(i, i + 8192));
+          const res = await fetch(PROXY_URL, {
+            method: "POST", headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ audio: btoa(binary), mimeType: blob.type || "audio/webm" }),
+          });
+          if (res.ok) {
+            const data = await res.json();
+            if (data.status?.code === 0 && data.metadata?.music?.length > 0) {
+              const m = data.metadata.music[0];
+              initialPosRef.current = (m.play_offset_ms || 0) / 1000 + PLAYBACK_OFFSET_CORRECTION;
+              syncStartRef.current  = Date.now();
+            }
+          }
+        } catch {}
+        setIsResyncing(false);
+      };
+
       const reset = () => {
         clearInterval(syncIntervalRef.current); clearInterval(progressTimerRef.current);
         streamRef.current?.getTracks().forEach(t => t.stop());
@@ -509,6 +630,8 @@
         autoRetryCountRef.current = 0;
         setMode("idle"); setDetectedSong(null); setSongDuration(null); setLyrics([]);
         setCurrentIndex(0); setError(null); setListenProgress(0); setPlaybackTime(0);
+        setAlbumTracks([]); setCurrentTrackIndex(-1);
+        setShouldAdvanceTrack(false); setIsResyncing(false);
       };
 
       // ─────────────────────────────────────────
@@ -868,10 +991,29 @@
                 <div style={{ position:"absolute", bottom:0, left:0, right:0, height:"20vh", background:"linear-gradient(to top, rgba(8,8,16,1), transparent)", pointerEvents:"none" }} />
               </div>
 
+              {/* Resync overlay */}
+              {isResyncing && (
+                <div style={{ position:"absolute", inset:0, zIndex:20, background:"rgba(8,8,16,0.85)", backdropFilter:"blur(6px)", display:"flex", flexDirection:"column", alignItems:"center", justifyContent:"center", gap:"16px" }}>
+                  <Vinyl size={72} spinning={true} />
+                  <div style={{ fontSize:"16px", color:"rgba(255,255,255,0.6)", letterSpacing:"1px" }}>Resyncing…</div>
+                  <div style={{ fontSize:"12px", color:"rgba(255,255,255,0.25)" }}>Hold near your speakers</div>
+                </div>
+              )}
+
               <div className="safe-bottom" style={{ padding:"12px 20px 0", flexShrink:0 }}>
+
+                {/* Vinyl mode: Skip Track button */}
+                {vinylMode && albumTracks.length > 0 && currentTrackIndex < albumTracks.length - 1 && (
+                  <div style={{ textAlign:"center", marginBottom:"10px" }}>
+                    <button onClick={() => advanceToNextTrack(albumTracksRef.current, currentTrackIndexRef.current)} style={{ background:"rgba(255,255,255,0.06)", border:"1px solid rgba(255,255,255,0.12)", color:"rgba(255,255,255,0.5)", borderRadius:"20px", padding:"8px 20px", fontSize:"12px", cursor:"pointer", fontFamily:"inherit" }}>
+                      Skip → {albumTracks[currentTrackIndex + 1]?.trackName || "Next Track"}
+                    </button>
+                  </div>
+                )}
+
                 {/* Nudge hint label */}
                 <div style={{ textAlign:"center", fontSize:"10px", color:"rgba(255,255,255,0.18)", letterSpacing:"2px", textTransform:"uppercase", marginBottom:"8px" }}>
-                  {nudgeMenu ? "tap to adjust more" : "tap ± to sync lyrics"}
+                  {isResyncing ? "listening…" : nudgeMenu ? "tap to adjust more" : "tap ± to sync lyrics"}
                 </div>
                 <div style={{ display:"flex", justifyContent:"center", alignItems:"center", gap:"8px", marginBottom:"12px" }}>
 
@@ -900,7 +1042,9 @@
                     )}
                   </div>
                 </div>
-                <div style={{ textAlign:"center" }}>
+                <div style={{ display:"flex", justifyContent:"center", alignItems:"center", gap:"20px" }}>
+                  <button onClick={resync} disabled={isResyncing} style={{ background:"none", border:"none", color:"rgba(255,255,255,0.3)", cursor: isResyncing ? "wait" : "pointer", fontSize:"12px", fontFamily:"inherit", opacity: isResyncing ? 0.4 : 1 }}>↻ Resync timing</button>
+                  <span style={{ color:"rgba(255,255,255,0.1)", fontSize:"10px" }}>·</span>
                   <button onClick={reset} style={{ background:"none", border:"none", color:"rgba(255,255,255,0.2)", cursor:"pointer", fontSize:"12px", fontFamily:"inherit" }}>Wrong song? Try again</button>
                 </div>
               </div>
