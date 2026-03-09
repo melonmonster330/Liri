@@ -354,10 +354,14 @@
         clearInterval(syncIntervalRef.current); // stop any active sync
 
         try {
-          // Disable iOS audio processing — echo cancellation & noise suppression
-          // mangle vinyl audio before ACRCloud sees it
+          // Prefer raw audio for vinyl — use 'ideal' so browsers that
+          // don't support these constraints don't reject the request
           const stream = await navigator.mediaDevices.getUserMedia({
-            audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: false }
+            audio: {
+              echoCancellation: { ideal: false },
+              noiseSuppression: { ideal: false },
+              autoGainControl: { ideal: false }
+            }
           });
           streamRef.current = stream;
           const mimeType = MediaRecorder.isTypeSupported("audio/webm") ? "audio/webm"
@@ -431,12 +435,6 @@
             setSongDuration(duration);
             await loadLyrics(title, artist);
 
-            // Fetch album tracklist for vinyl auto-advance
-            const tracks = await fetchAlbumTracks(title, artist);
-            setAlbumTracks(tracks);
-            const tIdx = tracks.findIndex(t => t.trackName?.toLowerCase() === title.toLowerCase());
-            setCurrentTrackIndex(tIdx >= 0 ? tIdx : 0);
-
             // Save to history, sync cast session, increment usage
             saveToHistory(user, song);
             fetchHistory(user);
@@ -448,6 +446,15 @@
             }
 
             setMode("confirmed");
+
+            // Fetch album tracklist in the background — non-blocking so it
+            // never interferes with recognition or sync startup
+            fetchAlbumTracks(title, artist).then(tracks => {
+              setAlbumTracks(tracks);
+              const tIdx = tracks.findIndex(t => t.trackName?.toLowerCase() === title.toLowerCase());
+              setCurrentTrackIndex(tIdx >= 0 ? tIdx : 0);
+            }).catch(() => {});
+
             return true;
           }
 
@@ -591,7 +598,11 @@
         setIsResyncing(true);
         try {
           const stream = await navigator.mediaDevices.getUserMedia({
-            audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: false }
+            audio: {
+              echoCancellation: { ideal: false },
+              noiseSuppression: { ideal: false },
+              autoGainControl: { ideal: false }
+            }
           });
           const mimeType = MediaRecorder.isTypeSupported("audio/webm") ? "audio/webm"
                          : MediaRecorder.isTypeSupported("audio/ogg")  ? "audio/ogg" : "";
