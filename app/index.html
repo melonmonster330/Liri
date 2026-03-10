@@ -1,3 +1,35 @@
+<!--
+  app/index.html — Liri Main App
+  ──────────────────────────────────────────────────────────────────────────────
+  The entire Liri web app lives in this single file (React 18 + Babel, no build).
+
+  What it does:
+  • Captures ~8s of audio via the device microphone and sends it to /api/recognize
+  • ACRCloud identifies the song and returns the title, artist, and exact playback offset
+  • Fetches timestamped LRC lyrics from lrclib.net and syncs them in real time
+  • Vinyl Auto Mode: pulls the full album tracklist from iTunes, auto-advances
+    through tracks, and detects side-flip points using:
+      1. Liri Vinyl Database (Supabase) — most accurate, community-verified
+      2. User-confirmed localStorage data — improves with use per-album
+      3. Duration heuristic — fallback for unknown albums
+  • TV Cast: broadcasts the current lyric line to tv.html via Supabase Realtime
+  • Flip reminders: Web Audio API chime + push notification when a side ends
+
+  Key dependencies (all loaded from CDN, no build step required):
+  • React 18 + ReactDOM
+  • Babel standalone (transpiles JSX in-browser)
+  • Supabase JS client
+
+  Supabase tables used:
+  • user_usage       — tracks listen counts per user
+  • song_history     — per-user history of identified songs
+  • cast_sessions    — real-time TV cast state
+  • vinyl_releases   — community vinyl pressing data
+  • vinyl_tracks     — per-track side/position data for flip detection
+
+  No environment variables needed client-side — all secrets live server-side
+  in api/recognize.js (Vercel environment variables).
+-->
 <!DOCTYPE html>
 <html lang="en">
 <head>

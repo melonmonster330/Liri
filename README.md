@@ -1,75 +1,140 @@
-# Liri 🎵
+# Liri 💿
 ### Real-Time Lyric Sync for Vinyl
 
-> Liri listens to your record player, identifies the song, and displays synchronized lyrics as the music plays — so you can stay in the moment instead of searching.
+> Liri listens to your record player, identifies the song, and displays synchronized lyrics — line by line, in real time. Built for vinyl lovers, not streaming.
 
 ---
 
-## What's in this folder
+## Repo structure
 
 ```
 liri/
-├── index.html          ← The working app. Open this in any browser.
-├── liri.jsx            ← Same app as React JSX (for Claude/dev previews)
-├── README.md           ← This file
-└── docs/
-    ├── ROADMAP.md      ← Big picture: Samsung TV, marketing, growth
-    ├── LEGAL.md        ← Licensing research: lyrics, fingerprinting, display rights
-    └── ARCHITECTURE.md ← How the code works and why decisions were made
+│
+├── index.html                 ← Public landing page (waitlist, features)
+├── tv.html                    ← TV cast view — displays lyrics on a big screen
+│                                 via Supabase real-time (open on any browser)
+│
+├── app/
+│   ├── index.html             ← The main Liri app (React + Babel, no build step)
+│   └── add-vinyl.html         ← Community vinyl contribution form
+│                                 (add side/track data for a record)
+│
+├── api/
+│   └── recognize.js           ← Vercel serverless function: ACRCloud proxy
+│                                 (keeps API credentials server-side)
+│
+├── supabase/
+│   └── vinyl_schema.sql       ← Run once in Supabase SQL editor to create
+│                                 the vinyl database tables
+│
+├── docs/
+│   ├── ARCHITECTURE.md        ← How the code works and why
+│   ├── ROADMAP.md             ← Big picture: TV app, growth, monetization
+│   ├── LEGAL.md               ← Licensing notes: lyrics, fingerprinting
+│   └── ACTION_PLAN.md         ← Near-term priorities
+│
+├── resources/
+│   └── icon.png               ← App icon (used by Capacitor for iOS build)
+│
+├── capacitor.config.json      ← Capacitor config for iOS packaging
+│   (appId: com.getliri.app, webDir: app/)
+│
+├── vercel.json                ← Deployment config and URL rewrites
+├── package.json               ← Capacitor dependencies + npm scripts
+└── .gitignore
 ```
 
 ---
 
-## How to run it
+## How to run the app
 
-1. Open `index.html` in Chrome, Safari, or Firefox
-2. Allow microphone access when the browser asks
-3. Put on a Taylor Swift record
-4. Tap **Listen**, hold your device near the speakers
-5. Liri identifies the song and syncs the lyrics automatically
+No build step. No terminal required.
 
-No installation. No terminal. No build step.
-
----
-
-## How it works (short version)
-
-1. **Record** — captures 8 seconds of audio via device microphone
-2. **Detect** — sends audio to [AudD](https://audd.io) which returns the song title + timecode (where in the song the record was playing)
-3. **Fetch** — pulls timestamped lyrics from [lrclib.net](https://lrclib.net)
-4. **Sync** — runs a timer from the detected timecode, advancing through lyrics in real time
-5. **Display** — current lyric line is highlighted; adjacent lines fade in and out
+1. Visit `getliri.com/app` (or open `app/index.html` locally via a dev server)
+2. Allow microphone access when prompted
+3. Put on a record and start playing
+4. Tap **Listen**, hold your phone near the speakers
+5. Liri identifies the song and syncs lyrics automatically
 
 ---
 
-## If lyrics are running ahead or behind
+## How it works
 
-Use the **← 2s / ← 5s / 2s → / 5s →** buttons at the bottom of the sync screen to nudge the timing. This compensates for turntable speed variation or a needle that landed a beat off.
+| Step | What happens |
+|---|---|
+| **Listen** | Captures ~8 seconds of audio via device microphone |
+| **Detect** | Sends audio to ACRCloud — returns song title, artist, and exact playback offset |
+| **Fetch lyrics** | Pulls timestamped LRC lyrics from [lrclib.net](https://lrclib.net) |
+| **Sync** | Runs a timer from the detected timecode, advancing through lyrics in real time |
+| **Display** | Current lyric highlighted; adjacent lines fade in/out |
+
+In **Vinyl Auto Mode**, Liri also:
+- Fetches the full album tracklist from iTunes after the first song is identified
+- Automatically loads the next track's lyrics as each song ends (no re-listening)
+- Detects side boundaries and prompts you to flip — using our community vinyl database
+  for precision, or a duration heuristic as fallback
 
 ---
 
-## API keys
+## Services used
 
-| Service | Free tier | Where to get a key |
+| Service | Purpose | Key lives in |
 |---|---|---|
-| AudD | ~10 recognitions/day | [audd.io](https://audd.io) |
-| lrclib.net | Unlimited, no key needed | — |
-
-Add your AudD key in the ⚙ settings panel for unlimited recognitions.
-
----
-
-## Current version
-
-**v0.1 — Taylor Swift Edition**
-- All Taylor Swift eras (including TV re-records + vault tracks)
-- Mic-based song detection via AudD
-- Synced lyrics from lrclib.net
-- Drift correction via nudge buttons
-- Album art background
+| [ACRCloud](https://acrcloud.com) | Audio fingerprinting / song identification | Vercel env vars (`ACR_HOST`, `ACR_ACCESS_KEY`, `ACR_ACCESS_SECRET`) |
+| [lrclib.net](https://lrclib.net) | Synced + plain lyrics | No key needed |
+| [iTunes Search API](https://developer.apple.com/library/archive/documentation/AudioVideo/Conceptual/iTuneSearchAPI/) | Album artwork + tracklist | No key needed |
+| [Supabase](https://supabase.com) | Auth, usage tracking, song history, cast sessions, vinyl database | Publishable key in app (safe to expose) |
 
 ---
 
-## What's next
+## Vercel environment variables
 
-See `docs/ROADMAP.md` for the full plan.
+Set these in your Vercel project dashboard under **Settings → Environment Variables**:
+
+```
+ACR_HOST          your-cluster.acrcloud.com
+ACR_ACCESS_KEY    your_access_key
+ACR_ACCESS_SECRET your_access_secret
+```
+
+---
+
+## The Liri Vinyl Database
+
+The community-powered side/track database lives in Supabase. To set it up:
+
+1. Open your Supabase project → SQL Editor
+2. Paste the contents of `supabase/vinyl_schema.sql` and run it
+3. That's it — the tables (`vinyl_releases`, `vinyl_tracks`, `user_vinyl_collections`) are live
+
+Users can contribute records at `/add-vinyl`. Submissions are public and improve flip
+detection for everyone who plays that album.
+
+---
+
+## iOS (Capacitor)
+
+The app is packaged for iOS using Capacitor. The `ios/` folder is gitignored — generate it with:
+
+```bash
+npm install
+npx cap add ios     # first time only
+npx cap sync        # after changes to app/
+npx cap open ios    # open in Xcode
+```
+
+The app ID is `com.getliri.app`. The web root is the `app/` folder.
+
+---
+
+## TV cast
+
+Navigate to `getliri.com/tv?room=ROOMCODE` on any browser. While Liri is syncing
+on your phone, tap the 📺 icon to get your room code and QR link. Supabase real-time
+keeps the TV view in sync automatically.
+
+---
+
+## Current version: v0.5
+
+See `docs/ROADMAP.md` for what's next.

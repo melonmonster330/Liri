@@ -2,7 +2,8 @@
   "installCommand": "npm install --omit=dev",
   "outputDirectory": ".",
   "rewrites": [
-    { "source": "/app", "destination": "/app/index.html" },
-    { "source": "/tv",  "destination": "/tv.html" }
+    { "source": "/app",       "destination": "/app/index.html"      },
+    { "source": "/add-vinyl", "destination": "/app/add-vinyl.html"  },
+    { "source": "/tv",        "destination": "/tv.html"             }
   ]
 }

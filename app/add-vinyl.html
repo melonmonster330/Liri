@@ -1,3 +1,32 @@
+<!--
+  app/add-vinyl.html — Liri Vinyl Database Contribution Form
+  ──────────────────────────────────────────────────────────────────────────────
+  Community form for adding vinyl release data to the Liri Vinyl Database.
+  Accessible at /add-vinyl (see vercel.json rewrite → app/add-vinyl.html).
+
+  What it does (4-step wizard):
+  • Step 1: Search iTunes by album/artist — auto-populates the full track list
+    and artwork so contributors don't have to type tracks manually
+  • Step 2: Collect pressing details — year, label, catalog number, country,
+    edition, version note, and LP count (handles multiple pressings of the same
+    album, e.g. Taylor Swift variants, coloured vinyl, regional editions)
+  • Step 3: Visual side-assignment UI — ↑/↓ arrows move a FLIP divider between
+    tracks per disc to define Side A vs B (and C/D, E/F for multi-LP sets)
+  • Step 4: Review summary and submit to Supabase
+
+  Why this data matters:
+  The submitted track/side data powers flip detection in Vinyl Auto Mode. Every
+  confirmed contribution makes Liri smarter about when to chime and prompt a flip.
+
+  Supabase tables written:
+  • vinyl_releases — one row per unique pressing/edition
+  • vinyl_tracks   — one row per track with side, position, disc metadata
+
+  Auth: requires a signed-in Supabase user (Google sign-in). Unauthenticated
+  visitors see a sign-in prompt before they can submit.
+
+  Dependencies (CDN, no build step): React 18, Babel standalone, Supabase JS client
+-->
 <!DOCTYPE html>
 <html lang="en">
 <head>
