@@ -199,6 +199,16 @@
       const [showSidesModal, setShowSidesModal]       = useState(false);
       const [flipFeedback, setFlipFeedback]           = useState(null); // null | "confirmed" | "wrong" | "adjusted"
 
+      // ── Liri vinyl database ──
+      const [vinylDbRelease, setVinylDbRelease]       = useState(null); // release from our DB (null if not found)
+      const vinylDbReleaseRef                         = useRef(null);
+      const [inLiriCollection, setInLiriCollection]   = useState(false); // show "✓ In Liri's collection" badge
+
+      // ── Flip notifications ──
+      const [flipSound, setFlipSound]   = useState(() => localStorage.getItem("liri_flip_sound") !== "false");
+      const [flipNotify, setFlipNotify] = useState(() => localStorage.getItem("liri_flip_notify") === "true");
+      const [notifyDenied, setNotifyDenied] = useState(false);
+
       // ── Nudge expand ──
       const [nudgeMenu, setNudgeMenu]         = useState(null); // null | "left" | "right"
       const nudgeMenuTimerRef                 = useRef(null);
@@ -242,6 +252,7 @@
       useEffect(() => { lyricsRef.current = lyrics; }, [lyrics]);
       useEffect(() => { albumTracksRef.current = albumTracks; }, [albumTracks]);
       useEffect(() => { currentTrackIndexRef.current = currentTrackIndex; }, [currentTrackIndex]);
+      useEffect(() => { vinylDbReleaseRef.current = vinylDbRelease; }, [vinylDbRelease]);
 
       // ── Vinyl mode persistence ──
       const toggleVinylMode = (val) => {
@@ -282,6 +293,85 @@
         const data = { ...existing, tps: newTps };
         localStorage.setItem(`liri_album_sides_${cid}`, JSON.stringify(data));
         albumTpsRef.current = newTps;
+      };
+
+      // ── Liri vinyl DB lookup ──
+      const fetchVinylRelease = async (collectionId) => {
+        try {
+          const { data } = await sb
+            .from("vinyl_releases")
+            .select("*, vinyl_tracks(*)")
+            .eq("itunes_collection_id", collectionId)
+            .order("confirmed_count", { ascending: false })
+            .limit(1)
+            .single();
+          return data || null;
+        } catch { return null; }
+      };
+
+      // Convert our DB track list into side-end indices that advanceToNextTrack can use.
+      // Returns an array of iTunes track indices that are the last track of each side.
+      const getDbSideEndIndices = (itunesTracks, dbTracks) => {
+        const sideGroups = {};
+        dbTracks.forEach(t => {
+          if (!sideGroups[t.side]) sideGroups[t.side] = [];
+          sideGroups[t.side].push(t);
+        });
+        const sides = Object.keys(sideGroups).sort();
+        const result = [];
+        // For every side except the last, find the last track of that side in the iTunes list
+        sides.slice(0, -1).forEach(side => {
+          const sorted = sideGroups[side].sort((a, b) => a.track_number_on_side - b.track_number_on_side);
+          const lastTitle = sorted[sorted.length - 1]?.title?.toLowerCase();
+          const idx = itunesTracks.findIndex(t => t.trackName?.toLowerCase() === lastTitle);
+          if (idx >= 0) result.push(idx);
+        });
+        result.push(itunesTracks.length - 1); // album end
+        return result;
+      };
+
+      // ── Flip notifications ──
+      const playFlipChime = () => {
+        if (localStorage.getItem("liri_flip_sound") === "false") return;
+        try {
+          const ctx = new (window.AudioContext || window.webkitAudioContext)();
+          [[523.25, 0], [659.25, 0.35], [783.99, 0.7]].forEach(([freq, delay]) => {
+            const osc = ctx.createOscillator();
+            const gain = ctx.createGain();
+            osc.connect(gain); gain.connect(ctx.destination);
+            osc.type = "sine"; osc.frequency.value = freq;
+            gain.gain.setValueAtTime(0, ctx.currentTime + delay);
+            gain.gain.linearRampToValueAtTime(0.3, ctx.currentTime + delay + 0.02);
+            gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + delay + 1.6);
+            osc.start(ctx.currentTime + delay);
+            osc.stop(ctx.currentTime + delay + 1.6);
+          });
+        } catch {}
+      };
+
+      const showFlipPushNotification = (song) => {
+        if (localStorage.getItem("liri_flip_notify") !== "true") return;
+        if (Notification.permission !== "granted") return;
+        try {
+          new Notification("Time to flip! 💿", {
+            body: song ? `${song.artist} — ${song.album || "Side A done"}` : "Your side has ended — flip the record",
+            icon: song?.artwork || undefined,
+            tag: "liri-flip",  // replaces any previous flip notification
+          });
+        } catch {}
+      };
+
+      const enableFlipNotify = async () => {
+        const perm = await Notification.requestPermission();
+        if (perm === "granted") {
+          setFlipNotify(true);
+          localStorage.setItem("liri_flip_notify", "true");
+          setNotifyDenied(false);
+        } else {
+          setNotifyDenied(true);
+          setFlipNotify(false);
+          localStorage.setItem("liri_flip_notify", "false");
+        }
       };
 
       // ── Usage fetch ──
@@ -490,24 +580,34 @@
 
             setMode("confirmed");
 
-            // Fetch album tracklist in the background — non-blocking so it
-            // never interferes with recognition or sync startup
-            fetchAlbumTracks(title, artist).then(({ tracks, collectionId }) => {
+            // Fetch album tracklist + check Liri's vinyl DB — both non-blocking
+            fetchAlbumTracks(title, artist).then(async ({ tracks, collectionId }) => {
               setAlbumTracks(tracks);
               setAlbumCollectionId(collectionId);
               const tIdx = tracks.findIndex(t => t.trackName?.toLowerCase() === title.toLowerCase());
               setCurrentTrackIndex(tIdx >= 0 ? tIdx : 0);
-              // Check stored side data for this album
-              if (collectionId) {
-                const stored = getAlbumSideData(collectionId);
-                if (stored?.tps) {
-                  albumTpsRef.current = stored.tps; // use known-good data
-                } else if (tracks.length > 1) {
-                  albumTpsRef.current = 0; // will fall back to heuristic
-                  // First time seeing this record — ask after 2s (so recognition UI settles)
-                  setTimeout(() => setShowSidesModal(true), 2000);
-                }
+
+              if (!collectionId || tracks.length === 0) return;
+
+              // 1. Check Liri's global vinyl DB first (most accurate)
+              const dbRelease = await fetchVinylRelease(collectionId);
+              if (dbRelease?.vinyl_tracks?.length > 0) {
+                setVinylDbRelease(dbRelease);
+                setInLiriCollection(true);
+                albumTpsRef.current = 0; // DB data overrides tps
+                return; // no modal needed — we have exact side data
               }
+
+              // 2. Fall back to local learning data
+              const stored = getAlbumSideData(collectionId);
+              if (stored?.tps) {
+                albumTpsRef.current = stored.tps;
+                return;
+              }
+
+              // 3. Nothing known — ask the user and invite them to contribute
+              albumTpsRef.current = 0;
+              setTimeout(() => setShowSidesModal(true), 2000);
             }).catch(() => {});
 
             return true;
@@ -649,10 +749,12 @@
       const advanceToNextTrack = async (tracks, idx) => {
         const nextIdx = idx + 1;
 
-        // Use per-album stored tps if available, otherwise global setting
+        // Use Liri DB side data (most accurate), then local learning, then heuristic
+        const dbRelease = vinylDbReleaseRef.current;
         const effectiveTps = albumTpsRef.current > 0 ? albumTpsRef.current : tracksPerSide;
-        // Check against side-end points
-        const sideEnds = getSideEndIndices(tracks, effectiveTps);
+        const sideEnds = dbRelease?.vinyl_tracks?.length > 0
+          ? getDbSideEndIndices(tracks, dbRelease.vinyl_tracks)
+          : getSideEndIndices(tracks, effectiveTps);
         const isLastTrack = idx === tracks.length - 1;
         const isSideEnd   = sideEnds.includes(idx);
 
@@ -664,6 +766,8 @@
         if (isSideEnd) {
           setSideEndReason("flip");
           setFlipFeedback(null); // reset feedback for fresh confirmation each time
+          playFlipChime();
+          showFlipPushNotification(detectedSong);
           setMode("side-end");
           return;
         }
@@ -746,7 +850,8 @@
         setAlbumTracks([]); setCurrentTrackIndex(-1);
         setShouldAdvanceTrack(false); setIsResyncing(false); setSideEndReason("failed");
         setShowSidesModal(false); setFlipFeedback(null); setAlbumCollectionId(null);
-        albumTpsRef.current = 0;
+        setVinylDbRelease(null); setInLiriCollection(false);
+        albumTpsRef.current = 0; vinylDbReleaseRef.current = null;
       };
 
       // ─────────────────────────────────────────
@@ -935,8 +1040,9 @@
             <div style={{ position:"fixed", inset:0, zIndex:200, background:"rgba(8,8,16,0.85)", backdropFilter:"blur(12px)", display:"flex", alignItems:"flex-end", justifyContent:"center" }}>
               <div style={{ width:"100%", maxWidth:"420px", background:"#12121e", border:"1px solid rgba(255,255,255,0.08)", borderRadius:"24px 24px 0 0", padding:"20px 24px max(32px,calc(env(safe-area-inset-bottom)+16px))", animation:"slide-up 0.3s ease both" }}>
                 <div style={{ width:"36px", height:"4px", background:"rgba(255,255,255,0.15)", borderRadius:"2px", margin:"0 auto 20px" }} />
+                <div style={{ fontSize:"11px", letterSpacing:"2px", color:"rgba(212,168,70,0.5)", textTransform:"uppercase", textAlign:"center", marginBottom:"8px" }}>Not in Liri's collection yet</div>
                 <div style={{ fontSize:"16px", fontWeight:"700", color:"#f0e6d3", marginBottom:"6px", textAlign:"center" }}>How many sides does this record have?</div>
-                <div style={{ fontSize:"13px", color:"rgba(255,255,255,0.3)", textAlign:"center", marginBottom:"24px", lineHeight:"1.6" }}>Liri will remember this and get better at<br/>detecting when it's time to flip</div>
+                <div style={{ fontSize:"13px", color:"rgba(255,255,255,0.3)", textAlign:"center", marginBottom:"24px", lineHeight:"1.6" }}>Liri will remember this for you</div>
                 <div style={{ display:"flex", gap:"10px", justifyContent:"center", marginBottom:"16px" }}>
                   {[1, 2, 3, 4].map(n => (
                     <button key={n} onClick={() => {
@@ -947,7 +1053,12 @@
                     </button>
                   ))}
                 </div>
-                <div style={{ textAlign:"center", fontSize:"11px", color:"rgba(255,255,255,0.18)", marginBottom:"8px" }}>1 side · 2 sides · 3 sides · 4 sides</div>
+                <div style={{ textAlign:"center", fontSize:"11px", color:"rgba(255,255,255,0.18)", marginBottom:"16px" }}>1 LP · 2 sides · 3 sides · 4 sides</div>
+                {/* Invite to contribute */}
+                <a href="/app/add-vinyl.html" style={{ display:"block", textAlign:"center", background:"rgba(212,168,70,0.08)", border:"1px solid rgba(212,168,70,0.2)", borderRadius:"12px", padding:"12px 16px", marginBottom:"8px", color:"#d4a846", fontSize:"13px", textDecoration:"none", lineHeight:"1.6" }}>
+                  💿 Add this record to Liri's collection →<br/>
+                  <span style={{ fontSize:"11px", color:"rgba(255,255,255,0.25)" }}>Help every listener who plays this album</span>
+                </a>
                 <button onClick={() => setShowSidesModal(false)} style={{ width:"100%", background:"none", border:"none", color:"rgba(255,255,255,0.2)", padding:"12px", fontSize:"13px", cursor:"pointer", fontFamily:"inherit" }}>Skip for now</button>
               </div>
             </div>
@@ -1024,6 +1135,49 @@
                     Auto-advances through the album tracklist without re-listening. Prompts you to flip at side boundaries. Set tracks per side below for multi-sided albums.
                   </div>
                 </div>
+
+                {/* Flip reminders — only shown when vinyl mode is on */}
+                {vinylMode && (
+                  <div style={{ background:"rgba(255,255,255,0.03)", border:"1px solid rgba(255,255,255,0.07)", borderRadius:"16px", padding:"16px 18px", marginBottom:"16px" }}>
+                    <div style={{ fontSize:"14px", fontWeight:"600", color:"#f0e6d3", marginBottom:"12px" }}>Flip reminders</div>
+
+                    {/* Sound chime */}
+                    <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", marginBottom:"14px" }}>
+                      <div>
+                        <div style={{ fontSize:"13px", color:"#f0e6d3" }}>Sound chime</div>
+                        <div style={{ fontSize:"11px", color:"rgba(255,255,255,0.3)", marginTop:"2px" }}>Plays a tone when it's time to flip</div>
+                      </div>
+                      <div onClick={() => { const v = !flipSound; setFlipSound(v); localStorage.setItem("liri_flip_sound", String(v)); }}
+                        style={{ width:"40px", height:"24px", borderRadius:"12px", background: flipSound ? "linear-gradient(135deg,#d4a846,#c9807a)" : "rgba(255,255,255,0.1)", cursor:"pointer", position:"relative", transition:"background 0.2s", flexShrink:0 }}>
+                        <div style={{ position:"absolute", top:"3px", left: flipSound ? "19px" : "3px", width:"18px", height:"18px", borderRadius:"50%", background:"white", transition:"left 0.2s", boxShadow:"0 1px 4px rgba(0,0,0,0.3)" }} />
+                      </div>
+                    </div>
+
+                    {/* Push notification */}
+                    <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between" }}>
+                      <div>
+                        <div style={{ fontSize:"13px", color:"#f0e6d3" }}>Push notification</div>
+                        <div style={{ fontSize:"11px", color:"rgba(255,255,255,0.3)", marginTop:"2px", lineHeight:"1.5" }}>Alerts you even when the screen is off</div>
+                      </div>
+                      <div onClick={() => { if (!flipNotify) { enableFlipNotify(); } else { setFlipNotify(false); localStorage.setItem("liri_flip_notify","false"); } }}
+                        style={{ width:"40px", height:"24px", borderRadius:"12px", background: flipNotify ? "linear-gradient(135deg,#d4a846,#c9807a)" : "rgba(255,255,255,0.1)", cursor:"pointer", position:"relative", transition:"background 0.2s", flexShrink:0 }}>
+                        <div style={{ position:"absolute", top:"3px", left: flipNotify ? "19px" : "3px", width:"18px", height:"18px", borderRadius:"50%", background:"white", transition:"left 0.2s", boxShadow:"0 1px 4px rgba(0,0,0,0.3)" }} />
+                      </div>
+                    </div>
+                    {notifyDenied && (
+                      <div style={{ fontSize:"11px", color:"#e8a0a8", marginTop:"8px", lineHeight:"1.5" }}>Notifications were blocked. Enable them in your browser settings.</div>
+                    )}
+
+                    {/* Link to Liri vinyl collection */}
+                    <a href="/app/add-vinyl.html" style={{ display:"flex", alignItems:"center", justifyContent:"space-between", marginTop:"16px", paddingTop:"14px", borderTop:"1px solid rgba(255,255,255,0.07)", textDecoration:"none" }}>
+                      <div>
+                        <div style={{ fontSize:"13px", color:"#d4a846" }}>Add a vinyl to Liri's collection</div>
+                        <div style={{ fontSize:"11px", color:"rgba(255,255,255,0.3)", marginTop:"2px" }}>Help improve flip detection for everyone</div>
+                      </div>
+                      <div style={{ color:"rgba(212,168,70,0.5)", fontSize:"18px" }}>›</div>
+                    </a>
+                  </div>
+                )}
 
                 {/* Tracks per side — only shown when vinyl mode is on */}
                 {vinylMode && (
@@ -1241,6 +1395,9 @@
                     </button>
                     {vinylMode && (
                       <div style={{ marginTop:"16px", fontSize:"12px", color:"rgba(212,168,70,0.5)", letterSpacing:"1px" }}>✦ Vinyl Auto Mode on</div>
+                    )}
+                    {vinylMode && inLiriCollection && (
+                      <div style={{ marginTop:"8px", fontSize:"12px", color:"rgba(106,170,138,0.7)", letterSpacing:"0.5px" }}>✓ In Liri's vinyl collection</div>
                     )}
                     {!isUnlimited(user) && (
                       <div style={{ marginTop:"12px", fontSize:"12px", color:"rgba(255,255,255,0.2)" }}>
