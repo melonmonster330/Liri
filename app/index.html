@@ -867,6 +867,12 @@
       const advanceToNextTrack = async (tracks, idx) => {
         const nextIdx = idx + 1;
 
+        // Stop the running sync interval immediately so stale playbackTime values
+        // can't trigger a false auto-advance on the incoming track. Reset the
+        // display to 0 so the UI reflects the new track from the start.
+        clearInterval(syncIntervalRef.current);
+        setPlaybackTime(0);
+
         // Use Liri DB side data (most accurate), then local learning, then heuristic
         const dbRelease = vinylDbReleaseRef.current;
         const effectiveTps = albumTpsRef.current > 0 ? albumTpsRef.current : tracksPerSide;
