@@ -76,7 +76,7 @@
       "sb_publishable_C-NBnfg0ltAoUi46XQTUjA_ozjZW_Nd"
     );
 
-    const APP_VERSION = "1.02";
+    const APP_VERSION = "1.03";
 
     const PROXY_URL = window.Capacitor
       ? "https://liri-vert.vercel.app/api/recognize"
@@ -155,6 +155,7 @@
       @keyframes wave-3 { from { transform: scaleY(0.6); } to { transform: scaleY(1); } }
       @keyframes fade-up  { from { opacity: 0; transform: translateY(12px); } to { opacity: 1; transform: translateY(0); } }
       @keyframes slide-up { from { transform: translateY(100%); } to { transform: translateY(0); } }
+      @keyframes pulse    { 0%, 100% { opacity: 1; } 50% { opacity: 0.35; } }
       .safe-top { padding-top: max(56px, calc(env(safe-area-inset-top) + 16px)) !important; }
       .safe-bottom { padding-bottom: max(32px, calc(env(safe-area-inset-bottom) + 16px)) !important; }
     `;
@@ -391,6 +392,7 @@
       const progressTimerRef    = useRef(null);
       const currentLineRef      = useRef(null);
       const listenSessionRef    = useRef(0); // increments on each startListening; guards stale async callbacks
+      const attemptLogRef       = useRef([]); // collects per-attempt debug info for the error screen
 
       useEffect(() => { lyricsRef.current = lyrics; }, [lyrics]);
       useEffect(() => { albumTracksRef.current = albumTracks; }, [albumTracks]);
@@ -822,7 +824,7 @@
       };
 
       // ── Handle final recognition failure ──
-      const handleNoMatch = (isAutoAdvance) => {
+      const handleNoMatch = (isAutoAdvance, stage = "acr") => {
         if (isAutoAdvance) {
           autoRetryCountRef.current += 1;
           if (autoRetryCountRef.current < 2) {
@@ -833,7 +835,14 @@
             setMode("side-end");
           }
         } else {
-          setError("Couldn't identify the song. Make sure your record is playing clearly and try again.");
+          const log = attemptLogRef.current;
+          const summary = log.length
+            ? log.join("\n")
+            : "No attempts logged";
+          const stageMsg = stage === "whisper_failed"
+            ? "ACRCloud: no match · Whisper fallback: also failed"
+            : "ACRCloud: no match after all attempts";
+          setError(`${stageMsg}\n\n${summary}\n\nMove closer to your speakers and try again.`);
           setMode("error");
         }
       };
@@ -848,6 +857,7 @@
       const startListening = async (isAutoAdvance = false) => {
         if (!isAutoAdvance && !isUnlimited(user) && usageCount >= FREE_LIMIT) { setMode("limit"); return; }
         const session = ++listenSessionRef.current; // unique id for this listen attempt
+        attemptLogRef.current = [];
         setError(null);
         setMode("listening");
         setListenProgress(0);
@@ -888,6 +898,13 @@
               const blob = new Blob([...allChunks], { type: mimeType || "audio/webm" });
               const data = await sendAudioToACR(blob);
 
+              // Log this attempt for the error screen
+              attemptLogRef.current.push(
+                data
+                  ? `#${attempts} (${attempts*5}s): ACR code ${data.status?.code} — ${data.status?.msg || "?"}`
+                  : `#${attempts} (${attempts*5}s): network error (no response)`
+              );
+
               // Abort if the user restarted while we were awaiting
               if (listenSessionRef.current !== session) {
                 clearInterval(progressTimerRef.current);
@@ -922,7 +939,7 @@
                 const finalBlob = new Blob([...allChunks], { type: mimeType || "audio/webm" });
                 const found = await tryLyricsTranscription(finalBlob, isAutoAdvance);
                 if (listenSessionRef.current !== session) return; // aborted during Whisper
-                if (!found) handleNoMatch(isAutoAdvance);
+                if (!found) handleNoMatch(isAutoAdvance, "whisper_failed");
                 return;
               }
 
@@ -1829,14 +1846,7 @@
                 <div style={{ position:"absolute", bottom:0, left:0, right:0, height:"20vh", background:"linear-gradient(to top, rgba(8,8,16,1), transparent)", pointerEvents:"none" }} />
               </div>
 
-              {/* Resync overlay */}
-              {isResyncing && (
-                <div style={{ position:"absolute", inset:0, zIndex:20, background:"rgba(8,8,16,0.85)", backdropFilter:"blur(6px)", display:"flex", flexDirection:"column", alignItems:"center", justifyContent:"center", gap:"16px" }}>
-                  <Vinyl size={72} spinning={true} />
-                  <div style={{ fontSize:"16px", color:"rgba(255,255,255,0.6)", letterSpacing:"1px" }}>Resyncing…</div>
-                  <div style={{ fontSize:"12px", color:"rgba(255,255,255,0.25)" }}>Hold near your speakers</div>
-                </div>
-              )}
+
 
               <div className="safe-bottom" style={{ padding:"12px 20px 0", flexShrink:0 }}>
 
@@ -1850,8 +1860,8 @@
                 )}
 
                 {/* Nudge hint label */}
-                <div style={{ textAlign:"center", fontSize:"10px", color:"rgba(255,255,255,0.18)", letterSpacing:"2px", textTransform:"uppercase", marginBottom:"8px" }}>
-                  {isResyncing ? "listening…" : nudgeMenu ? "tap to adjust more" : "tap ± to sync lyrics"}
+                <div style={{ textAlign:"center", fontSize:"10px", letterSpacing:"2px", textTransform:"uppercase", marginBottom:"8px", color: isResyncing ? "#d4a846" : "rgba(255,255,255,0.18)", animation: isResyncing ? "pulse 1.2s ease-in-out infinite" : "none" }}>
+                  {isResyncing ? "↻ listening for resync…" : nudgeMenu ? "tap to adjust more" : "tap ± to sync lyrics"}
                 </div>
                 <div style={{ display:"flex", justifyContent:"center", alignItems:"center", gap:"8px", marginBottom:"12px" }}>
 
@@ -1968,10 +1978,23 @@
 
                 {/* ERROR */}
                 {mode === "error" && (
-                  <div style={{ maxWidth:"300px", animation:"fade-up 0.3s ease both" }}>
-                    <div style={{ fontSize:"48px", marginBottom:"24px" }}>🎵</div>
-                    <div style={{ color:"#e8a0a8", marginBottom:"32px", lineHeight:"1.7", fontSize:"16px" }}>{error}</div>
-                    <button onClick={reset} style={{ background:"none", border:"1px solid rgba(212,168,70,0.4)", color:"#d4a846", borderRadius:"50px", padding:"12px 32px", fontSize:"14px", cursor:"pointer", fontFamily:"inherit" }}>Try Again</button>
+                  <div style={{ maxWidth:"320px", animation:"fade-up 0.3s ease both" }}>
+                    <div style={{ fontSize:"48px", marginBottom:"20px" }}>🎵</div>
+                    {error?.split("\n\n").map((block, i) => (
+                      <div key={i} style={{
+                        marginBottom:"12px",
+                        color: i === 0 ? "#e8a0a8" : "rgba(255,255,255,0.3)",
+                        fontSize: i === 0 ? "15px" : "11px",
+                        lineHeight: "1.7",
+                        fontFamily: i > 0 ? "monospace" : "inherit",
+                        whiteSpace: "pre-wrap",
+                        textAlign: i > 0 ? "left" : "center",
+                        background: i === 1 ? "rgba(255,255,255,0.04)" : "none",
+                        borderRadius: i === 1 ? "8px" : 0,
+                        padding: i === 1 ? "10px 12px" : 0,
+                      }}>{block}</div>
+                    ))}
+                    <button onClick={reset} style={{ marginTop:"8px", background:"none", border:"1px solid rgba(212,168,70,0.4)", color:"#d4a846", borderRadius:"50px", padding:"12px 32px", fontSize:"14px", cursor:"pointer", fontFamily:"inherit" }}>Try Again</button>
                   </div>
                 )}
 
