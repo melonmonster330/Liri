@@ -76,7 +76,7 @@
       "sb_publishable_C-NBnfg0ltAoUi46XQTUjA_ozjZW_Nd"
     );
 
-    const APP_VERSION = "1.11";
+    const APP_VERSION = "1.12";
 
     const PROXY_URL = window.Capacitor
       ? "https://liri-vert.vercel.app/api/recognize"
@@ -894,7 +894,10 @@
 
         try {
           const stream = await navigator.mediaDevices.getUserMedia({
-            audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: false }
+            // echoCancellation + noiseSuppression off: don't process the music signal.
+            // autoGainControl left as default (on): lets the device boost ambient music
+            // so ACRCloud gets a loud-enough signal to fingerprint.
+            audio: { echoCancellation: false, noiseSuppression: false }
           });
           streamRef.current = stream;
 
@@ -910,8 +913,11 @@
                              : "";
           const recorder = preferredMime ? new MediaRecorder(stream, { mimeType: preferredMime }) : new MediaRecorder(stream);
           // Read the actual mimeType back from the recorder — on iOS Safari this may
-          // differ from preferredMime (e.g. browser picks audio/mp4 when we asked for "")
-          const mimeType = recorder.mimeType || preferredMime || "audio/webm";
+          // differ from preferredMime (e.g. browser picks audio/mp4 when we asked for "").
+          // Strip any codec suffix (e.g. "audio/mp4;codecs=mp4a.40.2" → "audio/mp4")
+          // because ACRCloud doesn't recognise the long form.
+          const rawMime  = recorder.mimeType || preferredMime || "audio/webm";
+          const mimeType = rawMime.split(";")[0].trim();
           const allChunks  = [];
           let attempts     = 0;
           let sending      = false;
@@ -949,13 +955,14 @@
 
               // Snapshot ALL audio accumulated so far — clip grows with each attempt
               const blob = new Blob([...allChunks], { type: mimeType || "audio/webm" });
+              const blobKB = Math.round(blob.size / 1024);
               const data = await sendAudioToACR(blob);
 
               // Log this attempt for the error screen
               attemptLogRef.current.push(
                 data
-                  ? `#${attempts} (${attempts*5}s): ACR code ${data.status?.code} — ${data.status?.msg || "?"}`
-                  : `#${attempts} (${attempts*5}s): network error (no response)`
+                  ? `#${attempts} (${attempts*5}s, ${blobKB}KB): ACR ${data.status?.code} — ${data.status?.msg || "?"}`
+                  : `#${attempts} (${attempts*5}s, ${blobKB}KB): network error`
               );
 
               // Abort if the user restarted while we were awaiting
@@ -1245,14 +1252,15 @@
         setIsResyncing(true);
         try {
           const stream = await navigator.mediaDevices.getUserMedia({
-            audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: false }
+            audio: { echoCancellation: false, noiseSuppression: false }
           });
           const preferredMimeR = MediaRecorder.isTypeSupported("audio/webm") ? "audio/webm"
                               : MediaRecorder.isTypeSupported("audio/ogg")  ? "audio/ogg"
                               : MediaRecorder.isTypeSupported("audio/mp4")  ? "audio/mp4"
                               : "";
           const recorder = preferredMimeR ? new MediaRecorder(stream, { mimeType: preferredMimeR }) : new MediaRecorder(stream);
-          const mimeType = recorder.mimeType || preferredMimeR || "audio/webm";
+          const rawMimeR = recorder.mimeType || preferredMimeR || "audio/webm";
+          const mimeType = rawMimeR.split(";")[0].trim();
           const chunks = [];
           recorder.ondataavailable = e => { if (e.data.size > 0) chunks.push(e.data); };
           recorder.onstop = () => stream.getTracks().forEach(t => t.stop());
