@@ -76,7 +76,7 @@
       "sb_publishable_C-NBnfg0ltAoUi46XQTUjA_ozjZW_Nd"
     );
 
-    const APP_VERSION = "1.19";
+    const APP_VERSION = "1.21";
 
     const PROXY_URL = window.Capacitor
       ? "https://liri-vert.vercel.app/api/recognize"
@@ -1233,10 +1233,10 @@
         if (vinylDbRelease?.vinyl_tracks?.length > 0) {
           const title = albumTracks[currentTrackIndex]?.trackName?.toLowerCase();
           const dbTrack = vinylDbRelease.vinyl_tracks.find(t =>
-            t.track_title?.toLowerCase() === title
+            t.title?.toLowerCase() === title
           );
-          if (dbTrack?.side_label && dbTrack?.position_on_side) {
-            return { side: dbTrack.side_label.toUpperCase(), track: dbTrack.position_on_side };
+          if (dbTrack?.side && dbTrack?.track_number_on_side) {
+            return { side: dbTrack.side.toUpperCase(), track: dbTrack.track_number_on_side };
           }
         }
 
@@ -1692,7 +1692,7 @@
                         { name:"ACRCloud",    role:"Audio recognition" },
                         { name:"LRCLib",      role:"Synced lyrics" },
                         { name:"Apple iTunes",role:"Track & album data" },
-                        { name:"Discogs",     role:"Vinyl pressing database" },
+                        { name:"Liri Community", role:"Vinyl pressing database" },
                       ].map(c => (
                         <div key={c.name} style={{ display:"flex", justifyContent:"space-between", alignItems:"center", padding:"8px 14px", background:"rgba(255,255,255,0.03)", borderRadius:"10px" }}>
                           <span style={{ fontSize:"13px", color:"rgba(255,255,255,0.55)", fontWeight:"500" }}>{c.name}</span>
@@ -1873,8 +1873,15 @@
                       <div style={{ fontSize:"11px", color:"#e8a0a8", marginTop:"8px", lineHeight:"1.5" }}>Notifications were blocked. Enable them in your browser settings.</div>
                     )}
 
-                    {/* Link to Liri vinyl collection */}
-                    <a href="/app/add-vinyl.html" style={{ display:"flex", alignItems:"center", justifyContent:"space-between", marginTop:"16px", paddingTop:"14px", borderTop:"1px solid rgba(255,255,255,0.07)", textDecoration:"none" }}>
+                    {/* Links to Liri vinyl pages */}
+                    <a href="/vinyl" style={{ display:"flex", alignItems:"center", justifyContent:"space-between", marginTop:"16px", paddingTop:"14px", borderTop:"1px solid rgba(255,255,255,0.07)", textDecoration:"none" }}>
+                      <div>
+                        <div style={{ fontSize:"13px", color:"#d4a846" }}>Browse the Vinyl Library</div>
+                        <div style={{ fontSize:"11px", color:"rgba(255,255,255,0.3)", marginTop:"2px" }}>Community-verified pressings & flip data</div>
+                      </div>
+                      <div style={{ color:"rgba(212,168,70,0.5)", fontSize:"18px" }}>›</div>
+                    </a>
+                    <a href="/add-vinyl" style={{ display:"flex", alignItems:"center", justifyContent:"space-between", marginTop:"12px", paddingTop:"12px", borderTop:"1px solid rgba(255,255,255,0.05)", textDecoration:"none" }}>
                       <div>
                         <div style={{ fontSize:"13px", color:"#d4a846" }}>Add a vinyl to Liri's collection</div>
                         <div style={{ fontSize:"11px", color:"rgba(255,255,255,0.3)", marginTop:"2px" }}>Help improve flip detection for everyone</div>
@@ -1896,11 +1903,11 @@
                   <div style={{ fontSize:"11px", letterSpacing:"2px", color:"rgba(255,255,255,0.2)", textTransform:"uppercase", marginBottom:"12px" }}>Credits</div>
                   <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:"8px 16px", marginBottom:"14px" }}>
                     {[
-                      { name:"ACRCloud",     role:"Audio recognition" },
-                      { name:"LRCLib",       role:"Synced lyrics" },
-                      { name:"Apple iTunes", role:"Track &amp; artwork data" },
-                      { name:"Discogs",      role:"Vinyl pressing database" },
-                      { name:"OpenAI",       role:"Lyrics transcription" },
+                      { name:"ACRCloud",        role:"Audio recognition" },
+                      { name:"LRCLib",          role:"Synced lyrics" },
+                      { name:"Apple iTunes",    role:"Track &amp; artwork data" },
+                      { name:"Liri Community",  role:"Vinyl pressing database" },
+                      { name:"OpenAI",          role:"Lyrics transcription" },
                     ].map(c => (
                       <div key={c.name}>
                         <div style={{ fontSize:"12px", color:"rgba(255,255,255,0.5)", fontWeight:"600" }}>{c.name}</div>
