@@ -80,6 +80,9 @@
 
     // How many seconds we add to ACRCloud's offset to correct for processing lag
     const PLAYBACK_OFFSET_CORRECTION = 3;
+    // Extra offset added when auto-advancing to next track (no re-listen),
+    // accounting for lyrics-fetch + state-update delay. Tune if still drifting.
+    const AUTO_ADVANCE_OFFSET = 1.0;
 
     function parseLRC(lrc) {
       const re = /\[(\d{2}):(\d{2})[.:](\d{2,3})\](.*)/;
@@ -243,9 +246,10 @@
       const nudgeMenuTimerRef                 = useRef(null);
 
       // ── Onboarding ──
-      const [showOnboarding, setShowOnboarding] = useState(true); // forced true for testing
+      const [showOnboarding, setShowOnboarding] = useState(() => !localStorage.getItem("liri_onboarding_done"));
       const [onboardingStep, setOnboardingStep] = useState(0);
       const ONBOARDING_STEPS = 5;
+      const dismissOnboarding = () => { localStorage.setItem("liri_onboarding_done", "true"); setShowOnboarding(false); };
 
       // ── Analytics: persistent anonymous session ID ──
       // Stays in localStorage forever so we can track listening patterns even
@@ -892,9 +896,10 @@
 
         setCurrentTrackIndex(nextIdx);
         // autoAdvanceFiredRef stays TRUE until startSync() runs — prevents any
-        // stale playbackTime state updates from firing a double-advance
+        // stale playbackTime state updates from firing a double-advance.
+        // Start slightly ahead to compensate for lyrics-fetch + state-update delay.
         detectedAtRef.current = Date.now();
-        initialPosRef.current = 0;
+        initialPosRef.current = AUTO_ADVANCE_OFFSET;
 
         setDetectedSong(nextSong);
         setSongDuration(nextDuration);
@@ -991,38 +996,98 @@
       );
 
       // ─────────────────────────────────────────
-      // AUTH SCREEN
+      // LANDING + AUTH
       // ─────────────────────────────────────────
       if (!user) {
         const inp = { width:"100%", background:"rgba(255,255,255,0.05)", border:"1px solid rgba(255,255,255,0.1)", color:"#f0e6d3", padding:"16px 18px", borderRadius:"14px", fontSize:"16px", fontFamily:"inherit", transition:"border-color 0.2s" };
+
+        // authSheet: null | "signin" | "signup"
+        const [authSheet, setAuthSheet] = useState(null);
+        const openSheet = (mode) => { setAuthMode(mode); setAuthError(null); setAuthEmail(""); setAuthPassword(""); setAuthSheet(mode); };
+
+        const features = [
+          { icon:"🎵", label:"Identify", sub:"8-second song fingerprinting" },
+          { icon:"✦",  label:"Sync",     sub:"Real-time scrolling lyrics" },
+          { icon:"💿", label:"Auto Mode",sub:"Tracks side flips automatically" },
+        ];
+
         return (
-          <div style={{ minHeight:"100vh", background:"#080810", display:"flex", flexDirection:"column", alignItems:"center", justifyContent:"center", padding:"40px 28px" }}>
-            <Vinyl size={72} spinning={false} />
-            <div style={{ marginTop:"20px", fontSize:"28px", letterSpacing:"14px", color:"#d4a846", fontWeight:"300" }}>LIRI</div>
-            <div style={{ fontSize:"11px", color:"#2a2a4a", letterSpacing:"4px", textTransform:"uppercase", marginTop:"6px", marginBottom:"52px" }}>Lyrics for Vinyl</div>
-            <div style={{ width:"100%", maxWidth:"360px", animation:"fade-up 0.4s ease both" }}>
-              <h2 style={{ fontSize:"22px", fontWeight:"500", color:"#f0e6d3", textAlign:"center", marginBottom:"8px" }}>
-                {authMode === "signin" ? "Welcome back" : "Create your account"}
-              </h2>
-              <p style={{ fontSize:"14px", color:"#3a3a5a", textAlign:"center", marginBottom:"32px" }}>
-                {authMode === "signin" ? "Sign in to continue" : "It's free to start"}
-              </p>
-              <div style={{ display:"flex", flexDirection:"column", gap:"12px" }}>
-                <input type="email" placeholder="Email" value={authEmail} onChange={e => setAuthEmail(e.target.value)} onKeyDown={e => e.key === "Enter" && handleAuth()} style={inp} />
-                <input type="password" placeholder="Password" value={authPassword} onChange={e => setAuthPassword(e.target.value)} onKeyDown={e => e.key === "Enter" && handleAuth()} style={inp} />
+          <div style={{ minHeight:"100vh", background:"#080810", color:"#f0e6d3", fontFamily:"-apple-system,BlinkMacSystemFont,'SF Pro Display','Helvetica Neue',sans-serif", position:"relative", overflow:"hidden" }}>
+
+            {/* Subtle radial glow behind vinyl */}
+            <div style={{ position:"fixed", top:"20%", left:"50%", transform:"translateX(-50%)", width:"400px", height:"400px", borderRadius:"50%", background:"radial-gradient(circle, rgba(212,168,70,0.07) 0%, transparent 70%)", pointerEvents:"none" }} />
+
+            {/* ── Hero ── */}
+            <div style={{ display:"flex", flexDirection:"column", alignItems:"center", justifyContent:"center", minHeight:"100vh", padding:"max(60px,calc(env(safe-area-inset-top)+40px)) 32px max(120px,calc(env(safe-area-inset-bottom)+100px))", textAlign:"center" }}>
+
+              <Vinyl size={130} spinning={false} />
+
+              <div style={{ marginTop:"32px", fontSize:"11px", letterSpacing:"5px", color:"rgba(212,168,70,0.6)", textTransform:"uppercase", marginBottom:"10px" }}>Welcome to</div>
+              <div style={{ fontSize:"52px", letterSpacing:"18px", color:"#d4a846", fontWeight:"300", lineHeight:1 }}>LIRI</div>
+              <div style={{ fontSize:"13px", color:"rgba(255,255,255,0.25)", letterSpacing:"3px", textTransform:"uppercase", marginTop:"10px", marginBottom:"52px" }}>Lyrics for Vinyl</div>
+
+              {/* Feature row */}
+              <div style={{ display:"flex", gap:"12px", marginBottom:"56px", flexWrap:"wrap", justifyContent:"center" }}>
+                {features.map(f => (
+                  <div key={f.label} style={{ background:"rgba(255,255,255,0.03)", border:"1px solid rgba(255,255,255,0.07)", borderRadius:"16px", padding:"16px 18px", minWidth:"100px", flex:"0 0 auto" }}>
+                    <div style={{ fontSize:"22px", marginBottom:"6px" }}>{f.icon}</div>
+                    <div style={{ fontSize:"12px", fontWeight:"600", color:"#f0e6d3", marginBottom:"3px" }}>{f.label}</div>
+                    <div style={{ fontSize:"10px", color:"rgba(255,255,255,0.25)", lineHeight:"1.4" }}>{f.sub}</div>
+                  </div>
+                ))}
               </div>
-              {authError && (
-                <div style={{ fontSize:"13px", color: authError.includes("Check") ? "#6aaa8a" : "#e8a0a8", textAlign:"center", margin:"16px 0", lineHeight:"1.6" }}>{authError}</div>
-              )}
-              <button onClick={handleAuth} disabled={authWorking} style={{ width:"100%", marginTop:"20px", background:"linear-gradient(135deg, #d4a846, #c9807a)", color:"#080810", border:"none", borderRadius:"14px", padding:"18px", fontSize:"15px", fontWeight:"700", letterSpacing:"1px", cursor: authWorking ? "wait" : "pointer", opacity: authWorking ? 0.6 : 1, fontFamily:"inherit", transition:"opacity 0.2s" }}>
-                {authWorking ? "…" : authMode === "signin" ? "Sign In" : "Create Account"}
-              </button>
-              <div style={{ textAlign:"center", marginTop:"20px" }}>
-                <button onClick={() => { setAuthMode(m => m === "signin" ? "signup" : "signin"); setAuthError(null); }} style={{ background:"none", border:"none", color:"#3a3a5a", cursor:"pointer", fontSize:"14px", fontFamily:"inherit" }}>
-                  {authMode === "signin" ? "New here? Create an account →" : "Already have an account? Sign in →"}
+
+              {/* CTAs */}
+              <div style={{ display:"flex", flexDirection:"column", gap:"12px", width:"100%", maxWidth:"320px" }}>
+                <button onClick={() => openSheet("signup")} style={{ background:"linear-gradient(135deg, #d4a846, #c9807a)", color:"#080810", border:"none", borderRadius:"14px", padding:"18px", fontSize:"15px", fontWeight:"700", letterSpacing:"0.5px", cursor:"pointer", fontFamily:"inherit", boxShadow:"0 8px 32px rgba(212,168,70,0.25)" }}>
+                  Get Started — it's free
+                </button>
+                <button onClick={() => openSheet("signin")} style={{ background:"rgba(255,255,255,0.05)", color:"rgba(255,255,255,0.6)", border:"1px solid rgba(255,255,255,0.1)", borderRadius:"14px", padding:"16px", fontSize:"14px", cursor:"pointer", fontFamily:"inherit" }}>
+                  Sign In
                 </button>
               </div>
+
             </div>
+
+            {/* ── Auth sheet (slides up) ── */}
+            {authSheet && (
+              <div onClick={() => setAuthSheet(null)} style={{ position:"fixed", inset:0, zIndex:300, background:"rgba(0,0,0,0.5)", backdropFilter:"blur(6px)" }}>
+                <div onClick={e => e.stopPropagation()} style={{ position:"absolute", bottom:0, left:0, right:0, background:"#0f0f1c", borderRadius:"24px 24px 0 0", padding:"8px 28px max(40px,calc(env(safe-area-inset-bottom)+28px))", animation:"slide-up 0.3s ease", maxWidth:"520px", margin:"0 auto" }}>
+
+                  {/* Drag handle */}
+                  <div onClick={() => setAuthSheet(null)} style={{ padding:"12px 0 20px", cursor:"pointer", textAlign:"center" }}>
+                    <div style={{ width:"40px", height:"4px", borderRadius:"2px", background:"rgba(255,255,255,0.12)", display:"inline-block" }} />
+                  </div>
+
+                  <h2 style={{ fontSize:"22px", fontWeight:"600", color:"#f0e6d3", textAlign:"center", marginBottom:"6px" }}>
+                    {authSheet === "signin" ? "Welcome back" : "Create your account"}
+                  </h2>
+                  <p style={{ fontSize:"14px", color:"rgba(255,255,255,0.25)", textAlign:"center", marginBottom:"28px" }}>
+                    {authSheet === "signin" ? "Sign in to continue listening" : "Free to start — no credit card"}
+                  </p>
+
+                  <div style={{ display:"flex", flexDirection:"column", gap:"12px" }}>
+                    <input type="email" placeholder="Email" value={authEmail} onChange={e => setAuthEmail(e.target.value)} onKeyDown={e => e.key === "Enter" && handleAuth()} style={inp} autoFocus />
+                    <input type="password" placeholder="Password" value={authPassword} onChange={e => setAuthPassword(e.target.value)} onKeyDown={e => e.key === "Enter" && handleAuth()} style={inp} />
+                  </div>
+
+                  {authError && (
+                    <div style={{ fontSize:"13px", color: authError.includes("Check") ? "#6aaa8a" : "#e8a0a8", textAlign:"center", margin:"14px 0 0", lineHeight:"1.6" }}>{authError}</div>
+                  )}
+
+                  <button onClick={handleAuth} disabled={authWorking} style={{ width:"100%", marginTop:"20px", background:"linear-gradient(135deg, #d4a846, #c9807a)", color:"#080810", border:"none", borderRadius:"14px", padding:"18px", fontSize:"15px", fontWeight:"700", letterSpacing:"0.5px", cursor: authWorking ? "wait" : "pointer", opacity: authWorking ? 0.6 : 1, fontFamily:"inherit", transition:"opacity 0.2s" }}>
+                    {authWorking ? "…" : authSheet === "signin" ? "Sign In" : "Create Account"}
+                  </button>
+
+                  <div style={{ textAlign:"center", marginTop:"16px" }}>
+                    <button onClick={() => openSheet(authSheet === "signin" ? "signup" : "signin")} style={{ background:"none", border:"none", color:"rgba(255,255,255,0.3)", cursor:"pointer", fontSize:"13px", fontFamily:"inherit" }}>
+                      {authSheet === "signin" ? "New here? Create an account →" : "Already have an account? Sign in →"}
+                    </button>
+                  </div>
+                </div>
+              </div>
+            )}
+
           </div>
         );
       }
@@ -1048,7 +1113,7 @@
 
               {/* Skip button */}
               {onboardingStep < ONBOARDING_STEPS - 1 && (
-                <button onClick={() => setShowOnboarding(false)} style={{ position:"absolute", top:"max(24px, calc(env(safe-area-inset-top) + 12px))", right:"24px", background:"none", border:"none", color:"rgba(255,255,255,0.25)", cursor:"pointer", fontSize:"14px", fontFamily:"inherit" }}>Skip</button>
+                <button onClick={dismissOnboarding} style={{ position:"absolute", top:"max(24px, calc(env(safe-area-inset-top) + 12px))", right:"24px", background:"none", border:"none", color:"rgba(255,255,255,0.25)", cursor:"pointer", fontSize:"14px", fontFamily:"inherit" }}>Skip</button>
               )}
 
               {/* Step 0: Welcome */}
@@ -1144,7 +1209,7 @@
                     <div style={{ fontSize:"11px", color:"rgba(255,255,255,0.2)", letterSpacing:"2px", marginBottom:"8px" }}>ROOM CODE</div>
                     <div style={{ fontSize:"36px", fontWeight:"800", letterSpacing:"10px", color:"#d4a846" }}>ABCDEF</div>
                   </div>
-                  <button onClick={() => setShowOnboarding(false)} style={{ background:"linear-gradient(135deg, #d4a846, #c9807a)", color:"#080810", border:"none", borderRadius:"50px", padding:"18px 52px", fontSize:"15px", fontWeight:"700", cursor:"pointer", fontFamily:"inherit", letterSpacing:"1px", boxShadow:"0 8px 32px rgba(212,168,70,0.3)" }}>
+                  <button onClick={dismissOnboarding} style={{ background:"linear-gradient(135deg, #d4a846, #c9807a)", color:"#080810", border:"none", borderRadius:"50px", padding:"18px 52px", fontSize:"15px", fontWeight:"700", cursor:"pointer", fontFamily:"inherit", letterSpacing:"1px", boxShadow:"0 8px 32px rgba(212,168,70,0.3)" }}>
                     Start listening ✓
                   </button>
                   <div style={{ marginTop:"16px" }}>
@@ -1347,8 +1412,10 @@
                     </div>
                   )}
                   {!songDuration && <div style={{ fontSize:"12px", color:"rgba(255,255,255,0.3)", fontVariantNumeric:"tabular-nums" }}>{formatTime(playbackTime)}</div>}
-                  <button onClick={() => setShowCast(true)} style={{ background:"none", border:"none", color:"rgba(255,255,255,0.3)", cursor:"pointer", fontSize:"18px", padding:"4px" }} title="Cast to TV">📺</button>
-                  <button onClick={() => setShowSettings(!showSettings)} style={{ background:"none", border:"none", color:"rgba(255,255,255,0.3)", cursor:"pointer", fontSize:"16px", padding:"4px" }}>⚙</button>
+                  <button onClick={() => setShowCast(true)} style={{ background:"none", border:"none", color:"rgba(255,255,255,0.3)", cursor:"pointer", fontSize:"18px", padding:"4px", lineHeight:1 }} title="Cast to TV">📺</button>
+                  <button onClick={() => setShowSettings(!showSettings)} style={{ background:"linear-gradient(135deg, #d4a846, #c9807a)", border:"none", borderRadius:"50%", width:"30px", height:"30px", display:"flex", alignItems:"center", justifyContent:"center", fontSize:"12px", fontWeight:"700", color:"#080810", cursor:"pointer", flexShrink:0, padding:0, boxShadow:"0 2px 8px rgba(212,168,70,0.35)" }} title="Account">
+                    {user?.email?.[0]?.toUpperCase() || "?"}
+                  </button>
                 </div>
               </div>
 
@@ -1454,9 +1521,12 @@
               {/* Top bar */}
               <div className="safe-top" style={{ padding:"0 20px 16px", display:"flex", justifyContent:"space-between", alignItems:"center", flexShrink:0 }}>
                 <div style={{ fontSize:"16px", letterSpacing:"10px", color:"#d4a846", fontWeight:"300" }}>LIRI</div>
-                <div style={{ display:"flex", gap:"16px", alignItems:"center" }}>
-                  <button onClick={() => { fetchHistory(user); setShowHistory(true); }} style={{ background:"none", border:"none", color:"rgba(255,255,255,0.3)", cursor:"pointer", fontSize:"18px", padding:"2px" }}>⏱</button>
-                  <button onClick={() => setShowSettings(true)} style={{ background:"none", border:"none", color:"rgba(255,255,255,0.3)", cursor:"pointer", fontSize:"16px" }}>⚙</button>
+                <div style={{ display:"flex", gap:"12px", alignItems:"center" }}>
+                  <button onClick={() => { fetchHistory(user); setShowHistory(true); }} style={{ background:"none", border:"none", color:"rgba(255,255,255,0.35)", cursor:"pointer", fontSize:"18px", padding:"4px", lineHeight:1 }} title="History">⏱</button>
+                  {/* Account avatar */}
+                  <button onClick={() => setShowSettings(true)} style={{ background:"linear-gradient(135deg, #d4a846, #c9807a)", border:"none", borderRadius:"50%", width:"32px", height:"32px", display:"flex", alignItems:"center", justifyContent:"center", fontSize:"13px", fontWeight:"700", color:"#080810", cursor:"pointer", flexShrink:0, boxShadow:"0 2px 8px rgba(212,168,70,0.35)", padding:0 }} title="Account">
+                    {user?.email?.[0]?.toUpperCase() || "?"}
+                  </button>
                 </div>
               </div>
 
