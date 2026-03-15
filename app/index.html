@@ -76,7 +76,7 @@
       "sb_publishable_C-NBnfg0ltAoUi46XQTUjA_ozjZW_Nd"
     );
 
-    const APP_VERSION = "1.03";
+    const APP_VERSION = "1.04";
 
     const PROXY_URL = window.Capacitor
       ? "https://liri-vert.vercel.app/api/recognize"
@@ -623,13 +623,19 @@
 
       // ── Vinyl auto-advance: trigger when song nears its end ──
       useEffect(() => {
-        if (!vinylMode || mode !== "syncing" || !songDuration) return;
-        if (playbackTime >= songDuration - 2 && !autoAdvanceFiredRef.current) {
+        if (!vinylMode || mode !== "syncing") return;
+        // Use ACRCloud duration if available, otherwise fall back to the last
+        // lyric line's timestamp + 30s so we still fire even when duration_ms
+        // is missing from the ACRCloud response.
+        const lastLyricTime = lyrics.length > 0 ? lyrics[lyrics.length - 1].time : null;
+        const effectiveDuration = songDuration ?? (lastLyricTime ? lastLyricTime + 30 : null);
+        if (!effectiveDuration) return;
+        if (playbackTime >= effectiveDuration - 2 && !autoAdvanceFiredRef.current) {
           autoAdvanceFiredRef.current = true;
           // Small pause for the groove gap, then advance
           setTimeout(() => setShouldAdvanceTrack(true), 3000);
         }
-      }, [playbackTime, songDuration, vinylMode, mode]);
+      }, [playbackTime, songDuration, lyrics, vinylMode, mode]);
 
       // ── Handle track advance (runs with fresh state) ──
       useEffect(() => {
@@ -637,11 +643,14 @@
         setShouldAdvanceTrack(false);
         const tracks = albumTracksRef.current;
         const idx    = currentTrackIndexRef.current;
-        if (tracks.length > 0 && idx >= 0 && idx < tracks.length - 1) {
+        if (tracks.length > 0 && idx >= 0) {
+          // Let advanceToNextTrack decide: next track, side-end flip, or album-end
           advanceToNextTrack(tracks, idx);
         } else {
-          // Unknown tracklist — fall back to listening
-          startListening(true);
+          // No tracklist loaded — can't know if it's a side end or album end,
+          // so show the flip prompt immediately rather than listening to silence
+          setSideEndReason("flip");
+          setMode("side-end");
         }
       }, [shouldAdvanceTrack]);
 
