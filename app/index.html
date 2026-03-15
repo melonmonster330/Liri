@@ -83,7 +83,7 @@
     // ── Google Cast ───────────────────────────────────────────────────────────
     // Replace with your App ID from cast.google.com/publish after registering.
     // Receiver URL to register: https://getliri.app/tv (or your Vercel URL/tv)
-    const CAST_APP_ID = "YOUR_CAST_APP_ID"; // ← paste your App ID here
+    const CAST_APP_ID = "2FBB66AA";
     const CAST_NS     = "urn:x-cast:com.getliri.lyrics";
 
     // Cast state — lives outside React so it's not re-created on renders
@@ -91,7 +91,7 @@
     let castAvailable  = false;
 
     window["__onGCastApiAvailable"] = function(isAvailable) {
-      if (!isAvailable || CAST_APP_ID === "YOUR_CAST_APP_ID") return;
+      if (!isAvailable) return;
       try {
         castContext = cast.framework.CastContext.getInstance();
         castContext.setOptions({
