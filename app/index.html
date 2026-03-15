@@ -223,7 +223,8 @@
       const [currentIndex, setCurrentIndex]   = useState(0);
       const [playbackTime, setPlaybackTime]   = useState(0);
       const [error, setError]                 = useState(null);
-      const [listenProgress, setListenProgress] = useState(0);
+      const [listenProgress, setListenProgress]   = useState(0);
+      const [listenAttempt, setListenAttempt]     = useState(0); // which rolling attempt we're on
 
       // ── UI panels ──
       const [showSettings, setShowSettings]   = useState(false);
@@ -645,181 +646,198 @@
         streamRef.current?.getTracks().forEach(t => t.stop());
       }, []);
 
-      // ── Record audio and detect ──
-      const startListening = async (isAutoAdvance = false) => {
-        if (!isAutoAdvance && !isUnlimited(user) && usageCount >= FREE_LIMIT) { setMode("limit"); return; }
-        setError(null);
-        setMode("listening");
-        setListenProgress(0);
-        clearInterval(syncIntervalRef.current); // stop any active sync
-
-        try {
-          // Prefer raw audio for vinyl — use 'ideal' so browsers that
-          // don't support these constraints don't reject the request
-          const stream = await navigator.mediaDevices.getUserMedia({
-            audio: {
-              echoCancellation: { ideal: false },
-              noiseSuppression: { ideal: false },
-              autoGainControl: { ideal: false }
-            }
-          });
-          streamRef.current = stream;
-          const mimeType = MediaRecorder.isTypeSupported("audio/webm") ? "audio/webm"
-                         : MediaRecorder.isTypeSupported("audio/ogg")  ? "audio/ogg" : "";
-          const recorder = mimeType ? new MediaRecorder(stream, { mimeType }) : new MediaRecorder(stream);
-          const chunks = [];
-          recorder.ondataavailable = e => { if (e.data.size > 0) chunks.push(e.data); };
-          recorder.onstop = () => stream.getTracks().forEach(t => t.stop());
-          recorder.start(200);
-
-          let elapsed = 0;
-          const flags = { done: false };
-          progressTimerRef.current = setInterval(() => {
-            elapsed += 100;
-            setListenProgress(Math.min(elapsed / 8000, 1));
-            if (elapsed >= 8000 && !flags.done) {
-              flags.done = true;
-              clearInterval(progressTimerRef.current);
-              if (recorder.state === "recording") recorder.stop();
-              detectSong(new Blob(chunks, { type: recorder.mimeType || "audio/webm" }), isAutoAdvance);
-            }
-          }, 100);
-        } catch { setError("Microphone access denied."); setMode("error"); }
-      };
-
-      // ── Send audio to ACRCloud ──
-      const detectSong = async (blob, isAutoAdvance = false) => {
-        setMode("detecting");
+      // ── Pure HTTP: send audio blob to ACRCloud, return raw response or null ──
+      const sendAudioToACR = async (blob) => {
         try {
           const uint8 = new Uint8Array(await blob.arrayBuffer());
           let binary = "";
           for (let i = 0; i < uint8.length; i += 8192)
             binary += String.fromCharCode(...uint8.subarray(i, i + 8192));
-
           const res = await fetch(PROXY_URL, {
-            method:"POST", headers:{"Content-Type":"application/json"},
+            method: "POST", headers: { "Content-Type": "application/json" },
             body: JSON.stringify({ audio: btoa(binary), mimeType: blob.type || "audio/webm" }),
           });
-          if (!res.ok) {
-            let msg = `HTTP ${res.status}`;
-            try { const e = await res.json(); msg += e.message ? `: ${e.message}` : e.error ? `: ${e.error}` : ""; } catch {}
-            throw new Error(msg);
-          }
-          const data = await res.json();
+          if (!res.ok) return null;
+          return await res.json();
+        } catch { return null; }
+      };
 
-          if (data.status?.code === 0 && data.metadata?.music?.length > 0) {
-            const m = data.metadata.music[0];
-            // Apply +2s correction for processing lag
-            const tcSecs = (m.play_offset_ms || 0) / 1000 + PLAYBACK_OFFSET_CORRECTION;
-            const duration = m.duration_ms ? m.duration_ms / 1000 : null;
-            // Analytics metadata from ACRCloud + Vercel geo header
-            const acrScore   = m.score       || null;
-            const acrGenre   = m.genres?.[0]?.name || null;
-            const countryCode = data._liri?.country_code || null;
+      // ── Process a confirmed ACRCloud match — update all app state ──
+      const handleMatch = async (data, isAutoAdvance) => {
+        const m = data.metadata.music[0];
+        const tcSecs      = (m.play_offset_ms || 0) / 1000 + PLAYBACK_OFFSET_CORRECTION;
+        const duration    = m.duration_ms ? m.duration_ms / 1000 : null;
+        const acrScore    = m.score            || null;
+        const acrGenre    = m.genres?.[0]?.name || null;
+        const countryCode = data._liri?.country_code || null;
 
-            detectedAtRef.current = Date.now();
-            initialPosRef.current = tcSecs;
-            autoAdvanceFiredRef.current = false; // reset for next song
+        detectedAtRef.current      = Date.now();
+        initialPosRef.current      = tcSecs;
+        autoAdvanceFiredRef.current = false;
+        autoRetryCountRef.current  = 0;
+
+        const spotifyArt = m.external_metadata?.spotify?.album?.images?.[0]?.url || null;
+        const title  = m.title;
+        const artist = m.artists?.[0]?.name || "Unknown Artist";
+
+        let artwork = spotifyArt;
+        if (!artwork) {
+          try {
+            const itunes = await fetch(`https://itunes.apple.com/search?term=${encodeURIComponent(artist + " " + title)}&entity=song&limit=1`).then(r => r.json());
+            artwork = itunes.results?.[0]?.artworkUrl100?.replace("100x100bb", "600x600bb") || null;
+          } catch {}
+        }
+
+        const song = { title, artist, album: m.album?.name || "", artwork };
+        setDetectedSong(song);
+        setSongDuration(duration);
+        await loadLyrics(title, artist);
+
+        saveToHistory(user, song);
+        fetchHistory(user);
+        syncCastSession(song, lyricsRef.current, initialPosRef.current);
+        if (!isUnlimited(user)) {
+          const newCount = usageCount + 1;
+          await sb.from("user_usage").upsert({ user_id: user.id, recognition_count: newCount });
+          setUsageCount(newCount);
+        }
+
+        setMode("confirmed");
+
+        fetchAlbumTracks(title, artist).then(async ({ tracks, collectionId }) => {
+          setAlbumTracks(tracks);
+          setAlbumCollectionId(collectionId);
+          const tIdx = tracks.findIndex(t => t.trackName?.toLowerCase() === title.toLowerCase());
+          setCurrentTrackIndex(tIdx >= 0 ? tIdx : 0);
+
+          const itunesTrack = tIdx >= 0 ? tracks[tIdx] : null;
+          logListeningEvent({
+            userId: user?.id, title, artist, album: song.album, artwork: song.artwork,
+            genre: acrGenre, itunesTrackId: itunesTrack?.trackId, collectionId,
+            vinylReleaseId: null, vinylModeOn: vinylMode, source: "recognition",
+            countryCode, offsetSecs: tcSecs, durationSecs: duration, acrScore,
+          });
+
+          if (!collectionId || tracks.length === 0) return;
+          const dbRelease = await fetchVinylRelease(collectionId);
+          if (dbRelease?.vinyl_tracks?.length > 0) { setVinylDbRelease(dbRelease); albumTpsRef.current = 0; return; }
+          const stored = getAlbumSideData(collectionId);
+          if (stored?.tps) { albumTpsRef.current = stored.tps; return; }
+          albumTpsRef.current = 0;
+        }).catch(() => {});
+      };
+
+      // ── Handle final recognition failure ──
+      const handleNoMatch = (isAutoAdvance) => {
+        if (isAutoAdvance) {
+          autoRetryCountRef.current += 1;
+          if (autoRetryCountRef.current < 2) {
+            setTimeout(() => startListening(true), 4000);
+          } else {
             autoRetryCountRef.current = 0;
+            setSideEndReason("failed");
+            setMode("side-end");
+          }
+        } else {
+          setError("Couldn't identify the song. Make sure your record is playing clearly and try again.");
+          setMode("error");
+        }
+      };
 
-            const spotifyArt = m.external_metadata?.spotify?.album?.images?.[0]?.url || null;
-            const title  = m.title;
-            const artist = m.artists?.[0]?.name || "Unknown Artist";
+      // ── Record audio and detect — rolling 5s attempts ──
+      // Sends a recognition request every 5 seconds using ALL accumulated audio.
+      // On match: stops immediately. On miss: keeps recording and tries a longer clip.
+      // Fast songs get identified in 5s. Quiet/tricky ones keep accumulating up to 30s.
+      const ATTEMPT_INTERVAL = 5000; // ms between attempts
+      const MAX_ATTEMPTS     = 6;    // 5s, 10s, 15s, 20s, 25s, 30s max
 
-            let artwork = spotifyArt;
-            if (!artwork) {
-              try {
-                const itunes = await fetch(`https://itunes.apple.com/search?term=${encodeURIComponent(artist + " " + title)}&entity=song&limit=1`).then(r => r.json());
-                artwork = itunes.results?.[0]?.artworkUrl100?.replace("100x100bb", "600x600bb") || null;
-              } catch {}
-            }
+      const startListening = async (isAutoAdvance = false) => {
+        if (!isAutoAdvance && !isUnlimited(user) && usageCount >= FREE_LIMIT) { setMode("limit"); return; }
+        setError(null);
+        setMode("listening");
+        setListenProgress(0);
+        setListenAttempt(0);
+        clearInterval(syncIntervalRef.current);
 
-            const song = { title, artist, album: m.album?.name || "", artwork };
-            setDetectedSong(song);
-            setSongDuration(duration);
-            await loadLyrics(title, artist);
+        try {
+          const stream = await navigator.mediaDevices.getUserMedia({
+            audio: { echoCancellation: { ideal: false }, noiseSuppression: { ideal: false }, autoGainControl: { ideal: false } }
+          });
+          streamRef.current = stream;
+          const mimeType = MediaRecorder.isTypeSupported("audio/webm") ? "audio/webm"
+                         : MediaRecorder.isTypeSupported("audio/ogg")  ? "audio/ogg" : "";
+          const recorder = mimeType ? new MediaRecorder(stream, { mimeType }) : new MediaRecorder(stream);
+          const allChunks  = [];
+          let attempts     = 0;
+          let sending      = false;
+          let nextAttemptAt = ATTEMPT_INTERVAL;
 
-            // Save to history, sync cast session, increment usage
-            saveToHistory(user, song);
-            fetchHistory(user);
-            syncCastSession(song, lyricsRef.current, initialPosRef.current);
-            if (!isUnlimited(user)) {
-              const newCount = usageCount + 1;
-              await sb.from("user_usage").upsert({ user_id: user.id, recognition_count: newCount });
-              setUsageCount(newCount);
-            }
+          recorder.ondataavailable = e => { if (e.data.size > 0) allChunks.push(e.data); };
+          recorder.onstop = () => stream.getTracks().forEach(t => t.stop());
+          recorder.start(200);
 
-            setMode("confirmed");
+          let elapsed = 0;
+          progressTimerRef.current = setInterval(async () => {
+            elapsed += 100;
 
-            // Fetch album tracklist + check Liri's vinyl DB — both non-blocking
-            fetchAlbumTracks(title, artist).then(async ({ tracks, collectionId }) => {
-              setAlbumTracks(tracks);
-              setAlbumCollectionId(collectionId);
-              const tIdx = tracks.findIndex(t => t.trackName?.toLowerCase() === title.toLowerCase());
-              setCurrentTrackIndex(tIdx >= 0 ? tIdx : 0);
+            // Cycle the progress ring 0→1 over each 5s window so it keeps moving
+            setListenProgress((elapsed % ATTEMPT_INTERVAL) / ATTEMPT_INTERVAL);
 
-              // ── Log the recognition to analytics ──
-              const itunesTrack = tIdx >= 0 ? tracks[tIdx] : null;
-              logListeningEvent({
-                userId:       user?.id,
-                title, artist,
-                album:        song.album,
-                artwork:      song.artwork,
-                genre:        acrGenre,
-                itunesTrackId:      itunesTrack?.trackId,
-                collectionId,
-                vinylReleaseId:     null, // updated below once we know the DB result
-                vinylModeOn:        vinylMode,
-                source:             "recognition",
-                countryCode,
-                offsetSecs:         tcSecs,
-                durationSecs:       duration,
-                acrScore,
-              });
+            if (elapsed >= nextAttemptAt && !sending) {
+              sending = true;
+              attempts++;
+              setListenAttempt(attempts);
+              nextAttemptAt = (attempts + 1) * ATTEMPT_INTERVAL;
 
-              if (!collectionId || tracks.length === 0) return;
+              // Snapshot ALL audio accumulated so far — clip grows with each attempt
+              const blob = new Blob([...allChunks], { type: mimeType || "audio/webm" });
+              const data = await sendAudioToACR(blob);
 
-              // 1. Check Liri's global vinyl DB (most accurate)
-              const dbRelease = await fetchVinylRelease(collectionId);
-              if (dbRelease?.vinyl_tracks?.length > 0) {
-                setVinylDbRelease(dbRelease);
-                albumTpsRef.current = 0; // DB data overrides everything
+              // Rate limit
+              if (data?.status?.code === 3003 || data?.status?.code === 3015) {
+                clearInterval(progressTimerRef.current);
+                if (recorder.state === "recording") recorder.stop();
+                setError("Recognition limit reached. Visit acrcloud.com.");
+                setMode("error");
                 return;
               }
 
-              // 2. Fall back to local learning data (silent localStorage cache)
-              const stored = getAlbumSideData(collectionId);
-              if (stored?.tps) { albumTpsRef.current = stored.tps; return; }
+              // Match found — stop recording and process
+              if (data?.status?.code === 0 && data?.metadata?.music?.length > 0) {
+                clearInterval(progressTimerRef.current);
+                if (recorder.state === "recording") recorder.stop();
+                setMode("detecting");
+                await handleMatch(data, isAutoAdvance);
+                return;
+              }
 
-              // 3. Nothing known — duration heuristic will handle it silently
-              albumTpsRef.current = 0;
-            }).catch(() => {});
+              // No match yet — give up after MAX_ATTEMPTS
+              if (attempts >= MAX_ATTEMPTS) {
+                clearInterval(progressTimerRef.current);
+                if (recorder.state === "recording") recorder.stop();
+                handleNoMatch(isAutoAdvance);
+                return;
+              }
 
-            return true;
-          }
+              sending = false; // ready for next attempt
+            }
+          }, 100);
+        } catch { setError("Microphone access denied."); setMode("error"); }
+      };
 
+      // ── Kept for legacy reference — no longer called directly ──
+      const detectSong = async (blob, isAutoAdvance = false) => {
+        setMode("detecting");
+        try {
+          const data = await sendAudioToACR(blob);
+          if (!data) { handleNoMatch(isAutoAdvance); return false; }
           if (data.status?.code === 3003 || data.status?.code === 3015) {
             setError("Recognition limit reached. Visit acrcloud.com."); setMode("error"); return false;
           }
-
-          // No match
-          if (isAutoAdvance) {
-            autoRetryCountRef.current += 1;
-            if (autoRetryCountRef.current < 2) {
-              // One retry after a short pause (might be mid-gap between tracks)
-              setTimeout(() => startListening(true), 4000);
-            } else {
-              // Two failures = probably end of side
-              autoRetryCountRef.current = 0;
-              setSideEndReason("failed");
-              setMode("side-end");
-            }
-            return false;
+          if (data.status?.code === 0 && data.metadata?.music?.length > 0) {
+            await handleMatch(data, isAutoAdvance); return true;
           }
-
-          setError("Couldn't identify the song. Make sure your record is playing clearly and try again.");
-          setMode("error");
-          return false;
+          handleNoMatch(isAutoAdvance); return false;
         } catch (err) {
           if (isAutoAdvance) {
             autoRetryCountRef.current += 1;
@@ -1745,8 +1763,17 @@
                       <div style={{ position:"absolute", inset:0 }}><ProgressRing progress={listenProgress} size={120} /></div>
                       <div style={{ position:"absolute", inset:0, display:"flex", alignItems:"center", justifyContent:"center" }}><WaveAnimation active={true} /></div>
                     </div>
-                    <div style={{ fontSize:"22px", fontWeight:"600", color:"#f0e6d3", marginBottom:"10px" }}>Listening…</div>
-                    <div style={{ fontSize:"14px", color:"rgba(255,255,255,0.3)" }}>Hold near your speakers</div>
+                    <div style={{ fontSize:"22px", fontWeight:"600", color:"#f0e6d3", marginBottom:"10px" }}>
+                      {listenAttempt === 0 ? "Listening…"
+                       : listenAttempt === 1 ? "Trying again…"
+                       : listenAttempt <= 3  ? "Still looking…"
+                       : "Taking a bit longer…"}
+                    </div>
+                    <div style={{ fontSize:"14px", color:"rgba(255,255,255,0.3)" }}>
+                      {listenAttempt === 0
+                        ? "Hold near your speakers"
+                        : `${listenAttempt * 5}s of audio captured — hold steady`}
+                    </div>
                   </div>
                 )}
 
