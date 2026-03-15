@@ -54,8 +54,9 @@ function get(hostname, path, headers = {}) {
         const chunks = [];
         res.on("data", c => chunks.push(c));
         res.on("end", () => {
-          try { resolve({ status: res.statusCode, body: JSON.parse(Buffer.concat(chunks).toString()) }); }
-          catch (e) { reject(new Error(`Non-JSON from ${hostname}${path}`)); }
+          const raw = Buffer.concat(chunks).toString();
+          try { resolve({ status: res.statusCode, body: JSON.parse(raw) }); }
+          catch (e) { reject(new Error(`Non-JSON (HTTP ${res.statusCode}) from ${hostname}${path}: ${raw.slice(0, 120)}`)); }
         });
       }
     ).on("error", reject);
@@ -86,7 +87,9 @@ function post(hostname, path, headers, bodyObj) {
 // ── Discogs ───────────────────────────────────────────────────────────────────
 
 async function discogsSearch(genre, page) {
-  const qs = `format=Vinyl&genre=${encodeURIComponent(genre)}&sort=have&sort_order=desc&per_page=100&page=${page}&token=${DISCOGS_TOKEN}`;
+  // type=release ensures we only get individual pressings (not masters/artists/labels)
+  // which all live at /releases/{id} — other types cause Non-JSON errors
+  const qs = `type=release&format=Vinyl&genre=${encodeURIComponent(genre)}&sort=have&sort_order=desc&per_page=100&page=${page}&token=${DISCOGS_TOKEN}`;
   const r = await get("api.discogs.com", `/database/search?${qs}`);
   if (r.status === 429) { console.log("  Discogs rate limit — waiting 60s"); await sleep(60000); return discogsSearch(genre, page); }
   return r.body;
@@ -251,6 +254,10 @@ async function main() {
 
       for (const result of search.results) {
         if (inserted >= TARGET) break;
+
+        // Skip anything that isn't a plain release (masters, artists, labels
+        // live at different endpoints and will 404 at /releases/{id})
+        if (result.type && result.type !== "release") { skipped++; continue; }
 
         try {
           // ── 1. Get full release from Discogs ──
