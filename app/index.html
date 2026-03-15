@@ -76,7 +76,7 @@
       "sb_publishable_C-NBnfg0ltAoUi46XQTUjA_ozjZW_Nd"
     );
 
-    const APP_VERSION = "1.31";
+    const APP_VERSION = "1.32";
 
     const PROXY_URL = window.Capacitor
       ? "https://getliri.app/api/recognize"
@@ -1294,6 +1294,14 @@
               // Snapshot ALL audio accumulated so far — clip grows with each attempt
               const blob = new Blob([...allChunks], { type: mimeType || "audio/webm" });
               const blobKB = Math.round(blob.size / 1024);
+
+              // If blob is empty, MediaRecorder isn't producing audio (common on some iOS versions)
+              if (blob.size < 500) {
+                attemptLogRef.current.push(`#${attempts} (${attempts*5}s, ${blobKB}KB): no audio captured — MediaRecorder may not be supported on this device`);
+                sending = false;
+                return;
+              }
+
               const data = await sendAudioToACR(blob);
 
               // Log this attempt for the error screen
@@ -2585,18 +2593,22 @@
                   <div style={{ maxWidth:"320px", animation:"fade-up 0.3s ease both" }}>
                     <div style={{ fontSize:"48px", marginBottom:"20px" }}>🎵</div>
                     {error?.split("\n\n").map((block, i) => (
-                      <div key={i} style={{
-                        marginBottom:"12px",
-                        color: i === 0 ? "#e8a0a8" : "rgba(255,255,255,0.3)",
-                        fontSize: i === 0 ? "15px" : "11px",
-                        lineHeight: "1.7",
-                        fontFamily: i > 0 ? "monospace" : "inherit",
-                        whiteSpace: "pre-wrap",
-                        textAlign: i > 0 ? "left" : "center",
-                        background: i === 1 ? "rgba(255,255,255,0.04)" : "none",
-                        borderRadius: i === 1 ? "8px" : 0,
-                        padding: i === 1 ? "10px 12px" : 0,
-                      }}>{block}</div>
+                      <div key={i}
+                        onClick={i === 1 ? () => { navigator.clipboard?.writeText(block).catch(() => {}); } : undefined}
+                        title={i === 1 ? "Tap to copy log" : undefined}
+                        style={{
+                          marginBottom:"12px",
+                          color: i === 0 ? "#e8a0a8" : "rgba(255,255,255,0.3)",
+                          fontSize: i === 0 ? "15px" : "11px",
+                          lineHeight: "1.7",
+                          fontFamily: i > 0 ? "monospace" : "inherit",
+                          whiteSpace: "pre-wrap",
+                          textAlign: i > 0 ? "left" : "center",
+                          background: i === 1 ? "rgba(255,255,255,0.04)" : "none",
+                          borderRadius: i === 1 ? "8px" : 0,
+                          padding: i === 1 ? "10px 12px" : 0,
+                          cursor: i === 1 ? "pointer" : "default",
+                        }}>{block}</div>
                     ))}
                     <div style={{ display:"flex", gap:"10px", flexWrap:"wrap", justifyContent:"center", marginTop:"8px" }}>
                       <button onClick={reset} style={{ background:"none", border:"1px solid rgba(212,168,70,0.4)", color:"#d4a846", borderRadius:"50px", padding:"12px 32px", fontSize:"14px", cursor:"pointer", fontFamily:"inherit" }}>Try Again</button>
