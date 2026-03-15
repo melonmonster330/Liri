@@ -115,10 +115,10 @@
     // ─────────────────────────────────────────────────────────────────────────────────────────────
 
     // How many seconds we add to ACRCloud's offset to correct for processing lag
-    const PLAYBACK_OFFSET_CORRECTION = 3;
+    const PLAYBACK_OFFSET_CORRECTION = 3.5;
     // Extra offset added when auto-advancing to next track (no re-listen),
     // accounting for lyrics-fetch + state-update delay. Tune if still drifting.
-    const AUTO_ADVANCE_OFFSET = 1.0;
+    const AUTO_ADVANCE_OFFSET = 1.5;
 
     function parseLRC(lrc) {
       const re = /\[(\d{2}):(\d{2})[.:](\d{2,3})\](.*)/;
@@ -1023,6 +1023,42 @@
       // Returns an array of track indices that are the LAST track of each side.
       // e.g. for 12 tracks / 3 per side → [2, 5, 8, 11]
       // tracksPerSide=0 means auto-detect via duration (assumes 2 sides).
+      // Returns { side: "A", track: 2 } for the current position when vinyl mode is on.
+      // Uses Liri DB side data if available, otherwise derives from getSideEndIndices.
+      const getSideInfo = () => {
+        if (!vinylMode || albumTracks.length === 0 || currentTrackIndex < 0) return null;
+
+        // Prefer Liri DB — has exact side labels and position_on_side
+        if (vinylDbRelease?.vinyl_tracks?.length > 0) {
+          const title = albumTracks[currentTrackIndex]?.trackName?.toLowerCase();
+          const dbTrack = vinylDbRelease.vinyl_tracks.find(t =>
+            t.track_title?.toLowerCase() === title
+          );
+          if (dbTrack?.side_label && dbTrack?.position_on_side) {
+            return { side: dbTrack.side_label.toUpperCase(), track: dbTrack.position_on_side };
+          }
+        }
+
+        // Fall back to calculated side ends
+        const sideEnds = getSideEndIndices(albumTracks, albumTpsRef.current);
+        if (!sideEnds.length) return null;
+
+        let sideIdx  = sideEnds.length - 1; // default: last side
+        let sideStart = sideEnds.length > 1 ? sideEnds[sideEnds.length - 2] + 1 : 0;
+        for (let i = 0; i < sideEnds.length; i++) {
+          if (currentTrackIndex <= sideEnds[i]) {
+            sideIdx   = i;
+            sideStart = i === 0 ? 0 : sideEnds[i - 1] + 1;
+            break;
+          }
+        }
+
+        return {
+          side:  "ABCDEFGH"[sideIdx] || "?",
+          track: currentTrackIndex - sideStart + 1,
+        };
+      };
+
       const getSideEndIndices = (tracks, tps) => {
         if (tracks.length <= 1) return [];
         if (tps > 0) {
@@ -1649,6 +1685,29 @@
                   <div style={{ fontSize:"12px", color:"#d4a846", marginTop:"8px" }}>hello@getliri.com</div>
                 </div>
 
+                {/* Credits */}
+                <div style={{ borderTop:"1px solid rgba(255,255,255,0.07)", paddingTop:"20px", marginBottom:"20px" }}>
+                  <div style={{ fontSize:"11px", letterSpacing:"2px", color:"rgba(255,255,255,0.2)", textTransform:"uppercase", marginBottom:"12px" }}>Credits</div>
+                  <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:"8px 16px", marginBottom:"14px" }}>
+                    {[
+                      { name:"ACRCloud",     role:"Audio recognition" },
+                      { name:"LRCLib",       role:"Synced lyrics" },
+                      { name:"Apple iTunes", role:"Track &amp; artwork data" },
+                      { name:"Discogs",      role:"Vinyl pressing database" },
+                      { name:"OpenAI",       role:"Lyrics transcription" },
+                    ].map(c => (
+                      <div key={c.name}>
+                        <div style={{ fontSize:"12px", color:"rgba(255,255,255,0.5)", fontWeight:"600" }}>{c.name}</div>
+                        <div style={{ fontSize:"10px", color:"rgba(255,255,255,0.25)", marginTop:"1px" }} dangerouslySetInnerHTML={{ __html: c.role }} />
+                      </div>
+                    ))}
+                  </div>
+                  <div style={{ fontSize:"11px", color:"rgba(255,255,255,0.15)", lineHeight:"1.7" }}>
+                    © {new Date().getFullYear()} Liri. All rights reserved.<br/>
+                    Music rights belong to their respective artists, labels, and publishers.
+                  </div>
+                </div>
+
                 <button onClick={handleSignOut} style={{ width:"100%", background:"rgba(255,255,255,0.04)", border:"1px solid rgba(255,255,255,0.08)", color:"rgba(255,255,255,0.4)", borderRadius:"14px", padding:"14px", fontSize:"14px", cursor:"pointer", fontFamily:"inherit" }}>Sign Out</button>
                 <div style={{ textAlign:"center", marginTop:"16px", fontSize:"11px", color:"rgba(255,255,255,0.1)" }}>Liri v0.6 · getliri.com</div>
                 </div>{/* end inner padding div */}
@@ -1698,6 +1757,11 @@
                   <div style={{ minWidth:0 }}>
                     <div style={{ fontSize:"14px", fontWeight:"600", color:"#f0e6d3", overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>{detectedSong?.title}</div>
                     <div style={{ fontSize:"12px", color:"rgba(255,255,255,0.4)", overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>{detectedSong?.artist}</div>
+                    {(() => { const si = getSideInfo(); return si ? (
+                      <div style={{ fontSize:"10px", color:"rgba(212,168,70,0.65)", letterSpacing:"1.5px", textTransform:"uppercase", marginTop:"2px" }}>
+                        Side {si.side} · Track {si.track}
+                      </div>
+                    ) : null; })()}
                   </div>
                 </div>
                 <div style={{ display:"flex", alignItems:"center", gap:"12px", marginLeft:"12px", flexShrink:0 }}>
