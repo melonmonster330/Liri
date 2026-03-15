@@ -76,7 +76,7 @@
       "sb_publishable_C-NBnfg0ltAoUi46XQTUjA_ozjZW_Nd"
     );
 
-    const APP_VERSION = "1.16";
+    const APP_VERSION = "1.17";
 
     const PROXY_URL = window.Capacitor
       ? "https://liri-vert.vercel.app/api/recognize"
@@ -793,13 +793,52 @@
           }
           attemptLogRef.current.push(`whisper: transcribed "${transcribed.slice(0, 40)}…"`);
 
-          // 2. Search LRCLib with transcribed words
-          const [ra, rb] = await Promise.all([
-            fetch(`https://lrclib.net/api/search?q=${encodeURIComponent(transcribed)}`).then(r => r.json()).catch(() => []),
-            fetch(`https://lrclib.net/api/search?q=${encodeURIComponent(transcribed.split(" ").slice(0, 6).join(" "))}`).then(r => r.json()).catch(() => []),
-          ]);
-          const candidates = [...(Array.isArray(ra) ? ra : []), ...(Array.isArray(rb) ? rb : [])];
-          const match = candidates.find(c => c.syncedLyrics) || candidates[0];
+          // 2. Find the song on LRCLib
+          // Strategy A (vinyl mode): we know the artist + expected track — search directly
+          // Strategy B (fallback): search by transcribed lyrics text
+          let match = null;
+
+          const knownTracks = albumTracksRef.current;
+          const knownIdx    = currentTrackIndexRef.current;
+          const knownArtist = detectedSong?.artist || knownTracks[knownIdx]?.artistName || "";
+          const knownTitle  = knownTracks[knownIdx]?.trackName || "";
+
+          if (knownArtist && knownTitle) {
+            // Search LRCLib directly by artist + track name — much more reliable than lyrics search
+            const candidates = await Promise.all(
+              // also try adjacent tracks in case auto-advance index is off by one
+              [knownIdx - 1, knownIdx, knownIdx + 1]
+                .filter(i => i >= 0 && i < knownTracks.length)
+                .map(i => {
+                  const t = knownTracks[i];
+                  const q = `${t.artistName || knownArtist} ${t.trackName}`;
+                  return fetch(`https://lrclib.net/api/search?q=${encodeURIComponent(q)}`)
+                    .then(r => r.json()).catch(() => []);
+                })
+            );
+            const flat = candidates.flat().filter(c => c.syncedLyrics);
+            // Pick whichever result has lyrics that best match the Whisper transcript
+            const words = transcribed.toLowerCase().replace(/[^\w\s]/g, "").split(/\s+/).filter(w => w.length > 3);
+            let bestScore = 0;
+            for (const c of flat) {
+              const lyricText = c.syncedLyrics.toLowerCase().replace(/\[[\d:\.]+\]/g, "");
+              const hits = words.filter(w => lyricText.includes(w)).length;
+              if (hits > bestScore) { bestScore = hits; match = c; }
+            }
+            if (!match) match = flat[0] || null;
+            if (match) attemptLogRef.current.push(`whisper: matched via track context "${match.trackName}"`);
+          }
+
+          if (!match) {
+            // Strategy B: search by transcribed text (last resort)
+            const [ra, rb] = await Promise.all([
+              fetch(`https://lrclib.net/api/search?q=${encodeURIComponent(transcribed)}`).then(r => r.json()).catch(() => []),
+              fetch(`https://lrclib.net/api/search?q=${encodeURIComponent(transcribed.split(" ").slice(0, 8).join(" "))}`).then(r => r.json()).catch(() => []),
+            ]);
+            const candidates = [...(Array.isArray(ra) ? ra : []), ...(Array.isArray(rb) ? rb : [])];
+            match = candidates.find(c => c.syncedLyrics) || candidates[0] || null;
+          }
+
           if (!match) return false;
 
           // 3. Parse lyrics
@@ -1002,9 +1041,15 @@
               // No match yet — after MAX_ATTEMPTS try Whisper lyrics fallback
               if (attempts >= MAX_ATTEMPTS) {
                 clearInterval(progressTimerRef.current);
-                if (recorder.state === "recording") recorder.stop();
                 // Signal the UI we're now trying lyrics transcription
                 setListenAttempt(MAX_ATTEMPTS + 1);
+                // Keep recording 20s more so Whisper gets ~50s of lyrics to work with
+                await new Promise(resolve => setTimeout(resolve, 20000));
+                if (listenSessionRef.current !== session) {
+                  if (recorder.state === "recording") recorder.stop();
+                  return;
+                }
+                if (recorder.state === "recording") recorder.stop();
                 const finalBlob = new Blob([...allChunks], { type: mimeType || "audio/webm" });
                 lastRecordingRef.current = finalBlob; // save for debug download on error screen
                 const found = await tryLyricsTranscription(finalBlob, isAutoAdvance);
