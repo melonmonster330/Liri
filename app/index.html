@@ -76,6 +76,8 @@
       "sb_publishable_C-NBnfg0ltAoUi46XQTUjA_ozjZW_Nd"
     );
 
+    const APP_VERSION = "1.01";
+
     const PROXY_URL = window.Capacitor
       ? "https://liri-vert.vercel.app/api/recognize"
       : "/api/recognize";
@@ -1720,7 +1722,7 @@
                 </div>
 
                 <button onClick={handleSignOut} style={{ width:"100%", background:"rgba(255,255,255,0.04)", border:"1px solid rgba(255,255,255,0.08)", color:"rgba(255,255,255,0.4)", borderRadius:"14px", padding:"14px", fontSize:"14px", cursor:"pointer", fontFamily:"inherit" }}>Sign Out</button>
-                <div style={{ textAlign:"center", marginTop:"16px", fontSize:"11px", color:"rgba(255,255,255,0.1)" }}>Liri v0.6 · getliri.com</div>
+                <div style={{ textAlign:"center", marginTop:"16px", fontSize:"11px", color:"rgba(255,255,255,0.1)" }}>Liri v{APP_VERSION} · getliri.com</div>
                 </div>{/* end inner padding div */}
               </div>
             </div>
@@ -1893,7 +1895,10 @@
 
               {/* Top bar */}
               <div className="safe-top" style={{ padding:"0 20px 16px", display:"flex", justifyContent:"space-between", alignItems:"center", flexShrink:0 }}>
-                <div style={{ fontSize:"16px", letterSpacing:"10px", color:"#d4a846", fontWeight:"300" }}>LIRI</div>
+                <div style={{ display:"flex", flexDirection:"column", alignItems:"flex-start", gap:"1px" }}>
+                  <div style={{ fontSize:"9px", letterSpacing:"1px", color:"rgba(255,255,255,0.15)", fontWeight:"400" }}>v{APP_VERSION}</div>
+                  <div style={{ fontSize:"16px", letterSpacing:"10px", color:"#d4a846", fontWeight:"300" }}>LIRI</div>
+                </div>
                 <div style={{ display:"flex", gap:"12px", alignItems:"center" }}>
                   <button onClick={() => { fetchHistory(user); setShowHistory(true); }} style={{ background:"none", border:"none", color:"rgba(255,255,255,0.35)", cursor:"pointer", fontSize:"18px", padding:"4px", lineHeight:1 }} title="History">⏱</button>
                   {/* Account avatar */}
