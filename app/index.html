@@ -78,6 +78,16 @@
       ? "https://liri-vert.vercel.app/api/recognize"
       : "/api/recognize";
 
+    // ── ART TODO — replace all emoji placeholders with original Liri illustrations ──────────────
+    // Search "TODO ART" to find all locations. Priority order:
+    //   1. Onboarding Step 2 (⏱)  → custom "song history / time" illustration
+    //   2. Onboarding Step 4 (📺)  → custom "cast to TV" illustration
+    //   3. Landing page feature cards (🎵 → sound/wave art, 💿 → vinyl art)
+    //      Note: ✦ (sparkle character) is intentional Liri type — keep it
+    //   4. Settings panel — consider a custom Liri icon or wordmark instead of generic text
+    // All original artwork should match the dark palette: deep navy #080810, gold #d4a846, rose #c9807a
+    // ─────────────────────────────────────────────────────────────────────────────────────────────
+
     // How many seconds we add to ACRCloud's offset to correct for processing lag
     const PLAYBACK_OFFSET_CORRECTION = 3;
     // Extra offset added when auto-advancing to next track (no re-listen),
@@ -248,7 +258,7 @@
       // ── Onboarding ──
       const [showOnboarding, setShowOnboarding] = useState(() => !localStorage.getItem("liri_onboarding_done"));
       const [onboardingStep, setOnboardingStep] = useState(0);
-      const ONBOARDING_STEPS = 5;
+      const ONBOARDING_STEPS = 6;
       const dismissOnboarding = () => { localStorage.setItem("liri_onboarding_done", "true"); setShowOnboarding(false); };
 
       // ── Analytics: persistent anonymous session ID ──
@@ -1005,6 +1015,8 @@
         const [authSheet, setAuthSheet] = useState(null);
         const openSheet = (mode) => { setAuthMode(mode); setAuthError(null); setAuthEmail(""); setAuthPassword(""); setAuthSheet(mode); };
 
+        // TODO ART: 🎵 → original sound/wave illustration, 💿 → original vinyl illustration
+        // ✦ is an intentional Liri typographic mark — keep it
         const features = [
           { icon:"🎵", label:"Identify", sub:"8-second song fingerprinting" },
           { icon:"✦",  label:"Sync",     sub:"Real-time scrolling lyrics" },
@@ -1148,6 +1160,7 @@
               )}
 
               {/* Step 2: History */}
+              {/* TODO ART: ⏱ placeholder — replace with original Liri history/time illustration */}
               {onboardingStep === 2 && (
                 <div style={{ textAlign:"center", animation:"fade-up 0.4s ease both" }}>
                   <div style={{ fontSize:"72px", marginBottom:"24px", filter:"drop-shadow(0 0 20px rgba(212,168,70,0.4))" }}>⏱</div>
@@ -1198,6 +1211,7 @@
               )}
 
               {/* Step 4: Cast to TV */}
+              {/* TODO ART: 📺 placeholder — replace with original Liri TV/cast illustration */}
               {onboardingStep === 4 && (
                 <div style={{ textAlign:"center", animation:"fade-up 0.4s ease both" }}>
                   <div style={{ fontSize:"72px", marginBottom:"24px", filter:"drop-shadow(0 0 24px rgba(200,120,120,0.4))" }}>📺</div>
@@ -1209,11 +1223,54 @@
                     <div style={{ fontSize:"11px", color:"rgba(255,255,255,0.2)", letterSpacing:"2px", marginBottom:"8px" }}>ROOM CODE</div>
                     <div style={{ fontSize:"36px", fontWeight:"800", letterSpacing:"10px", color:"#d4a846" }}>ABCDEF</div>
                   </div>
+                  <div style={{ display:"flex", gap:"16px", justifyContent:"center", alignItems:"center" }}>
+                    <button onClick={() => setOnboardingStep(3)} style={{ background:"none", border:"1px solid rgba(255,255,255,0.1)", color:"rgba(255,255,255,0.3)", borderRadius:"50px", padding:"12px 24px", fontSize:"13px", cursor:"pointer", fontFamily:"inherit" }}>← Back</button>
+                    <button onClick={() => setOnboardingStep(5)} style={{ background:"linear-gradient(135deg, #d4a846, #c9807a)", color:"#080810", border:"none", borderRadius:"50px", padding:"14px 36px", fontSize:"14px", fontWeight:"700", cursor:"pointer", fontFamily:"inherit" }}>Next →</button>
+                  </div>
+                </div>
+              )}
+
+              {/* Step 5: Credits + Copyright */}
+              {onboardingStep === 5 && (
+                <div style={{ textAlign:"center", animation:"fade-up 0.4s ease both", maxWidth:"320px", margin:"0 auto" }}>
+
+                  {/* Liri mark */}
+                  <Vinyl size={64} spinning={false} />
+                  <div style={{ marginTop:"16px", fontSize:"11px", letterSpacing:"4px", color:"rgba(212,168,70,0.5)", textTransform:"uppercase", marginBottom:"6px" }}>Liri</div>
+                  <div style={{ fontSize:"12px", color:"rgba(255,255,255,0.2)", marginBottom:"32px" }}>© {new Date().getFullYear()} Liri. All rights reserved.</div>
+
+                  {/* Artist acknowledgment */}
+                  <div style={{ background:"rgba(212,168,70,0.06)", border:"1px solid rgba(212,168,70,0.12)", borderRadius:"16px", padding:"18px 20px", marginBottom:"24px" }}>
+                    <div style={{ fontSize:"13px", color:"rgba(212,168,70,0.7)", letterSpacing:"2px", textTransform:"uppercase", marginBottom:"10px" }}>To the artists</div>
+                    <p style={{ fontSize:"13px", color:"rgba(255,255,255,0.4)", lineHeight:"1.8" }}>
+                      The lyrics displayed in Liri belong to the artists, songwriters, and publishers who created them. We're just here to help you feel every word.
+                    </p>
+                  </div>
+
+                  {/* Credits row */}
+                  <div style={{ marginBottom:"36px" }}>
+                    <div style={{ fontSize:"11px", color:"rgba(255,255,255,0.2)", letterSpacing:"2px", textTransform:"uppercase", marginBottom:"14px" }}>Made possible by</div>
+                    <div style={{ display:"flex", flexDirection:"column", gap:"8px" }}>
+                      {[
+                        { name:"ACRCloud",    role:"Audio recognition" },
+                        { name:"LRCLib",      role:"Synced lyrics" },
+                        { name:"Apple iTunes",role:"Track & album data" },
+                        { name:"Discogs",     role:"Vinyl pressing database" },
+                      ].map(c => (
+                        <div key={c.name} style={{ display:"flex", justifyContent:"space-between", alignItems:"center", padding:"8px 14px", background:"rgba(255,255,255,0.03)", borderRadius:"10px" }}>
+                          <span style={{ fontSize:"13px", color:"rgba(255,255,255,0.55)", fontWeight:"500" }}>{c.name}</span>
+                          <span style={{ fontSize:"11px", color:"rgba(255,255,255,0.2)" }}>{c.role}</span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+
+                  {/* CTA */}
                   <button onClick={dismissOnboarding} style={{ background:"linear-gradient(135deg, #d4a846, #c9807a)", color:"#080810", border:"none", borderRadius:"50px", padding:"18px 52px", fontSize:"15px", fontWeight:"700", cursor:"pointer", fontFamily:"inherit", letterSpacing:"1px", boxShadow:"0 8px 32px rgba(212,168,70,0.3)" }}>
-                    Start listening ✓
+                    Start listening →
                   </button>
-                  <div style={{ marginTop:"16px" }}>
-                    <button onClick={() => setOnboardingStep(3)} style={{ background:"none", border:"none", color:"rgba(255,255,255,0.2)", cursor:"pointer", fontSize:"13px", fontFamily:"inherit" }}>← Back</button>
+                  <div style={{ marginTop:"14px" }}>
+                    <button onClick={() => setOnboardingStep(4)} style={{ background:"none", border:"none", color:"rgba(255,255,255,0.2)", cursor:"pointer", fontSize:"13px", fontFamily:"inherit" }}>← Back</button>
                   </div>
                 </div>
               )}
