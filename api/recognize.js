@@ -79,6 +79,11 @@ module.exports = async (req, res) => {
       Buffer.from(CRLF),
     ]);
 
+    // Use the correct file extension so ACRCloud knows the container format
+    const sampleExt = mimeType.includes("mp4") ? "m4a"
+                    : mimeType.includes("ogg") ? "ogg"
+                    : "webm";
+
     const formBody = Buffer.concat([
       textPart("access_key",        accessKey),
       textPart("data_type",         "audio"),
@@ -86,10 +91,6 @@ module.exports = async (req, res) => {
       textPart("timestamp",         String(timestamp)),
       textPart("signature",         signature),
       textPart("sample_bytes",      String(audioBuffer.length)),
-      // Use the correct file extension so ACRCloud knows the container format
-      const sampleExt = mimeType.includes("mp4") ? "m4a"
-                      : mimeType.includes("ogg") ? "ogg"
-                      : "webm";
       filePart("sample", `sample.${sampleExt}`, mimeType, audioBuffer),
       Buffer.from(`--${boundary}--${CRLF}`),
     ]);
