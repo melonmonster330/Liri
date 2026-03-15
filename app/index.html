@@ -76,7 +76,7 @@
       "sb_publishable_C-NBnfg0ltAoUi46XQTUjA_ozjZW_Nd"
     );
 
-    const APP_VERSION = "1.09";
+    const APP_VERSION = "1.10";
 
     const PROXY_URL = window.Capacitor
       ? "https://liri-vert.vercel.app/api/recognize"
@@ -908,11 +908,17 @@
             analyser.fftSize = 256;
             actx.createMediaStreamSource(stream).connect(analyser);
             const freqData = new Uint8Array(analyser.frequencyBinCount);
+            let smoothed = 0;
             const pollLevel = () => {
               analyser.getByteFrequencyData(freqData);
-              // Average the lower 40 bins (bass + mids where music energy lives)
+              // Average lower 40 bins (bass + mids where music energy lives)
               const avg = freqData.slice(0, 40).reduce((a, b) => a + b, 0) / 40;
-              setAudioLevel(avg / 255);
+              const raw = avg / 255;
+              // Fast attack (0.35), slow release (0.06) — VU meter feel, no beat-flashing
+              smoothed = raw > smoothed
+                ? smoothed + (raw - smoothed) * 0.35
+                : smoothed + (raw - smoothed) * 0.06;
+              setAudioLevel(smoothed);
               audioRafRef.current = requestAnimationFrame(pollLevel);
             };
             audioRafRef.current = requestAnimationFrame(pollLevel);
@@ -925,9 +931,14 @@
             setAudioLevel(0);
           };
 
-          const mimeType = MediaRecorder.isTypeSupported("audio/webm") ? "audio/webm"
-                         : MediaRecorder.isTypeSupported("audio/ogg")  ? "audio/ogg" : "";
-          const recorder = mimeType ? new MediaRecorder(stream, { mimeType }) : new MediaRecorder(stream);
+          const preferredMime = MediaRecorder.isTypeSupported("audio/webm") ? "audio/webm"
+                             : MediaRecorder.isTypeSupported("audio/ogg")  ? "audio/ogg"
+                             : MediaRecorder.isTypeSupported("audio/mp4")  ? "audio/mp4"
+                             : "";
+          const recorder = preferredMime ? new MediaRecorder(stream, { mimeType: preferredMime }) : new MediaRecorder(stream);
+          // Read the actual mimeType back from the recorder — on iOS Safari this may
+          // differ from preferredMime (e.g. browser picks audio/mp4 when we asked for "")
+          const mimeType = recorder.mimeType || preferredMime || "audio/webm";
           const allChunks  = [];
           let attempts     = 0;
           let sending      = false;
@@ -936,6 +947,8 @@
           recorder.ondataavailable = e => { if (e.data.size > 0) allChunks.push(e.data); };
           recorder.onstop = () => { stream.getTracks().forEach(t => t.stop()); stopMetering(); };
           recorder.start(200);
+          // Log the detected audio format so it shows in the error screen if things go wrong
+          attemptLogRef.current.push(`format: ${mimeType}`);
 
           let elapsed = 0;
           progressTimerRef.current = setInterval(async () => {
@@ -1254,9 +1267,12 @@
               autoGainControl: { ideal: false }
             }
           });
-          const mimeType = MediaRecorder.isTypeSupported("audio/webm") ? "audio/webm"
-                         : MediaRecorder.isTypeSupported("audio/ogg")  ? "audio/ogg" : "";
-          const recorder = mimeType ? new MediaRecorder(stream, { mimeType }) : new MediaRecorder(stream);
+          const preferredMimeR = MediaRecorder.isTypeSupported("audio/webm") ? "audio/webm"
+                              : MediaRecorder.isTypeSupported("audio/ogg")  ? "audio/ogg"
+                              : MediaRecorder.isTypeSupported("audio/mp4")  ? "audio/mp4"
+                              : "";
+          const recorder = preferredMimeR ? new MediaRecorder(stream, { mimeType: preferredMimeR }) : new MediaRecorder(stream);
+          const mimeType = recorder.mimeType || preferredMimeR || "audio/webm";
           const chunks = [];
           recorder.ondataavailable = e => { if (e.data.size > 0) chunks.push(e.data); };
           recorder.onstop = () => stream.getTracks().forEach(t => t.stop());
