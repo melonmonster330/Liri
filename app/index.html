@@ -76,7 +76,7 @@
       "sb_publishable_C-NBnfg0ltAoUi46XQTUjA_ozjZW_Nd"
     );
 
-    const APP_VERSION = "1.12";
+    const APP_VERSION = "1.13";
 
     const PROXY_URL = window.Capacitor
       ? "https://liri-vert.vercel.app/api/recognize"
@@ -405,6 +405,7 @@
       const currentLineRef      = useRef(null);
       const listenSessionRef    = useRef(0); // increments on each startListening; guards stale async callbacks
       const attemptLogRef       = useRef([]); // collects per-attempt debug info for the error screen
+      const lastRecordingRef    = useRef(null); // stores last recorded blob for debug download
       const [audioLevel, setAudioLevel] = useState(0); // 0–1 live mic amplitude (chunk-size proxy)
 
       useEffect(() => { lyricsRef.current = lyrics; }, [lyrics]);
@@ -997,6 +998,7 @@
                 // Signal the UI we're now trying lyrics transcription
                 setListenAttempt(MAX_ATTEMPTS + 1);
                 const finalBlob = new Blob([...allChunks], { type: mimeType || "audio/webm" });
+                lastRecordingRef.current = finalBlob; // save for debug download on error screen
                 const found = await tryLyricsTranscription(finalBlob, isAutoAdvance);
                 if (listenSessionRef.current !== session) return; // aborted during Whisper
                 if (!found) handleNoMatch(isAutoAdvance, "whisper_failed");
@@ -2095,7 +2097,19 @@
                         padding: i === 1 ? "10px 12px" : 0,
                       }}>{block}</div>
                     ))}
-                    <button onClick={reset} style={{ marginTop:"8px", background:"none", border:"1px solid rgba(212,168,70,0.4)", color:"#d4a846", borderRadius:"50px", padding:"12px 32px", fontSize:"14px", cursor:"pointer", fontFamily:"inherit" }}>Try Again</button>
+                    <div style={{ display:"flex", gap:"10px", flexWrap:"wrap", justifyContent:"center", marginTop:"8px" }}>
+                      <button onClick={reset} style={{ background:"none", border:"1px solid rgba(212,168,70,0.4)", color:"#d4a846", borderRadius:"50px", padding:"12px 32px", fontSize:"14px", cursor:"pointer", fontFamily:"inherit" }}>Try Again</button>
+                      {lastRecordingRef.current && (
+                        <button onClick={() => {
+                          const url = URL.createObjectURL(lastRecordingRef.current);
+                          const a = document.createElement("a");
+                          a.href = url; a.download = "liri-recording.webm"; a.click();
+                          setTimeout(() => URL.revokeObjectURL(url), 5000);
+                        }} style={{ background:"none", border:"1px solid rgba(255,255,255,0.15)", color:"rgba(255,255,255,0.4)", borderRadius:"50px", padding:"12px 24px", fontSize:"12px", cursor:"pointer", fontFamily:"inherit" }}>
+                          ↓ recording
+                        </button>
+                      )}
+                    </div>
                   </div>
                 )}
 
