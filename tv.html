@@ -1,10 +1,33 @@
 <!DOCTYPE html>
+<!--
+  tv.html — Liri TV Receiver
+  ─────────────────────────────────────────────────────────────────────────────
+  Dual-mode display for Liri lyrics on a large screen:
+
+  MODE 1 — Google Cast Receiver (preferred)
+    Loaded automatically by Chromecast when the user taps Cast in Liri.
+    Receives lyrics + song data over a private Cast message channel.
+    No room code needed. Sync is direct phone → Chromecast.
+
+  MODE 2 — Browser fallback (QR code / URL)
+    Works on any smart TV browser, Apple TV browser, etc.
+    User enters or scans a room code → syncs via Supabase Realtime.
+    Same display, different transport layer.
+
+  Cast message namespace: urn:x-cast:com.getliri.lyrics
+  Messages: SESSION_START | TRACK_ADVANCE | SESSION_END
+-->
 <html lang="en">
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Liri — TV</title>
+
+  <!-- Cast Receiver SDK — only loads when running on a Chromecast -->
+  <script src="//www.gstatic.com/cast/sdk/libs/caf_receiver/v3/cast_receiver_framework.js"></script>
+  <!-- Supabase (used for browser-mode fallback only) -->
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
+
   <style>
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
     html, body { height: 100%; overflow: hidden; background: #050508; color: #f0e6d3; font-family: -apple-system, BlinkMacSystemFont, 'Helvetica Neue', sans-serif; }
@@ -35,6 +58,13 @@
     .liri-logo { font-size: 48px; letter-spacing: 24px; color: #d4a846; font-weight: 300; }
     .tagline { font-size: 18px; color: rgba(255,255,255,0.2); letter-spacing: 4px; text-transform: uppercase; }
 
+    /* Cast mode waiting */
+    #waiting-cast { display: none; flex-direction: column; align-items: center; gap: 16px; margin-top: 40px; text-align: center; }
+    #waiting-cast.show { display: flex; }
+    #cast-status { font-size: 20px; color: rgba(255,255,255,0.3); }
+    #cast-hint { font-size: 16px; color: rgba(255,255,255,0.15); margin-top: 4px; }
+
+    /* Browser mode room entry */
     #room-entry { display: flex; flex-direction: column; align-items: center; gap: 16px; margin-top: 40px; }
     #room-entry p { font-size: 20px; color: rgba(255,255,255,0.35); }
     #room-input {
@@ -51,10 +81,7 @@
       letter-spacing: 1px;
     }
     #connect-error { color: #e8a0a8; font-size: 16px; }
-
-    #waiting-connected {
-      display: none; flex-direction: column; align-items: center; gap: 16px; margin-top: 40px;
-    }
+    #waiting-connected { display: none; flex-direction: column; align-items: center; gap: 16px; margin-top: 40px; }
     #waiting-connected.show { display: flex; }
     #waiting-room-code { font-size: 72px; letter-spacing: 16px; color: #d4a846; font-weight: 700; }
     #waiting-status { font-size: 20px; color: rgba(255,255,255,0.3); }
@@ -67,56 +94,29 @@
     }
     #lyrics-screen.visible { opacity: 1; pointer-events: auto; }
 
-    /* Song info — bottom left */
     #song-info {
       position: fixed; bottom: 48px; left: 64px; z-index: 20;
       display: flex; align-items: center; gap: 20px;
     }
-    #song-art {
-      width: 80px; height: 80px; border-radius: 12px; object-fit: cover;
-      box-shadow: 0 8px 32px rgba(0,0,0,0.6);
-      display: none;
-    }
+    #song-art { width: 80px; height: 80px; border-radius: 12px; object-fit: cover; box-shadow: 0 8px 32px rgba(0,0,0,0.6); display: none; }
     #song-art.show { display: block; }
-    #song-text {}
     #song-title { font-size: 24px; font-weight: 700; color: #f0e6d3; }
     #song-artist { font-size: 18px; color: rgba(255,255,255,0.4); margin-top: 4px; }
 
-    /* Room code — bottom right */
-    #room-badge {
-      position: fixed; bottom: 48px; right: 64px; z-index: 20;
-      font-size: 14px; color: rgba(255,255,255,0.15); letter-spacing: 2px; text-align: right;
-    }
+    #room-badge { position: fixed; bottom: 48px; right: 64px; z-index: 20; font-size: 14px; color: rgba(255,255,255,0.15); letter-spacing: 2px; text-align: right; }
 
-    /* Lyrics container */
     #lyrics-container {
       flex: 1; display: flex; flex-direction: column;
       align-items: center; justify-content: center;
-      padding: 80px 120px 180px;
-      gap: 0;
+      padding: 80px 120px 180px; gap: 0;
     }
 
-    .lyric-line {
-      text-align: center; line-height: 1.3;
-      transition: all 0.45s cubic-bezier(0.4, 0, 0.2, 1);
-      padding: 8px 0;
-    }
-    .lyric-line.current {
-      font-size: 80px; font-weight: 800; color: #ffffff;
-      text-shadow: 0 0 80px rgba(212,168,70,0.5), 0 4px 32px rgba(0,0,0,0.9);
-      padding: 16px 0;
-    }
-    .lyric-line.near {
-      font-size: 48px; font-weight: 400; color: rgba(255,255,255,0.3);
-    }
-    .lyric-line.far {
-      font-size: 32px; font-weight: 300; color: rgba(255,255,255,0.12);
-    }
+    .lyric-line { text-align: center; line-height: 1.3; transition: all 0.45s cubic-bezier(0.4, 0, 0.2, 1); padding: 8px 0; }
+    .lyric-line.current { font-size: 80px; font-weight: 800; color: #ffffff; text-shadow: 0 0 80px rgba(212,168,70,0.5), 0 4px 32px rgba(0,0,0,0.9); padding: 16px 0; }
+    .lyric-line.near { font-size: 48px; font-weight: 400; color: rgba(255,255,255,0.3); }
+    .lyric-line.far { font-size: 32px; font-weight: 300; color: rgba(255,255,255,0.12); }
 
-    #no-lyrics {
-      font-size: 36px; color: rgba(255,255,255,0.2); text-align: center;
-      display: none;
-    }
+    #no-lyrics { font-size: 36px; color: rgba(255,255,255,0.2); text-align: center; display: none; }
     #no-lyrics.show { display: block; }
   </style>
 </head>
@@ -124,12 +124,18 @@
   <div id="backdrop"></div>
   <div id="overlay"></div>
 
-  <!-- WAITING / ENTRY screen -->
+  <!-- WAITING screen -->
   <div id="waiting">
     <div class="liri-logo">LIRI</div>
     <div class="tagline">Lyrics for Vinyl</div>
 
-    <!-- Room code entry (shown when no URL param) -->
+    <!-- Cast mode: shown when running as Chromecast receiver -->
+    <div id="waiting-cast">
+      <div id="cast-status">Ready to receive</div>
+      <div id="cast-hint">Open Liri on your phone and tap the Cast button</div>
+    </div>
+
+    <!-- Browser mode: room code entry -->
     <div id="room-entry">
       <p>Enter your room code to connect</p>
       <input id="room-input" maxlength="6" placeholder="XXXXXX" spellcheck="false" autocomplete="off" />
@@ -137,7 +143,7 @@
       <div id="connect-error"></div>
     </div>
 
-    <!-- Connected, waiting for song -->
+    <!-- Browser mode: connected, waiting for song -->
     <div id="waiting-connected">
       <div id="waiting-room-code"></div>
       <div id="waiting-status">Waiting for music…</div>
@@ -161,92 +167,40 @@
   </div>
 
   <script>
-    const SB_URL  = "https://xjdjpaxgymgbvcwmvorc.supabase.co";
-    const SB_KEY  = "sb_publishable_C-NBnfg0ltAoUi46XQTUjA_ozjZW_Nd";
-    const sb = supabase.createClient(SB_URL, SB_KEY);
+    // ── Constants ──────────────────────────────────────────────────────────────
+    const SB_URL       = "https://xjdjpaxgymgbvcwmvorc.supabase.co";
+    const SB_KEY       = "sb_publishable_C-NBnfg0ltAoUi46XQTUjA_ozjZW_Nd";
+    const CAST_NS      = "urn:x-cast:com.getliri.lyrics"; // Cast message namespace
 
-    let syncInterval = null;
-    let currentRoomCode = null;
-    let realtimeChannel = null;
+    let syncInterval   = null;
 
-    // ── Read room code from URL ──
-    const params = new URLSearchParams(location.search);
-    const urlRoom = params.get("room")?.toUpperCase().slice(0, 6);
-    if (urlRoom) connectToRoom(urlRoom);
+    // ── Shared display functions (used by both Cast and browser mode) ──────────
 
-    // ── Connect button ──
-    document.getElementById("connect-btn").addEventListener("click", () => {
-      const val = document.getElementById("room-input").value.trim().toUpperCase();
-      if (val.length < 4) { showError("Enter your room code"); return; }
-      connectToRoom(val);
-    });
-    document.getElementById("room-input").addEventListener("keydown", e => {
-      if (e.key === "Enter") document.getElementById("connect-btn").click();
-    });
-
-    function showError(msg) {
-      document.getElementById("connect-error").textContent = msg;
-    }
-
-    async function connectToRoom(code) {
-      currentRoomCode = code;
-      document.getElementById("connect-error").textContent = "";
-
-      // Hide entry, show waiting-connected
-      document.getElementById("room-entry").style.display = "none";
-      document.getElementById("waiting-room-code").textContent = code;
-      document.getElementById("waiting-connected").classList.add("show");
-      document.getElementById("room-badge").textContent = "Room: " + code;
-
-      // Update URL without reload
-      history.replaceState(null, "", "?room=" + code);
-
-      // Fetch existing session
-      const { data, error } = await sb.from("cast_sessions")
-        .select("*").eq("room_code", code).eq("is_active", true).single();
-
-      if (data) startSession(data);
-
-      // Subscribe to realtime updates
-      if (realtimeChannel) sb.removeChannel(realtimeChannel);
-      realtimeChannel = sb.channel("cast:" + code)
-        .on("postgres_changes", {
-          event: "*", schema: "public", table: "cast_sessions",
-          filter: "room_code=eq." + code
-        }, payload => {
-          if (payload.new && payload.new.is_active) startSession(payload.new);
-        })
-        .subscribe();
-    }
-
-    function startSession(session) {
+    function showSession(data) {
       clearInterval(syncInterval);
 
-      const detectedAt  = new Date(session.detected_at).getTime();
-      const initialPos  = session.initial_position || 0;
-      const lyrics      = session.lyrics_json || [];
+      const detectedAt = typeof data.detectedAt === "number" ? data.detectedAt : new Date(data.detected_at || data.detectedAt).getTime();
+      const initialPos = data.initialPos ?? data.initial_position ?? 0;
+      const lyrics     = data.lyrics ?? data.lyrics_json ?? [];
+      const artwork    = data.artworkUrl ?? data.artwork_url ?? null;
+      const title      = data.songTitle  ?? data.song_title  ?? "";
+      const artist     = data.songArtist ?? data.song_artist ?? "";
 
-      // Update backdrop + song info
-      if (session.artwork_url) {
+      if (artwork) {
         const bd = document.getElementById("backdrop");
-        bd.style.backgroundImage = `url(${session.artwork_url})`;
+        bd.style.backgroundImage = `url(${artwork})`;
         bd.classList.add("visible");
         const art = document.getElementById("song-art");
-        art.src = session.artwork_url;
-        art.classList.add("show");
+        art.src = artwork; art.classList.add("show");
       } else {
         document.getElementById("backdrop").classList.remove("visible");
         document.getElementById("song-art").classList.remove("show");
       }
 
-      document.getElementById("song-title").textContent  = session.song_title  || "";
-      document.getElementById("song-artist").textContent = session.song_artist || "";
-
-      // Switch to lyrics screen
+      document.getElementById("song-title").textContent  = title;
+      document.getElementById("song-artist").textContent = artist;
       document.getElementById("waiting").classList.add("hidden");
       document.getElementById("lyrics-screen").classList.add("visible");
-
-      let lastIdx = -1;
 
       if (lyrics.length === 0) {
         document.getElementById("no-lyrics").classList.add("show");
@@ -254,10 +208,9 @@
         document.getElementById("lyrics-container").appendChild(document.getElementById("no-lyrics"));
         return;
       }
-
       document.getElementById("no-lyrics").classList.remove("show");
 
-      // Sync loop
+      let lastIdx = -1;
       syncInterval = setInterval(() => {
         const t   = initialPos + (Date.now() - detectedAt) / 1000;
         let idx   = 0;
@@ -273,24 +226,99 @@
     function renderLyrics(lyrics, currentIdx) {
       const container = document.getElementById("lyrics-container");
       container.innerHTML = "";
-
-      // Show lines around current index: 2 before, current, 3 after
-      const window = [
+      [
         [currentIdx - 2, "far"],
         [currentIdx - 1, "near"],
         [currentIdx,     "current"],
         [currentIdx + 1, "near"],
         [currentIdx + 2, "far"],
         [currentIdx + 3, "far"],
-      ];
-
-      window.forEach(([i, cls]) => {
+      ].forEach(([i, cls]) => {
         if (i < 0 || i >= lyrics.length) return;
         const div = document.createElement("div");
         div.className = "lyric-line " + cls;
         div.textContent = lyrics[i].text;
         container.appendChild(div);
       });
+    }
+
+    // ── MODE DETECTION ─────────────────────────────────────────────────────────
+    // The Cast Receiver SDK sets up `cast.framework` on the window.
+    // If it's present, we're running inside a Chromecast. Otherwise, browser mode.
+
+    if (typeof cast !== "undefined" && cast.framework) {
+      initCastReceiverMode();
+    } else {
+      initBrowserMode();
+    }
+
+    // ── CAST RECEIVER MODE ─────────────────────────────────────────────────────
+
+    function initCastReceiverMode() {
+      // Hide browser-mode UI, show Cast waiting screen
+      document.getElementById("room-entry").style.display       = "none";
+      document.getElementById("waiting-connected").style.display = "none";
+      document.getElementById("waiting-cast").classList.add("show");
+      document.getElementById("room-badge").textContent = "Cast";
+
+      const context = cast.framework.CastReceiverContext.getInstance();
+
+      // Listen for lyrics messages from the Liri sender app
+      context.addCustomMessageListener(CAST_NS, event => {
+        const msg = event.data;
+        if (!msg || !msg.type) return;
+
+        if (msg.type === "SESSION_START" || msg.type === "TRACK_ADVANCE") {
+          showSession(msg);
+        } else if (msg.type === "SESSION_END") {
+          clearInterval(syncInterval);
+          document.getElementById("lyrics-screen").classList.remove("visible");
+          document.getElementById("waiting").classList.remove("hidden");
+          document.getElementById("cast-status").textContent = "Ready to receive";
+        }
+      });
+
+      // Start the receiver — this tells Chromecast we're ready
+      context.start({ disableIdleTimeout: true });
+    }
+
+    // ── BROWSER FALLBACK MODE (QR code / room code) ────────────────────────────
+
+    function initBrowserMode() {
+      const sb = supabase.createClient(SB_URL, SB_KEY);
+      let realtimeChannel = null;
+
+      const params  = new URLSearchParams(location.search);
+      const urlRoom = params.get("room")?.toUpperCase().slice(0, 6);
+      if (urlRoom) connectToRoom(urlRoom);
+
+      document.getElementById("connect-btn").addEventListener("click", () => {
+        const val = document.getElementById("room-input").value.trim().toUpperCase();
+        if (val.length < 4) { document.getElementById("connect-error").textContent = "Enter your room code"; return; }
+        connectToRoom(val);
+      });
+      document.getElementById("room-input").addEventListener("keydown", e => {
+        if (e.key === "Enter") document.getElementById("connect-btn").click();
+      });
+
+      async function connectToRoom(code) {
+        document.getElementById("connect-error").textContent = "";
+        document.getElementById("room-entry").style.display = "none";
+        document.getElementById("waiting-room-code").textContent = code;
+        document.getElementById("waiting-connected").classList.add("show");
+        document.getElementById("room-badge").textContent = "Room: " + code;
+        history.replaceState(null, "", "?room=" + code);
+
+        const { data } = await sb.from("cast_sessions")
+          .select("*").eq("room_code", code).eq("is_active", true).single();
+        if (data) showSession(data);
+
+        if (realtimeChannel) sb.removeChannel(realtimeChannel);
+        realtimeChannel = sb.channel("cast:" + code)
+          .on("postgres_changes", { event: "*", schema: "public", table: "cast_sessions", filter: "room_code=eq." + code },
+            payload => { if (payload.new?.is_active) showSession(payload.new); })
+          .subscribe();
+      }
     }
   </script>
 </body>

@@ -60,6 +60,8 @@
   <script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.2/babel.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
+  <!-- Google Cast Web Sender SDK — loads Cast framework; only activates in Chrome -->
+  <script src="https://www.gstatic.com/cv/js/sender/v1/cast_sender.js?loadCastFramework=1"></script>
 
   <script type="text/babel">
     const { useState, useEffect, useRef, useCallback } = React;
@@ -77,6 +79,30 @@
     const PROXY_URL = window.Capacitor
       ? "https://liri-vert.vercel.app/api/recognize"
       : "/api/recognize";
+
+    // ── Google Cast ───────────────────────────────────────────────────────────
+    // Replace with your App ID from cast.google.com/publish after registering.
+    // Receiver URL to register: https://getliri.app/tv (or your Vercel URL/tv)
+    const CAST_APP_ID = "YOUR_CAST_APP_ID"; // ← paste your App ID here
+    const CAST_NS     = "urn:x-cast:com.getliri.lyrics";
+
+    // Cast state — lives outside React so it's not re-created on renders
+    let castContext    = null;
+    let castAvailable  = false;
+
+    window["__onGCastApiAvailable"] = function(isAvailable) {
+      if (!isAvailable || CAST_APP_ID === "YOUR_CAST_APP_ID") return;
+      try {
+        castContext = cast.framework.CastContext.getInstance();
+        castContext.setOptions({
+          receiverApplicationId: CAST_APP_ID,
+          autoJoinPolicy: chrome.cast.AutoJoinPolicy.ORIGIN_SCOPED,
+        });
+        castAvailable = true;
+        // Notify React that Cast became available
+        window.dispatchEvent(new Event("liri-cast-ready"));
+      } catch (e) { console.warn("Cast init failed:", e); }
+    };
 
     // ── ART TODO — replace all emoji placeholders with original Liri illustrations ──────────────
     // Search "TODO ART" to find all locations. Priority order:
@@ -275,12 +301,69 @@
       }, []);
 
       // ── Cast ──
-      const [showCast, setShowCast]           = useState(false);
+      const [showCast, setShowCast]                 = useState(false);
+      const [castReady, setCastReady]               = useState(false);   // Cast SDK loaded + App ID set
+      const [castConnected, setCastConnected]       = useState(false);   // Active Cast session
+      const [castDeviceName, setCastDeviceName]     = useState(null);    // e.g. "Living Room TV"
+
+      // Browser-mode fallback (QR code)
       const roomCode = user?.id ? user.id.replace(/-/g, "").slice(0, 6).toUpperCase() : null;
       const tvUrl = roomCode ? `${location.origin}/tv?room=${roomCode}` : null;
       const qrUrl = tvUrl ? `https://api.qrserver.com/v1/create-qr-code/?data=${encodeURIComponent(tvUrl)}&size=220x220&bgcolor=0f0f1c&color=d4a846&margin=12&qzone=1` : null;
 
+      // Listen for Cast SDK becoming ready
+      useEffect(() => {
+        const onReady = () => setCastReady(true);
+        window.addEventListener("liri-cast-ready", onReady);
+        if (castAvailable) setCastReady(true);
+        return () => window.removeEventListener("liri-cast-ready", onReady);
+      }, []);
+
+      // Track Cast session state
+      useEffect(() => {
+        if (!castReady || !castContext) return;
+        const onSessionChange = () => {
+          const session = castContext.getCurrentSession();
+          setCastConnected(!!session);
+          setCastDeviceName(session?.getCastDevice()?.friendlyName || null);
+        };
+        castContext.addEventListener(cast.framework.CastContextEventType.SESSION_STATE_CHANGED, onSessionChange);
+        return () => castContext.removeEventListener(cast.framework.CastContextEventType.SESSION_STATE_CHANGED, onSessionChange);
+      }, [castReady]);
+
+      // Send lyrics to Chromecast whenever a song is detected/advanced
+      const sendToCast = useCallback((song, lyricsArr, initialPos, detectedAt) => {
+        if (!castReady || !castConnected) return;
+        try {
+          const session = castContext.getCurrentSession();
+          if (!session) return;
+          session.sendMessage(CAST_NS, {
+            type:       "SESSION_START",
+            songTitle:  song.title,
+            songArtist: song.artist,
+            artworkUrl: song.artwork || null,
+            lyrics:     lyricsArr,
+            initialPos,
+            detectedAt: detectedAt || Date.now(),
+          });
+        } catch (e) { console.warn("Cast send failed:", e); }
+      }, [castReady, castConnected]);
+
+      const stopCast = useCallback(() => {
+        if (!castReady || !castConnected) return;
+        try {
+          const session = castContext.getCurrentSession();
+          session?.sendMessage(CAST_NS, { type: "SESSION_END" });
+          castContext.endCurrentSession(true);
+        } catch (e) {}
+        setCastConnected(false);
+      }, [castReady, castConnected]);
+
       const syncCastSession = async (song, lyricsArr, initialPos) => {
+        const now = Date.now();
+        // 1. Google Cast (Chromecast) — direct, instant, no server needed
+        sendToCast(song, lyricsArr, initialPos, now);
+        // 2. Supabase Realtime — fallback for TV browsers / QR code approach
         if (!user || !roomCode) return;
         await sb.from("cast_sessions").upsert({
           room_code: roomCode,
@@ -290,7 +373,7 @@
           artwork_url: song.artwork || null,
           lyrics_json: lyricsArr,
           initial_position: initialPos,
-          detected_at: new Date().toISOString(),
+          detected_at: new Date(now).toISOString(),
           is_active: true,
         });
       };
@@ -1284,29 +1367,72 @@
             </div>
           )}
 
-          {/* ── SIDES MODAL ── */}
           {/* ── CAST MODAL ── */}
           {showCast && (
             <div onClick={() => setShowCast(false)} style={{ position:"fixed", inset:0, zIndex:200, background:"rgba(0,0,0,0.6)", backdropFilter:"blur(4px)", display:"flex", alignItems:"flex-end", justifyContent:"center" }}>
-              <div onClick={e => e.stopPropagation()} style={{ background:"#0f0f1c", borderRadius:"24px 24px 0 0", padding:"20px 28px max(32px, calc(env(safe-area-inset-bottom) + 24px))", width:"100%", maxWidth:"480px", animation:"slide-up 0.3s ease", textAlign:"center" }}>
-                <div style={{ width:"40px", height:"4px", borderRadius:"2px", background:"rgba(255,255,255,0.12)", margin:"0 auto 24px" }} />
-                <div style={{ fontSize:"11px", letterSpacing:"3px", color:"#d4a846", textTransform:"uppercase", marginBottom:"6px" }}>Cast to TV</div>
-                <div style={{ fontSize:"14px", color:"rgba(255,255,255,0.3)", marginBottom:"24px" }}>Open on any TV browser to see lyrics on the big screen</div>
-
-                {/* QR code */}
-                {qrUrl && <img src={qrUrl} alt="QR Code" style={{ width:"180px", height:"180px", borderRadius:"16px", marginBottom:"20px" }} />}
-
-                {/* Room code */}
-                <div style={{ fontSize:"11px", color:"rgba(255,255,255,0.25)", letterSpacing:"2px", marginBottom:"8px" }}>ROOM CODE</div>
-                <div style={{ fontSize:"48px", fontWeight:"800", letterSpacing:"12px", color:"#d4a846", marginBottom:"20px" }}>{roomCode}</div>
-
-                {/* URL */}
-                <div style={{ background:"rgba(255,255,255,0.04)", border:"1px solid rgba(255,255,255,0.08)", borderRadius:"12px", padding:"12px 16px", marginBottom:"24px" }}>
-                  <div style={{ fontSize:"13px", color:"rgba(255,255,255,0.35)", wordBreak:"break-all" }}>{tvUrl}</div>
+              <div onClick={e => e.stopPropagation()} style={{ background:"#0f0f1c", borderRadius:"24px 24px 0 0", padding:"8px 28px max(40px, calc(env(safe-area-inset-bottom) + 28px))", width:"100%", maxWidth:"480px", animation:"slide-up 0.3s ease", textAlign:"center" }}>
+                <div style={{ padding:"12px 0 20px", cursor:"pointer" }} onClick={() => setShowCast(false)}>
+                  <div style={{ width:"40px", height:"4px", borderRadius:"2px", background:"rgba(255,255,255,0.12)", display:"inline-block" }} />
                 </div>
 
-                <div style={{ fontSize:"13px", color:"rgba(255,255,255,0.25)", lineHeight:"1.7" }}>
-                  Scan the QR code with your TV camera, or type the URL in your TV's browser.<br/>Lyrics sync automatically — no app needed.
+                <div style={{ fontSize:"11px", letterSpacing:"3px", color:"#d4a846", textTransform:"uppercase", marginBottom:"6px" }}>Cast to TV</div>
+
+                {/* ── Chromecast section (when Cast SDK is available) ── */}
+                {castReady ? (
+                  <div>
+                    {castConnected ? (
+                      /* Currently connected */
+                      <div>
+                        <div style={{ display:"inline-flex", alignItems:"center", gap:"10px", background:"rgba(212,168,70,0.08)", border:"1px solid rgba(212,168,70,0.2)", borderRadius:"50px", padding:"10px 20px", marginBottom:"28px" }}>
+                          <div style={{ width:"8px", height:"8px", borderRadius:"50%", background:"#d4a846", boxShadow:"0 0 8px rgba(212,168,70,0.8)" }} />
+                          <span style={{ fontSize:"14px", color:"rgba(255,255,255,0.7)" }}>Casting to <strong style={{ color:"#d4a846" }}>{castDeviceName || "TV"}</strong></span>
+                        </div>
+                        <div style={{ marginBottom:"32px" }}>
+                          <button onClick={stopCast} style={{ background:"rgba(232,160,168,0.1)", border:"1px solid rgba(232,160,168,0.2)", color:"#e8a0a8", borderRadius:"50px", padding:"12px 28px", fontSize:"13px", cursor:"pointer", fontFamily:"inherit" }}>
+                            Stop casting
+                          </button>
+                        </div>
+                      </div>
+                    ) : (
+                      /* Not connected — show device picker button */
+                      <div>
+                        <p style={{ fontSize:"14px", color:"rgba(255,255,255,0.3)", marginBottom:"28px", lineHeight:"1.7" }}>
+                          Tap below to choose a Chromecast or Google TV on your network.
+                        </p>
+                        <button
+                          onClick={() => castContext?.requestSession().catch(() => {})}
+                          style={{ background:"linear-gradient(135deg, #d4a846, #c9807a)", color:"#080810", border:"none", borderRadius:"14px", padding:"16px 36px", fontSize:"15px", fontWeight:"700", cursor:"pointer", fontFamily:"inherit", letterSpacing:"0.5px", boxShadow:"0 8px 24px rgba(212,168,70,0.3)", marginBottom:"12px", display:"block", width:"100%", maxWidth:"300px", margin:"0 auto 12px" }}>
+                          Choose Chromecast device
+                        </button>
+                        <p style={{ fontSize:"12px", color:"rgba(255,255,255,0.15)", marginBottom:"28px" }}>
+                          Your Chromecast must be on the same Wi-Fi network
+                        </p>
+                      </div>
+                    )}
+                    {/* Divider */}
+                    <div style={{ display:"flex", alignItems:"center", gap:"12px", marginBottom:"24px" }}>
+                      <div style={{ flex:1, height:"1px", background:"rgba(255,255,255,0.06)" }} />
+                      <span style={{ fontSize:"11px", color:"rgba(255,255,255,0.2)", letterSpacing:"1px" }}>OR USE ROOM CODE</span>
+                      <div style={{ flex:1, height:"1px", background:"rgba(255,255,255,0.06)" }} />
+                    </div>
+                  </div>
+                ) : (
+                  /* Cast SDK not available (iOS Safari, Firefox, etc.) */
+                  <p style={{ fontSize:"13px", color:"rgba(255,255,255,0.25)", marginBottom:"24px", lineHeight:"1.7" }}>
+                    Direct Chromecast requires Chrome on Android or desktop.<br/>
+                    <span style={{ color:"rgba(212,168,70,0.5)" }}>Use the room code below on any TV browser.</span>
+                  </p>
+                )}
+
+                {/* ── QR / Room code fallback (always shown) ── */}
+                {qrUrl && <img src={qrUrl} alt="QR Code" style={{ width:"160px", height:"160px", borderRadius:"14px", marginBottom:"16px" }} />}
+                <div style={{ fontSize:"11px", color:"rgba(255,255,255,0.2)", letterSpacing:"2px", marginBottom:"6px" }}>ROOM CODE</div>
+                <div style={{ fontSize:"44px", fontWeight:"800", letterSpacing:"10px", color:"#d4a846", marginBottom:"16px" }}>{roomCode}</div>
+                <div style={{ background:"rgba(255,255,255,0.03)", border:"1px solid rgba(255,255,255,0.07)", borderRadius:"10px", padding:"10px 14px", marginBottom:"8px" }}>
+                  <div style={{ fontSize:"12px", color:"rgba(255,255,255,0.25)", wordBreak:"break-all" }}>{tvUrl}</div>
+                </div>
+                <div style={{ fontSize:"12px", color:"rgba(255,255,255,0.18)", lineHeight:"1.7" }}>
+                  Open on any smart TV browser or scan the QR code
                 </div>
               </div>
             </div>
@@ -1469,7 +1595,10 @@
                     </div>
                   )}
                   {!songDuration && <div style={{ fontSize:"12px", color:"rgba(255,255,255,0.3)", fontVariantNumeric:"tabular-nums" }}>{formatTime(playbackTime)}</div>}
-                  <button onClick={() => setShowCast(true)} style={{ background:"none", border:"none", color:"rgba(255,255,255,0.3)", cursor:"pointer", fontSize:"18px", padding:"4px", lineHeight:1 }} title="Cast to TV">📺</button>
+                  <button onClick={() => setShowCast(true)} style={{ background:"none", border:"none", cursor:"pointer", fontSize:"18px", padding:"4px", lineHeight:1, position:"relative" }} title={castConnected ? `Casting to ${castDeviceName || "TV"}` : "Cast to TV"}>
+                    <span style={{ opacity: castConnected ? 1 : 0.3 }}>📺</span>
+                    {castConnected && <span style={{ position:"absolute", top:"2px", right:"2px", width:"6px", height:"6px", borderRadius:"50%", background:"#d4a846", boxShadow:"0 0 6px rgba(212,168,70,0.9)", display:"block" }} />}
+                  </button>
                   <button onClick={() => setShowSettings(!showSettings)} style={{ background:"linear-gradient(135deg, #d4a846, #c9807a)", border:"none", borderRadius:"50%", width:"30px", height:"30px", display:"flex", alignItems:"center", justifyContent:"center", fontSize:"12px", fontWeight:"700", color:"#080810", cursor:"pointer", flexShrink:0, padding:0, boxShadow:"0 2px 8px rgba(212,168,70,0.35)" }} title="Account">
                     {user?.email?.[0]?.toUpperCase() || "?"}
                   </button>
