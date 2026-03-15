@@ -76,7 +76,7 @@
       "sb_publishable_C-NBnfg0ltAoUi46XQTUjA_ozjZW_Nd"
     );
 
-    const APP_VERSION = "1.30";
+    const APP_VERSION = "1.31";
 
     const PROXY_URL = window.Capacitor
       ? "https://liri-vert.vercel.app/api/recognize"
@@ -290,8 +290,9 @@
       const [showAlbumPicker, setShowAlbumPicker] = useState(false);
       const [userLibrary, setUserLibrary]         = useState([]);
       const [libLoading, setLibLoading]           = useState(false);
-      const turntableAlbumRef  = useRef(turntableAlbum);
-      const turntableTracksRef = useRef([]); // iTunes tracks for selected album (pre-fetched)
+      const turntableAlbumRef       = useRef(turntableAlbum);
+      const turntableTracksRef      = useRef([]); // iTunes tracks for selected album (pre-fetched)
+      const turntableMatchedIdxRef  = useRef(-1);  // 0-based index of last vinyl-matched track
       const autoRetryCountRef                 = useRef(0);
 
       // ── Album tracklist (for vinyl auto-advance without re-listening) ──
@@ -875,13 +876,27 @@
 
         if (!bestTrack || bestScore < 4) return null;
 
-        // Find position within the winning track's lyrics
+        // Window-based position finding.
+        // The Whisper recording is ~20s ending at "now", so we slide a 20s window
+        // through the winning track's LRC lines and find where word-overlap peaks.
+        // The END of that window ≈ the listener's current position.
         const lyrics = parseLRC(bestTrack.lrcMatch.syncedLyrics);
-        let startPos = 0, bestLineScore = 0;
-        for (const line of lyrics) {
-          const lineWords = line.text.toLowerCase().replace(/[^\w\s]/g, "").split(/\s+/);
-          const hits = tWords.filter(w => w.length > 2 && lineWords.includes(w)).length;
-          if (hits > bestLineScore) { bestLineScore = hits; startPos = Math.max(0, line.time - 0.5); }
+        const LISTEN_WINDOW = 20; // seconds of audio captured
+        let bestWindowScore = 0, startPos = 0;
+        for (let wi = 0; wi < lyrics.length; wi++) {
+          const windowEnd   = lyrics[wi].time;
+          const windowStart = windowEnd - LISTEN_WINDOW;
+          // Collect all lines whose timestamp falls inside this window
+          const windowText  = lyrics
+            .filter(l => l.time >= windowStart && l.time <= windowEnd)
+            .map(l => l.text).join(" ")
+            .toLowerCase().replace(/[^\w\s]/g, "");
+          const score = tWords.filter(w => windowText.includes(w)).length;
+          if (score > bestWindowScore) {
+            bestWindowScore = score;
+            // +2s buffer accounts for the ~1-2s of processing latency
+            startPos = Math.max(0, windowEnd + 2);
+          }
         }
 
         return { track: bestTrack, lrcMatch: bestTrack.lrcMatch, lyrics, startPos, score: bestScore };
@@ -931,6 +946,12 @@
               recognitionWonRef.current = true;
               const { track, lrcMatch, lyrics, startPos, score } = vmResult;
               attemptLogRef.current.push(`whisper: vinyl match "${track.trackName}" (score ${score})`);
+              // Store matched track index so getSideInfo can show side/track before albumTracks loads
+              const matchedIdx = turntableTracksRef.current.findIndex(
+                t => t.trackName?.toLowerCase() === track.trackName?.toLowerCase()
+              );
+              turntableMatchedIdxRef.current = matchedIdx >= 0 ? matchedIdx
+                : (track.trackNumber ? track.trackNumber - 1 : 0);
               const ta = turntableAlbumRef.current;
               const song = {
                 title:   track.trackName,
@@ -1441,22 +1462,46 @@
       // tracksPerSide=0 means auto-detect via duration (assumes 2 sides).
       // Returns { side: "A", track: 2 } for the current position when vinyl mode is on.
       // Uses Liri DB side data if available, otherwise derives from getSideEndIndices.
-      const getSideInfo = () => {
-        if (!vinylMode || albumTracks.length === 0 || currentTrackIndex < 0) return null;
-
-        // Prefer Liri DB — has exact side labels and position_on_side
-        if (vinylDbRelease?.vinyl_tracks?.length > 0) {
-          const title = albumTracks[currentTrackIndex]?.trackName?.toLowerCase();
-          const dbTrack = vinylDbRelease.vinyl_tracks.find(t =>
-            t.title?.toLowerCase() === title
-          );
-          if (dbTrack?.side && dbTrack?.track_number_on_side) {
-            return { side: dbTrack.side.toUpperCase(), track: dbTrack.track_number_on_side };
+      // Derives a small helper from an index + track array — no state needed.
+      const deriveSideFromIndex = (idx, tracks) => {
+        if (tracks.length === 0 || idx < 0) return null;
+        const sideEnds = getSideEndIndices(tracks, 0); // 0 = auto heuristic
+        for (let s = 0; s < sideEnds.length; s++) {
+          if (idx <= sideEnds[s]) {
+            const side         = String.fromCharCode(65 + s); // A, B, C…
+            const prevEnd      = s === 0 ? -1 : sideEnds[s - 1];
+            const trackOnSide  = idx - prevEnd;
+            return { side, track: trackOnSide };
           }
         }
+        return { track: idx + 1 }; // fallback — beyond known sides
+      };
 
-        // No confirmed DB data — return track number only (no side letter)
-        return { track: currentTrackIndex + 1 };
+      const getSideInfo = () => {
+        // ── Path 1: Full vinyl auto-mode — albumTracks + currentTrackIndex ──
+        if (albumTracks.length > 0 && currentTrackIndex >= 0) {
+          // Prefer Liri DB — has exact side labels and position_on_side
+          if (vinylDbRelease?.vinyl_tracks?.length > 0) {
+            const title = albumTracks[currentTrackIndex]?.trackName?.toLowerCase();
+            const dbTrack = vinylDbRelease.vinyl_tracks.find(t =>
+              t.title?.toLowerCase() === title
+            );
+            if (dbTrack?.side && dbTrack?.track_number_on_side) {
+              return { side: dbTrack.side.toUpperCase(), track: dbTrack.track_number_on_side };
+            }
+          }
+          // No DB data — derive side from duration heuristic
+          return deriveSideFromIndex(currentTrackIndex, albumTracks) || { track: currentTrackIndex + 1 };
+        }
+
+        // ── Path 2: Turntable mode — album pre-selected, track matched by vinyl-aware scan ──
+        const tTracks = turntableTracksRef.current;
+        const tIdx    = turntableMatchedIdxRef.current;
+        if (turntableAlbum && tTracks.length > 0 && tIdx >= 0) {
+          return deriveSideFromIndex(tIdx, tTracks) || { track: tIdx + 1 };
+        }
+
+        return null;
       };
 
       const getSideEndIndices = (tracks, tps) => {
@@ -2268,12 +2313,12 @@
                           <span style={{ width:"5px", height:"5px", borderRadius:"50%", background:"rgba(190,140,255,0.55)", display:"inline-block", flexShrink:0 }} />lyrics match
                         </span>
                       )}
-                      {(() => { const si = getSideInfo(); return si ? (
-                        <span style={{ fontSize:"10px", color:"rgba(212,168,70,0.65)", letterSpacing:"1.5px", textTransform:"uppercase" }}>
-                          {si.side ? `Side ${si.side} · ` : ""}Track {si.track}
-                        </span>
-                      ) : null; })()}
                     </div>
+                    {(() => { const si = getSideInfo(); return si ? (
+                      <div style={{ marginTop:"4px", fontSize:"11px", fontWeight:"700", letterSpacing:"2px", color:"rgba(212,168,70,0.85)", textTransform:"uppercase" }}>
+                        {si.side ? `Side ${si.side}  ·  ${si.track}` : `Track ${si.track}`}
+                      </div>
+                    ) : null; })()}
                   </div>
                 </div>
                 <div style={{ display:"flex", alignItems:"center", gap:"12px", marginLeft:"12px", flexShrink:0 }}>
@@ -2420,6 +2465,11 @@
                 <div style={{ display:"flex", flexDirection:"column", alignItems:"flex-start", gap:"1px" }}>
                   <div style={{ fontSize:"9px", letterSpacing:"1px", color:"rgba(255,255,255,0.15)", fontWeight:"400" }}>v{APP_VERSION}</div>
                   <div style={{ fontSize:"16px", letterSpacing:"10px", color:"#d4a846", fontWeight:"300" }}>LIRI</div>
+                  {(() => { const si = getSideInfo(); return si ? (
+                    <div style={{ marginTop:"3px", fontSize:"10px", fontWeight:"600", letterSpacing:"2px", color:"rgba(212,168,70,0.75)", textTransform:"uppercase" }}>
+                      {si.side ? `Side ${si.side}  ·  ${si.track}` : `Track ${si.track}`}
+                    </div>
+                  ) : null; })()}
                 </div>
                 <div style={{ display:"flex", gap:"12px", alignItems:"center" }}>
                   <button onClick={() => { fetchHistory(user); setShowHistory(true); }} style={{ background:"none", border:"none", color:"rgba(255,255,255,0.35)", cursor:"pointer", fontSize:"18px", padding:"4px", lineHeight:1 }} title="History">⏱</button>
