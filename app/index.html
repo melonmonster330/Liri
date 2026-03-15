@@ -210,7 +210,6 @@
 
       // ── Vinyl auto mode ──
       const [vinylMode, setVinylMode]         = useState(() => localStorage.getItem("liri_vinyl_mode") === "true");
-      const [tracksPerSide, setTracksPerSide] = useState(() => parseInt(localStorage.getItem("liri_tracks_per_side") || "0")); // 0 = auto
       const autoAdvanceFiredRef               = useRef(false);
       const autoRetryCountRef                 = useRef(0);
 
@@ -225,17 +224,14 @@
       const [shouldAdvanceTrack, setShouldAdvanceTrack] = useState(false);
       const [sideEndReason, setSideEndReason]         = useState("failed"); // "failed" | "flip" | "album-end"
 
-      // ── Per-album side learning ──
+      // ── Per-album side learning (silent — no user-facing UI) ──
       const [albumCollectionId, setAlbumCollectionId] = useState(null);
-      const albumCollectionIdRef                      = useRef(null); // ref so advanceToNextTrack can read without stale closure
-      const albumTpsRef                               = useRef(0); // effective tps for current album (0 = use global/auto)
-      const [showSidesModal, setShowSidesModal]       = useState(false);
-      const [flipFeedback, setFlipFeedback]           = useState(null); // null | "confirmed" | "wrong" | "adjusted"
+      const albumCollectionIdRef                      = useRef(null);
+      const albumTpsRef                               = useRef(0); // effective tps from localStorage learning or heuristic
 
       // ── Liri vinyl database ──
-      const [vinylDbRelease, setVinylDbRelease]       = useState(null); // release from our DB (null if not found)
+      const [vinylDbRelease, setVinylDbRelease]       = useState(null);
       const vinylDbReleaseRef                         = useRef(null);
-      const [inLiriCollection, setInLiriCollection]   = useState(false); // show "✓ In Liri's collection" badge
 
       // ── Flip notifications ──
       const [flipSound, setFlipSound]   = useState(() => localStorage.getItem("liri_flip_sound") !== "false");
@@ -306,10 +302,6 @@
         setVinylMode(val);
         localStorage.setItem("liri_vinyl_mode", String(val));
       };
-      const updateTracksPerSide = (val) => {
-        setTracksPerSide(val);
-        localStorage.setItem("liri_tracks_per_side", String(val));
-      };
 
       // ── Per-album side data (localStorage, keyed by iTunes collectionId) ──
       const getAlbumSideData = (cid) => {
@@ -325,23 +317,6 @@
         localStorage.setItem(`liri_album_sides_${cid}`, JSON.stringify(data));
         albumTpsRef.current = tps;
       };
-      const confirmFlipCorrect = (cid) => {
-        if (!cid) return;
-        const existing = getAlbumSideData(cid);
-        if (!existing) return;
-        const data = { ...existing, confirmed: (existing.confirmed || 0) + 1 };
-        localStorage.setItem(`liri_album_sides_${cid}`, JSON.stringify(data));
-      };
-      const adjustFlipPoint = (cid, delta) => {
-        if (!cid) return;
-        const existing = getAlbumSideData(cid);
-        if (!existing) return;
-        const newTps = Math.max(1, (existing.tps || 1) + delta);
-        const data = { ...existing, tps: newTps };
-        localStorage.setItem(`liri_album_sides_${cid}`, JSON.stringify(data));
-        albumTpsRef.current = newTps;
-      };
-
       // ── Liri vinyl DB lookup ──
       const fetchVinylRelease = async (collectionId) => {
         try {
@@ -707,25 +682,20 @@
 
               if (!collectionId || tracks.length === 0) return;
 
-              // 1. Check Liri's global vinyl DB first (most accurate)
+              // 1. Check Liri's global vinyl DB (most accurate)
               const dbRelease = await fetchVinylRelease(collectionId);
               if (dbRelease?.vinyl_tracks?.length > 0) {
                 setVinylDbRelease(dbRelease);
-                setInLiriCollection(true);
-                albumTpsRef.current = 0; // DB data overrides tps
-                return; // no modal needed — we have exact side data
-              }
-
-              // 2. Fall back to local learning data
-              const stored = getAlbumSideData(collectionId);
-              if (stored?.tps) {
-                albumTpsRef.current = stored.tps;
+                albumTpsRef.current = 0; // DB data overrides everything
                 return;
               }
 
-              // 3. Nothing known — ask the user and invite them to contribute
+              // 2. Fall back to local learning data (silent localStorage cache)
+              const stored = getAlbumSideData(collectionId);
+              if (stored?.tps) { albumTpsRef.current = stored.tps; return; }
+
+              // 3. Nothing known — duration heuristic will handle it silently
               albumTpsRef.current = 0;
-              setTimeout(() => setShowSidesModal(true), 2000);
             }).catch(() => {});
 
             return true;
@@ -784,6 +754,8 @@
       };
 
       const startSync = useCallback(() => {
+        // Safe to re-arm auto-advance now — new sync is actually starting
+        autoAdvanceFiredRef.current = false;
         const delay = detectedAtRef.current ? (Date.now() - detectedAtRef.current) / 1000 : 0;
         initialPosRef.current += delay;
         syncStartRef.current = Date.now();
@@ -875,7 +847,7 @@
 
         // Use Liri DB side data (most accurate), then local learning, then heuristic
         const dbRelease = vinylDbReleaseRef.current;
-        const effectiveTps = albumTpsRef.current > 0 ? albumTpsRef.current : tracksPerSide;
+        const effectiveTps = albumTpsRef.current > 0 ? albumTpsRef.current : 0; // 0 = use duration heuristic
         const sideEnds = dbRelease?.vinyl_tracks?.length > 0
           ? getDbSideEndIndices(tracks, dbRelease.vinyl_tracks)
           : getSideEndIndices(tracks, effectiveTps);
@@ -889,7 +861,6 @@
         }
         if (isSideEnd) {
           setSideEndReason("flip");
-          setFlipFeedback(null); // reset feedback for fresh confirmation each time
           playFlipChime();
           showFlipPushNotification(detectedSong);
 
@@ -920,7 +891,8 @@
         const nextSong = { title: nextTitle, artist: nextArtist, album: next.collectionName || "", artwork: nextArtwork };
 
         setCurrentTrackIndex(nextIdx);
-        autoAdvanceFiredRef.current = false;
+        // autoAdvanceFiredRef stays TRUE until startSync() runs — prevents any
+        // stale playbackTime state updates from firing a double-advance
         detectedAtRef.current = Date.now();
         initialPosRef.current = 0;
 
@@ -1005,8 +977,7 @@
         setCurrentIndex(0); setError(null); setListenProgress(0); setPlaybackTime(0);
         setAlbumTracks([]); setCurrentTrackIndex(-1);
         setShouldAdvanceTrack(false); setIsResyncing(false); setSideEndReason("failed");
-        setShowSidesModal(false); setFlipFeedback(null); setAlbumCollectionId(null);
-        setVinylDbRelease(null); setInLiriCollection(false);
+        setAlbumCollectionId(null); setVinylDbRelease(null);
         albumTpsRef.current = 0; vinylDbReleaseRef.current = null;
       };
 
@@ -1192,34 +1163,6 @@
           )}
 
           {/* ── SIDES MODAL ── */}
-          {showSidesModal && vinylMode && (
-            <div style={{ position:"fixed", inset:0, zIndex:200, background:"rgba(8,8,16,0.85)", backdropFilter:"blur(12px)", display:"flex", alignItems:"flex-end", justifyContent:"center" }}>
-              <div style={{ width:"100%", maxWidth:"420px", background:"#12121e", border:"1px solid rgba(255,255,255,0.08)", borderRadius:"24px 24px 0 0", padding:"20px 24px max(32px,calc(env(safe-area-inset-bottom)+16px))", animation:"slide-up 0.3s ease both" }}>
-                <div style={{ width:"36px", height:"4px", background:"rgba(255,255,255,0.15)", borderRadius:"2px", margin:"0 auto 20px" }} />
-                <div style={{ fontSize:"11px", letterSpacing:"2px", color:"rgba(212,168,70,0.5)", textTransform:"uppercase", textAlign:"center", marginBottom:"8px" }}>Not in Liri's collection yet</div>
-                <div style={{ fontSize:"16px", fontWeight:"700", color:"#f0e6d3", marginBottom:"6px", textAlign:"center" }}>How many sides does this record have?</div>
-                <div style={{ fontSize:"13px", color:"rgba(255,255,255,0.3)", textAlign:"center", marginBottom:"24px", lineHeight:"1.6" }}>Liri will remember this for you</div>
-                <div style={{ display:"flex", gap:"10px", justifyContent:"center", marginBottom:"16px" }}>
-                  {[1, 2, 3, 4].map(n => (
-                    <button key={n} onClick={() => {
-                      saveAlbumSideData(albumCollectionId, n, albumTracksRef.current.length);
-                      setShowSidesModal(false);
-                    }} style={{ flex:1, maxWidth:"72px", background:"rgba(255,255,255,0.05)", border:"1px solid rgba(255,255,255,0.12)", color:"#f0e6d3", borderRadius:"16px", padding:"18px 8px", fontSize:"22px", fontWeight:"700", cursor:"pointer", fontFamily:"inherit" }}>
-                      {n}
-                    </button>
-                  ))}
-                </div>
-                <div style={{ textAlign:"center", fontSize:"11px", color:"rgba(255,255,255,0.18)", marginBottom:"16px" }}>1 LP · 2 sides · 3 sides · 4 sides</div>
-                {/* Invite to contribute */}
-                <a href="/app/add-vinyl.html" style={{ display:"block", textAlign:"center", background:"rgba(212,168,70,0.08)", border:"1px solid rgba(212,168,70,0.2)", borderRadius:"12px", padding:"12px 16px", marginBottom:"8px", color:"#d4a846", fontSize:"13px", textDecoration:"none", lineHeight:"1.6" }}>
-                  💿 Add this record to Liri's collection →<br/>
-                  <span style={{ fontSize:"11px", color:"rgba(255,255,255,0.25)" }}>Help every listener who plays this album</span>
-                </a>
-                <button onClick={() => setShowSidesModal(false)} style={{ width:"100%", background:"none", border:"none", color:"rgba(255,255,255,0.2)", padding:"12px", fontSize:"13px", cursor:"pointer", fontFamily:"inherit" }}>Skip for now</button>
-              </div>
-            </div>
-          )}
-
           {/* ── CAST MODAL ── */}
           {showCast && (
             <div onClick={() => setShowCast(false)} style={{ position:"fixed", inset:0, zIndex:200, background:"rgba(0,0,0,0.6)", backdropFilter:"blur(4px)", display:"flex", alignItems:"flex-end", justifyContent:"center" }}>
@@ -1336,32 +1279,6 @@
                       </div>
                       <div style={{ color:"rgba(212,168,70,0.5)", fontSize:"18px" }}>›</div>
                     </a>
-                  </div>
-                )}
-
-                {/* Tracks per side — only shown when vinyl mode is on */}
-                {vinylMode && (
-                  <div style={{ background:"rgba(255,255,255,0.03)", border:"1px solid rgba(255,255,255,0.07)", borderRadius:"16px", padding:"16px 18px", marginBottom:"16px" }}>
-                    <div style={{ fontSize:"14px", fontWeight:"600", color:"#f0e6d3", marginBottom:"6px" }}>Tracks per side</div>
-                    <div style={{ fontSize:"12px", color:"rgba(255,255,255,0.3)", marginBottom:"12px", lineHeight:"1.5" }}>
-                      Set this for multi-sided LPs (4-side, 6-side, etc.). Leave on Auto for standard 2-sided records.
-                    </div>
-                    <div style={{ display:"flex", gap:"8px", flexWrap:"wrap" }}>
-                      {[["Auto", 0], ["2", 2], ["3", 3], ["4", 4], ["5", 5], ["6", 6]].map(([label, val]) => (
-                        <button key={val} onClick={() => updateTracksPerSide(val)} style={{
-                          background: tracksPerSide === val ? "linear-gradient(135deg, #d4a846, #c9807a)" : "rgba(255,255,255,0.06)",
-                          border: tracksPerSide === val ? "none" : "1px solid rgba(255,255,255,0.1)",
-                          color: tracksPerSide === val ? "#080810" : "rgba(255,255,255,0.5)",
-                          borderRadius:"20px", padding:"7px 16px", fontSize:"13px", fontWeight: tracksPerSide === val ? "700" : "400",
-                          cursor:"pointer", fontFamily:"inherit", transition:"all 0.15s"
-                        }}>{label}</button>
-                      ))}
-                    </div>
-                    {tracksPerSide > 0 && (
-                      <div style={{ fontSize:"11px", color:"rgba(212,168,70,0.5)", marginTop:"10px" }}>
-                        ✦ Flip prompt every {tracksPerSide} track{tracksPerSide !== 1 ? "s" : ""}
-                      </div>
-                    )}
                   </div>
                 )}
 
@@ -1557,9 +1474,6 @@
                     {vinylMode && (
                       <div style={{ marginTop:"16px", fontSize:"12px", color:"rgba(212,168,70,0.5)", letterSpacing:"1px" }}>✦ Vinyl Auto Mode on</div>
                     )}
-                    {vinylMode && inLiriCollection && (
-                      <div style={{ marginTop:"8px", fontSize:"12px", color:"rgba(106,170,138,0.7)", letterSpacing:"0.5px" }}>✓ In Liri's vinyl collection</div>
-                    )}
                     {!isUnlimited(user) && (
                       <div style={{ marginTop:"12px", fontSize:"12px", color:"rgba(255,255,255,0.2)" }}>
                         {FREE_LIMIT - usageCount} free {FREE_LIMIT - usageCount === 1 ? "song" : "songs"} remaining
@@ -1606,39 +1520,9 @@
                       <>
                         <div style={{ marginTop:"32px", fontSize:"22px", fontWeight:"700", color:"#f0e6d3", marginBottom:"12px" }}>Time to flip! 💿</div>
                         <div style={{ color:"rgba(255,255,255,0.4)", marginBottom:"36px", lineHeight:"1.8", fontSize:"15px" }}>
-                          That's the end of Side A.<br/>Flip your record, drop the needle,<br/>then tap Listen.
+                          Flip your record, drop the needle,<br/>then tap Listen.
                         </div>
                         <button onClick={() => { reset(); setTimeout(() => startListening(false), 300); }} style={{ background:"linear-gradient(135deg, #d4a846, #c9807a)", color:"#080810", border:"none", borderRadius:"50px", padding:"14px 36px", fontSize:"14px", fontWeight:"700", cursor:"pointer", fontFamily:"inherit" }}>Flip &amp; Listen →</button>
-
-                        {/* Flip-point feedback — helps Liri learn */}
-                        {albumCollectionId && flipFeedback === null && (
-                          <div style={{ marginTop:"28px" }}>
-                            <div style={{ fontSize:"12px", color:"rgba(255,255,255,0.22)", marginBottom:"12px" }}>Was that the right flip point?</div>
-                            <div style={{ display:"flex", gap:"10px", justifyContent:"center" }}>
-                              <button onClick={() => { confirmFlipCorrect(albumCollectionId); setFlipFeedback("confirmed"); }}
-                                style={{ background:"rgba(106,170,138,0.12)", border:"1px solid rgba(106,170,138,0.3)", color:"#6aaa8a", borderRadius:"50px", padding:"8px 22px", fontSize:"13px", cursor:"pointer", fontFamily:"inherit" }}>✓ Yes</button>
-                              <button onClick={() => setFlipFeedback("wrong")}
-                                style={{ background:"rgba(232,160,168,0.08)", border:"1px solid rgba(232,160,168,0.2)", color:"#e8a0a8", borderRadius:"50px", padding:"8px 22px", fontSize:"13px", cursor:"pointer", fontFamily:"inherit" }}>✗ Not quite</button>
-                            </div>
-                          </div>
-                        )}
-                        {albumCollectionId && flipFeedback === "confirmed" && (
-                          <div style={{ marginTop:"20px", fontSize:"13px", color:"rgba(106,170,138,0.65)" }}>Thanks! Liri gets smarter every time 🎵</div>
-                        )}
-                        {albumCollectionId && flipFeedback === "wrong" && (
-                          <div style={{ marginTop:"28px" }}>
-                            <div style={{ fontSize:"12px", color:"rgba(255,255,255,0.22)", marginBottom:"12px" }}>Did it flip too early or too late?</div>
-                            <div style={{ display:"flex", gap:"10px", justifyContent:"center" }}>
-                              <button onClick={() => { adjustFlipPoint(albumCollectionId, 1); setFlipFeedback("adjusted"); }}
-                                style={{ background:"rgba(255,255,255,0.05)", border:"1px solid rgba(255,255,255,0.1)", color:"rgba(255,255,255,0.55)", borderRadius:"50px", padding:"8px 20px", fontSize:"12px", cursor:"pointer", fontFamily:"inherit" }}>← Too early</button>
-                              <button onClick={() => { adjustFlipPoint(albumCollectionId, -1); setFlipFeedback("adjusted"); }}
-                                style={{ background:"rgba(255,255,255,0.05)", border:"1px solid rgba(255,255,255,0.1)", color:"rgba(255,255,255,0.55)", borderRadius:"50px", padding:"8px 20px", fontSize:"12px", cursor:"pointer", fontFamily:"inherit" }}>Too late →</button>
-                            </div>
-                          </div>
-                        )}
-                        {albumCollectionId && flipFeedback === "adjusted" && (
-                          <div style={{ marginTop:"20px", fontSize:"13px", color:"rgba(212,168,70,0.65)" }}>Got it — I'll adjust next time 🎵</div>
-                        )}
                       </>
                     )}
                     {sideEndReason === "album-end" && (
