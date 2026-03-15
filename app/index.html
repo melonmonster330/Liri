@@ -76,7 +76,7 @@
       "sb_publishable_C-NBnfg0ltAoUi46XQTUjA_ozjZW_Nd"
     );
 
-    const APP_VERSION = "1.08";
+    const APP_VERSION = "1.09";
 
     const PROXY_URL = window.Capacitor
       ? "https://liri-vert.vercel.app/api/recognize"
@@ -183,19 +183,31 @@
       );
     }
 
-    function WaveAnimation({ active, size = 1 }) {
+    // level: 0–1 real mic amplitude. When > 0 the bars are driven by actual audio.
+    // Falls back to CSS animation when level === undefined (e.g. onboarding demo).
+    const BAR_MULTS = [0.55, 0.85, 1.0, 0.75, 0.95, 0.65, 0.90, 0.70, 1.0, 0.60, 0.80, 0.50];
+    function WaveAnimation({ active, size = 1, level }) {
+      const hasLevel = typeof level === "number";
       return (
         <div style={{ display:"flex", gap:`${4*size}px`, alignItems:"center", height:`${52*size}px`, justifyContent:"center" }}>
-          {[20,34,48,40,28,44,32,48,36,24,40,30].map((h, i) => (
-            <div key={i} style={{
-              width:`${3*size}px`, borderRadius:"2px",
-              background:"linear-gradient(to top, #d4a846, #e8a0a8)",
-              height: active ? `${h*size}px` : `${3*size}px`,
-              animation: active ? `wave-${i%4} ${0.5+i*0.07}s ease-in-out infinite alternate` : "none",
-              transition:"height 0.3s ease",
-              opacity: active ? 1 : 0.3,
-            }} />
-          ))}
+          {BAR_MULTS.map((mult, i) => {
+            const liveH = hasLevel ? Math.max(4, level * 48 * mult) : (active ? 20 + mult * 28 : 4);
+            const color = hasLevel
+              ? (level > 0.55 ? "#4ade80"        // loud — green
+               : level > 0.15 ? "#d4a846"        // good — gold
+               :                "rgba(255,255,255,0.25)") // quiet — grey
+              : "#d4a846";
+            return (
+              <div key={i} style={{
+                width:`${3*size}px`, borderRadius:"2px",
+                background: `linear-gradient(to top, ${color}, ${color}88)`,
+                height: active ? `${liveH*size}px` : `${3*size}px`,
+                animation: hasLevel ? "none" : (active ? `wave-${i%4} ${0.5+i*0.07}s ease-in-out infinite alternate` : "none"),
+                transition: hasLevel ? "height 0.05s ease, background 0.2s ease" : "height 0.3s ease",
+                opacity: active ? 1 : 0.3,
+              }} />
+            );
+          })}
         </div>
       );
     }
@@ -393,6 +405,9 @@
       const currentLineRef      = useRef(null);
       const listenSessionRef    = useRef(0); // increments on each startListening; guards stale async callbacks
       const attemptLogRef       = useRef([]); // collects per-attempt debug info for the error screen
+      const audioCtxRef         = useRef(null); // Web Audio context for live level metering
+      const audioRafRef         = useRef(null); // requestAnimationFrame handle for level polling
+      const [audioLevel, setAudioLevel] = useState(0); // 0–1 live mic amplitude
 
       useEffect(() => { lyricsRef.current = lyrics; }, [lyrics]);
       useEffect(() => { albumTracksRef.current = albumTracks; }, [albumTracks]);
@@ -884,6 +899,32 @@
             audio: { echoCancellation: { ideal: false }, noiseSuppression: { ideal: false }, autoGainControl: { ideal: false } }
           });
           streamRef.current = stream;
+
+          // ── Live mic level metering via Web Audio API ──
+          try {
+            const actx = new (window.AudioContext || window.webkitAudioContext)();
+            audioCtxRef.current = actx;
+            const analyser = actx.createAnalyser();
+            analyser.fftSize = 256;
+            actx.createMediaStreamSource(stream).connect(analyser);
+            const freqData = new Uint8Array(analyser.frequencyBinCount);
+            const pollLevel = () => {
+              analyser.getByteFrequencyData(freqData);
+              // Average the lower 40 bins (bass + mids where music energy lives)
+              const avg = freqData.slice(0, 40).reduce((a, b) => a + b, 0) / 40;
+              setAudioLevel(avg / 255);
+              audioRafRef.current = requestAnimationFrame(pollLevel);
+            };
+            audioRafRef.current = requestAnimationFrame(pollLevel);
+          } catch {}
+
+          const stopMetering = () => {
+            cancelAnimationFrame(audioRafRef.current);
+            audioCtxRef.current?.close().catch(() => {});
+            audioCtxRef.current = null;
+            setAudioLevel(0);
+          };
+
           const mimeType = MediaRecorder.isTypeSupported("audio/webm") ? "audio/webm"
                          : MediaRecorder.isTypeSupported("audio/ogg")  ? "audio/ogg" : "";
           const recorder = mimeType ? new MediaRecorder(stream, { mimeType }) : new MediaRecorder(stream);
@@ -893,7 +934,7 @@
           let nextAttemptAt = ATTEMPT_INTERVAL;
 
           recorder.ondataavailable = e => { if (e.data.size > 0) allChunks.push(e.data); };
-          recorder.onstop = () => stream.getTracks().forEach(t => t.stop());
+          recorder.onstop = () => { stream.getTracks().forEach(t => t.stop()); stopMetering(); };
           recorder.start(200);
 
           let elapsed = 0;
@@ -1246,6 +1287,9 @@
       const reset = () => {
         clearInterval(syncIntervalRef.current); clearInterval(progressTimerRef.current);
         streamRef.current?.getTracks().forEach(t => t.stop());
+        cancelAnimationFrame(audioRafRef.current);
+        audioCtxRef.current?.close().catch(() => {}); audioCtxRef.current = null;
+        setAudioLevel(0);
         autoAdvanceFiredRef.current = false;
         autoRetryCountRef.current = 0;
         setMode("idle"); setDetectedSong(null); setSongDuration(null); setLyrics([]);
@@ -1989,9 +2033,19 @@
                 {/* LISTENING */}
                 {mode === "listening" && (
                   <div style={{ animation:"fade-up 0.3s ease both" }}>
-                    <div style={{ position:"relative", width:"120px", height:"120px", margin:"0 auto 32px" }}>
+                    <div style={{ position:"relative", width:"120px", height:"120px", margin:"0 auto 16px" }}>
                       <div style={{ position:"absolute", inset:0 }}><ProgressRing progress={listenProgress} size={120} /></div>
-                      <div style={{ position:"absolute", inset:0, display:"flex", alignItems:"center", justifyContent:"center" }}><WaveAnimation active={true} /></div>
+                      <div style={{ position:"absolute", inset:0, display:"flex", alignItems:"center", justifyContent:"center" }}>
+                        <WaveAnimation active={true} level={audioLevel} />
+                      </div>
+                    </div>
+                    {/* Live volume label */}
+                    <div style={{ marginBottom:"20px", fontSize:"11px", letterSpacing:"1.5px", textTransform:"uppercase",
+                      color: audioLevel > 0.55 ? "#4ade80" : audioLevel > 0.15 ? "#d4a846" : "rgba(255,255,255,0.25)",
+                      transition:"color 0.2s ease" }}>
+                      {audioLevel > 0.55 ? "● Loud — perfect"
+                     : audioLevel > 0.15 ? "● Good signal"
+                     :                     "● Too quiet — move closer"}
                     </div>
                     <div style={{ fontSize:"22px", fontWeight:"600", color:"#f0e6d3", marginBottom:"10px" }}>
                       {listenAttempt > MAX_ATTEMPTS ? "Reading the lyrics…"
