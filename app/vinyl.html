@@ -400,15 +400,39 @@
       // Fetch releases (up to 2000 — more than enough for now)
       const { data: releases, error } = await sb
         .from("vinyl_releases")
-        .select("id, album_name, artist_name, release_year, record_label, catalog_number, country, edition, version_note, disc_count, artwork_url, confirmed_count, is_verified")
-        .order("artist_name", { ascending: true })
-        .order("album_name",  { ascending: true })
+        .select("id, itunes_collection_id, album_name, artist_name, release_year, record_label, catalog_number, country, edition, version_note, disc_count, artwork_url, confirmed_count, is_verified")
         .limit(2000);
 
       if (error) { showError(error.message); return; }
 
-      allReleases = releases || [];
-      filtered    = allReleases;
+      // Fetch play counts per album from listening_events (grouped by itunes_collection_id).
+      // Only counts albums that have a collection_id — manual entries without one won't have play data.
+      let playCounts = {};
+      try {
+        const { data: events } = await sb.rpc("get_collection_play_counts");
+        if (events) {
+          for (const e of events) playCounts[String(e.collection_id)] = e.play_count;
+        }
+      } catch {
+        // If the RPC doesn't exist yet, fall back to zero plays for all.
+        // This can be created later with:
+        // CREATE FUNCTION get_collection_play_counts() RETURNS TABLE(collection_id text, play_count bigint)
+        // AS $$ SELECT itunes_collection_id, COUNT(*) FROM listening_events
+        //        WHERE itunes_collection_id IS NOT NULL GROUP BY itunes_collection_id $$
+        // LANGUAGE sql STABLE;
+      }
+
+      // Attach play counts and sort by most played first, then alphabetically
+      allReleases = (releases || []).map(r => ({
+        ...r,
+        play_count: (r.itunes_collection_id ? playCounts[String(r.itunes_collection_id)] : 0) || 0,
+      }));
+      allReleases.sort((a, b) =>
+        b.play_count - a.play_count
+        || a.artist_name.localeCompare(b.artist_name)
+        || a.album_name.localeCompare(b.album_name)
+      );
+      filtered = allReleases;
 
       // Total track count (just a count query)
       const { count } = await sb.from("vinyl_tracks").select("*", { count: "exact", head: true });
@@ -499,6 +523,7 @@
       const placeholder = `<div class="artwork-placeholder" style="${r.artwork_url ? 'display:none' : ''}">💿</div>`;
 
       const chips = [];
+      if (r.play_count > 0)  chips.push(`<span class="chip gold">${r.play_count} play${r.play_count !== 1 ? "s" : ""}</span>`);
       if (r.is_verified)     chips.push(`<span class="chip verified">✓ Verified</span>`);
       if (r.release_year)    chips.push(`<span class="chip gold">${r.release_year}</span>`);
       if (r.record_label)    chips.push(`<span class="chip">${esc(r.record_label)}</span>`);

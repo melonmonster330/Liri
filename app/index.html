@@ -76,7 +76,7 @@
       "sb_publishable_C-NBnfg0ltAoUi46XQTUjA_ozjZW_Nd"
     );
 
-    const APP_VERSION = "1.26";
+    const APP_VERSION = "1.28";
 
     const PROXY_URL = window.Capacitor
       ? "https://liri-vert.vercel.app/api/recognize"
@@ -855,7 +855,9 @@
           }
 
           if (!match) {
-            // Strategy B: ask GPT to identify the song from the transcript, then look it up on LRCLib
+            // Strategy B: ask GPT to identify the song from the transcript, then look it up on LRCLib.
+            // Cross-validate: the matched lyrics must actually contain enough of the transcribed words —
+            // otherwise GPT guessed wrong and we fall through to Strategy C.
             try {
               const identifyUrl = window.Capacitor
                 ? "https://liri-vert.vercel.app/api/identify-lyrics"
@@ -872,7 +874,19 @@
                   const lrcRes = await fetch(`https://lrclib.net/api/search?q=${encodeURIComponent(q)}`)
                     .then(r => r.json()).catch(() => []);
                   const candidates = Array.isArray(lrcRes) ? lrcRes : [];
-                  match = candidates.find(c => c.syncedLyrics) || candidates[0] || null;
+                  const gptMatch = candidates.find(c => c.syncedLyrics) || null;
+                  // Cross-validate: check the transcribed words actually appear in the lyrics
+                  if (gptMatch?.syncedLyrics) {
+                    const vWords = transcribed.toLowerCase().replace(/[^\w\s]/g, "").split(/\s+/).filter(w => w.length > 3);
+                    const lyricText = gptMatch.syncedLyrics.toLowerCase().replace(/\[[\d:\.]+\]/g, "");
+                    const vHits = vWords.filter(w => lyricText.includes(w)).length;
+                    if (vHits >= 3) {
+                      match = gptMatch;
+                      attemptLogRef.current.push(`whisper: GPT match cross-validated (score ${vHits})`);
+                    } else {
+                      attemptLogRef.current.push(`whisper: GPT match rejected — lyrics don't match transcript (score ${vHits})`);
+                    }
+                  }
                 }
               }
             } catch {}
@@ -983,10 +997,19 @@
           const summary = log.length
             ? log.join("\n")
             : "No attempts logged";
-          const stageMsg = stage === "whisper_failed"
+          // Check ACR codes to give a more helpful message
+          const acrCodes = log.filter(l => l.includes("ACR")).map(l => {
+            const m = l.match(/ACR (\d+)/); return m ? Number(m[1]) : null;
+          }).filter(Boolean);
+          const allSameCode = acrCodes.length > 0 && acrCodes.every(c => c === acrCodes[0]);
+          let stageMsg = stage === "whisper_failed"
             ? "ACRCloud: no match · Whisper fallback: also failed"
             : "ACRCloud: no match after all attempts";
-          setError(`${stageMsg}\n\n${summary}\n\nMove closer to your speakers and try again.`);
+          let hint = "Move closer to your speakers and try again.";
+          if (allSameCode && acrCodes[0] === 2004) hint = "ACR couldn't fingerprint the audio. Check volume levels or ACRCloud trial status.";
+          else if (allSameCode && (acrCodes[0] === 3000 || acrCodes[0] === 3002)) hint = "ACRCloud credentials are invalid. Check Vercel env vars.";
+          else if (allSameCode && (acrCodes[0] === 3003 || acrCodes[0] === 3015)) hint = "ACRCloud rate limit reached.";
+          setError(`${stageMsg}\n\n${summary}\n\n${hint}`);
           setMode("error");
         }
       };
@@ -1000,6 +1023,9 @@
 
       const startListening = async (isAutoAdvance = false) => {
         if (!isAutoAdvance && !isUnlimited(user) && usageCount >= FREE_LIMIT) { setMode("limit"); return; }
+        // Kill any leftover interval from a previous session immediately — before awaiting mic
+        // so a resumed stale callback can't accidentally clear the new session's interval.
+        clearInterval(progressTimerRef.current);
         const session = ++listenSessionRef.current; // unique id for this listen attempt
         attemptLogRef.current = [];
         recognitionWonRef.current = false;
@@ -1106,8 +1132,14 @@
                   : `#${attempts} (${attempts*5}s, ${blobKB}KB): network error`
               );
 
-              // Abort if the user restarted while we were awaiting, or Whisper won
-              if (listenSessionRef.current !== session || recognitionWonRef.current) {
+              // Abort if the user restarted while we were awaiting — do NOT clear
+              // progressTimerRef here since it now belongs to the new session.
+              if (listenSessionRef.current !== session) {
+                if (recorder.state === "recording") recorder.stop();
+                return;
+              }
+              // Whisper won the race for this session — stop ACRCloud loop
+              if (recognitionWonRef.current) {
                 clearInterval(progressTimerRef.current);
                 if (recorder.state === "recording") recorder.stop();
                 return;
@@ -2242,7 +2274,10 @@
                         ? "Hold near your speakers"
                         : `${listenAttempt * 5}s of audio captured — hold steady`}
                     </div>
-                    <button onClick={() => { listenSessionRef.current++; clearInterval(progressTimerRef.current); streamRef.current?.getTracks().forEach(t => t.stop()); startListening(false); }} style={{ marginTop:"28px", background:"none", border:"1px solid rgba(255,255,255,0.12)", color:"rgba(255,255,255,0.3)", borderRadius:"50px", padding:"10px 26px", fontSize:"13px", cursor:"pointer", fontFamily:"inherit" }}>↺ Different song</button>
+                    <div style={{ display:"flex", gap:"12px", marginTop:"28px", justifyContent:"center" }}>
+                      <button onClick={() => { listenSessionRef.current++; clearInterval(progressTimerRef.current); streamRef.current?.getTracks().forEach(t => t.stop()); reset(); }} style={{ background:"none", border:"1px solid rgba(255,255,255,0.12)", color:"rgba(255,255,255,0.4)", borderRadius:"50px", padding:"10px 26px", fontSize:"13px", cursor:"pointer", fontFamily:"inherit" }}>Stop</button>
+                      <button onClick={() => { listenSessionRef.current++; clearInterval(progressTimerRef.current); streamRef.current?.getTracks().forEach(t => t.stop()); startListening(false); }} style={{ background:"none", border:"1px solid rgba(255,255,255,0.12)", color:"rgba(255,255,255,0.3)", borderRadius:"50px", padding:"10px 26px", fontSize:"13px", cursor:"pointer", fontFamily:"inherit" }}>↺ Different song</button>
+                    </div>
                   </div>
                 )}
 

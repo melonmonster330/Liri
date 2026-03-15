@@ -135,3 +135,22 @@ $$;
 CREATE TRIGGER set_updated_at
   BEFORE UPDATE ON vinyl_releases
   FOR EACH ROW EXECUTE FUNCTION update_updated_at();
+
+-- -----------------------------------------------------------
+-- Play count aggregation for vinyl library ordering
+-- Returns play counts per itunes_collection_id from listening_events.
+-- Used by vinyl.html to sort releases by most played on Liri.
+-- Run this once in the Supabase SQL editor to create the RPC.
+-- -----------------------------------------------------------
+CREATE OR REPLACE FUNCTION get_collection_play_counts()
+RETURNS TABLE(collection_id text, play_count bigint)
+LANGUAGE sql STABLE
+AS $$
+  SELECT
+    itunes_collection_id::text AS collection_id,
+    COUNT(*)                   AS play_count
+  FROM listening_events
+  WHERE itunes_collection_id IS NOT NULL
+  GROUP BY itunes_collection_id
+  ORDER BY play_count DESC;
+$$;
