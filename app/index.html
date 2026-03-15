@@ -76,7 +76,7 @@
       "sb_publishable_C-NBnfg0ltAoUi46XQTUjA_ozjZW_Nd"
     );
 
-    const APP_VERSION = "1.24";
+    const APP_VERSION = "1.25";
 
     const PROXY_URL = window.Capacitor
       ? "https://liri-vert.vercel.app/api/recognize"
@@ -895,6 +895,8 @@
                   const hits = words.filter(w => lyricText.includes(w)).length;
                   if (hits > bestScore) { bestScore = hits; match = c; }
                 }
+                // Require at least 3 word hits — prevents weak matches on coincidental shared words
+                if (bestScore < 3) match = null;
                 if (match) attemptLogRef.current.push(`whisper: strategy C matched "${match.trackName}" (score ${bestScore})`);
               }
             } catch {}
