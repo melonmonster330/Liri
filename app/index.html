@@ -76,7 +76,7 @@
       "sb_publishable_C-NBnfg0ltAoUi46XQTUjA_ozjZW_Nd"
     );
 
-    const APP_VERSION = "1.05";
+    const APP_VERSION = "1.06";
 
     const PROXY_URL = window.Capacitor
       ? "https://liri-vert.vercel.app/api/recognize"
@@ -1078,8 +1078,8 @@
           }
         }
 
-        // No confirmed DB data — don't guess, hide the label
-        return null;
+        // No confirmed DB data — return track number only (no side letter)
+        return { track: currentTrackIndex + 1 };
       };
 
       const getSideEndIndices = (tracks, tps) => {
@@ -1782,7 +1782,7 @@
                     <div style={{ fontSize:"12px", color:"rgba(255,255,255,0.4)", overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>{detectedSong?.artist}</div>
                     {(() => { const si = getSideInfo(); return si ? (
                       <div style={{ fontSize:"10px", color:"rgba(212,168,70,0.65)", letterSpacing:"1.5px", textTransform:"uppercase", marginTop:"2px" }}>
-                        Side {si.side} · Track {si.track}
+                        {si.side ? `Side ${si.side} · ` : ""}Track {si.track}
                       </div>
                     ) : null; })()}
                   </div>
@@ -1813,25 +1813,44 @@
 
               <div style={{ flex:1, overflow:"hidden", position:"relative" }}>
                 <div style={{ overflowY:"auto", height:"100%", padding:"8vh 28px 0" }}>
-                  {lyrics.length > 0 ? lyrics.map((line, i) => {
-                    const dist = i - currentIndex;
-                    if (dist < -5 || dist > 8) return null;
-                    const cur = dist === 0;
-                    const upcoming = dist > 0;
-                    return (
-                      <div key={i} ref={cur ? currentLineRef : null} style={{
-                        textAlign:"center", padding:"6px 0",
-                        fontSize: cur ? "32px" : Math.abs(dist) <= 1 ? "20px" : "16px",
-                        fontWeight: cur ? "700" : "400",
-                        color: cur ? "#ffffff" : upcoming ? "rgba(255,255,255,0.25)" : "rgba(255,255,255,0.15)",
-                        lineHeight:"1.4",
-                        transition:"all 0.4s cubic-bezier(0.4,0,0.2,1)",
-                        textShadow: cur ? "0 0 60px rgba(212,168,70,0.4), 0 2px 20px rgba(0,0,0,0.8)" : "none",
-                      }}>
-                        {line.text}
+                  {lyrics.length > 0 ? (
+                    <>
+                      {lyrics.map((line, i) => {
+                        const dist = i - currentIndex;
+                        if (dist < -5 || dist > 8) return null;
+                        const cur = dist === 0;
+                        const upcoming = dist > 0;
+                        return (
+                          <div key={i} ref={cur ? currentLineRef : null} style={{
+                            textAlign:"center", padding:"6px 0",
+                            fontSize: cur ? "32px" : Math.abs(dist) <= 1 ? "20px" : "16px",
+                            fontWeight: cur ? "700" : "400",
+                            color: cur ? "#ffffff" : upcoming ? "rgba(255,255,255,0.25)" : "rgba(255,255,255,0.15)",
+                            lineHeight:"1.4",
+                            transition:"all 0.4s cubic-bezier(0.4,0,0.2,1)",
+                            textShadow: cur ? "0 0 60px rgba(212,168,70,0.4), 0 2px 20px rgba(0,0,0,0.8)" : "none",
+                          }}>
+                            {line.text}
+                          </div>
+                        );
+                      })}
+                      {/* Copyright credit — visible when you scroll to the end */}
+                      <div style={{ marginTop:"48px", paddingBottom:"8vh", textAlign:"center", opacity: currentIndex >= lyrics.length - 3 ? 1 : 0, transition:"opacity 0.8s ease" }}>
+                        <div style={{ fontSize:"11px", color:"rgba(255,255,255,0.2)", lineHeight:"1.9", letterSpacing:"0.5px" }}>
+                          {detectedSong?.title && <div style={{ color:"rgba(255,255,255,0.3)", fontWeight:"600", marginBottom:"4px" }}>{detectedSong.title}</div>}
+                          {detectedSong?.artist && <div>{detectedSong.artist}</div>}
+                          {detectedSong?.album  && <div>{detectedSong.album}</div>}
+                          <div style={{ marginTop:"10px", borderTop:"1px solid rgba(255,255,255,0.07)", paddingTop:"10px" }}>
+                            Lyrics via LRCLib · Audio recognition by ACRCloud
+                          </div>
+                          <div>© {new Date().getFullYear()} Liri. All rights reserved.</div>
+                          <div style={{ fontSize:"10px", color:"rgba(255,255,255,0.1)", marginTop:"4px" }}>
+                            Music rights belong to their respective<br/>artists, labels &amp; publishers.
+                          </div>
+                        </div>
                       </div>
-                    );
-                  }) : (
+                    </>
+                  ) : (
                     <div style={{ textAlign:"center", color:"rgba(255,255,255,0.2)", fontSize:"16px", paddingTop:"30vh" }}>No lyrics found for this track</div>
                   )}
                 </div>
