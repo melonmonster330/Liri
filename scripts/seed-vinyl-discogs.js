@@ -6,7 +6,10 @@
 // matches each one to iTunes to get the collectionId Liri uses for flip detection,
 // and bulk-inserts into Supabase.
 //
-// Usage:
+// Usage (simplest — add your keys to scripts/.env once, then just run):
+//   node scripts/seed-vinyl-discogs.js
+//
+// Or pass keys inline (overrides .env):
 //   DISCOGS_TOKEN=xxx SUPABASE_SERVICE_KEY=yyy node scripts/seed-vinyl-discogs.js
 //
 // Optional flags:
@@ -20,9 +23,34 @@
 //                          (this bypasses RLS so we can bulk-insert as admin)
 //
 // Safe to run multiple times — skips releases already in the DB.
+// Runs connectivity checks at startup and exits with a clear error message if
+// either API key is wrong or the Supabase table isn't found.
 // ─────────────────────────────────────────────────────────────────────────────
 
 const https = require("https");
+const fs    = require("fs");
+const path  = require("path");
+
+// ── Load .env file (if present) ───────────────────────────────────────────────
+// Create scripts/.env with:
+//   DISCOGS_TOKEN=your_token_here
+//   SUPABASE_SERVICE_KEY=your_key_here
+// This file is gitignored — safe to store secrets there permanently.
+
+const envPath = path.join(__dirname, ".env");
+if (fs.existsSync(envPath)) {
+  const lines = fs.readFileSync(envPath, "utf8").split("\n");
+  for (const line of lines) {
+    const trimmed = line.trim();
+    if (!trimmed || trimmed.startsWith("#")) continue;
+    const eq = trimmed.indexOf("=");
+    if (eq === -1) continue;
+    const key = trimmed.slice(0, eq).trim();
+    const val = trimmed.slice(eq + 1).trim().replace(/^["']|["']$/g, ""); // strip optional quotes
+    if (key && !(key in process.env)) process.env[key] = val;
+  }
+  console.log(`  (Loaded secrets from ${envPath})`);
+}
 
 // ── Config ────────────────────────────────────────────────────────────────────
 
@@ -63,6 +91,21 @@ function get(hostname, path, headers = {}) {
   });
 }
 
+function del(hostname, path, headers) {
+  return new Promise((resolve, reject) => {
+    const req = https.request(
+      { hostname, path, method: "DELETE", headers },
+      (res) => {
+        const chunks = [];
+        res.on("data", c => chunks.push(c));
+        res.on("end", () => resolve({ status: res.statusCode }));
+      }
+    );
+    req.on("error", reject);
+    req.end();
+  });
+}
+
 function post(hostname, path, headers, bodyObj) {
   const body = JSON.stringify(bodyObj);
   return new Promise((resolve, reject) => {
@@ -73,8 +116,10 @@ function post(hostname, path, headers, bodyObj) {
         const chunks = [];
         res.on("data", c => chunks.push(c));
         res.on("end", () => {
-          try { resolve({ status: res.statusCode, body: JSON.parse(Buffer.concat(chunks).toString()) }); }
-          catch (e) { reject(new Error(`Non-JSON response`)); }
+          const raw = Buffer.concat(chunks).toString().trim();
+          if (!raw) { resolve({ status: res.statusCode, body: null }); return; }
+          try { resolve({ status: res.statusCode, body: JSON.parse(raw) }); }
+          catch (e) { reject(new Error(`Non-JSON (HTTP ${res.statusCode}) from ${hostname}${path}: ${raw.slice(0, 200)}`)); }
         });
       }
     );
@@ -224,6 +269,82 @@ async function main() {
   console.log(`\n🎵 Liri Vinyl Database Seeder`);
   console.log(`   Target: ${TARGET.toLocaleString()} records`);
   if (ONLY_GENRE) console.log(`   Genre filter: ${ONLY_GENRE}`);
+  console.log("");
+
+  // ── Startup connectivity checks ──────────────────────────────────────────
+  console.log("── Connectivity checks ─────────────────────────────────────");
+
+  // 1. Discogs
+  process.stdout.write("  Discogs API... ");
+  try {
+    const dr = await get("api.discogs.com", `/database/search?type=release&format=Vinyl&genre=Rock&per_page=1&page=1&token=${DISCOGS_TOKEN}`);
+    if (dr.status === 200 && dr.body.results) {
+      console.log(`✓  (found ${dr.body.pagination?.items?.toLocaleString() ?? "?"} Rock vinyl releases)`);
+    } else if (dr.status === 401) {
+      console.error(`✗  Auth failed — check your DISCOGS_TOKEN`);
+      process.exit(1);
+    } else {
+      console.error(`✗  Unexpected status ${dr.status}`);
+      process.exit(1);
+    }
+  } catch (e) {
+    console.error(`✗  ${e.message}`);
+    process.exit(1);
+  }
+
+  // 2. Supabase — read one row from vinyl_releases
+  process.stdout.write("  Supabase (read)... ");
+  try {
+    const sr = await get(SUPABASE_URL, `/rest/v1/vinyl_releases?select=id&limit=1`, SB_HEADERS);
+    if (sr.status === 200) {
+      console.log(`✓`);
+    } else if (sr.status === 401 || sr.status === 403) {
+      console.error(`✗  Auth failed (HTTP ${sr.status}) — check your SUPABASE_SERVICE_KEY`);
+      console.error(`   Response: ${JSON.stringify(sr.body).slice(0, 300)}`);
+      process.exit(1);
+    } else if (sr.status === 404) {
+      console.error(`✗  Table not found (HTTP 404) — have you run supabase/vinyl_schema.sql?`);
+      console.error(`   Response: ${JSON.stringify(sr.body).slice(0, 300)}`);
+      process.exit(1);
+    } else {
+      console.error(`✗  Unexpected status ${sr.status}: ${JSON.stringify(sr.body).slice(0, 300)}`);
+      process.exit(1);
+    }
+  } catch (e) {
+    console.error(`✗  ${e.message}`);
+    process.exit(1);
+  }
+
+  // 3. Supabase — test write (insert + delete a dummy row) to confirm service key
+  process.stdout.write("  Supabase (write)... ");
+  try {
+    const testRow = {
+      itunes_collection_id: null,
+      album_name:  "__connectivity_test__",
+      artist_name: "__test__",
+      disc_count:  1,
+      confirmed_count: 0,
+      is_verified: false,
+    };
+    const wr = await post(SUPABASE_URL, `/rest/v1/vinyl_releases`, {
+      ...SB_HEADERS,
+      "Prefer": "return=representation",
+    }, testRow);
+    if (wr.status >= 300) {
+      console.error(`✗  Insert failed (HTTP ${wr.status}): ${JSON.stringify(wr.body).slice(0, 300)}`);
+      process.exit(1);
+    }
+    // Clean up test row
+    const testId = wr.body?.id || (Array.isArray(wr.body) && wr.body[0]?.id);
+    if (testId) {
+      await del(SUPABASE_URL, `/rest/v1/vinyl_releases?id=eq.${testId}`, SB_HEADERS).catch(() => {});
+    }
+    console.log(`✓`);
+  } catch (e) {
+    console.error(`✗  ${e.message}`);
+    process.exit(1);
+  }
+
   console.log("");
 
   let inserted = 0;
