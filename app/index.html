@@ -76,7 +76,7 @@
       "sb_publishable_C-NBnfg0ltAoUi46XQTUjA_ozjZW_Nd"
     );
 
-    const APP_VERSION = "1.23";
+    const APP_VERSION = "1.24";
 
     const PROXY_URL = window.Capacitor
       ? "https://liri-vert.vercel.app/api/recognize"
@@ -187,23 +187,36 @@
     // Falls back to CSS animation when level === undefined (e.g. onboarding demo).
     const BAR_MULTS = [0.55, 0.85, 1.0, 0.75, 0.95, 0.65, 0.90, 0.70, 1.0, 0.60, 0.80, 0.50];
     function WaveAnimation({ active, size = 1, level }) {
+      const [tick, setTick] = useState(0);
+      useEffect(() => {
+        if (!active) return;
+        const id = setInterval(() => setTick(t => t + 1), 50);
+        return () => clearInterval(id);
+      }, [active]);
+
       const hasLevel = typeof level === "number";
+      // Amplitude: always animate, but scale with level. Floor at 0.12 so bars never go flat.
+      const amp = hasLevel ? Math.max(0.12, level) : 0.6;
+      // Color: gold when audible, rose/pink when too quiet, plain gold when no level data
+      const color = hasLevel
+        ? (level > 0.05 ? "#d4a846" : "#c9807a")
+        : "#d4a846";
+      const t = tick * 0.05;
+
       return (
         <div style={{ display:"flex", gap:`${4*size}px`, alignItems:"center", height:`${52*size}px`, justifyContent:"center" }}>
           {BAR_MULTS.map((mult, i) => {
-            const liveH = hasLevel ? Math.max(4, level * 48 * mult) : (active ? 20 + mult * 28 : 4);
-            const color = hasLevel
-              ? (level > 0.25 ? "#4ade80"        // loud — green
-               : level > 0.05 ? "#d4a846"        // good — gold
-               :                "rgba(255,255,255,0.25)") // quiet — grey
-              : "#d4a846";
+            const phase   = i * 0.72;
+            const sinVal  = (Math.sin(t * (1.8 + i * 0.18) + phase) + 1) / 2; // 0→1
+            const minH    = 4;
+            const maxH    = 48 * amp * mult;
+            const h       = active ? Math.max(minH, minH + (maxH - minH) * sinVal) : 3;
             return (
               <div key={i} style={{
                 width:`${3*size}px`, borderRadius:"2px",
                 background: `linear-gradient(to top, ${color}, ${color}88)`,
-                height: active ? `${liveH*size}px` : `${3*size}px`,
-                animation: hasLevel ? "none" : (active ? `wave-${i%4} ${0.5+i*0.07}s ease-in-out infinite alternate` : "none"),
-                transition: hasLevel ? "height 0.05s ease, background 0.2s ease" : "height 0.3s ease",
+                height: `${h * size}px`,
+                transition: "background 0.3s ease",
                 opacity: active ? 1 : 0.3,
               }} />
             );
@@ -2205,7 +2218,7 @@
                     {/* Live volume label — hidden once we move to lyric-matching phase */}
                     {listenAttempt <= MAX_ATTEMPTS && (
                       <div style={{ marginBottom:"20px", fontSize:"11px", letterSpacing:"1.5px", textTransform:"uppercase",
-                        color: audioLevel > 0.25 ? "#4ade80" : audioLevel > 0.05 ? "#d4a846" : "rgba(255,255,255,0.25)",
+                        color: audioLevel > 0.05 ? "#d4a846" : "#c9807a",
                         transition:"color 0.2s ease" }}>
                         {audioLevel > 0.25 ? "● Loud — perfect"
                        : audioLevel > 0.05 ? "● Good signal"
