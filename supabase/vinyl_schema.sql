@@ -65,6 +65,33 @@ CREATE TABLE IF NOT EXISTS vinyl_tracks (
 );
 
 -- -----------------------------------------------------------
+-- user_vinyl_library  — personal "my records" list per user
+-- Lightweight: only requires an iTunes collection ID, no
+-- dependency on a community vinyl_releases entry existing.
+-- Powers the "What's on the turntable?" selector in the app.
+-- -----------------------------------------------------------
+CREATE TABLE IF NOT EXISTS user_vinyl_library (
+  id                    uuid        PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id               uuid        NOT NULL REFERENCES auth.users(id) ON DELETE CASCADE,
+  itunes_collection_id  text        NOT NULL,
+  album_name            text        NOT NULL,
+  artist_name           text        NOT NULL,
+  artwork_url           text,
+  added_at              timestamptz NOT NULL DEFAULT now(),
+  UNIQUE (user_id, itunes_collection_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_user_vinyl_library_user
+  ON user_vinyl_library (user_id, added_at DESC);
+
+ALTER TABLE user_vinyl_library ENABLE ROW LEVEL SECURITY;
+
+CREATE POLICY "users manage own vinyl library"
+  ON user_vinyl_library FOR ALL
+  USING  (auth.uid() = user_id)
+  WITH CHECK (auth.uid() = user_id);
+
+-- -----------------------------------------------------------
 -- user_vinyl_collections  (future — tag records you own)
 -- -----------------------------------------------------------
 CREATE TABLE IF NOT EXISTS user_vinyl_collections (

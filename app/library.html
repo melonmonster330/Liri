@@ -1,0 +1,384 @@
+<!--
+  app/library.html — Liri Personal Vinyl Library
+  ──────────────────────────────────────────────────────────────────────────────
+  "My Records" — the user's personal collection of vinyl they own / listen to.
+  Separate from the community Vinyl Database (vinyl.html): this is just the
+  albums *you* have, used to power the "What's on the turntable?" selector in
+  the main app.
+
+  Features:
+  • View all your saved albums (artwork, title, artist, play count)
+  • Search iTunes to add new albums — one tap to save
+  • Remove albums from your library
+  • "Listen →" — sets the album as the active turntable album and goes to /app
+
+  Supabase table: user_vinyl_library
+    user_id, itunes_collection_id, album_name, artist_name, artwork_url
+-->
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+  <title>My Records — Liri</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    html, body { height: 100%; }
+    body { background: #080810; color: #f0e6d3; font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Display', 'Helvetica Neue', sans-serif; }
+    #root { min-height: 100vh; }
+    input { outline: none; }
+    input:focus { border-color: rgba(212,168,70,0.6) !important; }
+    ::-webkit-scrollbar { display: none; }
+    @keyframes spin { to { transform: rotate(360deg); } }
+    @keyframes fade-up { from { opacity: 0; transform: translateY(12px); } to { opacity: 1; transform: translateY(0); } }
+  </style>
+</head>
+<body>
+  <div id="root"></div>
+
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.2/babel.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
+
+  <script type="text/babel">
+    const { useState, useEffect, useRef, useCallback } = React;
+
+    const sb = supabase.createClient(
+      "https://xjdjpaxgymgbvcwmvorc.supabase.co",
+      "sb_publishable_C-NBnfg0ltAoUi46XQTUjA_ozjZW_Nd"
+    );
+
+    // ── Shared styles ──────────────────────────────────────────────────────
+    const inp = {
+      width: "100%", background: "rgba(255,255,255,0.05)",
+      border: "1px solid rgba(255,255,255,0.1)", color: "#f0e6d3",
+      padding: "14px 16px", borderRadius: "12px", fontSize: "15px",
+      fontFamily: "inherit", transition: "border-color 0.2s",
+    };
+
+    // ── Small vinyl disc icon ──────────────────────────────────────────────
+    function VinylDot({ size = 32 }) {
+      return (
+        <div style={{
+          width: size, height: size, borderRadius: "50%",
+          background: "conic-gradient(from 0deg, #d4a846 0% 25%, #1a1a2e 25% 50%, #d4a846 50% 75%, #1a1a2e 75% 100%)",
+          flexShrink: 0,
+        }} />
+      );
+    }
+
+    // ── Album artwork with fallback ────────────────────────────────────────
+    function AlbumArt({ src, size = 64, radius = 10 }) {
+      const [failed, setFailed] = useState(false);
+      if (!src || failed) {
+        return (
+          <div style={{
+            width: size, height: size, borderRadius: radius,
+            background: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.06)",
+            display: "flex", alignItems: "center", justifyContent: "center",
+            fontSize: size * 0.38, flexShrink: 0,
+          }}>💿</div>
+        );
+      }
+      return (
+        <img src={src} alt="" onError={() => setFailed(true)}
+          style={{ width: size, height: size, borderRadius: radius, objectFit: "cover", flexShrink: 0 }} />
+      );
+    }
+
+    // ── Main app ──────────────────────────────────────────────────────────
+    function Library() {
+      const [user, setUser]               = useState(null);
+      const [authLoading, setAuthLoading] = useState(true);
+
+      // Library state
+      const [library, setLibrary]         = useState([]);
+      const [libLoading, setLibLoading]   = useState(true);
+      const [playCounts, setPlayCounts]   = useState({});
+
+      // Add-album search
+      const [showSearch, setShowSearch]   = useState(false);
+      const [query, setQuery]             = useState("");
+      const [results, setResults]         = useState([]);
+      const [searching, setSearching]     = useState(false);
+      const [adding, setAdding]           = useState(null);  // collectionId being saved
+      const [removing, setRemoving]       = useState(null);  // collectionId being removed
+      const searchTimer                   = useRef(null);
+
+      // ── Auth ──
+      useEffect(() => {
+        sb.auth.getSession().then(({ data: { session } }) => {
+          setUser(session?.user ?? null);
+          setAuthLoading(false);
+        });
+      }, []);
+
+      // ── Fetch library ──
+      const fetchLibrary = useCallback(async (uid) => {
+        setLibLoading(true);
+        const { data } = await sb
+          .from("user_vinyl_library")
+          .select("*")
+          .eq("user_id", uid)
+          .order("added_at", { ascending: false });
+        setLibrary(data || []);
+        setLibLoading(false);
+      }, []);
+
+      // ── Fetch play counts ──
+      const fetchPlayCounts = useCallback(async () => {
+        try {
+          const { data } = await sb.rpc("get_collection_play_counts");
+          if (data) {
+            const map = {};
+            data.forEach(r => { map[String(r.collection_id)] = r.play_count; });
+            setPlayCounts(map);
+          }
+        } catch {}
+      }, []);
+
+      useEffect(() => {
+        if (user) { fetchLibrary(user.id); fetchPlayCounts(); }
+      }, [user]);
+
+      // ── Debounced iTunes search ──
+      useEffect(() => {
+        clearTimeout(searchTimer.current);
+        if (!query.trim() || query.length < 2) { setResults([]); return; }
+        searchTimer.current = setTimeout(async () => {
+          setSearching(true);
+          try {
+            const res = await fetch(
+              `https://itunes.apple.com/search?term=${encodeURIComponent(query)}&entity=album&limit=8`
+            ).then(r => r.json());
+            const seen = new Set();
+            const albums = (res.results || []).filter(r => {
+              if (seen.has(r.collectionId)) return false;
+              seen.add(r.collectionId); return true;
+            });
+            setResults(albums);
+          } catch { setResults([]); }
+          setSearching(false);
+        }, 350);
+      }, [query]);
+
+      // ── Add album to library ──
+      const addAlbum = async (album) => {
+        if (!user || adding) return;
+        setAdding(String(album.collectionId));
+        const { error } = await sb.from("user_vinyl_library").upsert({
+          user_id: user.id,
+          itunes_collection_id: String(album.collectionId),
+          album_name: album.collectionName,
+          artist_name: album.artistName,
+          artwork_url: album.artworkUrl100?.replace("100x100bb", "600x600bb") || null,
+        }, { onConflict: "user_id,itunes_collection_id" });
+        if (!error) {
+          await fetchLibrary(user.id);
+          setShowSearch(false);
+          setQuery("");
+          setResults([]);
+        }
+        setAdding(null);
+      };
+
+      // ── Remove album from library ──
+      const removeAlbum = async (collectionId) => {
+        if (!user || removing) return;
+        setRemoving(collectionId);
+        await sb.from("user_vinyl_library")
+          .delete()
+          .eq("user_id", user.id)
+          .eq("itunes_collection_id", collectionId);
+        setLibrary(prev => prev.filter(a => a.itunes_collection_id !== collectionId));
+        setRemoving(null);
+      };
+
+      // ── Set as turntable album and go to main app ──
+      const listenTo = (album) => {
+        localStorage.setItem("liri_turntable", JSON.stringify({
+          itunes_collection_id: album.itunes_collection_id,
+          album_name:  album.album_name,
+          artist_name: album.artist_name,
+          artwork_url: album.artwork_url,
+        }));
+        window.location.href = "/app";
+      };
+
+      // ── Loading ──
+      if (authLoading) return (
+        <div style={{ minHeight: "100vh", display: "flex", alignItems: "center", justifyContent: "center" }}>
+          <div style={{ width: 36, height: 36, borderRadius: "50%", border: "2px solid #1a1a2e", borderTopColor: "#d4a846", animation: "spin 0.8s linear infinite" }} />
+        </div>
+      );
+
+      // ── Auth gate ──
+      if (!user) return (
+        <div style={{ minHeight: "100vh", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", padding: "40px 24px", textAlign: "center" }}>
+          <VinylDot size={64} />
+          <div style={{ fontSize: 22, fontWeight: 700, marginTop: 24, marginBottom: 12 }}>Sign in to see your records</div>
+          <div style={{ fontSize: 14, color: "rgba(255,255,255,0.4)", marginBottom: 32, lineHeight: 1.7, maxWidth: 260 }}>
+            Your vinyl library syncs across devices when you're signed in.
+          </div>
+          <a href="/app" style={{ background: "linear-gradient(135deg,#d4a846,#c9807a)", color: "#080810", borderRadius: 50, padding: "14px 32px", fontSize: 14, fontWeight: 700, textDecoration: "none" }}>
+            Sign in to Liri →
+          </a>
+        </div>
+      );
+
+      const inLibraryIds = new Set(library.map(a => a.itunes_collection_id));
+
+      return (
+        <div style={{ minHeight: "100vh", paddingBottom: 80 }}>
+
+          {/* ── Header ── */}
+          <div style={{ padding: "max(52px, calc(env(safe-area-inset-top) + 24px)) 24px 0" }}>
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 28 }}>
+              <a href="/app" style={{ display: "flex", alignItems: "center", gap: 10, textDecoration: "none" }}>
+                <VinylDot size={28} />
+                <span style={{ fontSize: 18, fontWeight: 700, color: "#f0e6d3" }}>Liri</span>
+              </a>
+              <button onClick={() => { setShowSearch(true); setQuery(""); setResults([]); }}
+                style={{ background: "linear-gradient(135deg,#d4a846,#c9807a)", color: "#080810", border: "none", borderRadius: 50, padding: "10px 20px", fontSize: 13, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>
+                + Add record
+              </button>
+            </div>
+
+            <div style={{ fontSize: 28, fontWeight: 700, letterSpacing: "-0.5px", marginBottom: 6 }}>My Records</div>
+            <div style={{ fontSize: 14, color: "rgba(255,255,255,0.3)", marginBottom: 32 }}>
+              {library.length === 0 && !libLoading ? "Add your first record to get started" : `${library.length} album${library.length !== 1 ? "s" : ""} in your collection`}
+            </div>
+          </div>
+
+          {/* ── Library list ── */}
+          <div style={{ padding: "0 24px" }}>
+            {libLoading ? (
+              <div style={{ display: "flex", justifyContent: "center", padding: "60px 0" }}>
+                <div style={{ width: 28, height: 28, borderRadius: "50%", border: "2px solid rgba(255,255,255,0.06)", borderTopColor: "#d4a846", animation: "spin 0.8s linear infinite" }} />
+              </div>
+            ) : library.length === 0 ? (
+              <div style={{ textAlign: "center", padding: "60px 0", color: "rgba(255,255,255,0.2)" }}>
+                <div style={{ fontSize: 48, marginBottom: 16, opacity: 0.4 }}>💿</div>
+                <div style={{ fontSize: 15, marginBottom: 8 }}>Your collection is empty</div>
+                <div style={{ fontSize: 13, color: "rgba(255,255,255,0.15)" }}>Tap "+ Add record" to get started</div>
+              </div>
+            ) : (
+              <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
+                {library.map((album, i) => {
+                  const plays = playCounts[album.itunes_collection_id] || 0;
+                  const isRemoving = removing === album.itunes_collection_id;
+                  return (
+                    <div key={album.id} style={{ display: "flex", alignItems: "center", gap: 14, padding: "12px 0", borderBottom: "1px solid rgba(255,255,255,0.04)", animation: "fade-up 0.3s ease both", animationDelay: `${i * 30}ms` }}>
+                      <AlbumArt src={album.artwork_url} size={56} radius={8} />
+                      <div style={{ flex: 1, minWidth: 0 }}>
+                        <div style={{ fontSize: 14, fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{album.album_name}</div>
+                        <div style={{ fontSize: 12, color: "rgba(255,255,255,0.4)", marginTop: 2, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{album.artist_name}</div>
+                        {plays > 0 && (
+                          <div style={{ fontSize: 10, color: "rgba(212,168,70,0.6)", marginTop: 4 }}>{plays} play{plays !== 1 ? "s" : ""} on Liri</div>
+                        )}
+                      </div>
+                      <div style={{ display: "flex", gap: 8, flexShrink: 0 }}>
+                        <button onClick={() => listenTo(album)}
+                          style={{ background: "linear-gradient(135deg,#d4a846,#c9807a)", color: "#080810", border: "none", borderRadius: 50, padding: "8px 16px", fontSize: 12, fontWeight: 700, cursor: "pointer", fontFamily: "inherit", whiteSpace: "nowrap" }}>
+                          Listen →
+                        </button>
+                        <button onClick={() => removeAlbum(album.itunes_collection_id)} disabled={isRemoving}
+                          style={{ background: "rgba(255,255,255,0.05)", border: "1px solid rgba(255,255,255,0.08)", color: "rgba(255,255,255,0.3)", borderRadius: 50, padding: "8px 12px", fontSize: 12, cursor: isRemoving ? "wait" : "pointer", fontFamily: "inherit", opacity: isRemoving ? 0.4 : 1 }}>
+                          {isRemoving ? "…" : "✕"}
+                        </button>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+
+          {/* ── Add-album search sheet ── */}
+          {showSearch && (
+            <>
+              {/* Backdrop */}
+              <div onClick={() => setShowSearch(false)}
+                style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.6)", zIndex: 10 }} />
+
+              {/* Sheet */}
+              <div style={{ position: "fixed", left: 0, right: 0, bottom: 0, zIndex: 11, background: "#0e0e1a", borderRadius: "20px 20px 0 0", padding: "0 0 max(24px, env(safe-area-inset-bottom))", maxHeight: "85vh", display: "flex", flexDirection: "column" }}>
+
+                {/* Handle */}
+                <div style={{ display: "flex", justifyContent: "center", padding: "12px 0 4px" }}>
+                  <div style={{ width: 36, height: 4, borderRadius: 2, background: "rgba(255,255,255,0.12)" }} />
+                </div>
+
+                {/* Sheet header */}
+                <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "12px 24px 16px" }}>
+                  <div style={{ fontSize: 18, fontWeight: 700 }}>Add a record</div>
+                  <button onClick={() => setShowSearch(false)}
+                    style={{ background: "rgba(255,255,255,0.07)", border: "none", color: "rgba(255,255,255,0.5)", width: 30, height: 30, borderRadius: "50%", cursor: "pointer", fontSize: 14, fontFamily: "inherit" }}>✕</button>
+                </div>
+
+                {/* Search input */}
+                <div style={{ padding: "0 24px 16px", position: "relative" }}>
+                  <input
+                    autoFocus
+                    style={{ ...inp, paddingLeft: 44 }}
+                    placeholder="Artist + album name…"
+                    value={query}
+                    onChange={e => setQuery(e.target.value)}
+                  />
+                  <div style={{ position: "absolute", left: 40, top: "50%", transform: "translateY(-50%)", fontSize: 16, opacity: 0.35, pointerEvents: "none" }}>🔍</div>
+                </div>
+
+                {/* Results */}
+                <div style={{ overflowY: "auto", padding: "0 24px", flex: 1 }}>
+                  {searching && (
+                    <div style={{ textAlign: "center", padding: "24px 0", color: "rgba(255,255,255,0.25)", fontSize: 14 }}>Searching…</div>
+                  )}
+
+                  {!searching && query.length >= 2 && results.length === 0 && (
+                    <div style={{ textAlign: "center", padding: "24px 0", color: "rgba(255,255,255,0.2)", fontSize: 14 }}>No albums found</div>
+                  )}
+
+                  {results.map(album => {
+                    const alreadyAdded = inLibraryIds.has(String(album.collectionId));
+                    const isAdding = adding === String(album.collectionId);
+                    return (
+                      <div key={album.collectionId}
+                        style={{ display: "flex", alignItems: "center", gap: 14, padding: "10px 0", borderBottom: "1px solid rgba(255,255,255,0.04)" }}>
+                        {album.artworkUrl100
+                          ? <img src={album.artworkUrl100} alt="" style={{ width: 50, height: 50, borderRadius: 8, objectFit: "cover", flexShrink: 0 }} />
+                          : <div style={{ width: 50, height: 50, borderRadius: 8, background: "rgba(255,255,255,0.04)", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 20, flexShrink: 0 }}>💿</div>
+                        }
+                        <div style={{ flex: 1, minWidth: 0 }}>
+                          <div style={{ fontSize: 14, fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{album.collectionName}</div>
+                          <div style={{ fontSize: 12, color: "rgba(255,255,255,0.4)", marginTop: 2 }}>{album.artistName}</div>
+                          {album.releaseDate && <div style={{ fontSize: 11, color: "rgba(255,255,255,0.2)", marginTop: 1 }}>{new Date(album.releaseDate).getFullYear()}</div>}
+                        </div>
+                        <button onClick={() => !alreadyAdded && addAlbum(album)} disabled={alreadyAdded || isAdding}
+                          style={{
+                            background: alreadyAdded ? "rgba(100,200,120,0.12)" : isAdding ? "rgba(255,255,255,0.05)" : "linear-gradient(135deg,#d4a846,#c9807a)",
+                            color: alreadyAdded ? "rgba(100,200,120,0.8)" : isAdding ? "rgba(255,255,255,0.3)" : "#080810",
+                            border: alreadyAdded ? "1px solid rgba(100,200,120,0.2)" : "none",
+                            borderRadius: 50, padding: "8px 14px", fontSize: 12, fontWeight: 700,
+                            cursor: alreadyAdded || isAdding ? "default" : "pointer",
+                            fontFamily: "inherit", flexShrink: 0, whiteSpace: "nowrap",
+                          }}>
+                          {alreadyAdded ? "✓ Added" : isAdding ? "…" : "Add"}
+                        </button>
+                      </div>
+                    );
+                  })}
+                  <div style={{ height: 16 }} />
+                </div>
+              </div>
+            </>
+          )}
+
+        </div>
+      );
+    }
+
+    ReactDOM.createRoot(document.getElementById("root")).render(<Library />);
+  </script>
+</body>
+</html>

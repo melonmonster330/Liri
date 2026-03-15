@@ -76,7 +76,7 @@
       "sb_publishable_C-NBnfg0ltAoUi46XQTUjA_ozjZW_Nd"
     );
 
-    const APP_VERSION = "1.28";
+    const APP_VERSION = "1.30";
 
     const PROXY_URL = window.Capacitor
       ? "https://liri-vert.vercel.app/api/recognize"
@@ -254,6 +254,7 @@
       const [error, setError]                 = useState(null);
       const [listenProgress, setListenProgress]   = useState(0);
       const [listenAttempt, setListenAttempt]     = useState(0); // which rolling attempt we're on
+      const [listenSecs, setListenSecs]           = useState(0); // real-time seconds counter (UI only)
 
       // ── UI panels ──
       const [showSettings, setShowSettings]   = useState(false);
@@ -280,6 +281,17 @@
       // ── Vinyl auto mode ──
       const [vinylMode, setVinylMode]         = useState(() => localStorage.getItem("liri_vinyl_mode") === "true");
       const autoAdvanceFiredRef               = useRef(false);
+
+      // ── Turntable: album the user has selected before listening ──
+      const [turntableAlbum, setTurntableAlbum] = useState(() => {
+        try { return JSON.parse(localStorage.getItem("liri_turntable") || "null"); }
+        catch { return null; }
+      });
+      const [showAlbumPicker, setShowAlbumPicker] = useState(false);
+      const [userLibrary, setUserLibrary]         = useState([]);
+      const [libLoading, setLibLoading]           = useState(false);
+      const turntableAlbumRef  = useRef(turntableAlbum);
+      const turntableTracksRef = useRef([]); // iTunes tracks for selected album (pre-fetched)
       const autoRetryCountRef                 = useRef(0);
 
       // ── Album tracklist (for vinyl auto-advance without re-listening) ──
@@ -642,6 +654,47 @@
 
       const handleSignOut = async () => { await sb.auth.signOut(); setShowSettings(false); reset(); };
 
+      // ── Turntable album: sync to ref + localStorage, fetch tracks ──
+      const fetchTurntableTracks = async (collectionId) => {
+        try {
+          const res = await fetch(`https://itunes.apple.com/lookup?id=${collectionId}&entity=song`).then(r => r.json());
+          const tracks = (res.results || [])
+            .filter(t => t.wrapperType === "track")
+            .sort((a, b) => (a.discNumber - b.discNumber) || (a.trackNumber - b.trackNumber));
+          turntableTracksRef.current = tracks;
+        } catch { turntableTracksRef.current = []; }
+      };
+
+      useEffect(() => {
+        turntableAlbumRef.current = turntableAlbum;
+        if (turntableAlbum) {
+          localStorage.setItem("liri_turntable", JSON.stringify(turntableAlbum));
+          fetchTurntableTracks(turntableAlbum.itunes_collection_id);
+        } else {
+          localStorage.removeItem("liri_turntable");
+          turntableTracksRef.current = [];
+        }
+      }, [turntableAlbum]);
+
+      // ── User's personal vinyl library (for the album picker) ──
+      const fetchUserLibrary = async (uid) => {
+        setLibLoading(true);
+        try {
+          const { data } = await sb.from("user_vinyl_library").select("*").eq("user_id", uid).order("added_at", { ascending: false });
+          setUserLibrary(data || []);
+        } catch {}
+        setLibLoading(false);
+      };
+
+      useEffect(() => { if (user) fetchUserLibrary(user.id); }, [user]);
+
+      // ── Real-time seconds counter while listening (UI only — not tied to ACR attempts) ──
+      useEffect(() => {
+        if (mode !== "listening") { setListenSecs(0); return; }
+        const id = setInterval(() => setListenSecs(s => s + 1), 1000);
+        return () => clearInterval(id);
+      }, [mode]);
+
       // ── Auto-start sync after detection ──
       useEffect(() => { if (mode === "confirmed" && detectedSong) startSync(); }, [mode, detectedSong]);
 
@@ -787,6 +840,53 @@
         }).catch(() => {});
       };
 
+      // ── Vinyl-aware track matching ──────────────────────────────────────────────
+      // When the user has told us what album is on the turntable, fetch LRC lyrics
+      // for ALL tracks in parallel and score the Whisper transcript against each.
+      // Returns { track, lrcMatch, lyrics, startPos, score } or null.
+      // Skips GPT entirely — much more accurate for obscure / re-recorded albums.
+      const matchTranscriptToTracks = async (transcript, tracks) => {
+        const tWords = transcript.toLowerCase().replace(/[^\w\s]/g, "").split(/\s+/).filter(w => w.length > 3);
+        if (tWords.length < 3) return null;
+
+        // Parallel LRCLib fetch for every track on the album
+        const withLyrics = await Promise.all(tracks.map(async t => {
+          try {
+            const artist = t.artistName || "";
+            const title  = t.trackName  || "";
+            const [a, b] = await Promise.all([
+              fetch(`https://lrclib.net/api/search?artist_name=${encodeURIComponent(artist)}&track_name=${encodeURIComponent(title)}`).then(r => r.json()).catch(() => []),
+              fetch(`https://lrclib.net/api/search?q=${encodeURIComponent(`${artist} ${title}`.trim())}`).then(r => r.json()).catch(() => []),
+            ]);
+            const candidates = [...(Array.isArray(a) ? a : []), ...(Array.isArray(b) ? b : [])];
+            const best = candidates.find(c => c.syncedLyrics) || null;
+            return { ...t, lrcMatch: best };
+          } catch { return { ...t, lrcMatch: null }; }
+        }));
+
+        // Score each track by word overlap
+        let bestTrack = null, bestScore = 0;
+        for (const t of withLyrics) {
+          if (!t.lrcMatch?.syncedLyrics) continue;
+          const lyricText = t.lrcMatch.syncedLyrics.toLowerCase().replace(/\[[\d:\.]+\]/g, "");
+          const hits = tWords.filter(w => lyricText.includes(w)).length;
+          if (hits > bestScore) { bestScore = hits; bestTrack = t; }
+        }
+
+        if (!bestTrack || bestScore < 4) return null;
+
+        // Find position within the winning track's lyrics
+        const lyrics = parseLRC(bestTrack.lrcMatch.syncedLyrics);
+        let startPos = 0, bestLineScore = 0;
+        for (const line of lyrics) {
+          const lineWords = line.text.toLowerCase().replace(/[^\w\s]/g, "").split(/\s+/);
+          const hits = tWords.filter(w => w.length > 2 && lineWords.includes(w)).length;
+          if (hits > bestLineScore) { bestLineScore = hits; startPos = Math.max(0, line.time - 0.5); }
+        }
+
+        return { track: bestTrack, lrcMatch: bestTrack.lrcMatch, lyrics, startPos, score: bestScore };
+      };
+
       // ── Whisper transcription → LRCLib lyrics match (fallback when ACRCloud fails) ──
       // Sends audio to /api/transcribe (Whisper), searches LRCLib by the
       // transcribed words, finds which line matches to get the playback position.
@@ -817,6 +917,51 @@
             return false;
           }
           attemptLogRef.current.push(`whisper: transcribed "${transcribed.slice(0, 40)}…"`);
+
+          // ── Strategy V: Vinyl-aware match against known tracklist ──
+          // Only fires when the user has pre-selected their album ("what's on the turntable?").
+          // Skips GPT — directly matches transcript against every track's LRC lyrics.
+          // Best path for obscure tracks, re-recordings, anything ACR misses.
+          const turntableTracks = turntableTracksRef.current;
+          if (turntableTracks.length > 0) {
+            attemptLogRef.current.push(`whisper: trying vinyl-aware match against ${turntableTracks.length} tracks`);
+            const vmResult = await matchTranscriptToTracks(transcribed, turntableTracks);
+            if (vmResult) {
+              if (recognitionWonRef.current) return false;
+              recognitionWonRef.current = true;
+              const { track, lrcMatch, lyrics, startPos, score } = vmResult;
+              attemptLogRef.current.push(`whisper: vinyl match "${track.trackName}" (score ${score})`);
+              const ta = turntableAlbumRef.current;
+              const song = {
+                title:   track.trackName,
+                artist:  track.artistName || ta?.artist_name || "",
+                album:   ta?.album_name   || lrcMatch.albumName || "",
+                artwork: ta?.artwork_url  || null,
+              };
+              setIdentifiedBy("whisper");
+              detectedAtRef.current      = Date.now();
+              initialPosRef.current      = startPos;
+              autoAdvanceFiredRef.current = false;
+              autoRetryCountRef.current  = 0;
+              setDetectedSong(song);
+              setSongDuration(lrcMatch.duration || null);
+              setLyrics(lyrics); lyricsRef.current = lyrics;
+              setMode("confirmed");
+              saveToHistory(user, song); fetchHistory(user);
+              syncCastSession(song, lyrics, startPos);
+              // Load full tracklist for vinyl auto-advance
+              fetchAlbumTracks(track.trackName, track.artistName || "").then(({ tracks: at, collectionId }) => {
+                setAlbumTracks(at); setAlbumCollectionId(collectionId);
+                const tIdx = at.findIndex(t => t.trackName?.toLowerCase() === track.trackName.toLowerCase());
+                setCurrentTrackIndex(tIdx >= 0 ? tIdx : 0);
+                if (collectionId) fetchVinylRelease(collectionId).then(db => {
+                  if (db?.vinyl_tracks?.length > 0) { setVinylDbRelease(db); albumTpsRef.current = 0; }
+                });
+              }).catch(() => {});
+              return true;
+            }
+            attemptLogRef.current.push(`whisper: vinyl-aware match failed (score too low) — falling through`);
+          }
 
           // 2. Find the song on LRCLib
           // Strategy A (vinyl mode): we know the artist + expected track — search directly
@@ -1862,6 +2007,66 @@
             </div>
           )}
 
+          {/* ── ALBUM PICKER SHEET ── */}
+          {showAlbumPicker && (
+            <div onClick={() => setShowAlbumPicker(false)} style={{ position:"fixed", inset:0, zIndex:200, background:"rgba(0,0,0,0.6)", backdropFilter:"blur(4px)" }}>
+              <div onClick={e => e.stopPropagation()} style={{ position:"absolute", bottom:0, left:0, right:0, background:"#0f0f1c", borderRadius:"24px 24px 0 0", maxHeight:"80vh", display:"flex", flexDirection:"column", boxShadow:"0 -8px 48px rgba(0,0,0,0.6)", animation:"slide-up 0.3s ease" }}>
+                {/* Handle */}
+                <div style={{ display:"flex", justifyContent:"center", padding:"12px 0 4px" }}>
+                  <div style={{ width:36, height:4, borderRadius:2, background:"rgba(255,255,255,0.12)" }} />
+                </div>
+                <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", padding:"12px 24px 16px" }}>
+                  <div style={{ fontSize:18, fontWeight:700 }}>What's on the turntable?</div>
+                  <button onClick={() => setShowAlbumPicker(false)} style={{ background:"rgba(255,255,255,0.07)", border:"none", color:"rgba(255,255,255,0.5)", width:30, height:30, borderRadius:"50%", cursor:"pointer", fontSize:14, fontFamily:"inherit" }}>✕</button>
+                </div>
+                <div style={{ overflowY:"auto", padding:"0 24px", flex:1, paddingBottom:"max(24px, env(safe-area-inset-bottom))" }}>
+                  {/* Clear / none option */}
+                  {turntableAlbum && (
+                    <button onClick={() => { setTurntableAlbum(null); setShowAlbumPicker(false); }}
+                      style={{ width:"100%", display:"flex", alignItems:"center", gap:12, padding:"12px 0", background:"none", border:"none", borderBottom:"1px solid rgba(255,255,255,0.04)", cursor:"pointer", fontFamily:"inherit", color:"rgba(255,255,255,0.35)", fontSize:13, textAlign:"left", marginBottom:4 }}>
+                      <div style={{ width:44, height:44, borderRadius:8, background:"rgba(255,255,255,0.03)", border:"1px dashed rgba(255,255,255,0.1)", display:"flex", alignItems:"center", justifyContent:"center", fontSize:16, flexShrink:0 }}>✕</div>
+                      <span>Clear selection — use ACR fingerprinting</span>
+                    </button>
+                  )}
+                  {/* Library albums */}
+                  {libLoading ? (
+                    <div style={{ display:"flex", justifyContent:"center", padding:"32px 0" }}>
+                      <div style={{ width:24, height:24, borderRadius:"50%", border:"2px solid rgba(255,255,255,0.06)", borderTopColor:"#d4a846", animation:"spin 0.8s linear infinite" }} />
+                    </div>
+                  ) : userLibrary.length === 0 ? (
+                    <div style={{ textAlign:"center", padding:"32px 0", color:"rgba(255,255,255,0.2)" }}>
+                      <div style={{ fontSize:32, marginBottom:10, opacity:0.4 }}>💿</div>
+                      <div style={{ fontSize:14, marginBottom:8 }}>Your library is empty</div>
+                      <a href="/library" style={{ fontSize:12, color:"rgba(212,168,70,0.6)", textDecoration:"none" }}>Go to My Records →</a>
+                    </div>
+                  ) : (
+                    userLibrary.map(album => {
+                      const isSelected = turntableAlbum?.itunes_collection_id === album.itunes_collection_id;
+                      return (
+                        <button key={album.id} onClick={() => { setTurntableAlbum({ itunes_collection_id: album.itunes_collection_id, album_name: album.album_name, artist_name: album.artist_name, artwork_url: album.artwork_url }); setShowAlbumPicker(false); }}
+                          style={{ width:"100%", display:"flex", alignItems:"center", gap:12, padding:"12px 0", background:"none", border:"none", borderBottom:"1px solid rgba(255,255,255,0.04)", cursor:"pointer", fontFamily:"inherit", textAlign:"left" }}>
+                          {album.artwork_url
+                            ? <img src={album.artwork_url} alt="" style={{ width:44, height:44, borderRadius:7, objectFit:"cover", flexShrink:0, opacity: isSelected ? 1 : 0.85 }} />
+                            : <div style={{ width:44, height:44, borderRadius:7, background:"rgba(255,255,255,0.04)", display:"flex", alignItems:"center", justifyContent:"center", fontSize:20, flexShrink:0 }}>💿</div>
+                          }
+                          <div style={{ flex:1, minWidth:0 }}>
+                            <div style={{ fontSize:14, fontWeight:isSelected ? 700 : 500, color: isSelected ? "#d4a846" : "#f0e6d3", overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>{album.album_name}</div>
+                            <div style={{ fontSize:12, color:"rgba(255,255,255,0.4)", marginTop:2 }}>{album.artist_name}</div>
+                          </div>
+                          {isSelected && <span style={{ fontSize:14, color:"#d4a846", flexShrink:0 }}>✓</span>}
+                        </button>
+                      );
+                    })
+                  )}
+                  {/* Link to manage library */}
+                  <div style={{ textAlign:"center", padding:"20px 0 4px" }}>
+                    <a href="/library" style={{ fontSize:12, color:"rgba(255,255,255,0.2)", textDecoration:"none" }}>Manage My Records →</a>
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
+
           {/* ── SETTINGS PANEL ── */}
           {showSettings && (
             <div onClick={() => setShowSettings(false)} style={{ position:"fixed", inset:0, zIndex:200, background:"rgba(0,0,0,0.5)", backdropFilter:"blur(4px)" }}>
@@ -1948,6 +2153,13 @@
                       <div>
                         <div style={{ fontSize:"13px", color:"#d4a846" }}>Browse the Vinyl Library</div>
                         <div style={{ fontSize:"11px", color:"rgba(255,255,255,0.3)", marginTop:"2px" }}>Community-verified pressings & flip data</div>
+                      </div>
+                      <div style={{ color:"rgba(212,168,70,0.5)", fontSize:"18px" }}>›</div>
+                    </a>
+                    <a href="/library" style={{ display:"flex", alignItems:"center", justifyContent:"space-between", marginTop:"12px", paddingTop:"12px", borderTop:"1px solid rgba(255,255,255,0.05)", textDecoration:"none" }}>
+                      <div>
+                        <div style={{ fontSize:"13px", color:"#d4a846" }}>My Records</div>
+                        <div style={{ fontSize:"11px", color:"rgba(255,255,255,0.3)", marginTop:"2px" }}>Your personal vinyl library</div>
                       </div>
                       <div style={{ color:"rgba(212,168,70,0.5)", fontSize:"18px" }}>›</div>
                     </a>
@@ -2222,12 +2434,39 @@
 
                 {/* IDLE */}
                 {mode === "idle" && (
-                  <div style={{ animation:"fade-up 0.5s ease both" }}>
-                    <Vinyl size={140} spinning={false} />
-                    <div style={{ marginTop:"36px", fontSize:"13px", color:"rgba(255,255,255,0.25)", letterSpacing:"3px", textTransform:"uppercase", marginBottom:"16px" }}>Ready to listen</div>
-                    <p style={{ fontSize:"15px", color:"rgba(255,255,255,0.35)", maxWidth:"240px", margin:"0 auto 40px", lineHeight:"1.7" }}>Put on a record and hold your phone near the speakers</p>
-                    <button onClick={() => startListening(false)} style={{ background:"linear-gradient(135deg, #d4a846, #c9807a)", color:"#080810", border:"none", borderRadius:"50px", padding:"18px 52px", fontSize:"15px", fontWeight:"700", letterSpacing:"1px", cursor:"pointer", fontFamily:"inherit", boxShadow:"0 8px 32px rgba(212,168,70,0.3)" }}>
-                      Listen
+                  <div style={{ animation:"fade-up 0.5s ease both", width:"100%", maxWidth:"320px" }}>
+                    <Vinyl size={130} spinning={false} />
+
+                    {/* ── Turntable album selector ── */}
+                    <div style={{ marginTop:"32px", marginBottom:"24px" }}>
+                      {turntableAlbum ? (
+                        // Album selected — show it
+                        <div style={{ display:"flex", alignItems:"center", gap:"12px", background:"rgba(255,255,255,0.04)", border:"1px solid rgba(255,255,255,0.08)", borderRadius:"16px", padding:"12px 14px" }}>
+                          {turntableAlbum.artwork_url
+                            ? <img src={turntableAlbum.artwork_url} alt="" style={{ width:48, height:48, borderRadius:8, objectFit:"cover", flexShrink:0 }} />
+                            : <div style={{ width:48, height:48, borderRadius:8, background:"rgba(255,255,255,0.05)", display:"flex", alignItems:"center", justifyContent:"center", fontSize:22, flexShrink:0 }}>💿</div>
+                          }
+                          <div style={{ flex:1, minWidth:0, textAlign:"left" }}>
+                            <div style={{ fontSize:"13px", fontWeight:600, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>{turntableAlbum.album_name}</div>
+                            <div style={{ fontSize:"11px", color:"rgba(255,255,255,0.4)", marginTop:2, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>{turntableAlbum.artist_name}</div>
+                          </div>
+                          <button onClick={() => setShowAlbumPicker(true)}
+                            style={{ background:"none", border:"none", color:"rgba(255,255,255,0.25)", fontSize:"11px", cursor:"pointer", fontFamily:"inherit", padding:"4px 2px", flexShrink:0 }}>
+                            Change
+                          </button>
+                        </div>
+                      ) : (
+                        // No album selected
+                        <button onClick={() => { fetchUserLibrary(user.id); setShowAlbumPicker(true); }}
+                          style={{ width:"100%", display:"flex", alignItems:"center", gap:"10px", background:"rgba(255,255,255,0.03)", border:"1px dashed rgba(255,255,255,0.1)", borderRadius:"16px", padding:"12px 16px", cursor:"pointer", fontFamily:"inherit", color:"rgba(255,255,255,0.35)", fontSize:"13px", textAlign:"left" }}>
+                          <span style={{ fontSize:18, opacity:0.5 }}>💿</span>
+                          <span>What's on the turntable?</span>
+                        </button>
+                      )}
+                    </div>
+
+                    <button onClick={() => startListening(false)} style={{ background:"linear-gradient(135deg, #d4a846, #c9807a)", color:"#080810", border:"none", borderRadius:"50px", padding:"18px 52px", fontSize:"15px", fontWeight:"700", letterSpacing:"1px", cursor:"pointer", fontFamily:"inherit", boxShadow:"0 8px 32px rgba(212,168,70,0.3)", width:"100%" }}>
+                      {turntableAlbum ? "Find my place" : "Listen"}
                     </button>
                     {vinylMode && (
                       <div style={{ marginTop:"16px", fontSize:"12px", color:"rgba(212,168,70,0.5)", letterSpacing:"1px" }}>✦ Vinyl Auto Mode on</div>
@@ -2270,9 +2509,9 @@
                     <div style={{ fontSize:"14px", color:"rgba(255,255,255,0.3)" }}>
                       {listenAttempt > MAX_ATTEMPTS
                         ? "Couldn't fingerprint — identifying by lyrics"
-                        : listenAttempt === 0
+                        : listenSecs === 0
                         ? "Hold near your speakers"
-                        : `${listenAttempt * 5}s of audio captured — hold steady`}
+                        : `${listenSecs}s — hold steady`}
                     </div>
                     <div style={{ display:"flex", gap:"12px", marginTop:"28px", justifyContent:"center" }}>
                       <button onClick={() => { listenSessionRef.current++; clearInterval(progressTimerRef.current); streamRef.current?.getTracks().forEach(t => t.stop()); reset(); }} style={{ background:"none", border:"1px solid rgba(255,255,255,0.12)", color:"rgba(255,255,255,0.4)", borderRadius:"50px", padding:"10px 26px", fontSize:"13px", cursor:"pointer", fontFamily:"inherit" }}>Stop</button>
