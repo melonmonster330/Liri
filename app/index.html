@@ -727,6 +727,96 @@
         }).catch(() => {});
       };
 
+      // ── Whisper transcription → LRCLib lyrics match (fallback when ACRCloud fails) ──
+      // Sends audio to /api/transcribe (Whisper), searches LRCLib by the
+      // transcribed words, finds which line matches to get the playback position.
+      const tryLyricsTranscription = async (blob, isAutoAdvance) => {
+        try {
+          // 1. Transcribe with Whisper
+          const uint8 = new Uint8Array(await blob.arrayBuffer());
+          let binary = "";
+          for (let i = 0; i < uint8.length; i += 8192)
+            binary += String.fromCharCode(...uint8.subarray(i, i + 8192));
+
+          const transcribeUrl = window.Capacitor
+            ? "https://liri-vert.vercel.app/api/transcribe"
+            : "/api/transcribe";
+
+          const tr = await fetch(transcribeUrl, {
+            method: "POST", headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ audio: btoa(binary), mimeType: blob.type || "audio/webm" }),
+          });
+          if (!tr.ok) return false;
+          const { text: transcribed } = await tr.json();
+          if (!transcribed || transcribed.trim().length < 4) return false;
+
+          // 2. Search LRCLib with transcribed words
+          const [ra, rb] = await Promise.all([
+            fetch(`https://lrclib.net/api/search?q=${encodeURIComponent(transcribed)}`).then(r => r.json()).catch(() => []),
+            fetch(`https://lrclib.net/api/search?q=${encodeURIComponent(transcribed.split(" ").slice(0, 6).join(" "))}`).then(r => r.json()).catch(() => []),
+          ]);
+          const candidates = [...(Array.isArray(ra) ? ra : []), ...(Array.isArray(rb) ? rb : [])];
+          const match = candidates.find(c => c.syncedLyrics) || candidates[0];
+          if (!match) return false;
+
+          // 3. Parse lyrics
+          const lyrics = match.syncedLyrics
+            ? parseLRC(match.syncedLyrics)
+            : (match.plainLyrics || "").split("\n").filter(l => l.trim()).map((text, i) => ({ time: i * 4, text }));
+          if (!lyrics.length) return false;
+
+          // 4. Find playback position: match transcribed words against lyric lines
+          const words = transcribed.toLowerCase().replace(/[^\w\s]/g, "").split(/\s+/).filter(Boolean);
+          let startPos = 0;
+          let bestScore = 0;
+          for (const line of lyrics) {
+            const lineWords = line.text.toLowerCase().replace(/[^\w\s]/g, "").split(/\s+/);
+            const hits = words.filter(w => w.length > 3 && lineWords.includes(w)).length;
+            if (hits > bestScore) { bestScore = hits; startPos = Math.max(0, line.time - 0.5); }
+          }
+
+          // 5. Fetch artwork from iTunes
+          const title  = match.trackName  || "";
+          const artist = match.artistName || "";
+          let artwork = null;
+          try {
+            const it = await fetch(`https://itunes.apple.com/search?term=${encodeURIComponent(artist + " " + title)}&entity=song&limit=1`).then(r => r.json());
+            artwork = it.results?.[0]?.artworkUrl100?.replace("100x100bb", "600x600bb") || null;
+          } catch {}
+
+          // 6. Wire it up exactly like a normal recognition match
+          const song = { title, artist, album: match.albumName || "", artwork };
+          detectedAtRef.current      = Date.now();
+          initialPosRef.current      = startPos;
+          autoAdvanceFiredRef.current = false;
+          autoRetryCountRef.current  = 0;
+
+          setDetectedSong(song);
+          setSongDuration(match.duration || null);
+          setLyrics(lyrics);
+          lyricsRef.current = lyrics;
+          setMode("confirmed");
+
+          saveToHistory(user, song);
+          fetchHistory(user);
+          syncCastSession(song, lyrics, startPos);
+
+          // Non-blocking: fetch album tracklist for vinyl auto-advance
+          fetchAlbumTracks(title, artist).then(({ tracks, collectionId }) => {
+            setAlbumTracks(tracks);
+            setAlbumCollectionId(collectionId);
+            const tIdx = tracks.findIndex(t => t.trackName?.toLowerCase() === title.toLowerCase());
+            setCurrentTrackIndex(tIdx >= 0 ? tIdx : 0);
+            if (!collectionId) return;
+            fetchVinylRelease(collectionId).then(db => {
+              if (db?.vinyl_tracks?.length > 0) { setVinylDbRelease(db); albumTpsRef.current = 0; }
+            });
+          }).catch(() => {});
+
+          return true;
+        } catch { return false; }
+      };
+
       // ── Handle final recognition failure ──
       const handleNoMatch = (isAutoAdvance) => {
         if (isAutoAdvance) {
@@ -811,11 +901,15 @@
                 return;
               }
 
-              // No match yet — give up after MAX_ATTEMPTS
+              // No match yet — after MAX_ATTEMPTS try Whisper lyrics fallback
               if (attempts >= MAX_ATTEMPTS) {
                 clearInterval(progressTimerRef.current);
                 if (recorder.state === "recording") recorder.stop();
-                handleNoMatch(isAutoAdvance);
+                // Signal the UI we're now trying lyrics transcription
+                setListenAttempt(MAX_ATTEMPTS + 1);
+                const finalBlob = new Blob([...allChunks], { type: mimeType || "audio/webm" });
+                const found = await tryLyricsTranscription(finalBlob, isAutoAdvance);
+                if (!found) handleNoMatch(isAutoAdvance);
                 return;
               }
 
@@ -1764,13 +1858,16 @@
                       <div style={{ position:"absolute", inset:0, display:"flex", alignItems:"center", justifyContent:"center" }}><WaveAnimation active={true} /></div>
                     </div>
                     <div style={{ fontSize:"22px", fontWeight:"600", color:"#f0e6d3", marginBottom:"10px" }}>
-                      {listenAttempt === 0 ? "Listening…"
-                       : listenAttempt === 1 ? "Trying again…"
-                       : listenAttempt <= 3  ? "Still looking…"
-                       : "Taking a bit longer…"}
+                      {listenAttempt > MAX_ATTEMPTS ? "Reading the lyrics…"
+                       : listenAttempt === 0        ? "Listening…"
+                       : listenAttempt === 1        ? "Trying again…"
+                       : listenAttempt <= 3         ? "Still looking…"
+                       :                              "Taking a bit longer…"}
                     </div>
                     <div style={{ fontSize:"14px", color:"rgba(255,255,255,0.3)" }}>
-                      {listenAttempt === 0
+                      {listenAttempt > MAX_ATTEMPTS
+                        ? "Matching by lyrics — hang on"
+                        : listenAttempt === 0
                         ? "Hold near your speakers"
                         : `${listenAttempt * 5}s of audio captured — hold steady`}
                     </div>
