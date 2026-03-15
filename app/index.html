@@ -76,7 +76,7 @@
       "sb_publishable_C-NBnfg0ltAoUi46XQTUjA_ozjZW_Nd"
     );
 
-    const APP_VERSION = "1.17";
+    const APP_VERSION = "1.18";
 
     const PROXY_URL = window.Capacitor
       ? "https://liri-vert.vercel.app/api/recognize"
@@ -406,6 +406,7 @@
       const listenSessionRef    = useRef(0); // increments on each startListening; guards stale async callbacks
       const attemptLogRef       = useRef([]); // collects per-attempt debug info for the error screen
       const lastRecordingRef    = useRef(null); // stores last recorded blob for debug download
+      const recognitionWonRef   = useRef(false); // true once ACRCloud or Whisper wins — prevents double-set
       const [audioLevel, setAudioLevel] = useState(0); // 0–1 live mic amplitude (chunk-size proxy)
 
       useEffect(() => { lyricsRef.current = lyrics; }, [lyrics]);
@@ -830,13 +831,27 @@
           }
 
           if (!match) {
-            // Strategy B: search by transcribed text (last resort)
-            const [ra, rb] = await Promise.all([
-              fetch(`https://lrclib.net/api/search?q=${encodeURIComponent(transcribed)}`).then(r => r.json()).catch(() => []),
-              fetch(`https://lrclib.net/api/search?q=${encodeURIComponent(transcribed.split(" ").slice(0, 8).join(" "))}`).then(r => r.json()).catch(() => []),
-            ]);
-            const candidates = [...(Array.isArray(ra) ? ra : []), ...(Array.isArray(rb) ? rb : [])];
-            match = candidates.find(c => c.syncedLyrics) || candidates[0] || null;
+            // Strategy B: ask GPT to identify the song from the transcript, then look it up on LRCLib
+            try {
+              const identifyUrl = window.Capacitor
+                ? "https://liri-vert.vercel.app/api/identify-lyrics"
+                : "/api/identify-lyrics";
+              const gptRes = await fetch(identifyUrl, {
+                method: "POST", headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ text: transcribed }),
+              });
+              if (gptRes.ok) {
+                const { title: gptTitle, artist: gptArtist } = await gptRes.json();
+                if (gptTitle) {
+                  attemptLogRef.current.push(`whisper: GPT identified "${gptTitle}" by ${gptArtist || "?"}`);
+                  const q = `${gptArtist || ""} ${gptTitle}`.trim();
+                  const lrcRes = await fetch(`https://lrclib.net/api/search?q=${encodeURIComponent(q)}`)
+                    .then(r => r.json()).catch(() => []);
+                  const candidates = Array.isArray(lrcRes) ? lrcRes : [];
+                  match = candidates.find(c => c.syncedLyrics) || candidates[0] || null;
+                }
+              }
+            } catch {}
           }
 
           if (!match) return false;
@@ -867,6 +882,10 @@
           } catch {}
 
           // 6. Wire it up exactly like a normal recognition match
+          // Guard: if ACRCloud already won the race, don't overwrite its result
+          if (recognitionWonRef.current) return false;
+          recognitionWonRef.current = true;
+
           const song = { title, artist, album: match.albumName || "", artwork };
           detectedAtRef.current      = Date.now();
           initialPosRef.current      = startPos;
@@ -934,6 +953,7 @@
         if (!isAutoAdvance && !isUnlimited(user) && usageCount >= FREE_LIMIT) { setMode("limit"); return; }
         const session = ++listenSessionRef.current; // unique id for this listen attempt
         attemptLogRef.current = [];
+        recognitionWonRef.current = false;
         setError(null);
         setMode("listening");
         setListenProgress(0);
@@ -989,6 +1009,7 @@
           attemptLogRef.current.push(`format: ${mimeType}`);
 
           let elapsed = 0;
+          let bgWhisperStarted = false; // background Whisper fired at attempt 3
           progressTimerRef.current = setInterval(async () => {
             elapsed += 100;
 
@@ -1000,6 +1021,28 @@
               attempts++;
               setListenAttempt(attempts);
               nextAttemptAt = (attempts + 1) * ATTEMPT_INTERVAL;
+
+              // ── Background Whisper: fire at attempt 3 (15s) in parallel with ACRCloud ──
+              // Whisper + GPT run independently — if they find a match before ACRCloud
+              // does, recognitionWonRef catches the win and ACRCloud is skipped.
+              if (attempts === 3 && !bgWhisperStarted) {
+                bgWhisperStarted = true;
+                const bgBlob = new Blob([...allChunks], { type: mimeType || "audio/webm" });
+                tryLyricsTranscription(bgBlob, isAutoAdvance).then(found => {
+                  if (found && listenSessionRef.current === session) {
+                    // Whisper won the race — shut down ACRCloud loop
+                    clearInterval(progressTimerRef.current);
+                    if (recorder.state === "recording") recorder.stop();
+                  }
+                });
+              }
+
+              // If background Whisper already won, skip remaining ACRCloud attempts
+              if (recognitionWonRef.current) {
+                clearInterval(progressTimerRef.current);
+                if (recorder.state === "recording") recorder.stop();
+                return;
+              }
 
               // Snapshot ALL audio accumulated so far — clip grows with each attempt
               const blob = new Blob([...allChunks], { type: mimeType || "audio/webm" });
@@ -1013,8 +1056,8 @@
                   : `#${attempts} (${attempts*5}s, ${blobKB}KB): network error`
               );
 
-              // Abort if the user restarted while we were awaiting
-              if (listenSessionRef.current !== session) {
+              // Abort if the user restarted while we were awaiting, or Whisper won
+              if (listenSessionRef.current !== session || recognitionWonRef.current) {
                 clearInterval(progressTimerRef.current);
                 if (recorder.state === "recording") recorder.stop();
                 return;
@@ -1029,8 +1072,9 @@
                 return;
               }
 
-              // Match found — stop recording and process
+              // ACRCloud match found — ACRCloud wins the race
               if (data?.status?.code === 0 && data?.metadata?.music?.length > 0) {
+                recognitionWonRef.current = true;
                 clearInterval(progressTimerRef.current);
                 if (recorder.state === "recording") recorder.stop();
                 setMode("detecting");
@@ -1038,23 +1082,18 @@
                 return;
               }
 
-              // No match yet — after MAX_ATTEMPTS try Whisper lyrics fallback
+              // All ACRCloud attempts exhausted — wait for background Whisper or give up
               if (attempts >= MAX_ATTEMPTS) {
                 clearInterval(progressTimerRef.current);
-                // Signal the UI we're now trying lyrics transcription
                 setListenAttempt(MAX_ATTEMPTS + 1);
-                // Keep recording 20s more so Whisper gets ~50s of lyrics to work with
-                await new Promise(resolve => setTimeout(resolve, 20000));
-                if (listenSessionRef.current !== session) {
-                  if (recorder.state === "recording") recorder.stop();
-                  return;
+                // Give background Whisper up to 40s to complete before giving up
+                const deadline = Date.now() + 40000;
+                while (!recognitionWonRef.current && Date.now() < deadline) {
+                  await new Promise(resolve => setTimeout(resolve, 500));
+                  if (listenSessionRef.current !== session) return;
                 }
                 if (recorder.state === "recording") recorder.stop();
-                const finalBlob = new Blob([...allChunks], { type: mimeType || "audio/webm" });
-                lastRecordingRef.current = finalBlob; // save for debug download on error screen
-                const found = await tryLyricsTranscription(finalBlob, isAutoAdvance);
-                if (listenSessionRef.current !== session) return; // aborted during Whisper
-                if (!found) handleNoMatch(isAutoAdvance, "whisper_failed");
+                if (!recognitionWonRef.current) handleNoMatch(isAutoAdvance, "whisper_failed");
                 return;
               }
 
