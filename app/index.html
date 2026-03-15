@@ -76,7 +76,7 @@
       "sb_publishable_C-NBnfg0ltAoUi46XQTUjA_ozjZW_Nd"
     );
 
-    const APP_VERSION = "1.15";
+    const APP_VERSION = "1.16";
 
     const PROXY_URL = window.Capacitor
       ? "https://liri-vert.vercel.app/api/recognize"
@@ -1105,9 +1105,14 @@
       const fetchAlbumTracks = async (title, artist) => {
         try {
           const search = await fetch(
-            `https://itunes.apple.com/search?term=${encodeURIComponent(artist + " " + title)}&entity=song&limit=5`
+            `https://itunes.apple.com/search?term=${encodeURIComponent(artist + " " + title)}&entity=song&limit=10`
           ).then(r => r.json());
-          const hit = search.results?.find(r => r.wrapperType === "track");
+          const results = (search.results || []).filter(r => r.wrapperType === "track");
+          if (!results.length) return { tracks: [], collectionId: null };
+          // Prefer the LP: sort by trackCount descending so we get the full album
+          // rather than a single (which would only have 1–2 tracks and break side detection)
+          results.sort((a, b) => (b.trackCount || 0) - (a.trackCount || 0));
+          const hit = results[0];
           if (!hit?.collectionId) return { tracks: [], collectionId: null };
           const lookup = await fetch(
             `https://itunes.apple.com/lookup?id=${hit.collectionId}&entity=song`
