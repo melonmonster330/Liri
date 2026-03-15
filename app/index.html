@@ -76,7 +76,7 @@
       "sb_publishable_C-NBnfg0ltAoUi46XQTUjA_ozjZW_Nd"
     );
 
-    const APP_VERSION = "1.10";
+    const APP_VERSION = "1.11";
 
     const PROXY_URL = window.Capacitor
       ? "https://liri-vert.vercel.app/api/recognize"
@@ -193,8 +193,8 @@
           {BAR_MULTS.map((mult, i) => {
             const liveH = hasLevel ? Math.max(4, level * 48 * mult) : (active ? 20 + mult * 28 : 4);
             const color = hasLevel
-              ? (level > 0.55 ? "#4ade80"        // loud — green
-               : level > 0.15 ? "#d4a846"        // good — gold
+              ? (level > 0.25 ? "#4ade80"        // loud — green
+               : level > 0.05 ? "#d4a846"        // good — gold
                :                "rgba(255,255,255,0.25)") // quiet — grey
               : "#d4a846";
             return (
@@ -405,9 +405,7 @@
       const currentLineRef      = useRef(null);
       const listenSessionRef    = useRef(0); // increments on each startListening; guards stale async callbacks
       const attemptLogRef       = useRef([]); // collects per-attempt debug info for the error screen
-      const audioCtxRef         = useRef(null); // Web Audio context for live level metering
-      const audioRafRef         = useRef(null); // requestAnimationFrame handle for level polling
-      const [audioLevel, setAudioLevel] = useState(0); // 0–1 live mic amplitude
+      const [audioLevel, setAudioLevel] = useState(0); // 0–1 live mic amplitude (chunk-size proxy)
 
       useEffect(() => { lyricsRef.current = lyrics; }, [lyrics]);
       useEffect(() => { albumTracksRef.current = albumTracks; }, [albumTracks]);
@@ -896,40 +894,15 @@
 
         try {
           const stream = await navigator.mediaDevices.getUserMedia({
-            audio: { echoCancellation: { ideal: false }, noiseSuppression: { ideal: false }, autoGainControl: { ideal: false } }
+            audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: false }
           });
           streamRef.current = stream;
 
-          // ── Live mic level metering via Web Audio API ──
-          try {
-            const actx = new (window.AudioContext || window.webkitAudioContext)();
-            audioCtxRef.current = actx;
-            const analyser = actx.createAnalyser();
-            analyser.fftSize = 256;
-            actx.createMediaStreamSource(stream).connect(analyser);
-            const freqData = new Uint8Array(analyser.frequencyBinCount);
-            let smoothed = 0;
-            const pollLevel = () => {
-              analyser.getByteFrequencyData(freqData);
-              // Average lower 40 bins (bass + mids where music energy lives)
-              const avg = freqData.slice(0, 40).reduce((a, b) => a + b, 0) / 40;
-              const raw = avg / 255;
-              // Fast attack (0.35), slow release (0.06) — VU meter feel, no beat-flashing
-              smoothed = raw > smoothed
-                ? smoothed + (raw - smoothed) * 0.35
-                : smoothed + (raw - smoothed) * 0.06;
-              setAudioLevel(smoothed);
-              audioRafRef.current = requestAnimationFrame(pollLevel);
-            };
-            audioRafRef.current = requestAnimationFrame(pollLevel);
-          } catch {}
-
-          const stopMetering = () => {
-            cancelAnimationFrame(audioRafRef.current);
-            audioCtxRef.current?.close().catch(() => {});
-            audioCtxRef.current = null;
-            setAudioLevel(0);
-          };
+          // ── Live mic level metering via chunk-size proxy ──
+          // Uses the size of each 200ms audio chunk as a proxy for amplitude.
+          // Avoids creating an AudioContext (which can interfere with MediaRecorder on iOS Safari).
+          let smoothedLevel = 0;
+          const stopMetering = () => { setAudioLevel(0); };
 
           const preferredMime = MediaRecorder.isTypeSupported("audio/webm") ? "audio/webm"
                              : MediaRecorder.isTypeSupported("audio/ogg")  ? "audio/ogg"
@@ -944,7 +917,18 @@
           let sending      = false;
           let nextAttemptAt = ATTEMPT_INTERVAL;
 
-          recorder.ondataavailable = e => { if (e.data.size > 0) allChunks.push(e.data); };
+          recorder.ondataavailable = e => {
+            if (e.data.size > 0) {
+              allChunks.push(e.data);
+              // Chunk-size proxy for amplitude: 200ms @ 128kbps ≈ 3200 bytes silence → 6000+ bytes music
+              // Normalise to 0–1, fast attack (0.4), slow release (0.07)
+              const raw = Math.min(1, e.data.size / 5000);
+              smoothedLevel = raw > smoothedLevel
+                ? smoothedLevel + (raw - smoothedLevel) * 0.4
+                : smoothedLevel + (raw - smoothedLevel) * 0.07;
+              setAudioLevel(smoothedLevel);
+            }
+          };
           recorder.onstop = () => { stream.getTracks().forEach(t => t.stop()); stopMetering(); };
           recorder.start(200);
           // Log the detected audio format so it shows in the error screen if things go wrong
@@ -1261,11 +1245,7 @@
         setIsResyncing(true);
         try {
           const stream = await navigator.mediaDevices.getUserMedia({
-            audio: {
-              echoCancellation: { ideal: false },
-              noiseSuppression: { ideal: false },
-              autoGainControl: { ideal: false }
-            }
+            audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: false }
           });
           const preferredMimeR = MediaRecorder.isTypeSupported("audio/webm") ? "audio/webm"
                               : MediaRecorder.isTypeSupported("audio/ogg")  ? "audio/ogg"
@@ -1303,8 +1283,6 @@
       const reset = () => {
         clearInterval(syncIntervalRef.current); clearInterval(progressTimerRef.current);
         streamRef.current?.getTracks().forEach(t => t.stop());
-        cancelAnimationFrame(audioRafRef.current);
-        audioCtxRef.current?.close().catch(() => {}); audioCtxRef.current = null;
         setAudioLevel(0);
         autoAdvanceFiredRef.current = false;
         autoRetryCountRef.current = 0;
@@ -2057,10 +2035,10 @@
                     </div>
                     {/* Live volume label */}
                     <div style={{ marginBottom:"20px", fontSize:"11px", letterSpacing:"1.5px", textTransform:"uppercase",
-                      color: audioLevel > 0.55 ? "#4ade80" : audioLevel > 0.15 ? "#d4a846" : "rgba(255,255,255,0.25)",
+                      color: audioLevel > 0.25 ? "#4ade80" : audioLevel > 0.05 ? "#d4a846" : "rgba(255,255,255,0.25)",
                       transition:"color 0.2s ease" }}>
-                      {audioLevel > 0.55 ? "● Loud — perfect"
-                     : audioLevel > 0.15 ? "● Good signal"
+                      {audioLevel > 0.25 ? "● Loud — perfect"
+                     : audioLevel > 0.05 ? "● Good signal"
                      :                     "● Too quiet — move closer"}
                     </div>
                     <div style={{ fontSize:"22px", fontWeight:"600", color:"#f0e6d3", marginBottom:"10px" }}>
