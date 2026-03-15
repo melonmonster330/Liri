@@ -4,6 +4,7 @@
   "rewrites": [
     { "source": "/app",       "destination": "/app/index.html"      },
     { "source": "/add-vinyl", "destination": "/app/add-vinyl.html"  },
+    { "source": "/vinyl",     "destination": "/app/vinyl.html"      },
     { "source": "/tv",        "destination": "/tv.html"             }
   ]
 }

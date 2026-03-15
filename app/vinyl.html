@@ -1,0 +1,697 @@
+<!--
+  app/vinyl.html — Liri Vinyl Database
+  ─────────────────────────────────────────────────────────────────────────────
+  Public browse page for the community vinyl database.
+  Fetches vinyl_releases + vinyl_tracks from Supabase (public read, no auth).
+  Features:
+  • Live search by artist or album name
+  • Cards: artwork, pressing details, verified badge
+  • Expandable track listing grouped by side (A, B, C, D ...)
+  • Discogs-style catalog / label / year / country chips
+-->
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+  <title>Vinyl Database — Liri</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    html { scroll-behavior: smooth; }
+    body {
+      background: #080810;
+      color: #f0e6d3;
+      font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Display', 'Helvetica Neue', sans-serif;
+      min-height: 100vh;
+    }
+
+    /* ── Layout ── */
+    .page { max-width: 900px; margin: 0 auto; padding: 0 20px 80px; }
+
+    /* ── Header ── */
+    .header {
+      padding: 48px 0 32px;
+      border-bottom: 1px solid rgba(255,255,255,0.05);
+      margin-bottom: 32px;
+    }
+    .header-top {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 16px;
+      flex-wrap: wrap;
+    }
+    .logo { display: flex; align-items: center; gap: 12px; text-decoration: none; }
+    .logo-dot {
+      width: 32px; height: 32px; border-radius: 50%;
+      background: conic-gradient(from 0deg, #d4a846 0% 25%, #1a1a2e 25% 50%, #d4a846 50% 75%, #1a1a2e 75% 100%);
+    }
+    .logo-text { font-size: 20px; font-weight: 700; color: #f0e6d3; letter-spacing: -0.5px; }
+    .header h1 {
+      font-size: clamp(26px, 5vw, 38px);
+      font-weight: 700;
+      letter-spacing: -1px;
+      color: #f0e6d3;
+      margin-top: 24px;
+    }
+    .header-sub {
+      font-size: 14px;
+      color: rgba(255,255,255,0.35);
+      margin-top: 6px;
+    }
+    .stat-pill {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      background: rgba(212,168,70,0.08);
+      border: 1px solid rgba(212,168,70,0.2);
+      color: rgba(212,168,70,0.8);
+      border-radius: 20px;
+      padding: 4px 12px;
+      font-size: 12px;
+      font-weight: 600;
+      letter-spacing: 0.3px;
+      margin-top: 12px;
+    }
+
+    /* ── Search ── */
+    .search-wrap { position: relative; margin-bottom: 28px; }
+    .search-input {
+      width: 100%;
+      background: rgba(255,255,255,0.04);
+      border: 1px solid rgba(255,255,255,0.1);
+      border-radius: 14px;
+      padding: 14px 20px 14px 48px;
+      font-size: 15px;
+      color: #f0e6d3;
+      outline: none;
+      transition: border-color 0.2s;
+    }
+    .search-input::placeholder { color: rgba(255,255,255,0.2); }
+    .search-input:focus { border-color: rgba(212,168,70,0.4); }
+    .search-icon {
+      position: absolute;
+      left: 16px;
+      top: 50%;
+      transform: translateY(-50%);
+      font-size: 18px;
+      opacity: 0.3;
+      pointer-events: none;
+    }
+    .search-clear {
+      position: absolute;
+      right: 14px;
+      top: 50%;
+      transform: translateY(-50%);
+      background: rgba(255,255,255,0.08);
+      border: none;
+      color: rgba(255,255,255,0.4);
+      width: 24px; height: 24px;
+      border-radius: 50%;
+      cursor: pointer;
+      font-size: 13px;
+      display: flex; align-items: center; justify-content: center;
+      transition: opacity 0.2s;
+    }
+    .search-clear:hover { color: rgba(255,255,255,0.8); }
+
+    /* ── Results meta ── */
+    .results-meta {
+      font-size: 12px;
+      color: rgba(255,255,255,0.25);
+      margin-bottom: 16px;
+      letter-spacing: 0.3px;
+    }
+
+    /* ── Cards ── */
+    .cards { display: flex; flex-direction: column; gap: 2px; }
+
+    .card {
+      background: rgba(255,255,255,0.025);
+      border: 1px solid rgba(255,255,255,0.06);
+      border-radius: 16px;
+      overflow: hidden;
+      transition: border-color 0.2s;
+    }
+    .card:hover { border-color: rgba(255,255,255,0.12); }
+    .card.expanded { border-color: rgba(212,168,70,0.25); }
+
+    .card-header {
+      display: flex;
+      align-items: center;
+      gap: 16px;
+      padding: 16px;
+      cursor: pointer;
+      user-select: none;
+    }
+    .artwork {
+      width: 64px; height: 64px;
+      border-radius: 8px;
+      object-fit: cover;
+      flex-shrink: 0;
+      background: rgba(255,255,255,0.05);
+    }
+    .artwork-placeholder {
+      width: 64px; height: 64px;
+      border-radius: 8px;
+      background: rgba(255,255,255,0.04);
+      border: 1px solid rgba(255,255,255,0.06);
+      flex-shrink: 0;
+      display: flex; align-items: center; justify-content: center;
+      font-size: 24px;
+      opacity: 0.4;
+    }
+    .card-info { flex: 1; min-width: 0; }
+    .card-title {
+      font-size: 15px;
+      font-weight: 600;
+      color: #f0e6d3;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .card-artist {
+      font-size: 13px;
+      color: rgba(255,255,255,0.45);
+      margin-top: 2px;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .chips {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 5px;
+      margin-top: 8px;
+    }
+    .chip {
+      font-size: 10px;
+      font-weight: 500;
+      letter-spacing: 0.4px;
+      padding: 2px 8px;
+      border-radius: 10px;
+      background: rgba(255,255,255,0.06);
+      color: rgba(255,255,255,0.35);
+      border: 1px solid rgba(255,255,255,0.08);
+    }
+    .chip.gold {
+      background: rgba(212,168,70,0.1);
+      color: rgba(212,168,70,0.75);
+      border-color: rgba(212,168,70,0.2);
+    }
+    .chip.verified {
+      background: rgba(100,210,120,0.08);
+      color: rgba(100,210,120,0.65);
+      border-color: rgba(100,210,120,0.18);
+    }
+    .chevron {
+      flex-shrink: 0;
+      font-size: 12px;
+      color: rgba(255,255,255,0.2);
+      transition: transform 0.25s;
+    }
+    .expanded .chevron { transform: rotate(180deg); color: rgba(212,168,70,0.5); }
+
+    /* ── Track listing ── */
+    .tracklist {
+      border-top: 1px solid rgba(255,255,255,0.05);
+      padding: 0 16px 16px;
+    }
+    .side-block { margin-top: 16px; }
+    .side-label {
+      font-size: 10px;
+      font-weight: 700;
+      letter-spacing: 2px;
+      text-transform: uppercase;
+      color: rgba(212,168,70,0.55);
+      margin-bottom: 8px;
+      padding-bottom: 6px;
+      border-bottom: 1px solid rgba(212,168,70,0.1);
+    }
+    .track-row {
+      display: flex;
+      align-items: baseline;
+      gap: 12px;
+      padding: 5px 0;
+      border-bottom: 1px solid rgba(255,255,255,0.03);
+    }
+    .track-row:last-child { border-bottom: none; }
+    .track-pos {
+      font-size: 10px;
+      font-weight: 600;
+      color: rgba(255,255,255,0.2);
+      letter-spacing: 0.5px;
+      min-width: 24px;
+      flex-shrink: 0;
+    }
+    .track-title {
+      font-size: 13px;
+      color: rgba(255,255,255,0.7);
+      flex: 1;
+    }
+    .track-dur {
+      font-size: 11px;
+      color: rgba(255,255,255,0.2);
+      flex-shrink: 0;
+      font-variant-numeric: tabular-nums;
+    }
+
+    /* ── Loading / empty ── */
+    .spinner-wrap {
+      display: flex; justify-content: center;
+      padding: 80px 0;
+    }
+    .spinner {
+      width: 32px; height: 32px;
+      border-radius: 50%;
+      border: 2px solid rgba(255,255,255,0.06);
+      border-top-color: #d4a846;
+      animation: spin 0.8s linear infinite;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+
+    .empty-state {
+      text-align: center;
+      padding: 80px 0;
+      color: rgba(255,255,255,0.2);
+      font-size: 15px;
+    }
+    .empty-state .icon { font-size: 40px; margin-bottom: 12px; opacity: 0.4; }
+
+    /* ── Pagination ── */
+    .pagination {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 8px;
+      margin-top: 40px;
+      flex-wrap: wrap;
+    }
+    .page-btn {
+      background: rgba(255,255,255,0.05);
+      border: 1px solid rgba(255,255,255,0.08);
+      color: rgba(255,255,255,0.5);
+      border-radius: 8px;
+      padding: 8px 16px;
+      font-size: 13px;
+      cursor: pointer;
+      transition: all 0.15s;
+    }
+    .page-btn:hover:not(:disabled) {
+      background: rgba(255,255,255,0.1);
+      color: #f0e6d3;
+    }
+    .page-btn:disabled { opacity: 0.3; cursor: default; }
+    .page-btn.active {
+      background: rgba(212,168,70,0.15);
+      border-color: rgba(212,168,70,0.35);
+      color: rgba(212,168,70,0.9);
+    }
+    .page-info { font-size: 12px; color: rgba(255,255,255,0.25); padding: 0 8px; }
+
+    /* ── Footer ── */
+    .footer {
+      margin-top: 60px;
+      padding-top: 24px;
+      border-top: 1px solid rgba(255,255,255,0.05);
+      text-align: center;
+      font-size: 11px;
+      color: rgba(255,255,255,0.15);
+      line-height: 1.8;
+    }
+    .footer a { color: rgba(212,168,70,0.45); text-decoration: none; }
+    .footer a:hover { color: rgba(212,168,70,0.8); }
+
+    /* ── Responsive ── */
+    @media (max-width: 600px) {
+      .header { padding: 32px 0 24px; }
+      .card-header { gap: 12px; }
+      .artwork, .artwork-placeholder { width: 52px; height: 52px; }
+    }
+  </style>
+</head>
+<body>
+  <div class="page">
+
+    <!-- Header -->
+    <div class="header">
+      <div class="header-top">
+        <a href="/app" class="logo">
+          <div class="logo-dot"></div>
+          <span class="logo-text">Liri</span>
+        </a>
+      </div>
+      <h1>Vinyl Database</h1>
+      <div class="header-sub">Community-verified pressings with side &amp; track data</div>
+      <div class="stat-pill" id="total-stat">
+        <span>⬤</span> <span id="total-count">—</span> pressings · <span id="track-count">—</span> tracks
+      </div>
+    </div>
+
+    <!-- Search -->
+    <div class="search-wrap">
+      <span class="search-icon">🔍</span>
+      <input
+        class="search-input"
+        id="search"
+        type="text"
+        placeholder="Search by artist or album…"
+        autocomplete="off"
+        spellcheck="false"
+      />
+      <button class="search-clear" id="search-clear" style="display:none" aria-label="Clear search">✕</button>
+    </div>
+
+    <div class="results-meta" id="results-meta"></div>
+
+    <!-- Cards -->
+    <div class="cards" id="cards"></div>
+
+    <!-- Pagination -->
+    <div class="pagination" id="pagination"></div>
+
+    <!-- Footer -->
+    <div class="footer">
+      Liri Vinyl Database · Community contributed &amp; verified<br/>
+      <a href="/app">Open Liri App</a> · <a href="/add-vinyl">Add a Pressing</a>
+    </div>
+
+  </div>
+
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
+  <script>
+    const sb = supabase.createClient(
+      "https://xjdjpaxgymgbvcwmvorc.supabase.co",
+      "sb_publishable_C-NBnfg0ltAoUi46XQTUjA_ozjZW_Nd"
+    );
+
+    const PAGE_SIZE = 30;
+    let allReleases   = [];   // full dataset (fetched once)
+    let filtered      = [];   // after search filter
+    let currentPage   = 1;
+    let expandedId    = null; // currently expanded card
+    let tracksCache   = {};   // releaseId → tracks[]
+    let totalTrackCount = 0;
+
+    // ── Fetch everything once ──────────────────────────────────────────────
+    async function loadAll() {
+      showLoading();
+
+      // Fetch releases (up to 2000 — more than enough for now)
+      const { data: releases, error } = await sb
+        .from("vinyl_releases")
+        .select("id, album_name, artist_name, release_year, record_label, catalog_number, country, edition, version_note, disc_count, artwork_url, confirmed_count, is_verified")
+        .order("artist_name", { ascending: true })
+        .order("album_name",  { ascending: true })
+        .limit(2000);
+
+      if (error) { showError(error.message); return; }
+
+      allReleases = releases || [];
+      filtered    = allReleases;
+
+      // Total track count (just a count query)
+      const { count } = await sb.from("vinyl_tracks").select("*", { count: "exact", head: true });
+      totalTrackCount = count || 0;
+
+      document.getElementById("total-count").textContent  = allReleases.length.toLocaleString();
+      document.getElementById("track-count").textContent  = totalTrackCount.toLocaleString();
+
+      renderPage(1);
+    }
+
+    // ── Search filter ──────────────────────────────────────────────────────
+    const searchInput = document.getElementById("search");
+    const clearBtn    = document.getElementById("search-clear");
+
+    searchInput.addEventListener("input", () => {
+      const q = searchInput.value.trim().toLowerCase();
+      clearBtn.style.display = q ? "flex" : "none";
+      if (!q) {
+        filtered = allReleases;
+      } else {
+        filtered = allReleases.filter(r =>
+          r.album_name.toLowerCase().includes(q) ||
+          r.artist_name.toLowerCase().includes(q) ||
+          (r.catalog_number || "").toLowerCase().includes(q) ||
+          (r.record_label  || "").toLowerCase().includes(q)
+        );
+      }
+      expandedId = null;
+      renderPage(1);
+    });
+
+    clearBtn.addEventListener("click", () => {
+      searchInput.value = "";
+      clearBtn.style.display = "none";
+      filtered = allReleases;
+      expandedId = null;
+      renderPage(1);
+    });
+
+    // ── Render a page of cards ─────────────────────────────────────────────
+    function renderPage(page) {
+      currentPage = page;
+      const start = (page - 1) * PAGE_SIZE;
+      const slice = filtered.slice(start, start + PAGE_SIZE);
+
+      const meta = document.getElementById("results-meta");
+      if (searchInput.value.trim()) {
+        meta.textContent = filtered.length === 0
+          ? "No results"
+          : `${filtered.length} result${filtered.length !== 1 ? "s" : ""}`;
+      } else {
+        meta.textContent = "";
+      }
+
+      const container = document.getElementById("cards");
+      if (filtered.length === 0) {
+        container.innerHTML = `
+          <div class="empty-state">
+            <div class="icon">🎵</div>
+            No pressings found. Try a different search.
+          </div>`;
+        document.getElementById("pagination").innerHTML = "";
+        return;
+      }
+
+      container.innerHTML = slice.map(r => cardHTML(r)).join("");
+
+      // Re-attach click handlers
+      container.querySelectorAll(".card-header").forEach(el => {
+        el.addEventListener("click", () => toggleCard(el.dataset.id));
+      });
+
+      // Re-expand the previously expanded card
+      if (expandedId && slice.find(r => r.id === expandedId)) {
+        const card = container.querySelector(`.card[data-id="${expandedId}"]`);
+        if (card) openCard(card, expandedId, /* animate= */ false);
+      }
+
+      renderPagination();
+    }
+
+    // ── Single card HTML ───────────────────────────────────────────────────
+    function cardHTML(r) {
+      const img = r.artwork_url
+        ? `<img class="artwork" src="${r.artwork_url}" alt="" loading="lazy" onerror="this.style.display='none';this.nextElementSibling.style.display='flex'">`
+        : "";
+      const placeholder = `<div class="artwork-placeholder" style="${r.artwork_url ? 'display:none' : ''}">💿</div>`;
+
+      const chips = [];
+      if (r.is_verified)     chips.push(`<span class="chip verified">✓ Verified</span>`);
+      if (r.release_year)    chips.push(`<span class="chip gold">${r.release_year}</span>`);
+      if (r.record_label)    chips.push(`<span class="chip">${esc(r.record_label)}</span>`);
+      if (r.catalog_number)  chips.push(`<span class="chip">${esc(r.catalog_number)}</span>`);
+      if (r.country)         chips.push(`<span class="chip">${esc(r.country)}</span>`);
+      if (r.edition)         chips.push(`<span class="chip">${esc(r.edition)}</span>`);
+      if (r.version_note)    chips.push(`<span class="chip">${esc(r.version_note)}</span>`);
+      if (r.disc_count > 1)  chips.push(`<span class="chip">${r.disc_count}× LP</span>`);
+      if (r.confirmed_count > 1) chips.push(`<span class="chip">+${r.confirmed_count} confirmed</span>`);
+
+      return `
+        <div class="card" data-id="${r.id}" id="card-${r.id}">
+          <div class="card-header" data-id="${r.id}">
+            ${img}${placeholder}
+            <div class="card-info">
+              <div class="card-title">${esc(r.album_name)}</div>
+              <div class="card-artist">${esc(r.artist_name)}</div>
+              ${chips.length ? `<div class="chips">${chips.join("")}</div>` : ""}
+            </div>
+            <span class="chevron">▼</span>
+          </div>
+          <div class="tracklist" style="display:none" id="tracks-${r.id}">
+            <div style="text-align:center;padding:24px 0;color:rgba(255,255,255,0.2);font-size:13px">
+              Loading tracks…
+            </div>
+          </div>
+        </div>`;
+    }
+
+    // ── Toggle expand / collapse ───────────────────────────────────────────
+    function toggleCard(id) {
+      const card = document.getElementById(`card-${id}`);
+      if (!card) return;
+      const isOpen = card.classList.contains("expanded");
+      if (isOpen) {
+        card.classList.remove("expanded");
+        card.querySelector(".tracklist").style.display = "none";
+        expandedId = null;
+      } else {
+        // Collapse any other open card
+        if (expandedId) {
+          const prev = document.getElementById(`card-${expandedId}`);
+          if (prev) {
+            prev.classList.remove("expanded");
+            prev.querySelector(".tracklist").style.display = "none";
+          }
+        }
+        openCard(card, id, true);
+      }
+    }
+
+    async function openCard(card, id, animate) {
+      card.classList.add("expanded");
+      const trackDiv = card.querySelector(".tracklist");
+      trackDiv.style.display = "block";
+      expandedId = id;
+
+      if (tracksCache[id]) {
+        renderTracks(trackDiv, tracksCache[id]);
+        if (animate) card.scrollIntoView({ behavior: "smooth", block: "nearest" });
+        return;
+      }
+
+      const { data: tracks } = await sb
+        .from("vinyl_tracks")
+        .select("position, side, track_number_on_side, title, duration_ms, disc_number")
+        .eq("release_id", id)
+        .order("disc_number",          { ascending: true })
+        .order("side",                 { ascending: true })
+        .order("track_number_on_side", { ascending: true });
+
+      tracksCache[id] = tracks || [];
+      renderTracks(trackDiv, tracksCache[id]);
+      if (animate) card.scrollIntoView({ behavior: "smooth", block: "nearest" });
+    }
+
+    // ── Render track listing grouped by disc → side ───────────────────────
+    function renderTracks(container, tracks) {
+      if (!tracks.length) {
+        container.innerHTML = `<div style="padding:16px 0;text-align:center;color:rgba(255,255,255,0.2);font-size:13px">No track data</div>`;
+        return;
+      }
+
+      // Group by disc, then side
+      const discs = {};
+      for (const t of tracks) {
+        const d = t.disc_number || 1;
+        const s = t.side       || "?";
+        if (!discs[d]) discs[d] = {};
+        if (!discs[d][s]) discs[d][s] = [];
+        discs[d][s].push(t);
+      }
+
+      const discNums = Object.keys(discs).map(Number).sort((a,b) => a-b);
+      const multiDisc = discNums.length > 1;
+      let html = "";
+
+      for (const d of discNums) {
+        if (multiDisc) {
+          html += `<div style="font-size:10px;font-weight:700;letter-spacing:2px;text-transform:uppercase;color:rgba(255,255,255,0.2);margin-top:16px;margin-bottom:-4px">LP ${d}</div>`;
+        }
+        const sides = Object.keys(discs[d]).sort();
+        for (const s of sides) {
+          html += `<div class="side-block">`;
+          html += `<div class="side-label">Side ${s}</div>`;
+          for (const t of discs[d][s]) {
+            const dur = t.duration_ms ? formatMs(t.duration_ms) : "";
+            html += `
+              <div class="track-row">
+                <span class="track-pos">${esc(t.position || String(t.track_number_on_side))}</span>
+                <span class="track-title">${esc(t.title)}</span>
+                ${dur ? `<span class="track-dur">${dur}</span>` : ""}
+              </div>`;
+          }
+          html += `</div>`;
+        }
+      }
+
+      container.innerHTML = html;
+    }
+
+    // ── Pagination ─────────────────────────────────────────────────────────
+    function renderPagination() {
+      const total = filtered.length;
+      const pages = Math.ceil(total / PAGE_SIZE);
+      const wrap  = document.getElementById("pagination");
+      if (pages <= 1) { wrap.innerHTML = ""; return; }
+
+      let html = `<button class="page-btn" id="pg-prev" ${currentPage === 1 ? "disabled" : ""}>← Prev</button>`;
+
+      // Show up to 7 page buttons with ellipsis
+      const range = pageRange(currentPage, pages);
+      let prev = null;
+      for (const p of range) {
+        if (prev !== null && p - prev > 1) html += `<span class="page-info">…</span>`;
+        html += `<button class="page-btn ${p === currentPage ? "active" : ""}" data-p="${p}">${p}</button>`;
+        prev = p;
+      }
+
+      html += `<button class="page-btn" id="pg-next" ${currentPage === pages ? "disabled" : ""}>Next →</button>`;
+      wrap.innerHTML = html;
+
+      wrap.querySelector("#pg-prev")?.addEventListener("click", () => { scrollToTop(); renderPage(currentPage - 1); });
+      wrap.querySelector("#pg-next")?.addEventListener("click", () => { scrollToTop(); renderPage(currentPage + 1); });
+      wrap.querySelectorAll("[data-p]").forEach(btn => {
+        btn.addEventListener("click", () => { scrollToTop(); renderPage(Number(btn.dataset.p)); });
+      });
+    }
+
+    function pageRange(cur, total) {
+      if (total <= 7) return Array.from({ length: total }, (_, i) => i + 1);
+      const delta = 2;
+      const left = Math.max(1, cur - delta);
+      const right = Math.min(total, cur + delta);
+      const r = [];
+      for (let i = left; i <= right; i++) r.push(i);
+      if (left > 1) r.unshift(1);
+      if (right < total) r.push(total);
+      return r;
+    }
+
+    // ── Helpers ────────────────────────────────────────────────────────────
+    function showLoading() {
+      document.getElementById("cards").innerHTML = `<div class="spinner-wrap"><div class="spinner"></div></div>`;
+    }
+
+    function showError(msg) {
+      document.getElementById("cards").innerHTML = `
+        <div class="empty-state">
+          <div class="icon">⚠️</div>
+          ${esc(msg)}
+        </div>`;
+    }
+
+    function formatMs(ms) {
+      const s = Math.round(ms / 1000);
+      return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`;
+    }
+
+    function esc(str) {
+      return String(str || "")
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;")
+        .replace(/"/g, "&quot;");
+    }
+
+    function scrollToTop() {
+      window.scrollTo({ top: 0, behavior: "smooth" });
+    }
+
+    // ── Boot ───────────────────────────────────────────────────────────────
+    loadAll();
+  </script>
+</body>
+</html>

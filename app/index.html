@@ -76,7 +76,7 @@
       "sb_publishable_C-NBnfg0ltAoUi46XQTUjA_ozjZW_Nd"
     );
 
-    const APP_VERSION = "1.18";
+    const APP_VERSION = "1.19";
 
     const PROXY_URL = window.Capacitor
       ? "https://liri-vert.vercel.app/api/recognize"
@@ -233,6 +233,7 @@
       // ── Core state ──
       const [mode, setMode]                   = useState("idle");
       const [detectedSong, setDetectedSong]   = useState(null);
+      const [identifiedBy, setIdentifiedBy]   = useState(null); // "acr" | "whisper"
       const [songDuration, setSongDuration]   = useState(null); // seconds
       const [lyrics, setLyrics]               = useState([]);
       const [currentIndex, setCurrentIndex]   = useState(0);
@@ -403,6 +404,7 @@
       const lyricsRef        = useRef([]);
       const progressTimerRef    = useRef(null);
       const currentLineRef      = useRef(null);
+      const creditsRef          = useRef(null);
       const listenSessionRef    = useRef(0); // increments on each startListening; guards stale async callbacks
       const attemptLogRef       = useRef([]); // collects per-attempt debug info for the error screen
       const lastRecordingRef    = useRef(null); // stores last recorded blob for debug download
@@ -636,6 +638,14 @@
           currentLineRef.current.scrollIntoView({ behavior:"smooth", block:"center" });
       }, [currentIndex, mode]);
 
+      // ── Scroll to credits once song passes the last lyric (outro roll) ──
+      useEffect(() => {
+        if (mode !== "syncing" || !lyrics.length) return;
+        const lastTime = lyrics[lyrics.length - 1].time;
+        if (playbackTime >= lastTime + 6 && creditsRef.current)
+          creditsRef.current.scrollIntoView({ behavior:"smooth", block:"center" });
+      }, [Math.floor(playbackTime), mode, lyrics.length]);
+
       // ── Vinyl auto-advance: trigger when song nears its end ──
       useEffect(() => {
         if (!vinylMode || mode !== "syncing") return;
@@ -726,6 +736,7 @@
 
         const song = { title, artist, album: m.album?.name || "", artwork };
         setDetectedSong(song);
+        setIdentifiedBy("acr");
         setSongDuration(duration);
         await loadLyrics(title, artist);
 
@@ -887,6 +898,7 @@
           recognitionWonRef.current = true;
 
           const song = { title, artist, album: match.albumName || "", artwork };
+          setIdentifiedBy("whisper");
           detectedAtRef.current      = Date.now();
           initialPosRef.current      = startPos;
           autoAdvanceFiredRef.current = false;
@@ -1396,7 +1408,7 @@
         setAudioLevel(0);
         autoAdvanceFiredRef.current = false;
         autoRetryCountRef.current = 0;
-        setMode("idle"); setDetectedSong(null); setSongDuration(null); setLyrics([]);
+        setMode("idle"); setDetectedSong(null); setIdentifiedBy(null); setSongDuration(null); setLyrics([]);
         setCurrentIndex(0); setError(null); setListenProgress(0); setPlaybackTime(0);
         setAlbumTracks([]); setCurrentTrackIndex(-1);
         setShouldAdvanceTrack(false); setIsResyncing(false); setSideEndReason("failed");
@@ -1414,7 +1426,7 @@
         autoRetryCountRef.current = 0;
         setCurrentTrackIndex(idx);
         currentTrackIndexRef.current = idx;
-        setDetectedSong(null); setSongDuration(null); setLyrics([]);
+        setDetectedSong(null); setIdentifiedBy(null); setSongDuration(null); setLyrics([]);
         setCurrentIndex(0); setError(null); setListenProgress(0); setPlaybackTime(0);
         setShouldAdvanceTrack(false); setIsResyncing(false);
         // Re-listen immediately so timing locks onto the right position
@@ -1951,11 +1963,23 @@
                   <div style={{ minWidth:0 }}>
                     <div style={{ fontSize:"14px", fontWeight:"600", color:"#f0e6d3", overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>{detectedSong?.title}</div>
                     <div style={{ fontSize:"12px", color:"rgba(255,255,255,0.4)", overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>{detectedSong?.artist}</div>
-                    {(() => { const si = getSideInfo(); return si ? (
-                      <div style={{ fontSize:"10px", color:"rgba(212,168,70,0.65)", letterSpacing:"1.5px", textTransform:"uppercase", marginTop:"2px" }}>
-                        {si.side ? `Side ${si.side} · ` : ""}Track {si.track}
-                      </div>
-                    ) : null; })()}
+                    <div style={{ display:"flex", alignItems:"center", gap:"6px", marginTop:"2px", flexWrap:"wrap" }}>
+                      {identifiedBy === "acr" && (
+                        <span style={{ fontSize:"9px", color:"rgba(100,210,255,0.55)", letterSpacing:"1px", textTransform:"uppercase", display:"inline-flex", alignItems:"center", gap:"3px" }}>
+                          <span style={{ width:"5px", height:"5px", borderRadius:"50%", background:"rgba(100,210,255,0.55)", display:"inline-block", flexShrink:0 }} />fingerprint
+                        </span>
+                      )}
+                      {identifiedBy === "whisper" && (
+                        <span style={{ fontSize:"9px", color:"rgba(190,140,255,0.55)", letterSpacing:"1px", textTransform:"uppercase", display:"inline-flex", alignItems:"center", gap:"3px" }}>
+                          <span style={{ width:"5px", height:"5px", borderRadius:"50%", background:"rgba(190,140,255,0.55)", display:"inline-block", flexShrink:0 }} />lyrics match
+                        </span>
+                      )}
+                      {(() => { const si = getSideInfo(); return si ? (
+                        <span style={{ fontSize:"10px", color:"rgba(212,168,70,0.65)", letterSpacing:"1.5px", textTransform:"uppercase" }}>
+                          {si.side ? `Side ${si.side} · ` : ""}Track {si.track}
+                        </span>
+                      ) : null; })()}
+                    </div>
                   </div>
                 </div>
                 <div style={{ display:"flex", alignItems:"center", gap:"12px", marginLeft:"12px", flexShrink:0 }}>
@@ -2005,8 +2029,8 @@
                           </div>
                         );
                       })}
-                      {/* Copyright credit — always in the scroll, visible naturally as song ends */}
-                      <div style={{ marginTop:"52px", paddingBottom:"30vh", textAlign:"center" }}>
+                      {/* Copyright credit — scrolled into view ~6s after last lyric */}
+                      <div ref={creditsRef} style={{ marginTop:"52px", paddingBottom:"30vh", textAlign:"center" }}>
                         <div style={{ width:"32px", height:"1px", background:"rgba(255,255,255,0.1)", margin:"0 auto 20px" }} />
                         <div style={{ fontSize:"11px", color:"rgba(255,255,255,0.22)", lineHeight:"2", letterSpacing:"0.3px" }}>
                           {detectedSong?.title && <div style={{ color:"rgba(255,255,255,0.35)", fontWeight:"600", marginBottom:"2px" }}>{detectedSong.title}</div>}
