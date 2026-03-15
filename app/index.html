@@ -227,6 +227,7 @@
 
       // ── Per-album side learning ──
       const [albumCollectionId, setAlbumCollectionId] = useState(null);
+      const albumCollectionIdRef                      = useRef(null); // ref so advanceToNextTrack can read without stale closure
       const albumTpsRef                               = useRef(0); // effective tps for current album (0 = use global/auto)
       const [showSidesModal, setShowSidesModal]       = useState(false);
       const [flipFeedback, setFlipFeedback]           = useState(null); // null | "confirmed" | "wrong" | "adjusted"
@@ -249,6 +250,19 @@
       const [showOnboarding, setShowOnboarding] = useState(true); // forced true for testing
       const [onboardingStep, setOnboardingStep] = useState(0);
       const ONBOARDING_STEPS = 5;
+
+      // ── Analytics: persistent anonymous session ID ──
+      // Stays in localStorage forever so we can track listening patterns even
+      // before a user creates an account. Once logged in, user_id takes over.
+      const sessionId = React.useMemo(() => {
+        let sid = localStorage.getItem("liri_session_id");
+        if (!sid) {
+          sid = ([1e7]+-1e3+-4e3+-8e3+-1e11).replace(/[018]/g,
+            c => (c ^ crypto.getRandomValues(new Uint8Array(1))[0] & 15 >> c / 4).toString(16));
+          localStorage.setItem("liri_session_id", sid);
+        }
+        return sid;
+      }, []);
 
       // ── Cast ──
       const [showCast, setShowCast]           = useState(false);
@@ -284,7 +298,8 @@
       useEffect(() => { lyricsRef.current = lyrics; }, [lyrics]);
       useEffect(() => { albumTracksRef.current = albumTracks; }, [albumTracks]);
       useEffect(() => { currentTrackIndexRef.current = currentTrackIndex; }, [currentTrackIndex]);
-      useEffect(() => { vinylDbReleaseRef.current = vinylDbRelease; }, [vinylDbRelease]);
+      useEffect(() => { vinylDbReleaseRef.current    = vinylDbRelease;    }, [vinylDbRelease]);
+      useEffect(() => { albumCollectionIdRef.current = albumCollectionId; }, [albumCollectionId]);
 
       // ── Vinyl mode persistence ──
       const toggleVinylMode = (val) => {
@@ -437,6 +452,54 @@
         });
       };
 
+      // ── Analytics: log a song play to listening_events ──
+      // Called for both manual recognitions and vinyl auto-advances.
+      // Never throws — analytics must never block or break the UI.
+      const logListeningEvent = async (params) => {
+        try {
+          await sb.from("listening_events").insert({
+            user_id:              params.userId  || null,
+            session_id:           sessionId,
+            track_title:          params.title,
+            artist_name:          params.artist,
+            album_name:           params.album   || null,
+            artwork_url:          params.artwork  || null,
+            genre:                params.genre    || null,
+            itunes_track_id:      params.itunesTrackId  ? Number(params.itunesTrackId)  : null,
+            itunes_collection_id: params.collectionId   ? Number(params.collectionId)   : null,
+            vinyl_release_id:     params.vinylReleaseId || null,
+            vinyl_mode_on:        params.vinylModeOn    ?? false,
+            source:               params.source         || "recognition",
+            platform:             window.Capacitor ? "ios" : "web",
+            country_code:         params.countryCode    || null,
+            playback_offset_s:    params.offsetSecs     != null ? Math.round(params.offsetSecs)   : null,
+            track_duration_s:     params.durationSecs   != null ? Math.round(params.durationSecs) : null,
+            acr_confidence:       params.acrScore       || null,
+          });
+        } catch (e) {
+          console.error("logListeningEvent failed:", e.message);
+        }
+      };
+
+      // ── Analytics: log a vinyl side flip to flip_events ──
+      const logFlipEvent = async (params) => {
+        try {
+          await sb.from("flip_events").insert({
+            user_id:              params.userId  || null,
+            session_id:           sessionId,
+            vinyl_release_id:     params.vinylReleaseId  || null,
+            itunes_collection_id: params.collectionId    ? Number(params.collectionId) : null,
+            album_name:           params.album           || null,
+            artist_name:          params.artist          || null,
+            from_side:            params.fromSide        || null,
+            to_side:              params.toSide          || null,
+            detection_method:     params.method          || "heuristic",
+          });
+        } catch (e) {
+          console.error("logFlipEvent failed:", e.message);
+        }
+      };
+
       // ── Auth setup ──
       useEffect(() => {
         sb.auth.getSession().then(({ data: { session } }) => {
@@ -577,6 +640,10 @@
             // Apply +2s correction for processing lag
             const tcSecs = (m.play_offset_ms || 0) / 1000 + PLAYBACK_OFFSET_CORRECTION;
             const duration = m.duration_ms ? m.duration_ms / 1000 : null;
+            // Analytics metadata from ACRCloud + Vercel geo header
+            const acrScore   = m.score       || null;
+            const acrGenre   = m.genres?.[0]?.name || null;
+            const countryCode = data._liri?.country_code || null;
 
             detectedAtRef.current = Date.now();
             initialPosRef.current = tcSecs;
@@ -618,6 +685,25 @@
               setAlbumCollectionId(collectionId);
               const tIdx = tracks.findIndex(t => t.trackName?.toLowerCase() === title.toLowerCase());
               setCurrentTrackIndex(tIdx >= 0 ? tIdx : 0);
+
+              // ── Log the recognition to analytics ──
+              const itunesTrack = tIdx >= 0 ? tracks[tIdx] : null;
+              logListeningEvent({
+                userId:       user?.id,
+                title, artist,
+                album:        song.album,
+                artwork:      song.artwork,
+                genre:        acrGenre,
+                itunesTrackId:      itunesTrack?.trackId,
+                collectionId,
+                vinylReleaseId:     null, // updated below once we know the DB result
+                vinylModeOn:        vinylMode,
+                source:             "recognition",
+                countryCode,
+                offsetSecs:         tcSecs,
+                durationSecs:       duration,
+                acrScore,
+              });
 
               if (!collectionId || tracks.length === 0) return;
 
@@ -800,6 +886,23 @@
           setFlipFeedback(null); // reset feedback for fresh confirmation each time
           playFlipChime();
           showFlipPushNotification(detectedSong);
+
+          // ── Log the flip event to analytics ──
+          const sideIdx  = sideEnds.indexOf(idx); // 0 = first flip (A→B), 1 = B→C, etc.
+          const method   = dbRelease?.vinyl_tracks?.length > 0 ? "db"
+                         : albumTpsRef.current > 0             ? "learned"
+                         : "heuristic";
+          logFlipEvent({
+            userId:       user?.id,
+            vinylReleaseId:     dbRelease?.id || null,
+            collectionId:       albumCollectionIdRef?.current || null,
+            album:              detectedSong?.album,
+            artist:             detectedSong?.artist,
+            fromSide:           "ABCDEFGH"[sideIdx]     || null,
+            toSide:             "ABCDEFGH"[sideIdx + 1] || null,
+            method,
+          });
+
           setMode("side-end");
           return;
         }
@@ -822,6 +925,21 @@
         saveToHistory(user, nextSong);
         fetchHistory(user);
         syncCastSession(nextSong, lyricsRef.current, 0);
+
+        // ── Log auto-advance to analytics ──
+        logListeningEvent({
+          userId:       user?.id,
+          title:        nextTitle,
+          artist:       nextArtist,
+          album:        next.collectionName || detectedSong?.album,
+          artwork:      nextArtwork,
+          itunesTrackId:      next.trackId,
+          collectionId:       albumCollectionIdRef?.current || null,
+          vinylReleaseId:     vinylDbReleaseRef.current?.id || null,
+          vinylModeOn:        vinylMode,
+          source:             "auto_advance",
+          durationSecs:       nextDuration,
+        });
         if (!isUnlimited(user)) {
           const newCount = usageCount + 1;
           await sb.from("user_usage").upsert({ user_id: user.id, recognition_count: newCount });

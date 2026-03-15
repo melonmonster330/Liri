@@ -103,7 +103,10 @@ module.exports = async (req, res) => {
     // Log ACRCloud's response so we can debug in Vercel logs
     console.log("ACRCloud response:", JSON.stringify(result));
 
-    res.status(200).json(result);
+    // Attach the user's country (from Vercel's edge network headers) so the
+    // client can store it in listening_events without a separate geo lookup.
+    const countryCode = req.headers["x-vercel-ip-country"] || null;
+    res.status(200).json({ ...result, _liri: { country_code: countryCode } });
 
   } catch (err) {
     console.error("Recognize error:", err.message);

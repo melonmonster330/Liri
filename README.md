@@ -24,8 +24,10 @@ liri/
 │                                 (keeps API credentials server-side)
 │
 ├── supabase/
-│   └── vinyl_schema.sql       ← Run once in Supabase SQL editor to create
-│                                 the vinyl database tables
+│   ├── vinyl_schema.sql       ← Run once: creates vinyl_releases, vinyl_tracks,
+│   │                             user_vinyl_collections tables
+│   └── analytics_schema.sql   ← Run once: creates listening_events, flip_events
+│                                 tables + analytics views + get_user_wrapped()
 │
 ├── docs/
 │   ├── ARCHITECTURE.md        ← How the code works and why
@@ -104,11 +106,27 @@ ACR_ACCESS_SECRET your_access_secret
 The community-powered side/track database lives in Supabase. To set it up:
 
 1. Open your Supabase project → SQL Editor
-2. Paste the contents of `supabase/vinyl_schema.sql` and run it
-3. That's it — the tables (`vinyl_releases`, `vinyl_tracks`, `user_vinyl_collections`) are live
+2. Paste `supabase/vinyl_schema.sql` and run it — creates `vinyl_releases`, `vinyl_tracks`, `user_vinyl_collections`
+3. Paste `supabase/analytics_schema.sql` and run it — creates `listening_events`, `flip_events`, analytics views, and the `get_user_wrapped()` function
 
 Users can contribute records at `/add-vinyl`. Submissions are public and improve flip
 detection for everyone who plays that album.
+
+### Analytics (internal dashboard)
+
+Query these views directly in the Supabase SQL Editor:
+
+| View | What it shows |
+|---|---|
+| `v_dau_30d` | Daily active users, last 30 days |
+| `v_top_tracks_30d` | Top 20 tracks by play count |
+| `v_top_artists_30d` | Top 20 artists |
+| `v_top_albums_30d` | Top 20 albums |
+| `v_vinyl_mode_rate` | Vinyl mode adoption % by week |
+| `v_flip_methods` | Flip detection method breakdown |
+| `v_geo_30d` | Listen counts by country |
+
+User Wrapped stats: `SELECT get_user_wrapped('<user_id>', 2025);`
 
 ---
 
@@ -135,6 +153,14 @@ keeps the TV view in sync automatically.
 
 ---
 
-## Current version: v0.5
+## Current version: v0.6
 
 See `docs/ROADMAP.md` for what's next.
+
+---
+
+## Backlog
+
+- **Persistent sync across navigation** — lyrics should keep following the song even if the user taps away to add-vinyl or another page and then comes back. Likely implemented with a service worker or shared React context that survives navigation.
+- **Fix onboarding flag** — `showOnboarding` is `useState(true)` (forced for testing). Before launch, switch to `useState(() => !localStorage.getItem("liri_onboarding_done"))`.
+- **Lyrics provider** — consider switching from LRCLib to Musixmatch before monetization for better coverage and licensing.
