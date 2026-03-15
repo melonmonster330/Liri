@@ -423,11 +423,12 @@
       };
 
       // ── Refs ──
-      const streamRef        = useRef(null);
-      const syncIntervalRef  = useRef(null);
-      const syncStartRef     = useRef(null);
-      const detectedAtRef    = useRef(null);
-      const initialPosRef    = useRef(0);
+      const streamRef           = useRef(null);
+      const syncIntervalRef     = useRef(null);
+      const syncStartRef        = useRef(null);
+      const detectedAtRef       = useRef(null);
+      const initialPosRef       = useRef(0);
+      const recordingStartRef   = useRef(null); // wall-clock time when mic started recording
       const lyricsRef        = useRef([]);
       const progressTimerRef    = useRef(null);
       const currentLineRef      = useRef(null);
@@ -755,15 +756,21 @@
       }, []);
 
       // ── Pure HTTP: send audio blob to ACRCloud, return raw response or null ──
+      // Reliable base64 conversion using FileReader — works on all iOS/Android WebViews.
+      // The btoa(String.fromCharCode(...)) approach can throw on large buffers on mobile.
+      const blobToBase64 = (blob) => new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => resolve(reader.result.split(",")[1]);
+        reader.onerror = () => reject(new Error("FileReader failed"));
+        reader.readAsDataURL(blob);
+      });
+
       const sendAudioToACR = async (blob) => {
         try {
-          const uint8 = new Uint8Array(await blob.arrayBuffer());
-          let binary = "";
-          for (let i = 0; i < uint8.length; i += 8192)
-            binary += String.fromCharCode(...uint8.subarray(i, i + 8192));
+          const audio = await blobToBase64(blob);
           const res = await fetch(PROXY_URL, {
             method: "POST", headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ audio: btoa(binary), mimeType: blob.type || "audio/webm" }),
+            body: JSON.stringify({ audio, mimeType: blob.type || "audio/webm" }),
           });
           if (!res.ok) return null;
           return await res.json();
@@ -774,19 +781,18 @@
       // recordingDuration: seconds of audio in the matched blob (passed from startListening).
       // When provided, we use it as the dynamic offset instead of the fixed constant,
       // since offset = where-song-was-at-clip-start + clip-length + ~network-buffer.
-      const handleMatch = async (data, isAutoAdvance, recordingDuration = null) => {
+      const handleMatch = async (data, isAutoAdvance) => {
         const m = data.metadata.music[0];
-        const dynamicCorrection = recordingDuration !== null
-          ? recordingDuration + 0.5   // clip length + ~500ms network buffer
-          : PLAYBACK_OFFSET_CORRECTION;
-        const tcSecs      = (m.play_offset_ms || 0) / 1000 + dynamicCorrection;
         const duration    = m.duration_ms ? m.duration_ms / 1000 : null;
         const acrScore    = m.score            || null;
         const acrGenre    = m.genres?.[0]?.name || null;
         const countryCode = data._liri?.country_code || null;
 
-        detectedAtRef.current      = Date.now();
-        initialPosRef.current      = tcSecs;
+        // Use play_offset_ms (song position at clip start) + wall-clock time elapsed since
+        // recording began. startSync will add further delay for handleMatch processing time.
+        // This is more accurate than the old interval-tick estimate + fixed buffer.
+        detectedAtRef.current      = recordingStartRef.current || Date.now();
+        initialPosRef.current      = (m.play_offset_ms || 0) / 1000;
         autoAdvanceFiredRef.current = false;
         autoRetryCountRef.current  = 0;
 
@@ -909,10 +915,7 @@
       const tryLyricsTranscription = async (blob, isAutoAdvance) => {
         try {
           // 1. Transcribe with Whisper
-          const uint8 = new Uint8Array(await blob.arrayBuffer());
-          let binary = "";
-          for (let i = 0; i < uint8.length; i += 8192)
-            binary += String.fromCharCode(...uint8.subarray(i, i + 8192));
+          const audio = await blobToBase64(blob);
 
           const transcribeUrl = window.Capacitor
             ? "https://getliri.app/api/transcribe"
@@ -920,7 +923,7 @@
 
           const tr = await fetch(transcribeUrl, {
             method: "POST", headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ audio: btoa(binary), mimeType: blob.type || "audio/webm" }),
+            body: JSON.stringify({ audio, mimeType: blob.type || "audio/webm" }),
           });
           if (!tr.ok) {
             const errBody = await tr.json().catch(() => ({}));
@@ -1247,6 +1250,7 @@
           };
           recorder.onstop = () => { stream.getTracks().forEach(t => t.stop()); stopMetering(); };
           recorder.start(200);
+          recordingStartRef.current = Date.now();
           // Log the detected audio format so it shows in the error screen if things go wrong
           attemptLogRef.current.push(`format: ${mimeType}`);
 
@@ -1327,7 +1331,7 @@
                 clearInterval(progressTimerRef.current);
                 if (recorder.state === "recording") recorder.stop();
                 setMode("detecting");
-                await handleMatch(data, isAutoAdvance, elapsed / 1000);
+                await handleMatch(data, isAutoAdvance);
                 return;
               }
 
@@ -1639,23 +1643,23 @@
           const chunks = [];
           recorder.ondataavailable = e => { if (e.data.size > 0) chunks.push(e.data); };
           recorder.onstop = () => stream.getTracks().forEach(t => t.stop());
+          const resyncStartTime = Date.now();
           recorder.start(200);
           await new Promise(resolve => setTimeout(resolve, 6000));
           if (recorder.state === "recording") recorder.stop();
           const blob = new Blob(chunks, { type: recorder.mimeType || "audio/webm" });
-          const uint8 = new Uint8Array(await blob.arrayBuffer());
-          let binary = "";
-          for (let i = 0; i < uint8.length; i += 8192)
-            binary += String.fromCharCode(...uint8.subarray(i, i + 8192));
+          const resyncElapsedMs = Date.now() - resyncStartTime;
+          const audio = await blobToBase64(blob);
           const res = await fetch(PROXY_URL, {
             method: "POST", headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ audio: btoa(binary), mimeType: blob.type || "audio/webm" }),
+            body: JSON.stringify({ audio, mimeType: blob.type || "audio/webm" }),
           });
           if (res.ok) {
             const data = await res.json();
             if (data.status?.code === 0 && data.metadata?.music?.length > 0) {
               const m = data.metadata.music[0];
-              initialPosRef.current = (m.play_offset_ms || 0) / 1000 + PLAYBACK_OFFSET_CORRECTION;
+              const totalElapsed = (Date.now() - resyncStartTime) / 1000;
+              initialPosRef.current = (m.play_offset_ms || 0) / 1000 + totalElapsed;
               syncStartRef.current  = Date.now();
             }
           }
@@ -2550,15 +2554,11 @@
                     )}
                     <div style={{ fontSize:"22px", fontWeight:"600", color:"#f0e6d3", marginBottom:"10px",
                       marginTop: listenAttempt > MAX_ATTEMPTS ? "20px" : "0" }}>
-                      {listenAttempt > MAX_ATTEMPTS ? "Matching by lyrics…"
-                       : listenAttempt === 0        ? "Listening…"
-                       : listenAttempt === 1        ? "Trying again…"
-                       : listenAttempt <= 3         ? "Still looking…"
-                       :                              "Taking a bit longer…"}
+                      {listenAttempt > MAX_ATTEMPTS ? "Matching by lyrics…" : "Listening…"}
                     </div>
                     <div style={{ fontSize:"14px", color:"rgba(255,255,255,0.3)" }}>
                       {listenAttempt > MAX_ATTEMPTS
-                        ? "Couldn't fingerprint — identifying by lyrics"
+                        ? "Identifying by lyrics"
                         : listenSecs === 0
                         ? "Hold near your speakers"
                         : `${listenSecs}s — hold steady`}
