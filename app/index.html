@@ -76,7 +76,7 @@
       "sb_publishable_C-NBnfg0ltAoUi46XQTUjA_ozjZW_Nd"
     );
 
-    const APP_VERSION = "1.07";
+    const APP_VERSION = "1.08";
 
     const PROXY_URL = window.Capacitor
       ? "https://liri-vert.vercel.app/api/recognize"
@@ -1256,6 +1256,23 @@
         albumTpsRef.current = 0; vinylDbReleaseRef.current = null;
       };
 
+      // ── Jump to a specific track index (vinyl mode back/forward) ──
+      // Keeps the album context, resets sync state, then re-listens to
+      // lock onto the right position in the new track.
+      const jumpToTrack = (idx) => {
+        clearInterval(syncIntervalRef.current); clearInterval(progressTimerRef.current);
+        streamRef.current?.getTracks().forEach(t => t.stop());
+        autoAdvanceFiredRef.current = false;
+        autoRetryCountRef.current = 0;
+        setCurrentTrackIndex(idx);
+        currentTrackIndexRef.current = idx;
+        setDetectedSong(null); setSongDuration(null); setLyrics([]);
+        setCurrentIndex(0); setError(null); setListenProgress(0); setPlaybackTime(0);
+        setShouldAdvanceTrack(false); setIsResyncing(false);
+        // Re-listen immediately so timing locks onto the right position
+        setTimeout(() => startListening(false), 150);
+      };
+
       // ─────────────────────────────────────────
       // AUTH LOADING
       // ─────────────────────────────────────────
@@ -1866,11 +1883,23 @@
 
               <div className="safe-bottom" style={{ padding:"12px 20px 0", flexShrink:0 }}>
 
-                {/* Vinyl mode: Skip Track button */}
-                {vinylMode && albumTracks.length > 0 && currentTrackIndex < albumTracks.length - 1 && (
-                  <div style={{ textAlign:"center", marginBottom:"10px" }}>
-                    <button onClick={() => advanceToNextTrack(albumTracksRef.current, currentTrackIndexRef.current)} style={{ background:"rgba(255,255,255,0.06)", border:"1px solid rgba(255,255,255,0.12)", color:"rgba(255,255,255,0.5)", borderRadius:"20px", padding:"8px 20px", fontSize:"12px", cursor:"pointer", fontFamily:"inherit" }}>
-                      Skip → {albumTracks[currentTrackIndex + 1]?.trackName || "Next Track"}
+                {/* Vinyl mode: prev / track name / next row */}
+                {vinylMode && albumTracks.length > 0 && currentTrackIndex >= 0 && (
+                  <div style={{ display:"flex", alignItems:"center", justifyContent:"center", gap:"10px", marginBottom:"10px" }}>
+                    <button
+                      onClick={() => jumpToTrack(Math.max(0, currentTrackIndex - 1))}
+                      disabled={currentTrackIndex === 0}
+                      style={{ background:"rgba(255,255,255,0.06)", border:"1px solid rgba(255,255,255,0.1)", color: currentTrackIndex === 0 ? "rgba(255,255,255,0.15)" : "rgba(255,255,255,0.5)", borderRadius:"50%", width:"32px", height:"32px", display:"flex", alignItems:"center", justifyContent:"center", cursor: currentTrackIndex === 0 ? "default" : "pointer", fontSize:"14px", flexShrink:0 }}>
+                      ←
+                    </button>
+                    <div style={{ fontSize:"11px", color:"rgba(255,255,255,0.35)", textAlign:"center", maxWidth:"180px", overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>
+                      {albumTracks[currentTrackIndex]?.trackName || ""}
+                    </div>
+                    <button
+                      onClick={() => advanceToNextTrack(albumTracksRef.current, currentTrackIndexRef.current)}
+                      disabled={currentTrackIndex >= albumTracks.length - 1}
+                      style={{ background:"rgba(255,255,255,0.06)", border:"1px solid rgba(255,255,255,0.1)", color: currentTrackIndex >= albumTracks.length - 1 ? "rgba(255,255,255,0.15)" : "rgba(255,255,255,0.5)", borderRadius:"50%", width:"32px", height:"32px", display:"flex", alignItems:"center", justifyContent:"center", cursor: currentTrackIndex >= albumTracks.length - 1 ? "default" : "pointer", fontSize:"14px", flexShrink:0 }}>
+                      →
                     </button>
                   </div>
                 )}
