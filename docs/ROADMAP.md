@@ -197,6 +197,33 @@ These are the good ideas from the original project doc that shouldn't distract f
 
 ---
 
+## Backlog — Ideas from active development (v1.30–v1.31 era)
+
+These came up during the turntable / vinyl-aware matching phase. Not yet prioritized but clearly the right direction.
+
+### Turntable mode → vinyl auto-advance (next logical step after v1.31)
+
+Right now, picking a record on the "What's on the turntable?" screen enables vinyl-aware matching (Strategy V) but doesn't automatically enable full vinyl auto-advance mode. The two modes should be unified:
+
+- When a user picks an album from their library and taps "Find my place," Liri should also arm vinyl auto-advance, so after the first track is identified, it knows what comes next and can transition to track 2, 3, etc. without re-listening
+- The distinction between "turntable mode" and "vinyl mode" should disappear — picking a record IS entering vinyl mode
+- Auto-advance should flip sides correctly (prompt when Side A ends, continue on Side B)
+- This is the natural evolution: you put a record on, tell Liri what it is, and Liri follows along for the whole side without you touching it again
+
+### Record detail page (in My Records / library)
+
+Each record in the library should be tappable and open a full detail view showing:
+
+- Full tracklist with side labels (Side A: track 1, 2, 3... Side B: track 1, 2, 3...)
+- Each track's running time (from iTunes data, already loaded)
+- Any featured artist info (e.g. "feat. Bon Iver") where available
+- A tap-through on each track to view its full lyrics (fetched from LRCLib, displayed as plain text — useful for reading before listening, not just during)
+- Maybe: total album running time, release year, label
+
+This makes the library feel like a real vinyl companion app, not just a "pick your album before listening" widget.
+
+---
+
 ## The thing to keep in mind
 
 The project doc said it best: the hardest part of Liri is not "making an app." It's the sync problem. Every new feature is only worth building after the sync experience feels genuinely good. Don't let cool features distract from the core.
