@@ -1,6 +1,9 @@
 -- ─────────────────────────────────────────────────────────────────────────────
 -- Liri Analytics Schema
--- Run once in the Supabase SQL editor (after vinyl_schema.sql).
+-- Run once in the Supabase SQL editor.
+-- Can be run independently — no dependency on vinyl_schema.sql.
+-- vinyl_release_id columns store the UUID as plain text references (no FK
+-- constraint) so the order you run the two schema files doesn't matter.
 --
 -- Tables:
 --   listening_events  — every song played (recognition + auto-advance)
@@ -40,7 +43,7 @@ CREATE TABLE IF NOT EXISTS listening_events (
   -- Cross-reference keys
   itunes_track_id      bigint,
   itunes_collection_id bigint,
-  vinyl_release_id     uuid        REFERENCES vinyl_releases(id) ON DELETE SET NULL,
+  vinyl_release_id     uuid,       -- soft ref to vinyl_releases.id (no FK so schema is order-independent)
 
   -- Context
   vinyl_mode_on        boolean     DEFAULT false,
@@ -89,7 +92,7 @@ CREATE TABLE IF NOT EXISTS flip_events (
   session_id           text,
 
   -- Album context
-  vinyl_release_id     uuid        REFERENCES vinyl_releases(id) ON DELETE SET NULL,
+  vinyl_release_id     uuid,       -- soft ref to vinyl_releases.id (no FK so schema is order-independent)
   itunes_collection_id bigint,
   album_name           text,
   artist_name          text,
