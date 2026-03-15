@@ -76,10 +76,12 @@ module.exports = async (req, res) => {
       keyPrefix: accessKey.slice(0, 6) + "…",
       acrCode: code,
       acrMsg: result?.status?.msg,
-      // 1001 = credentials valid, audio just didn't match (expected for a ping)
+      // 0    = match found
+      // 1001 = no match, but credentials valid and audio processed (ideal ping result)
+      // 2004 = audio too short to fingerprint — credentials valid, just can't process 1-byte ping
       // 3000 = invalid access key
       // 3002 = invalid signature (wrong secret)
-      credentialsValid: code === 1001 || code === 0,
+      credentialsValid: code === 0 || code === 1001 || code === 2004,
     });
   } catch (err) {
     res.status(500).json({ ok: false, error: err.message });

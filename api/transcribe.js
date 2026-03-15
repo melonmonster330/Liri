@@ -92,28 +92,31 @@ module.exports = async (req, res) => {
     const raw = result.body.text || "";
     console.log("Whisper raw:", raw.slice(0, 80));
 
-    // Filter hallucinations: Whisper produces these when it hears music with no clear vocals.
-    // Strip emoji/symbols first, then reject if what's left is a known fake or too short.
-    const stripped = raw
+    // Filter only obvious Whisper hallucinations — non-lyric descriptions it produces
+    // when hearing instrumental passages. Keep the filter narrow so real lyrics pass through.
+    // We strip music emoji only, leave all text including parenthetical backing vocals intact.
+    const cleaned = raw
       .replace(/[\u{1F300}-\u{1FAFF}\u{2600}-\u{26FF}\u{2700}-\u{27BF}♪♫♬♩]/gu, "")
-      .replace(/\[.*?\]|\(.*?\)/g, "")   // remove [Music], (Instrumental), etc.
       .trim();
 
+    // Only reject if the entire output — after emoji removal — is a known fake phrase,
+    // or is pure punctuation/whitespace. Short real lyrics (e.g. "Yeah" / "Help me") pass.
     const HALLUCINATION_PATTERNS = [
-      /^music\s*(intro|outro|interlude|break|fade)?$/i,
+      /^\[.*?\]$/,                                        // entire output is [Music] etc.
+      /^music\s*(intro|outro|interlude|break|fade)?$/i,   // "Music Outro" etc.
       /^(thank you( for watching)?|subscribe|subtitles? by|transcribed by)/i,
-      /^[\s\.\-_,!?]+$/,                 // only punctuation
+      /^[\s\.\-_,!?♩♪♫♬]*$/,                             // only punctuation/whitespace
     ];
-    const isHallucination = stripped.length < 8
-      || HALLUCINATION_PATTERNS.some(p => p.test(stripped));
+    const isHallucination = cleaned.length < 2
+      || HALLUCINATION_PATTERNS.some(p => p.test(cleaned));
 
     if (isHallucination) {
       console.log("Whisper: hallucination detected, returning empty —", JSON.stringify(raw));
       return res.status(200).json({ text: "" });
     }
 
-    console.log("Whisper transcribed:", stripped.slice(0, 80));
-    return res.status(200).json({ text: stripped });
+    console.log("Whisper transcribed:", cleaned.slice(0, 80));
+    return res.status(200).json({ text: cleaned });
 
   } catch (err) {
     console.error("Transcribe error:", err);
