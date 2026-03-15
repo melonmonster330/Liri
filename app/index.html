@@ -76,7 +76,7 @@
       "sb_publishable_C-NBnfg0ltAoUi46XQTUjA_ozjZW_Nd"
     );
 
-    const APP_VERSION = "1.06";
+    const APP_VERSION = "1.07";
 
     const PROXY_URL = window.Capacitor
       ? "https://liri-vert.vercel.app/api/recognize"
@@ -678,9 +678,15 @@
       };
 
       // ── Process a confirmed ACRCloud match — update all app state ──
-      const handleMatch = async (data, isAutoAdvance) => {
+      // recordingDuration: seconds of audio in the matched blob (passed from startListening).
+      // When provided, we use it as the dynamic offset instead of the fixed constant,
+      // since offset = where-song-was-at-clip-start + clip-length + ~network-buffer.
+      const handleMatch = async (data, isAutoAdvance, recordingDuration = null) => {
         const m = data.metadata.music[0];
-        const tcSecs      = (m.play_offset_ms || 0) / 1000 + PLAYBACK_OFFSET_CORRECTION;
+        const dynamicCorrection = recordingDuration !== null
+          ? recordingDuration + 0.5   // clip length + ~500ms network buffer
+          : PLAYBACK_OFFSET_CORRECTION;
+        const tcSecs      = (m.play_offset_ms || 0) / 1000 + dynamicCorrection;
         const duration    = m.duration_ms ? m.duration_ms / 1000 : null;
         const acrScore    = m.score            || null;
         const acrGenre    = m.genres?.[0]?.name || null;
@@ -935,7 +941,7 @@
                 clearInterval(progressTimerRef.current);
                 if (recorder.state === "recording") recorder.stop();
                 setMode("detecting");
-                await handleMatch(data, isAutoAdvance);
+                await handleMatch(data, isAutoAdvance, elapsed / 1000);
                 return;
               }
 
@@ -1834,18 +1840,16 @@
                           </div>
                         );
                       })}
-                      {/* Copyright credit — visible when you scroll to the end */}
-                      <div style={{ marginTop:"48px", paddingBottom:"8vh", textAlign:"center", opacity: currentIndex >= lyrics.length - 3 ? 1 : 0, transition:"opacity 0.8s ease" }}>
-                        <div style={{ fontSize:"11px", color:"rgba(255,255,255,0.2)", lineHeight:"1.9", letterSpacing:"0.5px" }}>
-                          {detectedSong?.title && <div style={{ color:"rgba(255,255,255,0.3)", fontWeight:"600", marginBottom:"4px" }}>{detectedSong.title}</div>}
+                      {/* Copyright credit — always in the scroll, visible naturally as song ends */}
+                      <div style={{ marginTop:"52px", paddingBottom:"30vh", textAlign:"center" }}>
+                        <div style={{ width:"32px", height:"1px", background:"rgba(255,255,255,0.1)", margin:"0 auto 20px" }} />
+                        <div style={{ fontSize:"11px", color:"rgba(255,255,255,0.22)", lineHeight:"2", letterSpacing:"0.3px" }}>
+                          {detectedSong?.title && <div style={{ color:"rgba(255,255,255,0.35)", fontWeight:"600", marginBottom:"2px" }}>{detectedSong.title}</div>}
                           {detectedSong?.artist && <div>{detectedSong.artist}</div>}
-                          {detectedSong?.album  && <div>{detectedSong.album}</div>}
-                          <div style={{ marginTop:"10px", borderTop:"1px solid rgba(255,255,255,0.07)", paddingTop:"10px" }}>
-                            Lyrics via LRCLib · Audio recognition by ACRCloud
-                          </div>
-                          <div>© {new Date().getFullYear()} Liri. All rights reserved.</div>
-                          <div style={{ fontSize:"10px", color:"rgba(255,255,255,0.1)", marginTop:"4px" }}>
-                            Music rights belong to their respective<br/>artists, labels &amp; publishers.
+                          {detectedSong?.album  && <div style={{ color:"rgba(255,255,255,0.15)" }}>{detectedSong.album}</div>}
+                          <div style={{ marginTop:"14px", fontSize:"10px", color:"rgba(255,255,255,0.12)", lineHeight:"1.8" }}>
+                            Lyrics via LRCLib · Recognition by ACRCloud<br/>
+                            © {new Date().getFullYear()} Liri · Music rights belong to their<br/>respective artists, labels &amp; publishers.
                           </div>
                         </div>
                       </div>
