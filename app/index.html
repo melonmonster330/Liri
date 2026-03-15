@@ -865,6 +865,28 @@
             } catch {}
           }
 
+          if (!match) {
+            // Strategy C: search LRCLib directly using the raw transcribed words.
+            // Last resort — works when GPT can't identify the song but the transcript
+            // has enough lyric fragments for LRCLib's search to surface the right track.
+            try {
+              const q = transcribed.slice(0, 120).trim();
+              const lrcRes = await fetch(`https://lrclib.net/api/search?q=${encodeURIComponent(q)}`)
+                .then(r => r.json()).catch(() => []);
+              const candidates = (Array.isArray(lrcRes) ? lrcRes : []).filter(c => c.syncedLyrics);
+              if (candidates.length) {
+                const words = transcribed.toLowerCase().replace(/[^\w\s]/g, "").split(/\s+/).filter(w => w.length > 3);
+                let bestScore = 0;
+                for (const c of candidates) {
+                  const lyricText = c.syncedLyrics.toLowerCase().replace(/\[[\d:\.]+\]/g, "");
+                  const hits = words.filter(w => lyricText.includes(w)).length;
+                  if (hits > bestScore) { bestScore = hits; match = c; }
+                }
+                if (match) attemptLogRef.current.push(`whisper: strategy C matched "${match.trackName}" (score ${bestScore})`);
+              }
+            } catch {}
+          }
+
           if (!match) return false;
 
           // 3. Parse lyrics
