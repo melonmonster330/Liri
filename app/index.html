@@ -76,7 +76,7 @@
       "sb_publishable_C-NBnfg0ltAoUi46XQTUjA_ozjZW_Nd"
     );
 
-    const APP_VERSION = "1.14";
+    const APP_VERSION = "1.15";
 
     const PROXY_URL = window.Capacitor
       ? "https://liri-vert.vercel.app/api/recognize"
@@ -1153,15 +1153,18 @@
           if (ends[ends.length - 1] !== tracks.length - 1) ends.push(tracks.length - 1);
           return ends;
         }
+        // Short releases (singles, EPs ≤4 tracks) are single-sided — just mark album-end
+        if (tracks.length <= 4) return [tracks.length - 1];
         // Auto: split into 2 sides by cumulative duration
         const totalMs = tracks.reduce((s, t) => s + (t.trackTimeMillis || 0), 0);
-        if (!totalMs) return [Math.ceil(tracks.length / 2) - 1, tracks.length - 1];
+        const midIdx = Math.ceil(tracks.length / 2) - 1;
+        if (!totalMs) return [Math.max(1, midIdx), tracks.length - 1]; // never split at track 0
         let cumulative = 0;
         for (let i = 0; i < tracks.length - 1; i++) {
           cumulative += (tracks[i].trackTimeMillis || 0);
-          if (cumulative >= totalMs / 2) return [i, tracks.length - 1];
+          if (cumulative >= totalMs / 2) return [Math.max(1, i), tracks.length - 1];
         }
-        return [Math.ceil(tracks.length / 2) - 1, tracks.length - 1];
+        return [Math.max(1, midIdx), tracks.length - 1];
       };
 
       // ── Advance to the next track using the known tracklist (no re-listening) ──
