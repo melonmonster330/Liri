@@ -76,7 +76,7 @@
       "sb_publishable_C-NBnfg0ltAoUi46XQTUjA_ozjZW_Nd"
     );
 
-    const APP_VERSION = "1.04";
+    const APP_VERSION = "1.05";
 
     const PROXY_URL = window.Capacitor
       ? "https://liri-vert.vercel.app/api/recognize"
@@ -1078,24 +1078,8 @@
           }
         }
 
-        // Fall back to calculated side ends
-        const sideEnds = getSideEndIndices(albumTracks, albumTpsRef.current);
-        if (!sideEnds.length) return null;
-
-        let sideIdx  = sideEnds.length - 1; // default: last side
-        let sideStart = sideEnds.length > 1 ? sideEnds[sideEnds.length - 2] + 1 : 0;
-        for (let i = 0; i < sideEnds.length; i++) {
-          if (currentTrackIndex <= sideEnds[i]) {
-            sideIdx   = i;
-            sideStart = i === 0 ? 0 : sideEnds[i - 1] + 1;
-            break;
-          }
-        }
-
-        return {
-          side:  "ABCDEFGH"[sideIdx] || "?",
-          track: currentTrackIndex - sideStart + 1,
-        };
+        // No confirmed DB data — don't guess, hide the label
+        return null;
       };
 
       const getSideEndIndices = (tracks, tps) => {
