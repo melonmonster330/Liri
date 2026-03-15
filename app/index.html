@@ -261,6 +261,8 @@
 
       // ── Resync / advance flags ──
       const [isResyncing, setIsResyncing]             = useState(false);
+      const [pendingAction, setPendingAction]         = useState(null);    // null | "resync" | "restart"
+      const [pendingCountdown, setPendingCountdown]   = useState(0);
       const [shouldAdvanceTrack, setShouldAdvanceTrack] = useState(false);
       const [sideEndReason, setSideEndReason]         = useState("failed"); // "failed" | "flip" | "album-end"
 
@@ -394,6 +396,24 @@
       useEffect(() => { currentTrackIndexRef.current = currentTrackIndex; }, [currentTrackIndex]);
       useEffect(() => { vinylDbReleaseRef.current    = vinylDbRelease;    }, [vinylDbRelease]);
       useEffect(() => { albumCollectionIdRef.current = albumCollectionId; }, [albumCollectionId]);
+
+      // ── Countdown before resync / wrong-song re-listen ──
+      useEffect(() => {
+        if (!pendingAction) return;
+        if (pendingCountdown > 0) {
+          const t = setTimeout(() => setPendingCountdown(c => c - 1), 1000);
+          return () => clearTimeout(t);
+        }
+        // Countdown done — fire the action
+        const action = pendingAction;
+        setPendingAction(null);
+        if (action === "resync") {
+          resync();
+        } else {
+          reset();
+          setTimeout(() => startListening(false), 150);
+        }
+      }, [pendingAction, pendingCountdown]);
 
       // ── Vinyl mode persistence ──
       const toggleVinylMode = (val) => {
@@ -1867,10 +1887,24 @@
                     )}
                   </div>
                 </div>
-                <div style={{ display:"flex", justifyContent:"center", alignItems:"center", gap:"20px" }}>
-                  <button onClick={resync} disabled={isResyncing} style={{ background:"none", border:"none", color:"rgba(255,255,255,0.3)", cursor: isResyncing ? "wait" : "pointer", fontSize:"12px", fontFamily:"inherit", opacity: isResyncing ? 0.4 : 1 }}>↻ Resync timing</button>
-                  <span style={{ color:"rgba(255,255,255,0.1)", fontSize:"10px" }}>·</span>
-                  <button onClick={reset} style={{ background:"none", border:"none", color:"rgba(255,255,255,0.2)", cursor:"pointer", fontSize:"12px", fontFamily:"inherit" }}>Wrong song? Try again</button>
+                <div style={{ display:"flex", justifyContent:"center", alignItems:"center", gap:"20px", minHeight:"36px" }}>
+                  {pendingAction ? (
+                    <div style={{ display:"flex", alignItems:"center", gap:"20px", animation:"fade-up 0.2s ease" }}>
+                      <div style={{ textAlign:"center" }}>
+                        <div style={{ fontSize:"26px", fontWeight:"700", color:"#d4a846", fontVariantNumeric:"tabular-nums", lineHeight:1 }}>{pendingCountdown}</div>
+                        <div style={{ fontSize:"11px", color:"rgba(255,255,255,0.3)", marginTop:"3px" }}>
+                          {pendingAction === "resync" ? "Hold near speakers…" : "Get ready to listen…"}
+                        </div>
+                      </div>
+                      <button onClick={() => { setPendingAction(null); setPendingCountdown(0); }} style={{ background:"none", border:"none", color:"rgba(255,255,255,0.2)", cursor:"pointer", fontSize:"12px", fontFamily:"inherit" }}>Cancel</button>
+                    </div>
+                  ) : (
+                    <>
+                      <button onClick={() => { setPendingAction("resync"); setPendingCountdown(3); }} disabled={isResyncing} style={{ background:"none", border:"none", color:"rgba(255,255,255,0.3)", cursor: isResyncing ? "wait" : "pointer", fontSize:"12px", fontFamily:"inherit", opacity: isResyncing ? 0.4 : 1 }}>↻ Resync timing</button>
+                      <span style={{ color:"rgba(255,255,255,0.1)", fontSize:"10px" }}>·</span>
+                      <button onClick={() => { setPendingAction("restart"); setPendingCountdown(3); }} style={{ background:"none", border:"none", color:"rgba(255,255,255,0.2)", cursor:"pointer", fontSize:"12px", fontFamily:"inherit" }}>Wrong song? Try again</button>
+                    </>
+                  )}
                 </div>
               </div>
             </div>
