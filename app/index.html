@@ -261,8 +261,6 @@
 
       // ── Resync / advance flags ──
       const [isResyncing, setIsResyncing]             = useState(false);
-      const [pendingAction, setPendingAction]         = useState(null);    // null | "resync" | "restart"
-      const [pendingCountdown, setPendingCountdown]   = useState(0);
       const [shouldAdvanceTrack, setShouldAdvanceTrack] = useState(false);
       const [sideEndReason, setSideEndReason]         = useState("failed"); // "failed" | "flip" | "album-end"
 
@@ -388,8 +386,9 @@
       const detectedAtRef    = useRef(null);
       const initialPosRef    = useRef(0);
       const lyricsRef        = useRef([]);
-      const progressTimerRef = useRef(null);
-      const currentLineRef   = useRef(null);
+      const progressTimerRef    = useRef(null);
+      const currentLineRef      = useRef(null);
+      const listenSessionRef    = useRef(0); // increments on each startListening; guards stale async callbacks
 
       useEffect(() => { lyricsRef.current = lyrics; }, [lyrics]);
       useEffect(() => { albumTracksRef.current = albumTracks; }, [albumTracks]);
@@ -397,23 +396,6 @@
       useEffect(() => { vinylDbReleaseRef.current    = vinylDbRelease;    }, [vinylDbRelease]);
       useEffect(() => { albumCollectionIdRef.current = albumCollectionId; }, [albumCollectionId]);
 
-      // ── Countdown before resync / wrong-song re-listen ──
-      useEffect(() => {
-        if (!pendingAction) return;
-        if (pendingCountdown > 0) {
-          const t = setTimeout(() => setPendingCountdown(c => c - 1), 1000);
-          return () => clearTimeout(t);
-        }
-        // Countdown done — fire the action
-        const action = pendingAction;
-        setPendingAction(null);
-        if (action === "resync") {
-          resync();
-        } else {
-          reset();
-          setTimeout(() => startListening(false), 150);
-        }
-      }, [pendingAction, pendingCountdown]);
 
       // ── Vinyl mode persistence ──
       const toggleVinylMode = (val) => {
@@ -863,6 +845,7 @@
 
       const startListening = async (isAutoAdvance = false) => {
         if (!isAutoAdvance && !isUnlimited(user) && usageCount >= FREE_LIMIT) { setMode("limit"); return; }
+        const session = ++listenSessionRef.current; // unique id for this listen attempt
         setError(null);
         setMode("listening");
         setListenProgress(0);
@@ -903,6 +886,13 @@
               const blob = new Blob([...allChunks], { type: mimeType || "audio/webm" });
               const data = await sendAudioToACR(blob);
 
+              // Abort if the user restarted while we were awaiting
+              if (listenSessionRef.current !== session) {
+                clearInterval(progressTimerRef.current);
+                if (recorder.state === "recording") recorder.stop();
+                return;
+              }
+
               // Rate limit
               if (data?.status?.code === 3003 || data?.status?.code === 3015) {
                 clearInterval(progressTimerRef.current);
@@ -929,6 +919,7 @@
                 setListenAttempt(MAX_ATTEMPTS + 1);
                 const finalBlob = new Blob([...allChunks], { type: mimeType || "audio/webm" });
                 const found = await tryLyricsTranscription(finalBlob, isAutoAdvance);
+                if (listenSessionRef.current !== session) return; // aborted during Whisper
                 if (!found) handleNoMatch(isAutoAdvance);
                 return;
               }
@@ -1887,24 +1878,10 @@
                     )}
                   </div>
                 </div>
-                <div style={{ display:"flex", justifyContent:"center", alignItems:"center", gap:"20px", minHeight:"36px" }}>
-                  {pendingAction ? (
-                    <div style={{ display:"flex", alignItems:"center", gap:"20px", animation:"fade-up 0.2s ease" }}>
-                      <div style={{ textAlign:"center" }}>
-                        <div style={{ fontSize:"26px", fontWeight:"700", color:"#d4a846", fontVariantNumeric:"tabular-nums", lineHeight:1 }}>{pendingCountdown}</div>
-                        <div style={{ fontSize:"11px", color:"rgba(255,255,255,0.3)", marginTop:"3px" }}>
-                          {pendingAction === "resync" ? "Hold near speakers…" : "Get ready to listen…"}
-                        </div>
-                      </div>
-                      <button onClick={() => { setPendingAction(null); setPendingCountdown(0); }} style={{ background:"none", border:"none", color:"rgba(255,255,255,0.2)", cursor:"pointer", fontSize:"12px", fontFamily:"inherit" }}>Cancel</button>
-                    </div>
-                  ) : (
-                    <>
-                      <button onClick={() => { setPendingAction("resync"); setPendingCountdown(3); }} disabled={isResyncing} style={{ background:"none", border:"none", color:"rgba(255,255,255,0.3)", cursor: isResyncing ? "wait" : "pointer", fontSize:"12px", fontFamily:"inherit", opacity: isResyncing ? 0.4 : 1 }}>↻ Resync timing</button>
-                      <span style={{ color:"rgba(255,255,255,0.1)", fontSize:"10px" }}>·</span>
-                      <button onClick={() => { setPendingAction("restart"); setPendingCountdown(3); }} style={{ background:"none", border:"none", color:"rgba(255,255,255,0.2)", cursor:"pointer", fontSize:"12px", fontFamily:"inherit" }}>Wrong song? Try again</button>
-                    </>
-                  )}
+                <div style={{ display:"flex", justifyContent:"center", alignItems:"center", gap:"20px" }}>
+                  <button onClick={resync} disabled={isResyncing} style={{ background:"none", border:"none", color:"rgba(255,255,255,0.3)", cursor: isResyncing ? "wait" : "pointer", fontSize:"12px", fontFamily:"inherit", opacity: isResyncing ? 0.4 : 1 }}>↻ Resync timing</button>
+                  <span style={{ color:"rgba(255,255,255,0.1)", fontSize:"10px" }}>·</span>
+                  <button onClick={() => { reset(); setTimeout(() => startListening(false), 150); }} style={{ background:"none", border:"none", color:"rgba(255,255,255,0.2)", cursor:"pointer", fontSize:"12px", fontFamily:"inherit" }}>Wrong song? Try again</button>
                 </div>
               </div>
             </div>
@@ -1969,6 +1946,7 @@
                         ? "Hold near your speakers"
                         : `${listenAttempt * 5}s of audio captured — hold steady`}
                     </div>
+                    <button onClick={() => { listenSessionRef.current++; clearInterval(progressTimerRef.current); streamRef.current?.getTracks().forEach(t => t.stop()); startListening(false); }} style={{ marginTop:"28px", background:"none", border:"1px solid rgba(255,255,255,0.12)", color:"rgba(255,255,255,0.3)", borderRadius:"50px", padding:"10px 26px", fontSize:"13px", cursor:"pointer", fontFamily:"inherit" }}>↺ Different song</button>
                   </div>
                 )}
 
@@ -1978,6 +1956,7 @@
                     <Vinyl size={100} spinning={true} />
                     <div style={{ marginTop:"28px", fontSize:"20px", fontWeight:"600", color:"#f0e6d3", marginBottom:"8px" }}>Identifying…</div>
                     <div style={{ fontSize:"14px", color:"rgba(255,255,255,0.3)" }}>Just a moment</div>
+                    <button onClick={() => { listenSessionRef.current++; startListening(false); }} style={{ marginTop:"28px", background:"none", border:"1px solid rgba(255,255,255,0.12)", color:"rgba(255,255,255,0.3)", borderRadius:"50px", padding:"10px 26px", fontSize:"13px", cursor:"pointer", fontFamily:"inherit" }}>↺ Different song</button>
                   </div>
                 )}
 
