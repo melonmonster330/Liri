@@ -76,7 +76,7 @@
       "sb_publishable_C-NBnfg0ltAoUi46XQTUjA_ozjZW_Nd"
     );
 
-    const APP_VERSION = "1.13";
+    const APP_VERSION = "1.14";
 
     const PROXY_URL = window.Capacitor
       ? "https://liri-vert.vercel.app/api/recognize"
@@ -781,9 +781,17 @@
             method: "POST", headers: { "Content-Type": "application/json" },
             body: JSON.stringify({ audio: btoa(binary), mimeType: blob.type || "audio/webm" }),
           });
-          if (!tr.ok) return false;
+          if (!tr.ok) {
+            const errBody = await tr.json().catch(() => ({}));
+            attemptLogRef.current.push(`whisper: HTTP ${tr.status} — ${errBody.error || "failed"}`);
+            return false;
+          }
           const { text: transcribed } = await tr.json();
-          if (!transcribed || transcribed.trim().length < 4) return false;
+          if (!transcribed || transcribed.trim().length < 4) {
+            attemptLogRef.current.push(`whisper: got empty/short transcript — "${transcribed || ""}"`);
+            return false;
+          }
+          attemptLogRef.current.push(`whisper: transcribed "${transcribed.slice(0, 40)}…"`);
 
           // 2. Search LRCLib with transcribed words
           const [ra, rb] = await Promise.all([

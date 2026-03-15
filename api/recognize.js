@@ -86,7 +86,11 @@ module.exports = async (req, res) => {
       textPart("timestamp",         String(timestamp)),
       textPart("signature",         signature),
       textPart("sample_bytes",      String(audioBuffer.length)),
-      filePart("sample", "sample.webm", mimeType, audioBuffer),
+      // Use the correct file extension so ACRCloud knows the container format
+      const sampleExt = mimeType.includes("mp4") ? "m4a"
+                      : mimeType.includes("ogg") ? "ogg"
+                      : "webm";
+      filePart("sample", `sample.${sampleExt}`, mimeType, audioBuffer),
       Buffer.from(`--${boundary}--${CRLF}`),
     ]);
 

@@ -29,7 +29,12 @@ module.exports = async (req, res) => {
 
     // Build multipart/form-data manually (no npm packages needed)
     const boundary = "----LiriBoundary" + Date.now().toString(16);
-    const ext = mimeType.includes("ogg") ? "ogg" : "webm";
+    // Pick the right file extension so Whisper knows the format.
+    // Mismatched extension + Content-Type causes Whisper to reject the file.
+    const ext = mimeType.includes("ogg") ? "ogg"
+              : mimeType.includes("mp4") ? "m4a"
+              : mimeType.includes("mp3") ? "mp3"
+              : "webm";
 
     const preamble = Buffer.from(
       `--${boundary}\r\n` +
@@ -73,10 +78,12 @@ module.exports = async (req, res) => {
     });
 
     if (result.status !== 200) {
-      console.error("Whisper error:", result.body);
-      return res.status(502).json({ error: result.body?.error?.message || "Whisper failed" });
+      const msg = result.body?.error?.message || "Whisper failed";
+      console.error("Whisper error:", result.status, result.body);
+      return res.status(502).json({ error: msg, whisperStatus: result.status });
     }
 
+    console.log("Whisper transcribed:", result.body.text?.slice(0, 80));
     return res.status(200).json({ text: result.body.text || "" });
 
   } catch (err) {
