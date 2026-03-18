@@ -4,18 +4,20 @@
 
 ---
 
-## Where we are now (v0.1)
+## Where we are now (v1.32 — March 2026)
 
-A working web app that:
-- Listens to vinyl via microphone
-- Identifies the song via AudD audio fingerprinting
-- Fetches synced lyrics from lrclib.net
-- Displays them in real time with drift correction
+A working iOS app (via Capacitor) + web app at getliri.app that:
+- Listens to vinyl via microphone (iOS native audio, Web Audio API fallback)
+- Multi-strategy identification: ACRCloud fingerprint → Whisper transcription → GPT-4o-mini song ID
+- Fetches timestamped LRC lyrics from LRCLib, syncs in real time with drift correction
+- Vinyl mode: picks the right track from a user's library without re-listening, auto-advances through tracks
+- Personal library ("My Records"): tap an album to see full tracklist with side labels, tap a track to read lyrics
+- TV Cast: broadcasts current lyric to tv.html via Supabase Realtime (Cast SDK or room code)
+- Vinyl side data: Discogs-backed with full format support (A1/B1, sequential, numbered sides)
+- Lyric cache: shared global cache — one match benefits all users
 
-**Platform**: Browser (open index.html)
-**Scope**: Taylor Swift only
-
-This is the proof of concept. It works. Now we figure out where to take it.
+**Platform**: iOS App Store (pending review), web
+**Scope**: All artists (any song LRCLib has)
 
 ---
 
@@ -221,6 +223,92 @@ Each record in the library should be tappable and open a full detail view showin
 - Maybe: total album running time, release year, label
 
 This makes the library feel like a real vinyl companion app, not just a "pick your album before listening" widget.
+
+---
+
+---
+
+## Backlog — Ideas from active development (v1.32+ era)
+
+These are things that came up during the v1.32 cycle. All of them are clearly the right direction.
+
+### Code cleanup (see docs/CODE_REVIEW.md for full notes)
+
+The codebase is functional but not yet "proud of it" quality. Before expanding features significantly, a cleanup pass covering:
+- Extract shared CSS design tokens (`shared.css` with colors, buttons, inputs)
+- Reconcile `getSideInfo()` / `deriveSideFromIndex()` — two versions have drifted
+- Add an error UI component (toast/snackbar) — currently all errors are silent
+- Proxy LRCLib through Vercel (currently called directly from browser)
+- Fix `vinyl.html` innerHTML escaping audit (XSS risk)
+- Sync `ios/App/App/public/` properly — always out of date with `app/`
+
+### Library — per-album "Refresh vinyl data" button
+
+Currently stale vinyl data (wrong sides) is auto-detected only if there are duplicate positions. Any album where data exists but is incomplete (missing a side, wrong order) won't auto-fix. A "Refresh" button in `AlbumDetailSheet` that force-deletes and re-fetches from Discogs would let users fix edge cases themselves without waiting for a code change.
+
+### Library — cache tracklist per session
+
+`AlbumDetailSheet` re-fetches the iTunes tracklist every time an album is opened. The tracklist never changes during a session. Cache per `collectionId` so re-opening an album is instant.
+
+### Library — show vinyl source badge
+
+The `vinylSource` state (`"db"` | `"estimated"`) is tracked but never shown. A subtle badge ("Via Discogs" or "Estimated") on the tracklist header would be informative and help identify albums that need better data.
+
+### Library → Main App integration
+
+When a track is tapped in `AlbumDetailSheet`, it should be possible to jump to the main app with that track already loaded — "Start listening from here." This bridges the library and the listening experience.
+
+### Add-Vinyl — dynamic LP count, no hardcoded max
+
+The contribution wizard is hardcoded to support 4 LPs maximum (8 sides A-H). Should dynamically derive side letters from actual `disc_count` to support any number. A 6-LP box set submission currently silently breaks.
+
+### Add-Vinyl — auto-fill from Discogs
+
+When a user selects an album in the add-vinyl wizard, auto-populate the tracklist from Discogs (same logic as library) rather than requiring manual side-by-side assignment. The user would just review and confirm, not enter from scratch.
+
+### Main app — side flip detection via silence
+
+The turntable auto-advance currently relies on duration. A better trigger: the app detects a period of silence (the natural pause between Side A ending and the needle lifting). This is a true signal that the record is done. Web Audio API `AnalyserNode` can detect this reliably. Flip prompt fires on silence detection rather than a timer.
+
+### Main app — vinyl mode as default when library is set
+
+Right now, "turntable mode" (Strategy V) and "vinyl mode" (auto-advance) are somewhat distinct. Picking a record from your library should automatically arm both. You put a record on, select it in Liri, and it just follows — no extra steps.
+
+### TV display — full lyrics scroll mode
+
+In addition to the current "5 lines around the current lyric" view, offer a full-scroll mode where all lyrics are visible and the current line is highlighted. Some people prefer to read ahead. Toggle with D-pad.
+
+### TV display — responsive lyric window size
+
+The lyric window is always 5-6 lines regardless of screen size. Should calculate based on `window.innerHeight` so a 75" TV shows more context and a small monitor shows the right amount.
+
+### Lyric cache — offline-first album mode
+
+When a user adds an album to their library, pre-fetch and cache all lyrics for that album in `liri_lyric_cache`. Then listening works even without a network connection (after the initial sync). Especially useful for the iOS app on poor network.
+
+### "What's playing" widget (iOS lock screen)
+
+Use iOS Live Activities to show the current lyric line on the lock screen, the way music apps show "Now Playing." This is a high-effort feature (requires Swift + ActivityKit) but would be incredibly compelling — lyrics on your lock screen as the record plays.
+
+### Lyric corrections / user reporting
+
+LRCLib isn't always right. Add a "lyrics off?" button that lets users flag bad sync or wrong lyrics. Log these to Supabase. Even without implementing corrections, the data is useful for knowing which tracks have bad data.
+
+### Artist pages (stretch goal)
+
+A simple `/artist/taylor-swift` page showing all Taylor Swift albums in the Liri database, each album's full track listing with side labels, and a link to "Listen with Liri." Good for SEO and gives the app a discoverable public presence beyond the landing page.
+
+### Listening statistics / Wrapped
+
+`get_user_wrapped()` is already written in the analytics schema. Build a UI for it — total songs listened to this year, most-played album, side flips, total time. Annual "Liri Wrapped" moment, shareable image card.
+
+### Sharing / Lyric Cards
+
+Tap any lyric line to generate a shareable image: the lyric text over the album art with Liri branding. Share to Instagram Stories, iMessage, etc. Natural virality. The lyric card should be generated client-side using Canvas so there's no server cost.
+
+### Record label / pressing info in the library
+
+`vinyl_releases` already has `record_label`, `catalog_number`, `edition`, `version_note`. Display these in `AlbumDetailSheet` — e.g. "Capitol Records · PCS 7088 · UK Original Pressing." Makes the app feel like a proper vinyl companion.
 
 ---
 
