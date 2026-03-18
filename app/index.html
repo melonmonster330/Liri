@@ -76,7 +76,7 @@
       "sb_publishable_C-NBnfg0ltAoUi46XQTUjA_ozjZW_Nd"
     );
 
-    const APP_VERSION = "1.47";
+    const APP_VERSION = "1.48";
 
     const PROXY_URL = window.Capacitor
       ? "https://getliri.app/api/recognize"
@@ -871,14 +871,14 @@
       useEffect(() => {
         if (!shouldAdvanceTrack) return;
         setShouldAdvanceTrack(false);
-        const tracks = albumTracksRef.current;
-        const idx    = currentTrackIndexRef.current;
+        // Prefer turntable tracks — already loaded, correct version (no fetchAlbumTracks race)
+        const tTracks = turntableTracksRef.current;
+        const tIdx    = turntableMatchedIdxRef.current;
+        const tracks  = tTracks.length > 0 ? tTracks : albumTracksRef.current;
+        const idx     = tTracks.length > 0 && tIdx >= 0 ? tIdx : currentTrackIndexRef.current;
         if (tracks.length > 0 && idx >= 0) {
-          // Let advanceToNextTrack decide: next track, side-end flip, or album-end
           advanceToNextTrack(tracks, idx);
         } else {
-          // No tracklist loaded — can't know if it's a side end or album end,
-          // so show the flip prompt immediately rather than listening to silence
           setSideEndReason("flip");
           setMode("side-end");
         }
@@ -1854,15 +1854,20 @@
         const nextSong = { title: nextTitle, artist: nextArtist, album: next.collectionName || "", artwork: nextArtwork };
 
         setCurrentTrackIndex(nextIdx);
-        // autoAdvanceFiredRef stays TRUE until startSync() runs — prevents any
-        // stale playbackTime state updates from firing a double-advance.
-        // Start slightly ahead to compensate for lyrics-fetch + state-update delay.
+        turntableMatchedIdxRef.current = nextIdx; // keep turntable index in sync
         detectedAtRef.current = Date.now();
         initialPosRef.current = AUTO_ADVANCE_OFFSET;
 
         setDetectedSong(nextSong);
         setSongDuration(nextDuration);
-        await loadLyrics(nextTitle, nextArtist);
+        // Use cached LRC if available — skips LRCLib entirely for known tracks
+        const cachedLrc = turntableLyricsCacheRef.current?.[next.trackId];
+        if (cachedLrc) {
+          const parsed = parseLRC(cachedLrc);
+          setLyrics(parsed); lyricsRef.current = parsed;
+        } else {
+          await loadLyrics(nextTitle, nextArtist);
+        }
 
         saveToHistory(user, nextSong);
         fetchHistory(user);
