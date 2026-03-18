@@ -414,14 +414,33 @@
         // 4. Merge iTunes + vinyl position data
         const norm = s => (s || "").toLowerCase().replace(/[^a-z0-9]/g, "");
 
+        // Detect whether Discogs used global sequential track numbers (B5, F23…)
+        // vs per-side numbers (B1, B2… / F1, F2…).
+        // If max track_number_on_side == total vinyl tracks → sequential.
+        // Sequential releases: match by 1-based track index, not title
+        // (Discogs titles differ from iTunes, e.g. no "[Taylor's Version]" suffix).
+        const maxTrackNum = vinylTracks.length > 0
+          ? Math.max(...vinylTracks.map(v => v.track_number_on_side || 0)) : 0;
+        const isSequential = maxTrackNum > 0 && maxTrackNum === vinylTracks.length;
+
         const merged = itunesTracks.map((t, i) => {
-          const vt = vinylTracks.find(v => norm(v.title) === norm(t.trackName));
+          const normTitle = norm(t.trackName);
+          // For sequential Discogs numbering: index match is exact (track i+1 = vinyl row i+1)
+          // For per-side numbering: title match is reliable
+          const vt = isSequential
+            ? vinylTracks.find(v => v.track_number_on_side === (i + 1))
+            : (vinylTracks.find(v => norm(v.title) === normTitle)
+               || vinylTracks.find(v => v.track_number_on_side === (i + 1)));
           let side, trackOnSide, position;
-          if (vt?.side && vt?.track_number_on_side) {
-            // Discogs data — side/position are always accurate
+          if (vt?.side) {
             side        = vt.side.toUpperCase();
-            trackOnSide = vt.track_number_on_side;
-            position    = vt.position || (side + trackOnSide);
+            // For sequential numbering, show per-side track number (A1 not A1, B5 → B1)
+            // Count how many tracks from the same side come before this one
+            const sideTrackNum = isSequential
+              ? vinylTracks.filter(v => v.side === vt.side && v.track_number_on_side <= vt.track_number_on_side).length
+              : vt.track_number_on_side;
+            trackOnSide = sideTrackNum;
+            position    = side + trackOnSide;
           } else {
             const d = deriveSideFromIndex(i, itunesTracks);
             side        = d.side;
