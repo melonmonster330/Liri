@@ -496,51 +496,59 @@
           if (existing) return existing.id;
 
           const norm = s => (s || "").toLowerCase().replace(/[^a-z0-9]/g, "");
-          const normAlbum  = norm(albumName);
-          const normArtist = norm(artistName);
+          const normAlbum     = norm(albumName);
+          const normArtist    = norm(artistName);
+          const normAlbumBase = norm(albumName.split("(")[0].trim());
 
-          // 1. Search Discogs for vinyl releases matching this album
+          // 1. Search Discogs
           const search = await fetch(
-            `/api/discogs-lookup?q=${encodeURIComponent(artistName + " " + albumName)}&per_page=8`
+            `/api/discogs-lookup?q=${encodeURIComponent(artistName + " " + albumName)}&per_page=10`
           ).then(r => r.json()).catch(() => null);
           if (!search?.results?.length) return null;
 
-          // 2. Pick best result — prefer where title contains both artist + album name
-          let best = null;
-          for (const result of search.results) {
-            const t = norm(result.title || "");
-            if (t.includes(normAlbum) && t.includes(normArtist)) { best = result; break; }
+          // 2. Shortlist candidates whose title contains artist + album (or base name)
+          const candidates = search.results.filter(r => {
+            const t = norm(r.title || "");
+            return t.includes(normArtist) &&
+              (t.includes(normAlbum) || t.includes(normAlbumBase));
+          }).slice(0, 5);
+          if (!candidates.length) candidates.push(...search.results.slice(0, 3));
+
+          // 3. Fetch details for candidates; pick the one with the MOST sides
+          //    (6-sided 3LP beats a 4-sided reissue without bonus tracks)
+          let bestDetail = null;
+          let bestSideCount = 0;
+          for (const candidate of candidates) {
+            const detail = await fetch(`/api/discogs-lookup?id=${candidate.id}`)
+              .then(r => r.json()).catch(() => null);
+            if (!detail?.tracklist?.length) continue;
+            const sideCount = new Set(
+              detail.tracklist
+                .map(t => (t.position || "").toUpperCase().match(/^([A-Z])/)?.[1])
+                .filter(Boolean)
+            ).size;
+            if (sideCount > bestSideCount) { bestSideCount = sideCount; bestDetail = detail; }
+            if (bestSideCount >= 6) break;
           }
-          if (!best) best = search.results[0];
+          if (!bestDetail || bestSideCount === 0) return null;
 
-          // 3. Fetch full release detail (includes tracklist with exact positions)
-          const detail = await fetch(`/api/discogs-lookup?id=${best.id}`)
-            .then(r => r.json()).catch(() => null);
-          if (!detail?.tracklist?.length) return null;
-
-          // 4. Require vinyl-style side positions
-          const hasSidePos = detail.tracklist.some(t => /^[A-Z]\d/i.test(t.position || ""));
+          const hasSidePos = bestDetail.tracklist.some(t => /^[A-Z]\d/i.test(t.position || ""));
           if (!hasSidePos) return null;
 
-          // 5. Insert vinyl_release
-          const sideLetters = [...new Set(
-            detail.tracklist
-              .map(t => (t.position || "").toUpperCase().match(/^([A-Z])/)?.[1])
-              .filter(Boolean)
-          )];
+          // 4. Insert vinyl_release
           const { data: rel, error: relErr } = await sb.from("vinyl_releases").insert({
             itunes_collection_id: String(collectionId),
             album_name: albumName,
             artist_name: artistName,
-            release_year: detail.year || null,
-            record_label: detail.labels?.[0]?.name || null,
-            disc_count: Math.ceil(sideLetters.length / 2) || 1,
+            release_year: bestDetail.year || null,
+            record_label: bestDetail.labels?.[0]?.name || null,
+            disc_count: Math.ceil(bestSideCount / 2) || 1,
           }).select("id").single();
           if (relErr || !rel) return null;
 
-          // 6. Insert vinyl_tracks — Discogs positions are ground truth (A1, B1, …)
+          // 5. Insert vinyl_tracks — Discogs positions are ground truth (A1, B1, …)
           const rows = [];
-          for (const track of detail.tracklist) {
+          for (const track of bestDetail.tracklist) {
             const pos = (track.position || "").toUpperCase();
             const m = pos.match(/^([A-Z])(\d+)/);
             if (!m) continue;
@@ -552,7 +560,7 @@
             }
             rows.push({
               release_id:           rel.id,
-              disc_number:          m[1].charCodeAt(0) - 64, // A→1, B→2, …
+              disc_number:          m[1].charCodeAt(0) - 64,
               side:                 m[1],
               position:             pos,
               track_number_on_side: parseInt(m[2]),
