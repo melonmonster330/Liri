@@ -76,7 +76,7 @@
       "sb_publishable_C-NBnfg0ltAoUi46XQTUjA_ozjZW_Nd"
     );
 
-    const APP_VERSION = "1.45";
+    const APP_VERSION = "1.46";
 
     const PROXY_URL = window.Capacitor
       ? "https://getliri.app/api/recognize"
@@ -482,6 +482,76 @@
         } catch { return null; }
       };
 
+      // ── Auto-populate vinyl side data from MusicBrainz ──────────────────────────────
+      // When an album is selected, query MusicBrainz for its vinyl tracklist (A1, B2…)
+      // and store it in vinyl_releases + vinyl_tracks so getSideInfo can use real data.
+      // Fire-and-forget — runs in background, silent on failure.
+      const autoPopulateVinylSides = async (collectionId, albumName, artistName) => {
+        try {
+          // Already in DB? Skip.
+          const { data: existing } = await sb.from("vinyl_releases")
+            .select("id").eq("itunes_collection_id", String(collectionId)).maybeSingle();
+          if (existing) return existing.id;
+
+          const headers = { "User-Agent": "Liri/1.45 (getliri.app)" };
+
+          // 1. Search MusicBrainz for this release
+          const q = encodeURIComponent(`artist:"${artistName}" AND release:"${albumName}"`);
+          const search = await fetch(
+            `https://musicbrainz.org/ws/2/release/?query=${q}&fmt=json&limit=10`,
+            { headers }
+          ).then(r => r.json()).catch(() => null);
+          if (!search?.releases?.length) return null;
+
+          // 2. Fetch full details for the top result (includes track positions)
+          const mbid = search.releases[0].id;
+          if (!mbid) return null;
+          const details = await fetch(
+            `https://musicbrainz.org/ws/2/release/${mbid}?inc=recordings+media&fmt=json`,
+            { headers }
+          ).then(r => r.json()).catch(() => null);
+          if (!details?.media?.length) return null;
+
+          // 3. Only proceed if tracks have vinyl-style positions (A1, B2…)
+          const hasSidePos = details.media.some(m =>
+            m.tracks?.some(t => /^[A-Z]\d/i.test(t.number || ""))
+          );
+          if (!hasSidePos) return null;
+
+          // 4. Insert vinyl_release record
+          const { data: rel, error: relErr } = await sb.from("vinyl_releases").insert({
+            itunes_collection_id: String(collectionId),
+            album_name: albumName,
+            artist_name: artistName,
+            disc_count: details.media.length,
+          }).select("id").single();
+          if (relErr || !rel) return null;
+
+          // 5. Insert vinyl_tracks with exact side/position data
+          const rows = [];
+          for (const medium of details.media) {
+            for (const track of (medium.tracks || [])) {
+              const pos      = (track.number || "").toUpperCase();
+              const sideM    = pos.match(/^([A-Z])/);
+              const numM     = pos.match(/(\d+)$/);
+              if (!sideM) continue;
+              rows.push({
+                release_id:           rel.id,
+                disc_number:          medium.position || 1,
+                side:                 sideM[1],
+                position:             pos,
+                track_number_on_side: numM ? parseInt(numM[1]) : 1,
+                title:                track.title,
+                duration_ms:          track.length || null,
+                itunes_track_id:      null,
+              });
+            }
+          }
+          if (rows.length > 0) await sb.from("vinyl_tracks").insert(rows);
+          return rel.id;
+        } catch { return null; }
+      };
+
       // Convert our DB track list into side-end indices that advanceToNextTrack can use.
       // Returns an array of iTunes track indices that are the last track of each side.
       const getDbSideEndIndices = (itunesTracks, dbTracks) => {
@@ -684,6 +754,19 @@
           }
 
           turntableTracksRef.current = tracks;
+
+          // Auto-populate vinyl side data from MusicBrainz (background)
+          const alb = turntableAlbumRef.current;
+          if (alb && tracks.length > 0) {
+            autoPopulateVinylSides(collectionId, alb.album_name, alb.artist_name)
+              .then(releaseId => {
+                if (releaseId) {
+                  fetchVinylRelease(String(collectionId)).then(db => {
+                    if (db?.vinyl_tracks?.length > 0) { setVinylDbRelease(db); albumTpsRef.current = 0; }
+                  });
+                }
+              });
+          }
 
           // Pre-load cached LRC from Supabase for this album
           const trackIds = tracks.map(t => t.trackId).filter(Boolean);
@@ -1633,6 +1716,14 @@
         const tTracks = turntableTracksRef.current;
         const tIdx    = turntableMatchedIdxRef.current;
         if (turntableAlbum && tTracks.length > 0 && tIdx >= 0) {
+          // Prefer vinyl DB — real side positions from MusicBrainz
+          if (vinylDbRelease?.vinyl_tracks?.length > 0) {
+            const norm = s => (s || "").toLowerCase().replace(/[^a-z0-9]/g, "");
+            const title = norm(tTracks[tIdx]?.trackName);
+            const dbT = vinylDbRelease.vinyl_tracks.find(t => norm(t.title) === title);
+            if (dbT?.side && dbT?.track_number_on_side)
+              return { side: dbT.side.toUpperCase(), track: dbT.track_number_on_side };
+          }
           return deriveSideFromIndex(tIdx, tTracks) || { track: tIdx + 1 };
         }
 
