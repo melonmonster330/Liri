@@ -76,7 +76,7 @@
       "sb_publishable_C-NBnfg0ltAoUi46XQTUjA_ozjZW_Nd"
     );
 
-    const APP_VERSION = "1.37";
+    const APP_VERSION = "1.38";
 
     const PROXY_URL = window.Capacitor
       ? "https://getliri.app/api/recognize"
@@ -288,9 +288,10 @@
         try { return JSON.parse(localStorage.getItem("liri_turntable") || "null"); }
         catch { return null; }
       });
-      const [showAlbumPicker, setShowAlbumPicker] = useState(false);
-      const [userLibrary, setUserLibrary]         = useState([]);
-      const [libLoading, setLibLoading]           = useState(false);
+      const [showAlbumPicker, setShowAlbumPicker]       = useState(false);
+      const [userLibrary, setUserLibrary]               = useState([]);
+      const [libLoading, setLibLoading]                 = useState(false);
+      const [turntableTracksLoading, setTurntableTracksLoading] = useState(false);
       const turntableAlbumRef       = useRef(turntableAlbum);
       const turntableTracksRef      = useRef([]); // iTunes tracks for selected album (pre-fetched)
       const turntableMatchedIdxRef  = useRef(-1);  // 0-based index of last vinyl-matched track
@@ -659,6 +660,7 @@
 
       // ── Turntable album: sync to ref + localStorage, fetch tracks ──
       const fetchTurntableTracks = async (collectionId) => {
+        setTurntableTracksLoading(true);
         try {
           const res = await fetch(`https://itunes.apple.com/lookup?id=${collectionId}&entity=song`).then(r => r.json());
           const tracks = (res.results || [])
@@ -666,16 +668,19 @@
             .sort((a, b) => (a.discNumber - b.discNumber) || (a.trackNumber - b.trackNumber));
           turntableTracksRef.current = tracks;
         } catch { turntableTracksRef.current = []; }
+        setTurntableTracksLoading(false);
       };
 
       useEffect(() => {
         turntableAlbumRef.current = turntableAlbum;
+        turntableMatchedIdxRef.current = -1; // reset stale match when album changes
         if (turntableAlbum) {
           localStorage.setItem("liri_turntable", JSON.stringify(turntableAlbum));
           fetchTurntableTracks(turntableAlbum.itunes_collection_id);
         } else {
           localStorage.removeItem("liri_turntable");
           turntableTracksRef.current = [];
+          setTurntableTracksLoading(false);
         }
       }, [turntableAlbum]);
 
@@ -2530,33 +2535,38 @@
                     {/* ── Turntable album selector ── */}
                     <div style={{ marginTop:"32px", marginBottom:"24px" }}>
                       {turntableAlbum ? (
-                        // Album selected — show it
-                        <div style={{ display:"flex", alignItems:"center", gap:"12px", background:"rgba(255,255,255,0.04)", border:"1px solid rgba(255,255,255,0.08)", borderRadius:"16px", padding:"12px 14px" }}>
+                        // Album selected — whole card is tappable to change
+                        <button onClick={() => { fetchUserLibrary(user.id); setShowAlbumPicker(true); }}
+                          style={{ width:"100%", display:"flex", alignItems:"center", gap:"12px", background:"rgba(255,255,255,0.04)", border:"1px solid rgba(255,255,255,0.08)", borderRadius:"16px", padding:"12px 14px", cursor:"pointer", fontFamily:"inherit", textAlign:"left" }}>
                           {turntableAlbum.artwork_url
                             ? <img src={turntableAlbum.artwork_url} alt="" style={{ width:48, height:48, borderRadius:8, objectFit:"cover", flexShrink:0 }} />
                             : <div style={{ width:48, height:48, borderRadius:8, background:"rgba(255,255,255,0.05)", display:"flex", alignItems:"center", justifyContent:"center", fontSize:22, flexShrink:0 }}>💿</div>
                           }
                           <div style={{ flex:1, minWidth:0, textAlign:"left" }}>
-                            <div style={{ fontSize:"13px", fontWeight:600, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>{turntableAlbum.album_name}</div>
+                            <div style={{ fontSize:"13px", fontWeight:600, color:"#f0e6d3", overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>{turntableAlbum.album_name}</div>
                             <div style={{ fontSize:"11px", color:"rgba(255,255,255,0.4)", marginTop:2, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>{turntableAlbum.artist_name}</div>
                           </div>
-                          <button onClick={() => setShowAlbumPicker(true)}
-                            style={{ background:"none", border:"none", color:"rgba(255,255,255,0.25)", fontSize:"11px", cursor:"pointer", fontFamily:"inherit", padding:"4px 2px", flexShrink:0 }}>
-                            Change
-                          </button>
-                        </div>
+                          {turntableTracksLoading
+                            ? <div style={{ width:14, height:14, borderRadius:"50%", border:"2px solid rgba(255,255,255,0.1)", borderTopColor:"#d4a846", animation:"spin 0.8s linear infinite", flexShrink:0 }} />
+                            : <span style={{ fontSize:"11px", color:"rgba(255,255,255,0.3)", flexShrink:0 }}>change</span>
+                          }
+                        </button>
                       ) : (
-                        // No album selected
+                        // No album selected — prominent call to action
                         <button onClick={() => { fetchUserLibrary(user.id); setShowAlbumPicker(true); }}
-                          style={{ width:"100%", display:"flex", alignItems:"center", gap:"10px", background:"rgba(255,255,255,0.03)", border:"1px dashed rgba(255,255,255,0.1)", borderRadius:"16px", padding:"12px 16px", cursor:"pointer", fontFamily:"inherit", color:"rgba(255,255,255,0.35)", fontSize:"13px", textAlign:"left" }}>
-                          <span style={{ fontSize:18, opacity:0.5 }}>💿</span>
-                          <span>What's on the turntable?</span>
+                          style={{ width:"100%", display:"flex", alignItems:"center", gap:"12px", background:"rgba(212,168,70,0.06)", border:"1px solid rgba(212,168,70,0.2)", borderRadius:"16px", padding:"14px 16px", cursor:"pointer", fontFamily:"inherit", textAlign:"left" }}>
+                          <div style={{ width:40, height:40, borderRadius:8, background:"rgba(212,168,70,0.1)", display:"flex", alignItems:"center", justifyContent:"center", fontSize:20, flexShrink:0 }}>💿</div>
+                          <div>
+                            <div style={{ fontSize:"13px", fontWeight:600, color:"rgba(212,168,70,0.9)" }}>What's on the turntable?</div>
+                            <div style={{ fontSize:"11px", color:"rgba(255,255,255,0.35)", marginTop:2 }}>Tap to choose a record from your library</div>
+                          </div>
                         </button>
                       )}
                     </div>
 
-                    <button onClick={() => startListening(false)} style={{ background:"linear-gradient(135deg, #d4a846, #c9807a)", color:"#080810", border:"none", borderRadius:"50px", padding:"18px 52px", fontSize:"15px", fontWeight:"700", letterSpacing:"1px", cursor:"pointer", fontFamily:"inherit", boxShadow:"0 8px 32px rgba(212,168,70,0.3)", width:"100%" }}>
-                      {turntableAlbum ? "Find my place" : "Listen"}
+                    <button onClick={() => !turntableTracksLoading && startListening(false)}
+                      style={{ background: turntableTracksLoading ? "rgba(255,255,255,0.08)" : "linear-gradient(135deg, #d4a846, #c9807a)", color: turntableTracksLoading ? "rgba(255,255,255,0.3)" : "#080810", border:"none", borderRadius:"50px", padding:"18px 52px", fontSize:"15px", fontWeight:"700", letterSpacing:"1px", cursor: turntableTracksLoading ? "default" : "pointer", fontFamily:"inherit", boxShadow: turntableTracksLoading ? "none" : "0 8px 32px rgba(212,168,70,0.3)", width:"100%", transition:"all 0.2s" }}>
+                      {turntableTracksLoading ? "Loading tracks…" : turntableAlbum ? "Find my place" : "Listen"}
                     </button>
                     {vinylMode && (
                       <div style={{ marginTop:"16px", fontSize:"12px", color:"rgba(212,168,70,0.5)", letterSpacing:"1px" }}>✦ Vinyl Auto Mode on</div>
