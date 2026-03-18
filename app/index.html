@@ -495,71 +495,71 @@
             .select("id").eq("itunes_collection_id", String(collectionId)).maybeSingle();
           if (existing) return existing.id;
 
-          const headers = { "User-Agent": "Liri/1.45 (getliri.app)" };
+          const norm = s => (s || "").toLowerCase().replace(/[^a-z0-9]/g, "");
+          const normAlbum  = norm(albumName);
+          const normArtist = norm(artistName);
 
-          // 1. Search MusicBrainz for this release
-          const q = encodeURIComponent(`artist:"${artistName}" AND release:"${albumName}"`);
+          // 1. Search Discogs for vinyl releases matching this album
           const search = await fetch(
-            `https://musicbrainz.org/ws/2/release/?query=${q}&fmt=json&limit=10`,
-            { headers }
+            `/api/discogs-lookup?q=${encodeURIComponent(artistName + " " + albumName)}&per_page=8`
           ).then(r => r.json()).catch(() => null);
-          if (!search?.releases?.length) return null;
+          if (!search?.results?.length) return null;
 
-          // 2. Fetch full details for the top result (includes track positions)
-          const mbid = search.releases[0].id;
-          if (!mbid) return null;
-          const details = await fetch(
-            `https://musicbrainz.org/ws/2/release/${mbid}?inc=recordings+media&fmt=json`,
-            { headers }
-          ).then(r => r.json()).catch(() => null);
-          if (!details?.media?.length) return null;
+          // 2. Pick best result — prefer where title contains both artist + album name
+          let best = null;
+          for (const result of search.results) {
+            const t = norm(result.title || "");
+            if (t.includes(normAlbum) && t.includes(normArtist)) { best = result; break; }
+          }
+          if (!best) best = search.results[0];
 
-          // 3. Only proceed if tracks have vinyl-style positions (A1, B2…)
-          const hasSidePos = details.media.some(m =>
-            m.tracks?.some(t => /^[A-Z]\d/i.test(t.number || ""))
-          );
+          // 3. Fetch full release detail (includes tracklist with exact positions)
+          const detail = await fetch(`/api/discogs-lookup?id=${best.id}`)
+            .then(r => r.json()).catch(() => null);
+          if (!detail?.tracklist?.length) return null;
+
+          // 4. Require vinyl-style side positions
+          const hasSidePos = detail.tracklist.some(t => /^[A-Z]\d/i.test(t.position || ""));
           if (!hasSidePos) return null;
 
-          // 4. Insert vinyl_release record
+          // 5. Insert vinyl_release
+          const sideLetters = [...new Set(
+            detail.tracklist
+              .map(t => (t.position || "").toUpperCase().match(/^([A-Z])/)?.[1])
+              .filter(Boolean)
+          )];
           const { data: rel, error: relErr } = await sb.from("vinyl_releases").insert({
             itunes_collection_id: String(collectionId),
             album_name: albumName,
             artist_name: artistName,
-            disc_count: details.media.length,
+            release_year: detail.year || null,
+            record_label: detail.labels?.[0]?.name || null,
+            disc_count: Math.ceil(sideLetters.length / 2) || 1,
           }).select("id").single();
           if (relErr || !rel) return null;
 
-          // 5. Insert vinyl_tracks with side/position data
+          // 6. Insert vinyl_tracks — Discogs positions are ground truth (A1, B1, …)
           const rows = [];
-          for (const medium of details.media) {
-            const medPos    = medium.position || 1;
-            const medTracks = medium.tracks || [];
-            // Single-side medium: all tracks share one letter → position-derived side
-            // Multi-side medium: A+B on same LP → trust the track letter
-            const letters = new Set(
-              medTracks.map(t => (t.number || "").match(/^([A-Z])/i)?.[1]?.toUpperCase()).filter(Boolean)
-            );
-            const isSingleSide = letters.size === 1;
-            for (const track of medTracks) {
-              const pos    = (track.number || "").toUpperCase();
-              const letterM = pos.match(/^([A-Z])/);
-              const numM   = pos.match(/(\d+)$/);
-              if (!numM) continue;
-              const trackNum = parseInt(numM[1]);
-              const side = isSingleSide
-                ? String.fromCharCode(64 + medPos)
-                : (letterM?.[1] || String.fromCharCode(64 + medPos));
-              rows.push({
-                release_id:           rel.id,
-                disc_number:          medPos,
-                side,
-                position:             side + trackNum,
-                track_number_on_side: trackNum,
-                title:                track.title,
-                duration_ms:          track.length || null,
-                itunes_track_id:      null,
-              });
+          for (const track of detail.tracklist) {
+            const pos = (track.position || "").toUpperCase();
+            const m = pos.match(/^([A-Z])(\d+)/);
+            if (!m) continue;
+            let durationMs = null;
+            if (track.duration) {
+              const parts = track.duration.split(":");
+              if (parts.length === 2)
+                durationMs = (parseInt(parts[0]) * 60 + parseInt(parts[1])) * 1000;
             }
+            rows.push({
+              release_id:           rel.id,
+              disc_number:          m[1].charCodeAt(0) - 64, // A→1, B→2, …
+              side:                 m[1],
+              position:             pos,
+              track_number_on_side: parseInt(m[2]),
+              title:                track.title,
+              duration_ms:          durationMs,
+              itunes_track_id:      null,
+            });
           }
           if (rows.length > 0) await sb.from("vinyl_tracks").insert(rows);
           return rel.id;
@@ -1749,11 +1749,8 @@
             const norm = s => (s || "").toLowerCase().replace(/[^a-z0-9]/g, "");
             const title = norm(tTracks[tIdx]?.trackName);
             const dbT = vinylDbRelease.vinyl_tracks.find(t => norm(t.title) === title);
-            if (dbT?.disc_number && dbT?.track_number_on_side) {
-              const sidesOnDisc = (vinylDbRelease.vinyl_tracks.filter(t => t.disc_number === dbT.disc_number).reduce((s, t) => { s.add(t.side?.toUpperCase()); return s; }, new Set())).size;
-              const side = sidesOnDisc === 1 ? String.fromCharCode(64 + dbT.disc_number) : dbT.side?.toUpperCase();
-              return { side, track: dbT.track_number_on_side };
-            }
+            if (dbT?.side && dbT?.track_number_on_side)
+              return { side: dbT.side.toUpperCase(), track: dbT.track_number_on_side };
           }
           return deriveSideFromIndex(tIdx, tTracks) || { track: tIdx + 1 };
         }
@@ -1766,10 +1763,8 @@
             const dbTrack = vinylDbRelease.vinyl_tracks.find(t =>
               t.title?.toLowerCase() === title
             );
-            if (dbTrack?.disc_number && dbTrack?.track_number_on_side) {
-              const sidesOnDisc = (vinylDbRelease.vinyl_tracks.filter(t => t.disc_number === dbTrack.disc_number).reduce((s, t) => { s.add(t.side?.toUpperCase()); return s; }, new Set())).size;
-              const side = sidesOnDisc === 1 ? String.fromCharCode(64 + dbTrack.disc_number) : dbTrack.side?.toUpperCase();
-              return { side, track: dbTrack.track_number_on_side };
+            if (dbTrack?.side && dbTrack?.track_number_on_side) {
+              return { side: dbTrack.side.toUpperCase(), track: dbTrack.track_number_on_side };
             }
           }
           // No DB data — derive side from duration heuristic

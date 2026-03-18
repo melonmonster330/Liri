@@ -137,6 +137,11 @@ CREATE POLICY "Submitter update releases"
   ON vinyl_releases FOR UPDATE
   USING (auth.uid() = submitted_by);
 
+-- Allow any authenticated user to delete a release (needed to replace stale MusicBrainz data)
+CREATE POLICY "Auth delete releases"
+  ON vinyl_releases FOR DELETE
+  USING (auth.uid() IS NOT NULL);
+
 -- vinyl_tracks: same pattern
 CREATE POLICY "Public read tracks"
   ON vinyl_tracks FOR SELECT USING (true);
@@ -144,6 +149,11 @@ CREATE POLICY "Public read tracks"
 CREATE POLICY "Auth insert tracks"
   ON vinyl_tracks FOR INSERT
   WITH CHECK (auth.uid() IS NOT NULL);
+
+-- Allow authenticated users to delete tracks (cleanup before re-populating)
+CREATE POLICY "Auth delete tracks"
+  ON vinyl_tracks FOR DELETE
+  USING (auth.uid() IS NOT NULL);
 
 -- user_vinyl_collections: users manage only their own rows
 CREATE POLICY "Own collection only"
