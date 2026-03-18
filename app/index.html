@@ -76,7 +76,7 @@
       "sb_publishable_C-NBnfg0ltAoUi46XQTUjA_ozjZW_Nd"
     );
 
-    const APP_VERSION = "1.35";
+    const APP_VERSION = "1.36";
 
     const PROXY_URL = window.Capacitor
       ? "https://getliri.app/api/recognize"
@@ -876,24 +876,34 @@
         const noLrc = withLyrics.filter(t => !t.lrcMatch).map(t => t.trackName);
         if (logRef && noLrc.length) logRef.push(`stratV: no LRC for: ${noLrc.join(", ")}`);
 
-        // Score each track using only distinctive words (> 4 chars).
-        // Short words like "love", "know", "like" appear in every Taylor Swift song and
-        // cause wrong tracks to score just as high as the correct one.
-        const scoreWords = tWords.filter(w => w.length > 4);
+        // Score each track using consecutive word pairs (bigrams) from the transcript.
+        // Single-word matching is too loose — "love", "know", "night" appear in every song.
+        // Adjacent word pairs like "shake it", "out too late", "knew you were" are specific
+        // to one section of one song and far harder to match by coincidence.
+        const allWords = transcript.toLowerCase().replace(/[^\w\s]/g, "").split(/\s+/).filter(w => w.length > 1);
+        const bigrams = [];
+        for (let i = 0; i < allWords.length - 1; i++) {
+          bigrams.push(allWords[i] + " " + allWords[i + 1]);
+        }
+        if (logRef) logRef.push(`stratV: ${bigrams.length} bigrams from transcript`);
+
         let bestTrack = null, bestScore = 0, secondScore = 0;
         for (const t of withLyrics) {
           if (!t.lrcMatch?.syncedLyrics) continue;
           const lyricText = t.lrcMatch.syncedLyrics.toLowerCase().replace(/\[[\d:\.]+\]/g, "");
-          const hits = scoreWords.filter(w => lyricText.includes(w)).length;
+          const hits = bigrams.filter(bg => lyricText.includes(bg)).length;
           if (logRef) logRef.push(`stratV: "${t.trackName}" score ${hits}`);
           if (hits > bestScore) { secondScore = bestScore; bestScore = hits; bestTrack = t; }
           else if (hits > secondScore) { secondScore = hits; }
         }
-        console.log("[stratV] scores:", withLyrics.map(t => `${t.trackName}: ${scoreWords.filter(w => (t.lrcMatch?.syncedLyrics||"").toLowerCase().includes(w)).length}`).join(" | "));
+        console.log("[stratV] bigram scores:", withLyrics.map(t => {
+          const lt = (t.lrcMatch?.syncedLyrics||"").toLowerCase().replace(/\[[\d:\.]+\]/g,"");
+          return `${t.trackName}: ${bigrams.filter(bg => lt.includes(bg)).length}`;
+        }).join(" | "));
 
-        // Require winner to have at least 3 hits AND beat 2nd place by 2+ points.
-        // A margin of 1 is too fragile — common words can push the wrong track to near-tie.
-        if (!bestTrack || bestScore < 3 || (bestScore - secondScore) < 2) return null;
+        // Require at least 2 bigram matches AND a clear margin over runner-up.
+        // 2 bigrams = 3 consecutive words in common — very unlikely to be coincidence.
+        if (!bestTrack || bestScore < 2 || (bestScore - secondScore) < 2) return null;
 
         // Window-based position finding.
         // Use longer/distinctive words only (> 4 chars) — short words like "the", "you", "and"
