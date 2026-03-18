@@ -76,7 +76,7 @@
       "sb_publishable_C-NBnfg0ltAoUi46XQTUjA_ozjZW_Nd"
     );
 
-    const APP_VERSION = "1.32";
+    const APP_VERSION = "1.33";
 
     const PROXY_URL = window.Capacitor
       ? "https://getliri.app/api/recognize"
@@ -853,9 +853,10 @@
       // for ALL tracks in parallel and score the Whisper transcript against each.
       // Returns { track, lrcMatch, lyrics, startPos, score } or null.
       // Skips GPT entirely — much more accurate for obscure / re-recorded albums.
-      const matchTranscriptToTracks = async (transcript, tracks) => {
-        const tWords = transcript.toLowerCase().replace(/[^\w\s]/g, "").split(/\s+/).filter(w => w.length > 3);
-        if (tWords.length < 3) return null;
+      const matchTranscriptToTracks = async (transcript, tracks, logRef) => {
+        const tWords = transcript.toLowerCase().replace(/[^\w\s]/g, "").split(/\s+/).filter(w => w.length > 2);
+        if (logRef) logRef.push(`stratV: transcript "${transcript.slice(0, 60)}…" → ${tWords.length} words`);
+        if (tWords.length < 2) return null;
 
         // Parallel LRCLib fetch for every track on the album
         const withLyrics = await Promise.all(tracks.map(async t => {
@@ -872,16 +873,20 @@
           } catch { return { ...t, lrcMatch: null }; }
         }));
 
+        const noLrc = withLyrics.filter(t => !t.lrcMatch).map(t => t.trackName);
+        if (logRef && noLrc.length) logRef.push(`stratV: no LRC for: ${noLrc.join(", ")}`);
+
         // Score each track by word overlap
         let bestTrack = null, bestScore = 0;
         for (const t of withLyrics) {
           if (!t.lrcMatch?.syncedLyrics) continue;
           const lyricText = t.lrcMatch.syncedLyrics.toLowerCase().replace(/\[[\d:\.]+\]/g, "");
           const hits = tWords.filter(w => lyricText.includes(w)).length;
+          if (logRef) logRef.push(`stratV: "${t.trackName}" score ${hits}`);
           if (hits > bestScore) { bestScore = hits; bestTrack = t; }
         }
 
-        if (!bestTrack || bestScore < 4) return null;
+        if (!bestTrack || bestScore < 3) return null;
 
         // Window-based position finding.
         // The Whisper recording is ~20s ending at "now", so we slide a 20s window
@@ -944,7 +949,7 @@
           const turntableTracks = turntableTracksRef.current;
           if (turntableTracks.length > 0) {
             attemptLogRef.current.push(`whisper: trying vinyl-aware match against ${turntableTracks.length} tracks`);
-            const vmResult = await matchTranscriptToTracks(transcribed, turntableTracks);
+            const vmResult = await matchTranscriptToTracks(transcribed, turntableTracks, attemptLogRef.current);
             if (vmResult) {
               if (recognitionWonRef.current) return false;
               recognitionWonRef.current = true;
@@ -985,7 +990,8 @@
               }).catch(() => {});
               return true;
             }
-            attemptLogRef.current.push(`whisper: vinyl-aware match failed (score too low) — falling through`);
+            attemptLogRef.current.push(`whisper: vinyl-aware match failed — stopping (turntable set, not guessing)`);
+            return false;
           }
 
           // 2. Find the song on LRCLib
