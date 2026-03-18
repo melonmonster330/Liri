@@ -76,7 +76,7 @@
       "sb_publishable_C-NBnfg0ltAoUi46XQTUjA_ozjZW_Nd"
     );
 
-    const APP_VERSION = "1.43";
+    const APP_VERSION = "1.44";
 
     const PROXY_URL = window.Capacitor
       ? "https://getliri.app/api/recognize"
@@ -1376,7 +1376,7 @@
               // In non-turntable mode: fire once at 20s only (GPT/Strategy C need a good transcript).
               const hasTurntable = turntableTracksRef.current.length > 0;
               const shouldFireWhisper = hasTurntable
-                ? (attempts >= 3 && !bgWhisperStarted && !recognitionWonRef.current)
+                ? (attempts >= 2 && !bgWhisperStarted && !recognitionWonRef.current)
                 : (attempts === 4 && !bgWhisperStarted);
               if (shouldFireWhisper) {
                 bgWhisperStarted = true;
