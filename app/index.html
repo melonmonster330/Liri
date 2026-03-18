@@ -76,7 +76,7 @@
       "sb_publishable_C-NBnfg0ltAoUi46XQTUjA_ozjZW_Nd"
     );
 
-    const APP_VERSION = "1.42";
+    const APP_VERSION = "1.43";
 
     const PROXY_URL = window.Capacitor
       ? "https://getliri.app/api/recognize"
@@ -928,22 +928,31 @@
         }
         if (logRef) logRef.push(`stratV: ${bigrams.length} bigrams from transcript`);
 
-        let bestTrack = null, bestScore = 0, secondScore = 0;
+        // Score every track
+        const trackScores = new Map();
+        let bestTrack = null, bestScore = 0;
         for (const t of withLyrics) {
           if (!t.lrcMatch?.syncedLyrics) continue;
           const lyricText = t.lrcMatch.syncedLyrics.toLowerCase().replace(/\[[\d:\.]+\]/g, "");
           const hits = bigrams.filter(bg => lyricText.includes(bg)).length;
+          trackScores.set(t, hits);
           if (logRef) logRef.push(`stratV: "${t.trackName}" score ${hits}`);
-          if (hits > bestScore) { secondScore = bestScore; bestScore = hits; bestTrack = t; }
-          else if (hits > secondScore) { secondScore = hits; }
+          if (hits > bestScore) { bestScore = hits; bestTrack = t; }
         }
-        console.log("[stratV] bigram scores:", withLyrics.map(t => {
-          const lt = (t.lrcMatch?.syncedLyrics||"").toLowerCase().replace(/\[[\d:\.]+\]/g,"");
-          return `${t.trackName}: ${bigrams.filter(bg => lt.includes(bg)).length}`;
-        }).join(" | "));
 
-        // Require at least 2 bigram matches AND a clear margin over runner-up.
-        // 2 bigrams = 3 consecutive words in common — very unlikely to be coincidence.
+        // Runner-up: best score from a DIFFERENT base song.
+        // Alternate arrangements (Piano Version, Live, Acoustic) of the same song share
+        // identical lyrics and will tie — exclude them so they don't kill the margin check.
+        const baseTitle = t => (t.trackName || "").toLowerCase().replace(/[\(\[].*/, "").trim();
+        const winnerBase = bestTrack ? baseTitle(bestTrack) : "";
+        let secondScore = 0;
+        for (const [t, score] of trackScores) {
+          if (t === bestTrack) continue;
+          if (baseTitle(t) === winnerBase) continue; // same song, different arrangement
+          if (score > secondScore) secondScore = score;
+        }
+
+        // Require at least 2 bigram matches AND a clear margin over the best different song.
         if (!bestTrack || bestScore < 2 || (bestScore - secondScore) < 2) return null;
 
         // Window-based position finding.
