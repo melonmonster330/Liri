@@ -76,7 +76,7 @@
       "sb_publishable_C-NBnfg0ltAoUi46XQTUjA_ozjZW_Nd"
     );
 
-    const APP_VERSION = "1.33";
+    const APP_VERSION = "1.34";
 
     const PROXY_URL = window.Capacitor
       ? "https://getliri.app/api/recognize"
@@ -889,10 +889,12 @@
         if (!bestTrack || bestScore < 3) return null;
 
         // Window-based position finding.
-        // The Whisper recording is ~20s ending at "now", so we slide a 20s window
-        // through the winning track's LRC lines and find where word-overlap peaks.
-        // The END of that window ≈ the listener's current position.
+        // Use longer/distinctive words only (> 4 chars) — short words like "the", "you", "and"
+        // appear in every 20s window and make the score uniform, producing random results.
+        // Longer words (e.g. "forever", "trouble", "dancing") are specific enough to peak
+        // in the correct window even when shorter words repeat across choruses.
         const lyrics = parseLRC(bestTrack.lrcMatch.syncedLyrics);
+        const posWords = transcript.toLowerCase().replace(/[^\w\s]/g, "").split(/\s+/).filter(w => w.length > 4);
         const LISTEN_WINDOW = 20; // seconds of audio captured
         let bestWindowScore = 0, startPos = 0;
         for (let wi = 0; wi < lyrics.length; wi++) {
@@ -903,13 +905,14 @@
             .filter(l => l.time >= windowStart && l.time <= windowEnd)
             .map(l => l.text).join(" ")
             .toLowerCase().replace(/[^\w\s]/g, "");
-          const score = tWords.filter(w => windowText.includes(w)).length;
+          const score = posWords.filter(w => windowText.includes(w)).length;
           if (score > bestWindowScore) {
             bestWindowScore = score;
             // +2s buffer accounts for the ~1-2s of processing latency
             startPos = Math.max(0, windowEnd + 2);
           }
         }
+        if (logRef) logRef.push(`stratV: position window score ${bestWindowScore}, startPos ${startPos.toFixed(1)}s (${posWords.length} distinctive words)`);
 
         return { track: bestTrack, lrcMatch: bestTrack.lrcMatch, lyrics, startPos, score: bestScore };
       };
@@ -1274,14 +1277,19 @@
               setListenAttempt(attempts);
               nextAttemptAt = (attempts + 1) * ATTEMPT_INTERVAL;
 
-              // ── Background Whisper: fire at attempt 4 (20s) in parallel with ACRCloud ──
-              // 20s gives Whisper more lyric context than 15s, improving Strategy A/C match rates.
-              // Whisper + GPT run independently — if they find a match before ACRCloud
-              // does, recognitionWonRef catches the win and ACRCloud is skipped.
-              if (attempts === 4 && !bgWhisperStarted) {
+              // ── Background Whisper: fire starting at attempt 4 (20s), retry each attempt ──
+              // In turntable mode: retry every 5s (at 20s, 25s, 30s) — the first blob may have
+              // landed in an intro/instrumental; a later blob with more lyric content often succeeds.
+              // In non-turntable mode: fire once at 20s only (GPT/Strategy C need a good transcript).
+              const hasTurntable = turntableTracksRef.current.length > 0;
+              const shouldFireWhisper = hasTurntable
+                ? (attempts >= 4 && !bgWhisperStarted && !recognitionWonRef.current)
+                : (attempts === 4 && !bgWhisperStarted);
+              if (shouldFireWhisper) {
                 bgWhisperStarted = true;
                 const bgBlob = new Blob([...allChunks], { type: mimeType || "audio/webm" });
                 tryLyricsTranscription(bgBlob, isAutoAdvance).then(found => {
+                  bgWhisperStarted = false; // allow retry on next attempt if this one failed
                   if (found && listenSessionRef.current === session) {
                     // Whisper won the race — shut down ACRCloud loop
                     clearInterval(progressTimerRef.current);
