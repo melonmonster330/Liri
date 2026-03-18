@@ -76,7 +76,7 @@
       "sb_publishable_C-NBnfg0ltAoUi46XQTUjA_ozjZW_Nd"
     );
 
-    const APP_VERSION = "1.44";
+    const APP_VERSION = "1.45";
 
     const PROXY_URL = window.Capacitor
       ? "https://getliri.app/api/recognize"
@@ -961,25 +961,24 @@
         // Longer words (e.g. "forever", "trouble", "dancing") are specific enough to peak
         // in the correct window even when shorter words repeat across choruses.
         const lyrics = parseLRC(bestTrack.lrcMatch.syncedLyrics);
-        const posWords = transcript.toLowerCase().replace(/[^\w\s]/g, "").split(/\s+/).filter(w => w.length > 4);
+        // Use transcript bigrams for position — consecutive word pairs are far more
+        // location-specific than individual words that repeat across verses/chorus.
         const LISTEN_WINDOW = 20; // seconds of audio captured
         let bestWindowScore = 0, startPos = 0;
         for (let wi = 0; wi < lyrics.length; wi++) {
           const windowEnd   = lyrics[wi].time;
           const windowStart = windowEnd - LISTEN_WINDOW;
-          // Collect all lines whose timestamp falls inside this window
           const windowText  = lyrics
             .filter(l => l.time >= windowStart && l.time <= windowEnd)
             .map(l => l.text).join(" ")
             .toLowerCase().replace(/[^\w\s]/g, "");
-          const score = posWords.filter(w => windowText.includes(w)).length;
+          const score = bigrams.filter(bg => windowText.includes(bg)).length;
           if (score > bestWindowScore) {
             bestWindowScore = score;
-            // +2s buffer accounts for the ~1-2s of processing latency
             startPos = Math.max(0, windowEnd + 2);
           }
         }
-        if (logRef) logRef.push(`stratV: position window score ${bestWindowScore}, startPos ${startPos.toFixed(1)}s (${posWords.length} distinctive words)`);
+        if (logRef) logRef.push(`stratV: position window score ${bestWindowScore}, startPos ${startPos.toFixed(1)}s`);
 
         return { track: bestTrack, lrcMatch: bestTrack.lrcMatch, lyrics, startPos, score: bestScore };
       };
@@ -1376,7 +1375,7 @@
               // In non-turntable mode: fire once at 20s only (GPT/Strategy C need a good transcript).
               const hasTurntable = turntableTracksRef.current.length > 0;
               const shouldFireWhisper = hasTurntable
-                ? (attempts >= 2 && !bgWhisperStarted && !recognitionWonRef.current)
+                ? (attempts >= 1 && !bgWhisperStarted && !recognitionWonRef.current)
                 : (attempts === 4 && !bgWhisperStarted);
               if (shouldFireWhisper) {
                 bgWhisperStarted = true;
@@ -1668,16 +1667,28 @@
         }
         // Short releases (singles, EPs ≤4 tracks) are single-sided — just mark album-end
         if (tracks.length <= 4) return [tracks.length - 1];
-        // Auto: split into 2 sides by cumulative duration
+        // Estimate number of sides from total runtime: typical vinyl side = ~20 min
         const totalMs = tracks.reduce((s, t) => s + (t.trackTimeMillis || 0), 0);
-        const midIdx = Math.ceil(tracks.length / 2) - 1;
-        if (!totalMs) return [Math.max(1, midIdx), tracks.length - 1]; // never split at track 0
+        const SIDE_MS  = 20 * 60 * 1000;
+        const numSides = totalMs > 0 ? Math.max(2, Math.round(totalMs / SIDE_MS)) : 2;
+        if (!totalMs) {
+          // No duration data — split evenly by track count
+          const perSide = Math.ceil(tracks.length / numSides);
+          const ends = [];
+          for (let i = perSide - 1; i < tracks.length - 1; i += perSide) ends.push(i);
+          ends.push(tracks.length - 1);
+          return ends;
+        }
+        // Split by cumulative duration, targeting totalMs/numSides per side
+        const targetMs = totalMs / numSides;
+        const ends = [];
         let cumulative = 0;
         for (let i = 0; i < tracks.length - 1; i++) {
-          cumulative += (tracks[i].trackTimeMillis || 0);
-          if (cumulative >= totalMs / 2) return [Math.max(1, i), tracks.length - 1];
+          cumulative += tracks[i].trackTimeMillis || 0;
+          if (cumulative >= targetMs * (ends.length + 1) && ends.length < numSides - 1) ends.push(i);
         }
-        return [Math.max(1, midIdx), tracks.length - 1];
+        ends.push(tracks.length - 1);
+        return ends;
       };
 
       // ── Advance to the next track using the known tracklist (no re-listening) ──
