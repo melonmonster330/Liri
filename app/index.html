@@ -76,7 +76,7 @@
       "sb_publishable_C-NBnfg0ltAoUi46XQTUjA_ozjZW_Nd"
     );
 
-    const APP_VERSION = "1.34";
+    const APP_VERSION = "1.35";
 
     const PROXY_URL = window.Capacitor
       ? "https://getliri.app/api/recognize"
@@ -876,17 +876,24 @@
         const noLrc = withLyrics.filter(t => !t.lrcMatch).map(t => t.trackName);
         if (logRef && noLrc.length) logRef.push(`stratV: no LRC for: ${noLrc.join(", ")}`);
 
-        // Score each track by word overlap
-        let bestTrack = null, bestScore = 0;
+        // Score each track using only distinctive words (> 4 chars).
+        // Short words like "love", "know", "like" appear in every Taylor Swift song and
+        // cause wrong tracks to score just as high as the correct one.
+        const scoreWords = tWords.filter(w => w.length > 4);
+        let bestTrack = null, bestScore = 0, secondScore = 0;
         for (const t of withLyrics) {
           if (!t.lrcMatch?.syncedLyrics) continue;
           const lyricText = t.lrcMatch.syncedLyrics.toLowerCase().replace(/\[[\d:\.]+\]/g, "");
-          const hits = tWords.filter(w => lyricText.includes(w)).length;
+          const hits = scoreWords.filter(w => lyricText.includes(w)).length;
           if (logRef) logRef.push(`stratV: "${t.trackName}" score ${hits}`);
-          if (hits > bestScore) { bestScore = hits; bestTrack = t; }
+          if (hits > bestScore) { secondScore = bestScore; bestScore = hits; bestTrack = t; }
+          else if (hits > secondScore) { secondScore = hits; }
         }
+        console.log("[stratV] scores:", withLyrics.map(t => `${t.trackName}: ${scoreWords.filter(w => (t.lrcMatch?.syncedLyrics||"").toLowerCase().includes(w)).length}`).join(" | "));
 
-        if (!bestTrack || bestScore < 3) return null;
+        // Require winner to have at least 3 hits AND beat 2nd place by 2+ points.
+        // A margin of 1 is too fragile — common words can push the wrong track to near-tie.
+        if (!bestTrack || bestScore < 3 || (bestScore - secondScore) < 2) return null;
 
         // Window-based position finding.
         // Use longer/distinctive words only (> 4 chars) — short words like "the", "you", "and"
