@@ -169,6 +169,43 @@ CREATE TRIGGER set_updated_at
 -- Used by vinyl.html to sort releases by most played on Liri.
 -- Run this once in the Supabase SQL editor to create the RPC.
 -- -----------------------------------------------------------
+-- -----------------------------------------------------------
+-- liri_lyric_cache  — cached LRC lyrics from successful Strategy V matches
+-- Global (no user_id) — one row per iTunes track ID, shared across all users.
+-- Populated automatically when Liri successfully identifies a track via vinyl-
+-- aware matching; used to skip LRCLib on subsequent listens to the same album.
+-- -----------------------------------------------------------
+CREATE TABLE IF NOT EXISTS liri_lyric_cache (
+  itunes_track_id       bigint      PRIMARY KEY,
+  itunes_collection_id  bigint      NOT NULL,
+  track_name            text        NOT NULL,
+  artist_name           text        NOT NULL,
+  album_name            text,
+  track_number          int,
+  disc_number           int,
+  synced_lyrics         text        NOT NULL,
+  cached_at             timestamptz NOT NULL DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS idx_lyric_cache_collection
+  ON liri_lyric_cache (itunes_collection_id);
+
+ALTER TABLE liri_lyric_cache ENABLE ROW LEVEL SECURITY;
+
+-- Anyone can read; authenticated users can insert/update
+CREATE POLICY "Public read lyric cache"
+  ON liri_lyric_cache FOR SELECT USING (true);
+
+CREATE POLICY "Auth upsert lyric cache"
+  ON liri_lyric_cache FOR INSERT
+  WITH CHECK (auth.uid() IS NOT NULL);
+
+CREATE POLICY "Auth update lyric cache"
+  ON liri_lyric_cache FOR UPDATE
+  USING (auth.uid() IS NOT NULL);
+
+-- -----------------------------------------------------------
+
 CREATE OR REPLACE FUNCTION get_collection_play_counts()
 RETURNS TABLE(collection_id text, play_count bigint)
 LANGUAGE sql STABLE

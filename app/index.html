@@ -76,7 +76,7 @@
       "sb_publishable_C-NBnfg0ltAoUi46XQTUjA_ozjZW_Nd"
     );
 
-    const APP_VERSION = "1.40";
+    const APP_VERSION = "1.41";
 
     const PROXY_URL = window.Capacitor
       ? "https://getliri.app/api/recognize"
@@ -295,6 +295,7 @@
       const turntableAlbumRef       = useRef(turntableAlbum);
       const turntableTracksRef      = useRef([]); // iTunes tracks for selected album (pre-fetched)
       const turntableMatchedIdxRef  = useRef(-1);  // 0-based index of last vinyl-matched track
+      const turntableLyricsCacheRef = useRef({});  // trackId → syncedLyrics string (from Supabase cache)
       const autoRetryCountRef                 = useRef(0);
 
       // ── Album tracklist (for vinyl auto-advance without re-listening) ──
@@ -683,6 +684,21 @@
           }
 
           turntableTracksRef.current = tracks;
+
+          // Pre-load cached LRC from Supabase for this album
+          const trackIds = tracks.map(t => t.trackId).filter(Boolean);
+          if (trackIds.length > 0) {
+            sb.from("liri_lyric_cache")
+              .select("itunes_track_id, synced_lyrics")
+              .in("itunes_track_id", trackIds)
+              .then(({ data }) => {
+                const cache = {};
+                for (const row of (data || [])) cache[row.itunes_track_id] = row.synced_lyrics;
+                turntableLyricsCacheRef.current = cache;
+              }).catch(() => {});
+          } else {
+            turntableLyricsCacheRef.current = {};
+          }
         } catch { turntableTracksRef.current = []; }
         setTurntableTracksLoading(false);
       };
@@ -874,14 +890,18 @@
       // for ALL tracks in parallel and score the Whisper transcript against each.
       // Returns { track, lrcMatch, lyrics, startPos, score } or null.
       // Skips GPT entirely — much more accurate for obscure / re-recorded albums.
-      const matchTranscriptToTracks = async (transcript, tracks, logRef) => {
+      const matchTranscriptToTracks = async (transcript, tracks, logRef, lyricsCache = {}) => {
         const tWords = transcript.toLowerCase().replace(/[^\w\s]/g, "").split(/\s+/).filter(w => w.length > 2);
         if (logRef) logRef.push(`stratV: transcript "${transcript.slice(0, 60)}…" → ${tWords.length} words`);
         if (tWords.length < 2) return null;
 
-        // Parallel LRCLib fetch for every track on the album
+        // Parallel LRCLib fetch for every track on the album (uses Supabase cache when available)
         const withLyrics = await Promise.all(tracks.map(async t => {
           try {
+            // Use cached LRC if we have it — skips LRCLib entirely
+            if (t.trackId && lyricsCache[t.trackId]) {
+              return { ...t, lrcMatch: { syncedLyrics: lyricsCache[t.trackId] } };
+            }
             const artist = t.artistName || "";
             const title  = t.trackName  || "";
             const [a, b] = await Promise.all([
@@ -998,7 +1018,7 @@
           attemptLogRef.current.push(`turntable: ${turntableTracks.length} tracks loaded`);
           if (turntableTracks.length > 0) {
             attemptLogRef.current.push(`whisper: trying vinyl-aware match against ${turntableTracks.length} tracks`);
-            const vmResult = await matchTranscriptToTracks(transcribed, turntableTracks, attemptLogRef.current);
+            const vmResult = await matchTranscriptToTracks(transcribed, turntableTracks, attemptLogRef.current, turntableLyricsCacheRef.current);
             if (vmResult) {
               if (recognitionWonRef.current) return false;
               recognitionWonRef.current = true;
@@ -1028,6 +1048,23 @@
               setMode("confirmed");
               saveToHistory(user, song); fetchHistory(user);
               syncCastSession(song, lyrics, startPos);
+              // Cache the LRC to Supabase so future matches for this track skip LRCLib
+              if (track.trackId && lrcMatch?.syncedLyrics) {
+                const ta2 = turntableAlbumRef.current;
+                sb.from("liri_lyric_cache").upsert({
+                  itunes_track_id:      track.trackId,
+                  itunes_collection_id: ta2?.itunes_collection_id || track.collectionId,
+                  track_name:    track.trackName,
+                  artist_name:   track.artistName,
+                  album_name:    ta2?.album_name,
+                  track_number:  track.trackNumber,
+                  disc_number:   track.discNumber,
+                  synced_lyrics: lrcMatch.syncedLyrics,
+                }, { onConflict: "itunes_track_id" }).then(() => {
+                  turntableLyricsCacheRef.current[track.trackId] = lrcMatch.syncedLyrics;
+                  attemptLogRef.current.push(`cache: saved LRC for "${track.trackName}"`);
+                }).catch(() => {});
+              }
               // Load full tracklist for vinyl auto-advance
               fetchAlbumTracks(track.trackName, track.artistName || "").then(({ tracks: at, collectionId }) => {
                 setAlbumTracks(at); setAlbumCollectionId(collectionId);
