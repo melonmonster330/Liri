@@ -76,7 +76,7 @@
       "sb_publishable_C-NBnfg0ltAoUi46XQTUjA_ozjZW_Nd"
     );
 
-    const APP_VERSION = "1.36";
+    const APP_VERSION = "1.37";
 
     const PROXY_URL = window.Capacitor
       ? "https://getliri.app/api/recognize"
@@ -1444,7 +1444,13 @@
         const delay = detectedAtRef.current ? (Date.now() - detectedAtRef.current) / 1000 : 0;
         initialPosRef.current += delay;
         syncStartRef.current = Date.now();
-        setMode("syncing"); setCurrentIndex(0);
+        // Jump to correct starting index immediately so the scroll effect lands on the right
+        // line without smooth-scrolling from 0 (which caused a ~3s visual lag on load).
+        const lrc0 = lyricsRef.current;
+        const t0   = initialPosRef.current;
+        let initIdx = 0;
+        for (let i = 0; i < lrc0.length; i++) { if (lrc0[i].time <= t0) initIdx = i; else break; }
+        setMode("syncing"); setCurrentIndex(initIdx);
         clearInterval(syncIntervalRef.current);
         syncIntervalRef.current = setInterval(() => {
           const t = initialPosRef.current + (Date.now() - syncStartRef.current) / 1000;
@@ -1522,6 +1528,15 @@
       };
 
       const getSideInfo = () => {
+        // ── Path 2 first: Turntable mode — album pre-selected, track matched by vinyl-aware scan ──
+        // Must check this before Path 1 — fetchAlbumTracks may load the wrong album version
+        // (e.g. original instead of Taylor's Version) and produce the wrong track index.
+        const tTracks = turntableTracksRef.current;
+        const tIdx    = turntableMatchedIdxRef.current;
+        if (turntableAlbum && tTracks.length > 0 && tIdx >= 0) {
+          return deriveSideFromIndex(tIdx, tTracks) || { track: tIdx + 1 };
+        }
+
         // ── Path 1: Full vinyl auto-mode — albumTracks + currentTrackIndex ──
         if (albumTracks.length > 0 && currentTrackIndex >= 0) {
           // Prefer Liri DB — has exact side labels and position_on_side
@@ -1536,13 +1551,6 @@
           }
           // No DB data — derive side from duration heuristic
           return deriveSideFromIndex(currentTrackIndex, albumTracks) || { track: currentTrackIndex + 1 };
-        }
-
-        // ── Path 2: Turntable mode — album pre-selected, track matched by vinyl-aware scan ──
-        const tTracks = turntableTracksRef.current;
-        const tIdx    = turntableMatchedIdxRef.current;
-        if (turntableAlbum && tTracks.length > 0 && tIdx >= 0) {
-          return deriveSideFromIndex(tIdx, tTracks) || { track: tIdx + 1 };
         }
 
         return null;
@@ -2340,23 +2348,12 @@
           {isSyncing && (
             <div style={{ position:"fixed", inset:0, zIndex:10, display:"flex", flexDirection:"column" }}>
               <div className="safe-top" style={{ padding:"0 20px 16px", display:"flex", alignItems:"center", justifyContent:"space-between", flexShrink:0 }}>
+                <button onClick={() => { clearInterval(syncIntervalRef.current); reset(); }} style={{ background:"none", border:"none", color:"rgba(255,255,255,0.35)", fontSize:"20px", cursor:"pointer", padding:"0 10px 0 0", flexShrink:0, lineHeight:1 }} title="Back">‹</button>
                 <div style={{ display:"flex", alignItems:"center", gap:"10px", flex:1, minWidth:0 }}>
                   {artwork && <img src={artwork} alt="" style={{ width:"36px", height:"36px", borderRadius:"8px", flexShrink:0, boxShadow:"0 4px 16px rgba(0,0,0,0.5)" }} />}
                   <div style={{ minWidth:0 }}>
                     <div style={{ fontSize:"14px", fontWeight:"600", color:"#f0e6d3", overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>{detectedSong?.title}</div>
                     <div style={{ fontSize:"12px", color:"rgba(255,255,255,0.4)", overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>{detectedSong?.artist}</div>
-                    <div style={{ display:"flex", alignItems:"center", gap:"6px", marginTop:"2px", flexWrap:"wrap" }}>
-                      {identifiedBy === "acr" && (
-                        <span style={{ fontSize:"9px", color:"rgba(100,210,255,0.55)", letterSpacing:"1px", textTransform:"uppercase", display:"inline-flex", alignItems:"center", gap:"3px" }}>
-                          <span style={{ width:"5px", height:"5px", borderRadius:"50%", background:"rgba(100,210,255,0.55)", display:"inline-block", flexShrink:0 }} />fingerprint
-                        </span>
-                      )}
-                      {identifiedBy === "whisper" && (
-                        <span style={{ fontSize:"9px", color:"rgba(190,140,255,0.55)", letterSpacing:"1px", textTransform:"uppercase", display:"inline-flex", alignItems:"center", gap:"3px" }}>
-                          <span style={{ width:"5px", height:"5px", borderRadius:"50%", background:"rgba(190,140,255,0.55)", display:"inline-block", flexShrink:0 }} />lyrics match
-                        </span>
-                      )}
-                    </div>
                     {(() => { const si = getSideInfo(); return si ? (
                       <div style={{ marginTop:"4px", fontSize:"11px", fontWeight:"700", letterSpacing:"2px", color:"rgba(212,168,70,0.85)", textTransform:"uppercase" }}>
                         {si.side ? `Side ${si.side}  ·  ${si.track}` : `Track ${si.track}`}
