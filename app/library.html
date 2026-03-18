@@ -8,12 +8,13 @@
 
   Features:
   • View all your saved albums (artwork, title, artist, play count)
+  • Tap an album → full tracklist with side labels (A1, B2, …)
+  • Tap a track → read lyrics from cache or LRCLib
   • Search iTunes to add new albums — one tap to save
   • Remove albums from your library
   • "Listen →" — sets the album as the active turntable album and goes to /app
 
-  Supabase table: user_vinyl_library
-    user_id, itunes_collection_id, album_name, artist_name, artwork_url
+  Supabase tables: user_vinyl_library, vinyl_releases, vinyl_tracks, liri_lyric_cache
 -->
 <!DOCTYPE html>
 <html lang="en">
@@ -29,8 +30,10 @@
     input { outline: none; }
     input:focus { border-color: rgba(212,168,70,0.6) !important; }
     ::-webkit-scrollbar { display: none; }
-    @keyframes spin { to { transform: rotate(360deg); } }
+    @keyframes spin    { to { transform: rotate(360deg); } }
     @keyframes fade-up { from { opacity: 0; transform: translateY(12px); } to { opacity: 1; transform: translateY(0); } }
+    @keyframes slide-in { from { transform: translateX(100%); } to { transform: translateX(0); } }
+    @keyframes sheet-up { from { transform: translateY(100%); } to { transform: translateY(0); } }
   </style>
 </head>
 <body>
@@ -56,6 +59,217 @@
       padding: "14px 16px", borderRadius: "12px", fontSize: "15px",
       fontFamily: "inherit", transition: "border-color 0.2s",
     };
+
+    // ── Helpers ────────────────────────────────────────────────────────────
+
+    function parseLRC(lrc) {
+      if (!lrc) return [];
+      const lines = [];
+      for (const line of lrc.split("\n")) {
+        const m = line.match(/^\[(\d+):(\d+\.\d+)\](.*)/);
+        if (m) {
+          const time = parseInt(m[1]) * 60 + parseFloat(m[2]);
+          const text = m[3].trim();
+          if (text) lines.push({ time, text });
+        }
+      }
+      return lines;
+    }
+
+    function formatDuration(ms) {
+      const s = Math.round(ms / 1000);
+      return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`;
+    }
+
+    // Estimate vinyl side/track position from index when no DB data available.
+    // Fills each side with as many complete songs as fit in ~22 min, then flips.
+    function deriveSideFromIndex(idx, tracks) {
+      const SIDE_LIMIT_MS = 22 * 60 * 1000;
+      let sideIdx = 0;
+      let sideMs = 0;
+      let trackOnSide = 0;
+      const assignments = [];
+      for (const t of tracks) {
+        const dur = t.trackTimeMillis || 0;
+        // Flip to next side only if we already have songs on this side AND adding
+        // this song would exceed the limit.
+        if (sideMs > 0 && sideMs + dur > SIDE_LIMIT_MS) {
+          sideIdx++;
+          sideMs = 0;
+          trackOnSide = 0;
+        }
+        trackOnSide++;
+        sideMs += dur;
+        assignments.push({ side: String.fromCharCode(65 + sideIdx), track: trackOnSide });
+      }
+      return assignments[idx] || { side: "A", track: idx + 1 };
+    }
+
+    // Parse "4:32" duration string → milliseconds (null if unparseable)
+    function durationToMs(dur) {
+      if (!dur) return null;
+      const m = dur.match(/^(\d+):(\d+)$/);
+      return m ? (parseInt(m[1]) * 60 + parseInt(m[2])) * 1000 : null;
+    }
+
+    // Parse a Discogs tracklist into { side, trackOnSide, title, duration_ms, position }.
+    // Handles all common formats:
+    //   • Letter + per-side number:  A1, A2, B1, B2
+    //   • Letter + sequential:       A1, A2, B5, B6  (global index continues across sides)
+    //   • Numbered headings:         type_:"heading" title:"Side 1" then position:"1","2"
+    //   • No usable position:        skipped (caller falls back to deriveSideFromIndex)
+    function parseDiscogsTracklist(tracklist) {
+      const results = [];
+      let currentSide = null;
+      const sideTrackCount = {};
+
+      for (const entry of tracklist) {
+        if (entry.type_ === "heading") {
+          const title = (entry.title || "").trim();
+          const numMatch = title.match(/(\d+)/);
+          const letterMatch = title.match(/\b([A-Za-z])\b/);
+          if (numMatch) {
+            currentSide = String.fromCharCode(64 + parseInt(numMatch[1])); // 1→A, 2→B …
+          } else if (letterMatch) {
+            currentSide = letterMatch[1].toUpperCase();
+          }
+          continue;
+        }
+
+        const pos = (entry.position || "").trim();
+
+        // Letter + number (A1, B12, AA1 — use first letter only)
+        const letterNum = pos.match(/^([A-Za-z])(\d+)$/);
+        if (letterNum) {
+          results.push({
+            side: letterNum[1].toUpperCase(),
+            trackOnSide: parseInt(letterNum[2]),
+            title: entry.title,
+            duration_ms: durationToMs(entry.duration),
+            position: pos.toUpperCase(),
+          });
+          continue;
+        }
+
+        // Pure number (works with heading context, or standalone)
+        const numOnly = pos.match(/^(\d+)$/);
+        if (numOnly && currentSide) {
+          sideTrackCount[currentSide] = (sideTrackCount[currentSide] || 0) + 1;
+          results.push({
+            side: currentSide,
+            trackOnSide: sideTrackCount[currentSide],
+            title: entry.title,
+            duration_ms: durationToMs(entry.duration),
+            position: pos,
+          });
+          continue;
+        }
+        // anything else (intros, medleys without position, etc.) — skip
+      }
+
+      return results;
+    }
+
+    // Populate vinyl_releases + vinyl_tracks from Discogs (ground-truth vinyl data).
+    // Tries up to 5 matching releases and picks the one with the most unique sides.
+    async function autoPopulateVinylSides(collectionId, albumName, artistName) {
+      try {
+        const { data: existing } = await sb.from("vinyl_releases")
+          .select("id").eq("itunes_collection_id", String(collectionId)).maybeSingle();
+        if (existing?.id) return existing.id;
+
+        const norm = s => (s || "").toLowerCase().replace(/[^a-z0-9]/g, "");
+        const normArtist = norm(artistName);
+        const normAlbum  = norm(albumName);
+        // Also try without edition suffix ("Taylor's Version", "Deluxe Edition", etc.)
+        const normAlbumBase = normAlbum.replace(/taylorsversion|deluxeedition|specialedition|remaster(?:ed)?/g, "").trim();
+
+        const q = `${artistName} ${albumName}`;
+        const search = await fetch(`/api/discogs-lookup?q=${encodeURIComponent(q)}&per_page=8`)
+          .then(r => r.json()).catch(() => null);
+        if (!search?.results?.length) return null;
+
+        // Filter to releases that mention both artist and album
+        const candidates = search.results.filter(r => {
+          const t = norm(r.title || "");
+          return t.includes(normArtist) && (t.includes(normAlbum) || t.includes(normAlbumBase));
+        }).slice(0, 5);
+        if (!candidates.length) return null;
+
+        // Pick candidate with the most unique sides (e.g. 6-sided 3LP beats 2-sided 1LP)
+        let bestParsed = null;
+        let bestSideCount = 0;
+        let bestDetail = null;
+
+        for (const candidate of candidates) {
+          const detail = await fetch(`/api/discogs-lookup?id=${candidate.id}`)
+            .then(r => r.json()).catch(() => null);
+          if (!detail?.tracklist?.length) continue;
+
+          const parsed = parseDiscogsTracklist(detail.tracklist);
+          if (!parsed.length) continue;
+
+          const sideCount = new Set(parsed.map(t => t.side)).size;
+          if (sideCount > bestSideCount) {
+            bestSideCount = sideCount;
+            bestParsed    = parsed;
+            bestDetail    = detail;
+          }
+          if (bestSideCount >= 6) break; // can't do better than 3LP
+        }
+
+        if (!bestParsed?.length) return null;
+
+        const { data: releaseRow, error: relErr } = await sb.from("vinyl_releases").insert({
+          itunes_collection_id: String(collectionId),
+          album_name:  albumName,
+          artist_name: artistName,
+          release_year: bestDetail.released ? parseInt(bestDetail.released) : null,
+          disc_count: Math.ceil(bestSideCount / 2),
+        }).select("id").single();
+        if (relErr || !releaseRow?.id) return null;
+
+        const trackRows = bestParsed.map((t, i) => ({
+          release_id: releaseRow.id,
+          disc_number: Math.ceil((t.side.charCodeAt(0) - 64) / 2),
+          side: t.side,
+          position: t.position || (t.side + t.trackOnSide),
+          track_number_on_side: t.trackOnSide,
+          title: t.title,
+          duration_ms: t.duration_ms || null,
+        }));
+
+        if (trackRows.length > 0) await sb.from("vinyl_tracks").insert(trackRows);
+        return releaseRow.id;
+      } catch { return null; }
+    }
+
+    // Fetch synced lyrics: Supabase cache → LRCLib get → LRCLib search
+    async function fetchLyricsForTrack(trackId, trackName, artistName, albumName, durationMs) {
+      if (trackId) {
+        const { data } = await sb.from("liri_lyric_cache")
+          .select("synced_lyrics").eq("itunes_track_id", trackId).maybeSingle();
+        if (data?.synced_lyrics) return data.synced_lyrics;
+      }
+      const dur = durationMs ? Math.round(durationMs / 1000) : 0;
+      try {
+        const p = new URLSearchParams({ track_name: trackName, artist_name: artistName, album_name: albumName });
+        if (dur) p.set("duration", dur);
+        const res = await fetch(`https://lrclib.net/api/get?${p}`).then(r => r.json());
+        if (res?.syncedLyrics) return res.syncedLyrics;
+      } catch {}
+      try {
+        const p = new URLSearchParams({ track_name: trackName, artist_name: artistName });
+        const results = await fetch(`https://lrclib.net/api/search?${p}`).then(r => r.json());
+        if (Array.isArray(results)) {
+          const exact = results.find(r => r.syncedLyrics && r.trackName?.toLowerCase() === trackName.toLowerCase());
+          if (exact?.syncedLyrics) return exact.syncedLyrics;
+          const any = results.find(r => r.syncedLyrics);
+          if (any?.syncedLyrics) return any.syncedLyrics;
+        }
+      } catch {}
+      return null;
+    }
 
     // ── Small vinyl disc icon ──────────────────────────────────────────────
     function VinylDot({ size = 32 }) {
@@ -87,6 +301,321 @@
       );
     }
 
+    // ── Spinner ────────────────────────────────────────────────────────────
+    function Spinner({ size = 28 }) {
+      return (
+        <div style={{ width: size, height: size, borderRadius: "50%", border: `2px solid rgba(255,255,255,0.06)`, borderTopColor: "#d4a846", animation: "spin 0.8s linear infinite" }} />
+      );
+    }
+
+    // ── Track Lyrics Sheet ─────────────────────────────────────────────────
+    function TrackLyricsSheet({ track, album, onClose }) {
+      const [lrc, setLrc]         = useState(null);
+      const [loading, setLoading] = useState(true);
+      const [noLyrics, setNoLyrics] = useState(false);
+
+      useEffect(() => {
+        fetchLyricsForTrack(
+          track.trackId, track.trackName, track.artistName,
+          album.album_name, track.trackTimeMillis
+        ).then(result => {
+          if (result) setLrc(parseLRC(result));
+          else setNoLyrics(true);
+          setLoading(false);
+        });
+      }, []);
+
+      return (
+        <>
+          <div onClick={onClose}
+            style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.55)", zIndex: 30 }} />
+          <div style={{
+            position: "fixed", left: 0, right: 0, bottom: 0, zIndex: 31,
+            background: "#0e0e1a", borderRadius: "20px 20px 0 0",
+            paddingBottom: "max(24px, env(safe-area-inset-bottom))",
+            maxHeight: "82vh", display: "flex", flexDirection: "column",
+            animation: "sheet-up 0.28s cubic-bezier(0.4,0,0.2,1)",
+          }}>
+            {/* Handle */}
+            <div style={{ display: "flex", justifyContent: "center", padding: "12px 0 4px" }}>
+              <div style={{ width: 36, height: 4, borderRadius: 2, background: "rgba(255,255,255,0.12)" }} />
+            </div>
+            {/* Header */}
+            <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", padding: "8px 24px 16px" }}>
+              <div style={{ flex: 1, minWidth: 0, paddingRight: 12 }}>
+                <div style={{ fontSize: 16, fontWeight: 700, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{track.trackName}</div>
+                <div style={{ fontSize: 12, color: "rgba(255,255,255,0.4)", marginTop: 3 }}>
+                  {track.position && <span style={{ color: "rgba(212,168,70,0.7)", fontWeight: 700 }}>{track.position}</span>}
+                  {track.position && "  ·  "}
+                  {track.artistName}
+                  {track.trackTimeMillis && `  ·  ${formatDuration(track.trackTimeMillis)}`}
+                </div>
+              </div>
+              <button onClick={onClose}
+                style={{ background: "rgba(255,255,255,0.07)", border: "none", color: "rgba(255,255,255,0.5)", width: 30, height: 30, borderRadius: "50%", cursor: "pointer", fontSize: 14, fontFamily: "inherit", flexShrink: 0 }}>
+                ✕
+              </button>
+            </div>
+            {/* Lyrics */}
+            <div style={{ overflowY: "auto", padding: "0 24px", flex: 1 }}>
+              {loading ? (
+                <div style={{ display: "flex", justifyContent: "center", padding: "48px 0" }}>
+                  <Spinner />
+                </div>
+              ) : noLyrics ? (
+                <div style={{ textAlign: "center", padding: "48px 0", color: "rgba(255,255,255,0.2)", fontSize: 14 }}>
+                  <div style={{ fontSize: 32, marginBottom: 12, opacity: 0.4 }}>🎵</div>
+                  No synced lyrics found
+                </div>
+              ) : (
+                <div style={{ paddingBottom: 24 }}>
+                  {lrc.map((line, i) => (
+                    <div key={i} style={{ fontSize: 15, lineHeight: 1.85, color: "rgba(255,255,255,0.72)", padding: "1px 0" }}>
+                      {line.text}
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          </div>
+        </>
+      );
+    }
+
+    // ── Album Detail Sheet ─────────────────────────────────────────────────
+    function AlbumDetailSheet({ album, onClose }) {
+      const [tracks, setTracks]           = useState([]);
+      const [loading, setLoading]         = useState(true);
+      const [selectedTrack, setSelectedTrack] = useState(null);
+      const [vinylSource, setVinylSource] = useState(null); // "db" | "estimated"
+
+      useEffect(() => { loadTracks(); }, []);
+
+      async function loadTracks() {
+        const cid = album.itunes_collection_id;
+
+        // 1. iTunes lookup (via proxy) + vinyl DB in parallel
+        const [itunesData, { data: releaseRow }] = await Promise.all([
+          fetch(`/api/itunes-lookup?id=${cid}&entity=song&limit=200`)
+            .then(r => r.json()).catch(() => null),
+          sb.from("vinyl_releases").select("id")
+            .eq("itunes_collection_id", String(cid)).maybeSingle(),
+        ]);
+
+        let itunesTracks = (itunesData?.results || [])
+          .filter(r => r.wrapperType === "track")
+          .sort((a, b) => (a.discNumber - b.discNumber) || (a.trackNumber - b.trackNumber));
+
+        // Fallback: search by artist + album if lookup returned nothing
+        if (itunesTracks.length === 0) {
+          const s = await fetch(
+            `/api/itunes-lookup?term=${encodeURIComponent(album.artist_name + " " + album.album_name)}&entity=album&limit=5`
+          ).then(r => r.json()).catch(() => null);
+          const match = (s?.results || []).find(r => r.wrapperType === "collection");
+          if (match) {
+            const r2 = await fetch(`/api/itunes-lookup?id=${match.collectionId}&entity=song&limit=200`)
+              .then(r => r.json()).catch(() => null);
+            itunesTracks = (r2?.results || [])
+              .filter(r => r.wrapperType === "track")
+              .sort((a, b) => (a.discNumber - b.discNumber) || (a.trackNumber - b.trackNumber));
+          }
+        }
+
+        // 2. Vinyl tracks from DB
+        let vinylTracks = [];
+        let releaseId = releaseRow?.id;
+
+        if (releaseId) {
+          const { data: vt } = await sb.from("vinyl_tracks").select("*")
+            .eq("release_id", releaseId)
+            .order("side", { ascending: true })
+            .order("track_number_on_side", { ascending: true });
+          vinylTracks = vt || [];
+        }
+
+        // 3. Stale data check: duplicate side+track_number_on_side pairs = bad MusicBrainz data
+        const hasDuplicatePositions = vinylTracks.length > 0 && (() => {
+          const seen = new Set();
+          return vinylTracks.some(v => {
+            const key = `${v.side}-${v.track_number_on_side}`;
+            if (seen.has(key)) return true;
+            seen.add(key);
+            return false;
+          });
+        })();
+
+        if (hasDuplicatePositions && releaseId) {
+          await sb.from("vinyl_tracks").delete().eq("release_id", releaseId);
+          await sb.from("vinyl_releases").delete().eq("id", releaseId);
+          releaseId = null;
+          vinylTracks = [];
+        }
+
+        // 4. Auto-populate from Discogs if no vinyl data
+        if (vinylTracks.length === 0 && itunesTracks.length > 0) {
+          releaseId = await autoPopulateVinylSides(cid, album.album_name, album.artist_name);
+          if (releaseId) {
+            const { data: vt } = await sb.from("vinyl_tracks").select("*")
+              .eq("release_id", releaseId)
+              .order("side", { ascending: true })
+              .order("track_number_on_side", { ascending: true });
+            vinylTracks = vt || [];
+          }
+        }
+
+        const hasVinylData = vinylTracks.length > 0;
+        setVinylSource(hasVinylData ? "db" : "estimated");
+
+        // 5. Merge iTunes + vinyl position data
+        // Detect sequential Discogs numbering (e.g. Fearless TV: B5,B6 … F27).
+        // Signature: max(track_number_on_side) == total vinyl tracks.
+        const norm = s => (s || "").toLowerCase().replace(/[^a-z0-9]/g, "");
+        const maxTrackNum = vinylTracks.length > 0
+          ? Math.max(...vinylTracks.map(v => v.track_number_on_side || 0)) : 0;
+        const isSequential = maxTrackNum > 0 && maxTrackNum === vinylTracks.length;
+
+        const merged = itunesTracks.map((t, i) => {
+          // Sequential: match by global index position (i+1)
+          // Per-side:   match by title, fall back to index
+          const vt = isSequential
+            ? vinylTracks.find(v => v.track_number_on_side === (i + 1))
+            : (vinylTracks.find(v => norm(v.title) === norm(t.trackName))
+               || vinylTracks.find(v => v.track_number_on_side === (i + 1)));
+
+          let side, trackOnSide, position;
+          if (vt?.side) {
+            side = vt.side.toUpperCase();
+            // For sequential Discogs numbering, derive per-side display number
+            const sideTrackNum = isSequential
+              ? vinylTracks.filter(v => v.side === vt.side && v.track_number_on_side <= vt.track_number_on_side).length
+              : vt.track_number_on_side;
+            trackOnSide = sideTrackNum;
+            position    = side + trackOnSide;
+          } else {
+            const d = deriveSideFromIndex(i, itunesTracks);
+            side        = d.side;
+            trackOnSide = d.track;
+            position    = side + trackOnSide;
+          }
+          return { ...t, side, trackOnSide, position };
+        });
+
+        setTracks(merged);
+        setLoading(false);
+      }
+
+      // Group by side (preserve order: A, B, C, D …)
+      const sideOrder = [];
+      const sideMap   = {};
+      for (const t of tracks) {
+        if (!sideMap[t.side]) { sideMap[t.side] = []; sideOrder.push(t.side); }
+        sideMap[t.side].push(t);
+      }
+
+      return (
+        <div style={{
+          position: "fixed", inset: 0, zIndex: 20,
+          background: "#080810", overflowY: "auto",
+          animation: "slide-in 0.25s cubic-bezier(0.4,0,0.2,1)",
+        }}>
+          {/* ── Sticky header ── */}
+          <div style={{
+            position: "sticky", top: 0, zIndex: 2,
+            background: "rgba(8,8,16,0.92)", backdropFilter: "blur(16px)",
+            WebkitBackdropFilter: "blur(16px)",
+            padding: "max(52px, calc(env(safe-area-inset-top) + 16px)) 20px 14px",
+            borderBottom: "1px solid rgba(255,255,255,0.06)",
+          }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 14 }}>
+              <button onClick={onClose}
+                style={{ background: "rgba(255,255,255,0.08)", border: "none", color: "#f0e6d3", width: 36, height: 36, borderRadius: "50%", cursor: "pointer", fontSize: 20, fontFamily: "inherit", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
+                ‹
+              </button>
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{ fontSize: 16, fontWeight: 700, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{album.album_name}</div>
+                <div style={{ fontSize: 12, color: "rgba(255,255,255,0.38)", marginTop: 1 }}>{album.artist_name}</div>
+              </div>
+            </div>
+          </div>
+
+          {/* ── Album hero ── */}
+          <div style={{ padding: "24px 24px 8px", display: "flex", gap: 18, alignItems: "center" }}>
+            <AlbumArt src={album.artwork_url} size={88} radius={12} />
+            <div>
+              <div style={{ fontSize: 18, fontWeight: 700, marginBottom: 4, lineHeight: 1.3 }}>{album.album_name}</div>
+              <div style={{ fontSize: 14, color: "rgba(255,255,255,0.5)", marginBottom: 6 }}>{album.artist_name}</div>
+              {!loading && tracks.length > 0 && (
+                <div style={{ fontSize: 11, color: "rgba(255,255,255,0.2)" }}>
+                  {tracks.length} tracks · {sideOrder.length} sides
+                  {vinylSource === "estimated" && <span style={{ color: "rgba(212,168,70,0.4)", marginLeft: 6 }}>· est. sides</span>}
+                </div>
+              )}
+            </div>
+          </div>
+
+          {/* ── Tracklist ── */}
+          <div style={{ paddingBottom: "max(80px, calc(env(safe-area-inset-bottom) + 48px))" }}>
+            {loading ? (
+              <div style={{ display: "flex", justifyContent: "center", padding: "64px 0" }}>
+                <Spinner />
+              </div>
+            ) : tracks.length === 0 ? (
+              <div style={{ textAlign: "center", padding: "48px 24px", color: "rgba(255,255,255,0.2)", fontSize: 14 }}>
+                Couldn't load tracks
+              </div>
+            ) : (
+              sideOrder.map(side => (
+                <div key={side}>
+                  {/* Side label */}
+                  <div style={{ padding: "22px 24px 8px", fontSize: 11, fontWeight: 700, letterSpacing: "0.12em", color: "rgba(212,168,70,0.65)", textTransform: "uppercase" }}>
+                    Side {side}
+                  </div>
+                  {(sideMap[side] || []).map(track => (
+                    <button key={track.trackId || track.trackName}
+                      onClick={() => setSelectedTrack(track)}
+                      style={{
+                        display: "flex", alignItems: "center", gap: 12,
+                        width: "100%", padding: "13px 24px",
+                        background: "none", border: "none",
+                        borderBottom: "1px solid rgba(255,255,255,0.04)",
+                        cursor: "pointer", textAlign: "left", fontFamily: "inherit",
+                      }}>
+                      {/* Position badge */}
+                      <div style={{ width: 30, fontSize: 12, fontWeight: 700, color: "rgba(212,168,70,0.65)", flexShrink: 0, letterSpacing: "0.02em" }}>
+                        {track.position}
+                      </div>
+                      {/* Track info */}
+                      <div style={{ flex: 1, minWidth: 0 }}>
+                        <div style={{ fontSize: 14, color: "#f0e6d3", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                          {track.trackName}
+                        </div>
+                        {track.trackTimeMillis && (
+                          <div style={{ fontSize: 11, color: "rgba(255,255,255,0.28)", marginTop: 2 }}>
+                            {formatDuration(track.trackTimeMillis)}
+                          </div>
+                        )}
+                      </div>
+                      {/* Chevron */}
+                      <div style={{ fontSize: 18, color: "rgba(255,255,255,0.18)", flexShrink: 0 }}>›</div>
+                    </button>
+                  ))}
+                </div>
+              ))
+            )}
+          </div>
+
+          {/* Lyrics sheet */}
+          {selectedTrack && (
+            <TrackLyricsSheet
+              track={selectedTrack}
+              album={album}
+              onClose={() => setSelectedTrack(null)}
+            />
+          )}
+        </div>
+      );
+    }
+
     // ── Main app ──────────────────────────────────────────────────────────
     function Library() {
       const [user, setUser]               = useState(null);
@@ -97,13 +626,16 @@
       const [libLoading, setLibLoading]   = useState(true);
       const [playCounts, setPlayCounts]   = useState({});
 
+      // Detail view
+      const [selectedAlbum, setSelectedAlbum] = useState(null);
+
       // Add-album search
       const [showSearch, setShowSearch]   = useState(false);
       const [query, setQuery]             = useState("");
       const [results, setResults]         = useState([]);
       const [searching, setSearching]     = useState(false);
-      const [adding, setAdding]           = useState(null);  // collectionId being saved
-      const [removing, setRemoving]       = useState(null);  // collectionId being removed
+      const [adding, setAdding]           = useState(null);
+      const [removing, setRemoving]       = useState(null);
       const searchTimer                   = useRef(null);
 
       // ── Auth ──
@@ -175,6 +707,8 @@
           artwork_url: album.artworkUrl100?.replace("100x100bb", "600x600bb") || null,
         }, { onConflict: "user_id,itunes_collection_id" });
         if (!error) {
+          // Kick off MusicBrainz populate in background so data is ready when album is opened
+          autoPopulateVinylSides(String(album.collectionId), album.collectionName, album.artistName);
           await fetchLibrary(user.id);
           setShowSearch(false);
           setQuery("");
@@ -209,7 +743,7 @@
       // ── Loading ──
       if (authLoading) return (
         <div style={{ minHeight: "100vh", display: "flex", alignItems: "center", justifyContent: "center" }}>
-          <div style={{ width: 36, height: 36, borderRadius: "50%", border: "2px solid #1a1a2e", borderTopColor: "#d4a846", animation: "spin 0.8s linear infinite" }} />
+          <Spinner size={36} />
         </div>
       );
 
@@ -247,7 +781,9 @@
 
             <div style={{ fontSize: 28, fontWeight: 700, letterSpacing: "-0.5px", marginBottom: 6 }}>My Records</div>
             <div style={{ fontSize: 14, color: "rgba(255,255,255,0.3)", marginBottom: 32 }}>
-              {library.length === 0 && !libLoading ? "Add your first record to get started" : `${library.length} album${library.length !== 1 ? "s" : ""} in your collection`}
+              {library.length === 0 && !libLoading
+                ? "Add your first record to get started"
+                : `${library.length} album${library.length !== 1 ? "s" : ""} in your collection`}
             </div>
           </div>
 
@@ -255,7 +791,7 @@
           <div style={{ padding: "0 24px" }}>
             {libLoading ? (
               <div style={{ display: "flex", justifyContent: "center", padding: "60px 0" }}>
-                <div style={{ width: 28, height: 28, borderRadius: "50%", border: "2px solid rgba(255,255,255,0.06)", borderTopColor: "#d4a846", animation: "spin 0.8s linear infinite" }} />
+                <Spinner />
               </div>
             ) : library.length === 0 ? (
               <div style={{ textAlign: "center", padding: "60px 0", color: "rgba(255,255,255,0.2)" }}>
@@ -269,15 +805,23 @@
                   const plays = playCounts[album.itunes_collection_id] || 0;
                   const isRemoving = removing === album.itunes_collection_id;
                   return (
-                    <div key={album.id} style={{ display: "flex", alignItems: "center", gap: 14, padding: "12px 0", borderBottom: "1px solid rgba(255,255,255,0.04)", animation: "fade-up 0.3s ease both", animationDelay: `${i * 30}ms` }}>
-                      <AlbumArt src={album.artwork_url} size={56} radius={8} />
-                      <div style={{ flex: 1, minWidth: 0 }}>
-                        <div style={{ fontSize: 14, fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{album.album_name}</div>
-                        <div style={{ fontSize: 12, color: "rgba(255,255,255,0.4)", marginTop: 2, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{album.artist_name}</div>
-                        {plays > 0 && (
-                          <div style={{ fontSize: 10, color: "rgba(212,168,70,0.6)", marginTop: 4 }}>{plays} play{plays !== 1 ? "s" : ""} on Liri</div>
-                        )}
+                    <div key={album.id}
+                      style={{ display: "flex", alignItems: "center", gap: 14, padding: "12px 0", borderBottom: "1px solid rgba(255,255,255,0.04)", animation: "fade-up 0.3s ease both", animationDelay: `${i * 30}ms` }}>
+
+                      {/* Tappable area → album detail */}
+                      <div onClick={() => setSelectedAlbum(album)}
+                        style={{ display: "flex", alignItems: "center", gap: 14, flex: 1, minWidth: 0, cursor: "pointer" }}>
+                        <AlbumArt src={album.artwork_url} size={56} radius={8} />
+                        <div style={{ flex: 1, minWidth: 0 }}>
+                          <div style={{ fontSize: 14, fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{album.album_name}</div>
+                          <div style={{ fontSize: 12, color: "rgba(255,255,255,0.4)", marginTop: 2, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{album.artist_name}</div>
+                          {plays > 0 && (
+                            <div style={{ fontSize: 10, color: "rgba(212,168,70,0.6)", marginTop: 4 }}>{plays} play{plays !== 1 ? "s" : ""} on Liri</div>
+                          )}
+                        </div>
                       </div>
+
+                      {/* Action buttons */}
                       <div style={{ display: "flex", gap: 8, flexShrink: 0 }}>
                         <button onClick={() => listenTo(album)}
                           style={{ background: "linear-gradient(135deg,#d4a846,#c9807a)", color: "#080810", border: "none", borderRadius: 50, padding: "8px 16px", fontSize: 12, fontWeight: 700, cursor: "pointer", fontFamily: "inherit", whiteSpace: "nowrap" }}>
@@ -295,29 +839,32 @@
             )}
           </div>
 
+          {/* ── Album detail (full screen) ── */}
+          {selectedAlbum && (
+            <AlbumDetailSheet
+              album={selectedAlbum}
+              onClose={() => setSelectedAlbum(null)}
+            />
+          )}
+
           {/* ── Add-album search sheet ── */}
           {showSearch && (
             <>
-              {/* Backdrop */}
               <div onClick={() => setShowSearch(false)}
                 style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.6)", zIndex: 10 }} />
 
-              {/* Sheet */}
-              <div style={{ position: "fixed", left: 0, right: 0, bottom: 0, zIndex: 11, background: "#0e0e1a", borderRadius: "20px 20px 0 0", padding: "0 0 max(24px, env(safe-area-inset-bottom))", maxHeight: "85vh", display: "flex", flexDirection: "column" }}>
+              <div style={{ position: "fixed", left: 0, right: 0, bottom: 0, zIndex: 11, background: "#0e0e1a", borderRadius: "20px 20px 0 0", padding: "0 0 max(24px, env(safe-area-inset-bottom))", maxHeight: "85vh", display: "flex", flexDirection: "column", animation: "sheet-up 0.28s cubic-bezier(0.4,0,0.2,1)" }}>
 
-                {/* Handle */}
                 <div style={{ display: "flex", justifyContent: "center", padding: "12px 0 4px" }}>
                   <div style={{ width: 36, height: 4, borderRadius: 2, background: "rgba(255,255,255,0.12)" }} />
                 </div>
 
-                {/* Sheet header */}
                 <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "12px 24px 16px" }}>
                   <div style={{ fontSize: 18, fontWeight: 700 }}>Add a record</div>
                   <button onClick={() => setShowSearch(false)}
                     style={{ background: "rgba(255,255,255,0.07)", border: "none", color: "rgba(255,255,255,0.5)", width: 30, height: 30, borderRadius: "50%", cursor: "pointer", fontSize: 14, fontFamily: "inherit" }}>✕</button>
                 </div>
 
-                {/* Search input */}
                 <div style={{ padding: "0 24px 16px", position: "relative" }}>
                   <input
                     autoFocus
@@ -329,16 +876,13 @@
                   <div style={{ position: "absolute", left: 40, top: "50%", transform: "translateY(-50%)", fontSize: 16, opacity: 0.35, pointerEvents: "none" }}>🔍</div>
                 </div>
 
-                {/* Results */}
                 <div style={{ overflowY: "auto", padding: "0 24px", flex: 1 }}>
                   {searching && (
                     <div style={{ textAlign: "center", padding: "24px 0", color: "rgba(255,255,255,0.25)", fontSize: 14 }}>Searching…</div>
                   )}
-
                   {!searching && query.length >= 2 && results.length === 0 && (
                     <div style={{ textAlign: "center", padding: "24px 0", color: "rgba(255,255,255,0.2)", fontSize: 14 }}>No albums found</div>
                   )}
-
                   {results.map(album => {
                     const alreadyAdded = inLibraryIds.has(String(album.collectionId));
                     const isAdding = adding === String(album.collectionId);
