@@ -194,7 +194,8 @@
           const t = norm(r.title || "");
           return t.includes(normArtist) && (t.includes(normAlbum) || t.includes(normAlbumBase));
         }).slice(0, 5);
-        if (!candidates.length) return null;
+        // Fallback: if title matching fails, try the top 3 raw results
+        if (!candidates.length) candidates.push(...search.results.slice(0, 3));
 
         // Pick candidate with the most unique sides (e.g. 6-sided 3LP beats 2-sided 1LP)
         let bestParsed = null;
@@ -224,7 +225,8 @@
           itunes_collection_id: String(collectionId),
           album_name:  albumName,
           artist_name: artistName,
-          release_year: bestDetail.released ? parseInt(bestDetail.released) : null,
+          release_year: bestDetail.year || null,
+          record_label: bestDetail.labels?.[0]?.name || null,
           disc_count: Math.ceil(bestSideCount / 2),
         }).select("id").single();
         if (relErr || !releaseRow?.id) return null;
