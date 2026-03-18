@@ -76,7 +76,7 @@
       "sb_publishable_C-NBnfg0ltAoUi46XQTUjA_ozjZW_Nd"
     );
 
-    const APP_VERSION = "1.38";
+    const APP_VERSION = "1.39";
 
     const PROXY_URL = window.Capacitor
       ? "https://getliri.app/api/recognize"
@@ -971,7 +971,15 @@
           // Only fires when the user has pre-selected their album ("what's on the turntable?").
           // Skips GPT — directly matches transcript against every track's LRC lyrics.
           // Best path for obscure tracks, re-recordings, anything ACR misses.
+          // If turntable album is set but tracks are empty (iTunes fetch failed or race),
+          // retry the fetch now so this attempt isn't wasted.
+          if (turntableAlbumRef.current && turntableTracksRef.current.length === 0) {
+            attemptLogRef.current.push(`turntable: tracks empty, retrying iTunes fetch…`);
+            await fetchTurntableTracks(turntableAlbumRef.current.itunes_collection_id);
+          }
+
           const turntableTracks = turntableTracksRef.current;
+          attemptLogRef.current.push(`turntable: ${turntableTracks.length} tracks loaded`);
           if (turntableTracks.length > 0) {
             attemptLogRef.current.push(`whisper: trying vinyl-aware match against ${turntableTracks.length} tracks`);
             const vmResult = await matchTranscriptToTracks(transcribed, turntableTracks, attemptLogRef.current);
