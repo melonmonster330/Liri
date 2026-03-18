@@ -76,7 +76,7 @@
       "sb_publishable_C-NBnfg0ltAoUi46XQTUjA_ozjZW_Nd"
     );
 
-    const APP_VERSION = "1.41";
+    const APP_VERSION = "1.42";
 
     const PROXY_URL = window.Capacitor
       ? "https://getliri.app/api/recognize"
@@ -1291,6 +1291,7 @@
         const session = ++listenSessionRef.current; // unique id for this listen attempt
         attemptLogRef.current = [];
         recognitionWonRef.current = false;
+        turntableMatchedIdxRef.current = -1; // clear stale side/track display during new listen
         setError(null);
         setMode("listening");
         setListenProgress(0);
@@ -1366,7 +1367,7 @@
               // In non-turntable mode: fire once at 20s only (GPT/Strategy C need a good transcript).
               const hasTurntable = turntableTracksRef.current.length > 0;
               const shouldFireWhisper = hasTurntable
-                ? (attempts >= 4 && !bgWhisperStarted && !recognitionWonRef.current)
+                ? (attempts >= 3 && !bgWhisperStarted && !recognitionWonRef.current)
                 : (attempts === 4 && !bgWhisperStarted);
               if (shouldFireWhisper) {
                 bgWhisperStarted = true;
@@ -1581,16 +1582,40 @@
       // Derives a small helper from an index + track array — no state needed.
       const deriveSideFromIndex = (idx, tracks) => {
         if (tracks.length === 0 || idx < 0) return null;
-        const sideEnds = getSideEndIndices(tracks, 0); // 0 = auto heuristic
+        const t = tracks[idx];
+        // Multi-disc release (e.g. 2-LP set): split each disc in half for A/B, C/D, E/F…
+        const hasMultiDisc = tracks.some(x => x.discNumber > 1);
+        if (hasMultiDisc && t?.discNumber) {
+          const discTracks = tracks
+            .filter(x => x.discNumber === t.discNumber)
+            .sort((a, b) => a.trackNumber - b.trackNumber);
+          const posInDisc = discTracks.findIndex(x => x.trackId === t.trackId);
+          // Find duration midpoint of this disc
+          const totalMs = discTracks.reduce((s, x) => s + (x.trackTimeMillis || 0), 0);
+          let sideBreak = Math.ceil(discTracks.length / 2) - 1;
+          if (totalMs > 0) {
+            let cumMs = 0;
+            for (let i = 0; i < discTracks.length - 1; i++) {
+              cumMs += discTracks[i].trackTimeMillis || 0;
+              if (cumMs >= totalMs / 2) { sideBreak = i; break; }
+            }
+          }
+          const isSecondHalf = posInDisc > sideBreak;
+          const sideLetter   = String.fromCharCode(65 + (t.discNumber - 1) * 2 + (isSecondHalf ? 1 : 0));
+          const trackOnSide  = isSecondHalf ? posInDisc - sideBreak : posInDisc + 1;
+          return { side: sideLetter, track: trackOnSide };
+        }
+        // Single-disc: split by cumulative duration
+        const sideEnds = getSideEndIndices(tracks, 0);
         for (let s = 0; s < sideEnds.length; s++) {
           if (idx <= sideEnds[s]) {
-            const side         = String.fromCharCode(65 + s); // A, B, C…
-            const prevEnd      = s === 0 ? -1 : sideEnds[s - 1];
-            const trackOnSide  = idx - prevEnd;
+            const side        = String.fromCharCode(65 + s);
+            const prevEnd     = s === 0 ? -1 : sideEnds[s - 1];
+            const trackOnSide = idx - prevEnd;
             return { side, track: trackOnSide };
           }
         }
-        return { track: idx + 1 }; // fallback — beyond known sides
+        return { track: idx + 1 };
       };
 
       const getSideInfo = () => {
