@@ -76,7 +76,7 @@
       "sb_publishable_C-NBnfg0ltAoUi46XQTUjA_ozjZW_Nd"
     );
 
-    const APP_VERSION = "1.46";
+    const APP_VERSION = "1.47";
 
     const PROXY_URL = window.Capacitor
       ? "https://getliri.app/api/recognize"
@@ -435,6 +435,8 @@
       const progressTimerRef    = useRef(null);
       const currentLineRef      = useRef(null);
       const creditsRef          = useRef(null);
+      const userScrollingRef    = useRef(false); // true while user is browsing lyrics manually
+      const scrollInhibitTimer  = useRef(null);
       const listenSessionRef    = useRef(0); // increments on each startListening; guards stale async callbacks
       const attemptLogRef       = useRef([]); // collects per-attempt debug info for the error screen
       const lastRecordingRef    = useRef(null); // stores last recorded blob for debug download
@@ -821,11 +823,25 @@
       // ── Auto-start sync after detection ──
       useEffect(() => { if (mode === "confirmed" && detectedSong) startSync(); }, [mode, detectedSong]);
 
-      // ── Scroll to current lyric ──
+      // ── Scroll to current lyric (skip if user is manually browsing) ──
       useEffect(() => {
+        if (userScrollingRef.current) return;
         if (currentLineRef.current && mode === "syncing")
           currentLineRef.current.scrollIntoView({ behavior:"smooth", block:"center" });
       }, [currentIndex, mode]);
+
+      // ── Tap-to-seek: jump sync to the tapped lyric line ──
+      const seekToLine = (i) => {
+        const targetTime = lyricsRef.current[i]?.time;
+        if (targetTime == null) return;
+        initialPosRef.current = targetTime;
+        syncStartRef.current  = Date.now();
+        setCurrentIndex(i);
+        setPlaybackTime(targetTime);
+        // Re-enable auto-scroll so it follows from the tapped line
+        clearTimeout(scrollInhibitTimer.current);
+        userScrollingRef.current = false;
+      };
 
       // ── Scroll to credits once song passes the last lyric (outro roll) ──
       useEffect(() => {
@@ -2588,24 +2604,40 @@
               )}
 
               <div style={{ flex:1, overflow:"hidden", position:"relative" }}>
-                <div style={{ overflowY:"auto", height:"100%", padding:"8vh 28px 0" }}>
+                <div
+                  style={{ overflowY:"auto", height:"100%", padding:"8vh 28px 0" }}
+                  onTouchStart={() => {
+                    userScrollingRef.current = true;
+                    clearTimeout(scrollInhibitTimer.current);
+                    scrollInhibitTimer.current = setTimeout(() => { userScrollingRef.current = false; }, 4000);
+                  }}
+                >
                   {lyrics.length > 0 ? (
                     <>
                       {lyrics.map((line, i) => {
                         const dist = i - currentIndex;
-                        if (dist < -5 || dist > 8) return null;
-                        const cur = dist === 0;
-                        const upcoming = dist > 0;
+                        const cur  = dist === 0;
+                        const near = Math.abs(dist) <= 3;
                         return (
-                          <div key={i} ref={cur ? currentLineRef : null} style={{
-                            textAlign:"center", padding:"6px 0",
-                            fontSize: cur ? "32px" : Math.abs(dist) <= 1 ? "20px" : "16px",
-                            fontWeight: cur ? "700" : "400",
-                            color: cur ? "#ffffff" : upcoming ? "rgba(255,255,255,0.25)" : "rgba(255,255,255,0.15)",
-                            lineHeight:"1.4",
-                            transition:"all 0.4s cubic-bezier(0.4,0,0.2,1)",
-                            textShadow: cur ? "0 0 60px rgba(212,168,70,0.4), 0 2px 20px rgba(0,0,0,0.8)" : "none",
-                          }}>
+                          <div
+                            key={i}
+                            ref={cur ? currentLineRef : null}
+                            onClick={() => seekToLine(i)}
+                            style={{
+                              textAlign:"center",
+                              padding: near ? "6px 0" : "3px 0",
+                              fontSize: cur ? "32px" : Math.abs(dist) <= 1 ? "20px" : near ? "16px" : "13px",
+                              fontWeight: cur ? "700" : "400",
+                              color: cur ? "#ffffff"
+                                : dist > 0
+                                  ? `rgba(255,255,255,${Math.max(0.07, 0.28 - Math.abs(dist) * 0.04)})`
+                                  : `rgba(255,255,255,${Math.max(0.05, 0.18 - Math.abs(dist) * 0.02)})`,
+                              lineHeight:"1.4",
+                              transition: near ? "all 0.4s cubic-bezier(0.4,0,0.2,1)" : "none",
+                              textShadow: cur ? "0 0 60px rgba(212,168,70,0.4), 0 2px 20px rgba(0,0,0,0.8)" : "none",
+                              cursor:"pointer",
+                            }}
+                          >
                             {line.text}
                           </div>
                         );
