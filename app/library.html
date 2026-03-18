@@ -139,20 +139,32 @@
 
         const trackRows = [];
         for (const medium of (bestRelease.media || [])) {
-          // Derive side from medium position (1→A, 2→B, …) — more reliable
-          // than the track number prefix which can repeat across mediums
           const medPos = medium.position || 1;
-          const sideLetter = String.fromCharCode(64 + medPos);
-          for (const track of (medium.tracks || [])) {
+          const medTracks = medium.tracks || [];
+
+          // Determine if this medium is single-side (all tracks share one letter)
+          // or multi-side (A+B on the same LP). Single-side mediums can have
+          // duplicate letters across mediums (Fearless TV E+E bug), so we derive
+          // the side from the medium's position number instead.
+          const letters = new Set(
+            medTracks.map(t => (t.number || "").match(/^([A-Z])/i)?.[1]?.toUpperCase()).filter(Boolean)
+          );
+          const isSingleSide = letters.size === 1;
+
+          for (const track of medTracks) {
             const num = track.number || "";
-            const m = num.match(/^[A-Z]?(\d+)/);
-            if (!m) continue;
-            const trackNum = parseInt(m[1]);
+            const letterM = num.match(/^([A-Z])/i);
+            const numM = num.match(/(\d+)$/);
+            if (!numM) continue;
+            const trackNum = parseInt(numM[1]);
+            const side = isSingleSide
+              ? String.fromCharCode(64 + medPos)          // position-derived (dedup)
+              : (letterM?.[1]?.toUpperCase() || String.fromCharCode(64 + medPos)); // trust letter
             trackRows.push({
               release_id: releaseRow.id,
               disc_number: medPos,
-              side: sideLetter,
-              position: sideLetter + trackNum,
+              side,
+              position: side + trackNum,
               track_number_on_side: trackNum,
               title: track.title,
               duration_ms: track.length || null,
@@ -370,13 +382,30 @@
 
         // 4. Merge iTunes + vinyl position data
         const norm = s => (s || "").toLowerCase().replace(/[^a-z0-9]/g, "");
+
+        // For each disc_number, count how many unique side letters are stored.
+        // Single-side discs (1 letter) → derive side from disc_number to fix any
+        // duplicate letters (e.g. Fearless TV mediums 5+6 both stored as "E").
+        // Multi-side discs (2+ letters, e.g. standard 2LP with A+B on disc 1) →
+        // trust the stored side field, which is correct for those releases.
+        const discToSideSet = {};
+        for (const v of vinylTracks) {
+          if (!discToSideSet[v.disc_number]) discToSideSet[v.disc_number] = new Set();
+          if (v.side) discToSideSet[v.disc_number].add(v.side.toUpperCase());
+        }
+
         const merged = itunesTracks.map((t, i) => {
           const vt = vinylTracks.find(v => norm(v.title) === norm(t.trackName));
           let side, trackOnSide, position;
           if (vt?.disc_number && vt?.track_number_on_side) {
-            // Derive side from disc_number (medium position) — more reliable
-            // than the side field which can have duplicates across mediums
-            side        = String.fromCharCode(64 + vt.disc_number);
+            const sidesOnDisc = discToSideSet[vt.disc_number]?.size || 1;
+            if (sidesOnDisc === 1) {
+              // Side-per-medium: derive letter from position to fix any duplicates
+              side = String.fromCharCode(64 + vt.disc_number);
+            } else {
+              // LP-per-medium (A+B on same disc): trust the stored side letter
+              side = vt.side?.toUpperCase() || "A";
+            }
             trackOnSide = vt.track_number_on_side;
             position    = side + trackOnSide;
           } else {
