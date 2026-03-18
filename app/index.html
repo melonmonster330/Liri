@@ -529,20 +529,23 @@
           }).select("id").single();
           if (relErr || !rel) return null;
 
-          // 5. Insert vinyl_tracks with exact side/position data
+          // 5. Insert vinyl_tracks — derive side from medium position (1→A, 2→B…)
+          //    to avoid duplicates when multiple mediums share the same track prefix
           const rows = [];
           for (const medium of details.media) {
+            const medPos = medium.position || 1;
+            const sideLetter = String.fromCharCode(64 + medPos);
             for (const track of (medium.tracks || [])) {
-              const pos      = (track.number || "").toUpperCase();
-              const sideM    = pos.match(/^([A-Z])/);
-              const numM     = pos.match(/(\d+)$/);
-              if (!sideM) continue;
+              const pos = (track.number || "").toUpperCase();
+              const numM = pos.match(/(\d+)$/);
+              if (!numM) continue;
+              const trackNum = parseInt(numM[1]);
               rows.push({
                 release_id:           rel.id,
-                disc_number:          medium.position || 1,
-                side:                 sideM[1],
-                position:             pos,
-                track_number_on_side: numM ? parseInt(numM[1]) : 1,
+                disc_number:          medPos,
+                side:                 sideLetter,
+                position:             sideLetter + trackNum,
+                track_number_on_side: trackNum,
                 title:                track.title,
                 duration_ms:          track.length || null,
                 itunes_track_id:      null,
@@ -1737,8 +1740,8 @@
             const norm = s => (s || "").toLowerCase().replace(/[^a-z0-9]/g, "");
             const title = norm(tTracks[tIdx]?.trackName);
             const dbT = vinylDbRelease.vinyl_tracks.find(t => norm(t.title) === title);
-            if (dbT?.side && dbT?.track_number_on_side)
-              return { side: dbT.side.toUpperCase(), track: dbT.track_number_on_side };
+            if (dbT?.disc_number && dbT?.track_number_on_side)
+              return { side: String.fromCharCode(64 + dbT.disc_number), track: dbT.track_number_on_side };
           }
           return deriveSideFromIndex(tIdx, tTracks) || { track: tIdx + 1 };
         }
@@ -1751,8 +1754,8 @@
             const dbTrack = vinylDbRelease.vinyl_tracks.find(t =>
               t.title?.toLowerCase() === title
             );
-            if (dbTrack?.side && dbTrack?.track_number_on_side) {
-              return { side: dbTrack.side.toUpperCase(), track: dbTrack.track_number_on_side };
+            if (dbTrack?.disc_number && dbTrack?.track_number_on_side) {
+              return { side: String.fromCharCode(64 + dbTrack.disc_number), track: dbTrack.track_number_on_side };
             }
           }
           // No DB data — derive side from duration heuristic

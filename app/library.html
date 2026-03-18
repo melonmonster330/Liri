@@ -139,16 +139,21 @@
 
         const trackRows = [];
         for (const medium of (bestRelease.media || [])) {
+          // Derive side from medium position (1→A, 2→B, …) — more reliable
+          // than the track number prefix which can repeat across mediums
+          const medPos = medium.position || 1;
+          const sideLetter = String.fromCharCode(64 + medPos);
           for (const track of (medium.tracks || [])) {
             const num = track.number || "";
-            const m = num.match(/^([A-Z])(\d+)/);
+            const m = num.match(/^[A-Z]?(\d+)/);
             if (!m) continue;
+            const trackNum = parseInt(m[1]);
             trackRows.push({
               release_id: releaseRow.id,
-              disc_number: medium.position || 1,
-              side: m[1],
-              position: num,
-              track_number_on_side: parseInt(m[2]),
+              disc_number: medPos,
+              side: sideLetter,
+              position: sideLetter + trackNum,
+              track_number_on_side: trackNum,
               title: track.title,
               duration_ms: track.length || null,
             });
@@ -368,10 +373,12 @@
         const merged = itunesTracks.map((t, i) => {
           const vt = vinylTracks.find(v => norm(v.title) === norm(t.trackName));
           let side, trackOnSide, position;
-          if (vt?.side && vt?.track_number_on_side) {
-            side        = vt.side.toUpperCase();
+          if (vt?.disc_number && vt?.track_number_on_side) {
+            // Derive side from disc_number (medium position) — more reliable
+            // than the side field which can have duplicates across mediums
+            side        = String.fromCharCode(64 + vt.disc_number);
             trackOnSide = vt.track_number_on_side;
-            position    = vt.position || (side + trackOnSide);
+            position    = side + trackOnSide;
           } else {
             const d = deriveSideFromIndex(i, itunesTracks);
             side        = d.side;
