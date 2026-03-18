@@ -311,7 +311,7 @@
 
         // 1. iTunes lookup + vinyl DB in parallel
         const [itunesData, { data: releaseRow }] = await Promise.all([
-          fetch(`https://itunes.apple.com/lookup?id=${cid}&entity=song`)
+          fetch(`/api/itunes-lookup?id=${cid}`)
             .then(r => r.json()).catch(() => null),
           sb.from("vinyl_releases").select("id")
             .eq("itunes_collection_id", String(cid)).maybeSingle(),
@@ -324,11 +324,11 @@
         // Fallback: search by artist + album if lookup returned nothing
         if (itunesTracks.length === 0) {
           const s = await fetch(
-            `https://itunes.apple.com/search?term=${encodeURIComponent(album.artist_name + " " + album.album_name)}&entity=album&limit=5`
+            `/api/itunes-lookup?term=${encodeURIComponent(album.artist_name + " " + album.album_name)}&entity=album&limit=5`
           ).then(r => r.json()).catch(() => null);
           const match = (s?.results || []).find(r => r.wrapperType === "collection");
           if (match) {
-            const r2 = await fetch(`https://itunes.apple.com/lookup?id=${match.collectionId}&entity=song`)
+            const r2 = await fetch(`/api/itunes-lookup?id=${match.collectionId}`)
               .then(r => r.json()).catch(() => null);
             itunesTracks = (r2?.results || [])
               .filter(r => r.wrapperType === "track")
@@ -563,7 +563,7 @@
           setSearching(true);
           try {
             const res = await fetch(
-              `https://itunes.apple.com/search?term=${encodeURIComponent(query)}&entity=album&limit=8`
+              `/api/itunes-lookup?term=${encodeURIComponent(query)}&entity=album&limit=8`
             ).then(r => r.json());
             const seen = new Set();
             const albums = (res.results || []).filter(r => {
