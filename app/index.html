@@ -627,6 +627,18 @@
         } catch {}
       };
 
+      const showAlbumEndPushNotification = (song) => {
+        if (localStorage.getItem("liri_flip_notify") !== "true") return;
+        if (Notification.permission !== "granted") return;
+        try {
+          new Notification("That's the album! Time for a new LP 🎶", {
+            body: song ? `${song.artist} — ${song.album || "Album complete"}` : "Put on your next record to keep going",
+            icon: song?.artwork || undefined,
+            tag: "liri-album-end",
+          });
+        } catch {}
+      };
+
       const enableFlipNotify = async () => {
         const perm = await Notification.requestPermission();
         if (perm === "granted") {
@@ -916,6 +928,7 @@
                 showFlipPushNotification(detectedSong);
                 setSideEndReason("flip");
               } else {
+                showAlbumEndPushNotification(detectedSong);
                 setSideEndReason("album-end");
               }
               setMode("side-end");
@@ -1924,6 +1937,7 @@
         const isSideEnd   = sideEnds.includes(idx);
 
         if (isLastTrack) {
+          showAlbumEndPushNotification(detectedSong);
           setSideEndReason("album-end");
           setMode("side-end");
           return;
