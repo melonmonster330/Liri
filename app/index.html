@@ -2735,34 +2735,44 @@
                 >
                   {lyrics.length > 0 ? (
                     <>
-                      {lyrics.map((line, i) => {
-                        const dist = i - currentIndex;
-                        const cur  = dist === 0;
-                        const near = Math.abs(dist) <= 3;
-                        return (
-                          <div
-                            key={i}
-                            ref={cur ? currentLineRef : null}
-                            onClick={() => seekToLine(i)}
-                            style={{
-                              textAlign:"center",
-                              padding: near ? "6px 0" : "3px 0",
-                              fontSize: cur ? "32px" : Math.abs(dist) <= 1 ? "20px" : near ? "16px" : "13px",
-                              fontWeight: cur ? "700" : "400",
-                              color: cur ? "#ffffff"
-                                : dist > 0
-                                  ? `rgba(255,255,255,${Math.max(0.07, 0.28 - Math.abs(dist) * 0.04)})`
-                                  : `rgba(255,255,255,${Math.max(0.05, 0.18 - Math.abs(dist) * 0.02)})`,
-                              lineHeight:"1.4",
-                              transition: near ? "all 0.4s cubic-bezier(0.4,0,0.2,1)" : "none",
-                              textShadow: cur ? "0 0 60px rgba(212,168,70,0.4), 0 2px 20px rgba(0,0,0,0.8)" : "none",
-                              cursor:"pointer",
-                            }}
-                          >
-                            {line.text}
-                          </div>
-                        );
-                      })}
+                      {(() => {
+                        // Adaptive transition: scale with how long the current line lasts.
+                        // Fast rap/spoken sections have lines <1s apart — a 0.4s transition
+                        // overlaps and looks sluggish. Cap at 0.4s, floor at 0.1s.
+                        const curLine  = lyrics[currentIndex];
+                        const nextLine = lyrics[currentIndex + 1];
+                        const lineDur  = curLine && nextLine ? nextLine.time - curLine.time : 3;
+                        const transSec = Math.min(0.4, Math.max(0.1, lineDur * 0.35)).toFixed(2);
+                        const transition = `all ${transSec}s cubic-bezier(0.4,0,0.2,1)`;
+                        return lyrics.map((line, i) => {
+                          const dist = i - currentIndex;
+                          const cur  = dist === 0;
+                          const near = Math.abs(dist) <= 3;
+                          return (
+                            <div
+                              key={i}
+                              ref={cur ? currentLineRef : null}
+                              onClick={() => seekToLine(i)}
+                              style={{
+                                textAlign:"center",
+                                padding: near ? "6px 0" : "3px 0",
+                                fontSize: cur ? "32px" : Math.abs(dist) <= 1 ? "20px" : near ? "16px" : "13px",
+                                fontWeight: cur ? "700" : "400",
+                                color: cur ? "#ffffff"
+                                  : dist > 0
+                                    ? `rgba(255,255,255,${Math.max(0.07, 0.28 - Math.abs(dist) * 0.04)})`
+                                    : `rgba(255,255,255,${Math.max(0.05, 0.18 - Math.abs(dist) * 0.02)})`,
+                                lineHeight:"1.4",
+                                transition: near ? transition : "none",
+                                textShadow: cur ? "0 0 60px rgba(212,168,70,0.4), 0 2px 20px rgba(0,0,0,0.8)" : "none",
+                                cursor:"pointer",
+                              }}
+                            >
+                              {line.text}
+                            </div>
+                          );
+                        });
+                      })()}
                       {/* Copyright credit — scrolled into view ~6s after last lyric */}
                       <div ref={creditsRef} style={{ marginTop:"52px", paddingBottom:"30vh", textAlign:"center" }}>
                         <div style={{ width:"32px", height:"1px", background:"rgba(255,255,255,0.1)", margin:"0 auto 20px" }} />
