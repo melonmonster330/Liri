@@ -1745,35 +1745,61 @@
         return { track: idx + 1 };
       };
 
+      // ── SOURCE OF TRUTH for side/track display ──────────────────────────────
+      // This is the single source of truth for which side + track the user is on.
+      // library.html uses the same norm() function and the same isSequential logic
+      // to merge Discogs data — if you change the logic here, update library.html too.
       const getSideInfo = () => {
+        // Strip punctuation + lowercase for reliable title matching (Discogs titles ≠ iTunes titles)
+        const norm = s => (s || "").toLowerCase().replace(/[^a-z0-9]/g, "");
+
+        // Resolve a vinyl DB entry for a given iTunes track name + 0-based index.
+        // Handles sequential Discogs numbering (B5, F23 → match by index) vs per-side (B1, B2 → match by title).
+        const resolveVinylTrack = (trackName, idx, vinylTracks) => {
+          if (!vinylTracks?.length) return null;
+          const maxNum = Math.max(...vinylTracks.map(v => v.track_number_on_side || 0));
+          const isSeq  = maxNum > 0 && maxNum === vinylTracks.length;
+          if (isSeq) return vinylTracks.find(v => v.track_number_on_side === idx + 1) || null;
+          const normTitle = norm(trackName);
+          return vinylTracks.find(v => norm(v.title) === normTitle)
+              || vinylTracks.find(v => v.track_number_on_side === idx + 1)
+              || null;
+        };
+
+        // Convert a vinyl DB row to { side, track } for display.
+        // For sequential numbering, recounts per-side position (B5 is shown as Side B · track 1).
+        const vinylTrackToSideInfo = (vt, vinylTracks) => {
+          if (!vt?.side) return null;
+          const maxNum = Math.max(...vinylTracks.map(v => v.track_number_on_side || 0));
+          const isSeq  = maxNum > 0 && maxNum === vinylTracks.length;
+          const track  = isSeq
+            ? vinylTracks.filter(v => v.side === vt.side && v.track_number_on_side <= vt.track_number_on_side).length
+            : vt.track_number_on_side;
+          return { side: vt.side.toUpperCase(), track };
+        };
+
         // ── Path 2 first: Turntable mode — album pre-selected, track matched by vinyl-aware scan ──
         // Must check this before Path 1 — fetchAlbumTracks may load the wrong album version
         // (e.g. original instead of Taylor's Version) and produce the wrong track index.
         const tTracks = turntableTracksRef.current;
         const tIdx    = turntableMatchedIdxRef.current;
         if (turntableAlbum && tTracks.length > 0 && tIdx >= 0) {
-          // Prefer vinyl DB — real side positions from MusicBrainz
-          if (vinylDbRelease?.vinyl_tracks?.length > 0) {
-            const norm = s => (s || "").toLowerCase().replace(/[^a-z0-9]/g, "");
-            const title = norm(tTracks[tIdx]?.trackName);
-            const dbT = vinylDbRelease.vinyl_tracks.find(t => norm(t.title) === title);
-            if (dbT?.side && dbT?.track_number_on_side)
-              return { side: dbT.side.toUpperCase(), track: dbT.track_number_on_side };
+          const vinylTracks = vinylDbRelease?.vinyl_tracks;
+          if (vinylTracks?.length > 0) {
+            const vt = resolveVinylTrack(tTracks[tIdx]?.trackName, tIdx, vinylTracks);
+            const si = vinylTrackToSideInfo(vt, vinylTracks);
+            if (si) return si;
           }
           return deriveSideFromIndex(tIdx, tTracks) || { track: tIdx + 1 };
         }
 
         // ── Path 1: Full vinyl auto-mode — albumTracks + currentTrackIndex ──
         if (albumTracks.length > 0 && currentTrackIndex >= 0) {
-          // Prefer Liri DB — has exact side labels and position_on_side
-          if (vinylDbRelease?.vinyl_tracks?.length > 0) {
-            const title = albumTracks[currentTrackIndex]?.trackName?.toLowerCase();
-            const dbTrack = vinylDbRelease.vinyl_tracks.find(t =>
-              t.title?.toLowerCase() === title
-            );
-            if (dbTrack?.side && dbTrack?.track_number_on_side) {
-              return { side: dbTrack.side.toUpperCase(), track: dbTrack.track_number_on_side };
-            }
+          const vinylTracks = vinylDbRelease?.vinyl_tracks;
+          if (vinylTracks?.length > 0) {
+            const vt = resolveVinylTrack(albumTracks[currentTrackIndex]?.trackName, currentTrackIndex, vinylTracks);
+            const si = vinylTrackToSideInfo(vt, vinylTracks);
+            if (si) return si;
           }
           // No DB data — derive side from duration heuristic
           return deriveSideFromIndex(currentTrackIndex, albumTracks) || { track: currentTrackIndex + 1 };
