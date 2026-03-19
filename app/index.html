@@ -888,6 +888,42 @@
         }
       }, [playbackTime, songDuration, lyrics, vinylMode, mode]);
 
+      // ── Side-end detection for turntable mode without vinyl auto-mode ──
+      // vinyl auto-mode already handles this; this covers the case where the user
+      // has an album selected but hasn't turned on auto-advance.
+      useEffect(() => {
+        if (vinylMode || mode !== "syncing" || !turntableAlbum) return;
+        const tTracks = turntableTracksRef.current;
+        const tIdx    = turntableMatchedIdxRef.current;
+        if (tTracks.length === 0 || tIdx < 0) return;
+        const lastLyricTime = lyrics.length > 0 ? lyrics[lyrics.length - 1].time : null;
+        const effectiveDuration = songDuration ?? (lastLyricTime ? lastLyricTime + 30 : null);
+        if (!effectiveDuration) return;
+        if (playbackTime >= effectiveDuration - 2 && !autoAdvanceFiredRef.current) {
+          autoAdvanceFiredRef.current = true;
+          const dbRelease    = vinylDbReleaseRef.current;
+          const effectiveTps = albumTpsRef.current > 0 ? albumTpsRef.current : 0;
+          const sideEnds     = dbRelease?.vinyl_tracks?.length > 0
+            ? getDbSideEndIndices(tTracks, dbRelease.vinyl_tracks)
+            : getSideEndIndices(tTracks, effectiveTps);
+          const isLastTrack  = tIdx === tTracks.length - 1;
+          const isSideEnd    = sideEnds.includes(tIdx);
+          if (isLastTrack || isSideEnd) {
+            setTimeout(() => {
+              clearInterval(syncIntervalRef.current);
+              if (isSideEnd && !isLastTrack) {
+                playFlipChime();
+                showFlipPushNotification(detectedSong);
+                setSideEndReason("flip");
+              } else {
+                setSideEndReason("album-end");
+              }
+              setMode("side-end");
+            }, 3000);
+          }
+        }
+      }, [playbackTime, songDuration, lyrics, mode, vinylMode, turntableAlbum]);
+
       // ── Handle track advance (runs with fresh state) ──
       useEffect(() => {
         if (!shouldAdvanceTrack) return;
