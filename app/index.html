@@ -2799,27 +2799,6 @@
 
               <div className="safe-bottom" style={{ padding:"12px 20px 0", flexShrink:0 }}>
 
-                {/* Vinyl mode: prev / track name / next row */}
-                {vinylMode && albumTracks.length > 0 && currentTrackIndex >= 0 && (
-                  <div style={{ display:"flex", alignItems:"center", justifyContent:"center", gap:"10px", marginBottom:"10px" }}>
-                    <button
-                      onClick={() => jumpToTrack(Math.max(0, currentTrackIndex - 1))}
-                      disabled={currentTrackIndex === 0}
-                      style={{ background:"rgba(255,255,255,0.06)", border:"1px solid rgba(255,255,255,0.1)", color: currentTrackIndex === 0 ? "rgba(255,255,255,0.15)" : "rgba(255,255,255,0.5)", borderRadius:"50%", width:"32px", height:"32px", display:"flex", alignItems:"center", justifyContent:"center", cursor: currentTrackIndex === 0 ? "default" : "pointer", fontSize:"14px", flexShrink:0 }}>
-                      ←
-                    </button>
-                    <div style={{ fontSize:"11px", color:"rgba(255,255,255,0.35)", textAlign:"center", maxWidth:"180px", overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>
-                      {detectedSong?.title || ""}
-                    </div>
-                    <button
-                      onClick={() => advanceToNextTrack(albumTracksRef.current, currentTrackIndexRef.current)}
-                      disabled={currentTrackIndex >= albumTracks.length - 1}
-                      style={{ background:"rgba(255,255,255,0.06)", border:"1px solid rgba(255,255,255,0.1)", color: currentTrackIndex >= albumTracks.length - 1 ? "rgba(255,255,255,0.15)" : "rgba(255,255,255,0.5)", borderRadius:"50%", width:"32px", height:"32px", display:"flex", alignItems:"center", justifyContent:"center", cursor: currentTrackIndex >= albumTracks.length - 1 ? "default" : "pointer", fontSize:"14px", flexShrink:0 }}>
-                      →
-                    </button>
-                  </div>
-                )}
-
                 {/* Nudge hint label */}
                 <div style={{ textAlign:"center", fontSize:"10px", letterSpacing:"2px", textTransform:"uppercase", marginBottom:"8px", color: isResyncing ? "#d4a846" : "rgba(255,255,255,0.18)", animation: isResyncing ? "pulse 1.2s ease-in-out infinite" : "none" }}>
                   {isResyncing ? "↻ listening for resync…" : nudgeMenu ? "tap to adjust more" : "early ← · behind →"}
@@ -2846,6 +2825,26 @@
                   <button onClick={resync} disabled={isResyncing} style={{ background:"rgba(255,255,255,0.07)", border:"1px solid rgba(255,255,255,0.15)", color:"rgba(255,255,255,0.55)", borderRadius:"50px", padding:"10px 22px", fontSize:"13px", fontWeight:"500", cursor: isResyncing ? "wait" : "pointer", fontFamily:"inherit", opacity: isResyncing ? 0.4 : 1 }}>↻ Resync</button>
                   <button onClick={() => { reset(); setTimeout(() => startListening(false), 150); }} style={{ background:"rgba(255,255,255,0.04)", border:"1px solid rgba(255,255,255,0.09)", color:"rgba(255,255,255,0.35)", borderRadius:"50px", padding:"10px 22px", fontSize:"13px", cursor:"pointer", fontFamily:"inherit" }}>Wrong song?</button>
                 </div>
+                {/* Vinyl mode: prev / track name / next — smaller, below timing controls */}
+                {vinylMode && albumTracks.length > 0 && currentTrackIndex >= 0 && (
+                  <div style={{ display:"flex", alignItems:"center", justifyContent:"center", gap:"8px", marginTop:"6px", marginBottom:"2px" }}>
+                    <button
+                      onClick={() => jumpToTrack(Math.max(0, currentTrackIndex - 1))}
+                      disabled={currentTrackIndex === 0}
+                      style={{ background:"none", border:"none", color: currentTrackIndex === 0 ? "rgba(255,255,255,0.1)" : "rgba(255,255,255,0.3)", cursor: currentTrackIndex === 0 ? "default" : "pointer", fontSize:"12px", padding:"2px 6px", flexShrink:0 }}>
+                      ←
+                    </button>
+                    <div style={{ fontSize:"10px", color:"rgba(255,255,255,0.25)", textAlign:"center", maxWidth:"160px", overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>
+                      {detectedSong?.title || ""}
+                    </div>
+                    <button
+                      onClick={() => advanceToNextTrack(albumTracksRef.current, currentTrackIndexRef.current)}
+                      disabled={currentTrackIndex >= albumTracks.length - 1}
+                      style={{ background:"none", border:"none", color: currentTrackIndex >= albumTracks.length - 1 ? "rgba(255,255,255,0.1)" : "rgba(255,255,255,0.3)", cursor: currentTrackIndex >= albumTracks.length - 1 ? "default" : "pointer", fontSize:"12px", padding:"2px 6px", flexShrink:0 }}>
+                      →
+                    </button>
+                  </div>
+                )}
                 <div style={{ textAlign:"center", marginTop:"6px", fontSize:"9px", color:"rgba(255,255,255,0.1)", letterSpacing:"1px" }}>v{APP_VERSION}</div>
               </div>
             </div>
