@@ -1065,7 +1065,10 @@
               fetch(`https://lrclib.net/api/search?q=${encodeURIComponent(`${artist} ${title}`.trim())}`).then(r => r.json()).catch(() => []),
             ]);
             const candidates = [...(Array.isArray(a) ? a : []), ...(Array.isArray(b) ? b : [])];
-            const best = candidates.find(c => c.syncedLyrics) || null;
+            const withSynced = candidates.filter(c => c.syncedLyrics);
+            // Prefer uncensored lyrics — deprioritise results with obvious asterisk censoring
+            const isCensored = c => /\*{2,}/.test(c.syncedLyrics || "");
+            const best = withSynced.find(c => !isCensored(c)) || withSynced[0] || null;
             return { ...t, lrcMatch: best };
           } catch { return { ...t, lrcMatch: null }; }
         }));
@@ -1317,7 +1320,9 @@
                   const lrcRes = await fetch(`https://lrclib.net/api/search?q=${encodeURIComponent(q)}`)
                     .then(r => r.json()).catch(() => []);
                   const candidates = Array.isArray(lrcRes) ? lrcRes : [];
-                  const gptMatch = candidates.find(c => c.syncedLyrics) || null;
+                  const withSyncedGpt = candidates.filter(c => c.syncedLyrics);
+                  const isCensoredGpt = c => /\*{2,}/.test(c.syncedLyrics || "");
+                  const gptMatch = withSyncedGpt.find(c => !isCensoredGpt(c)) || withSyncedGpt[0] || null;
                   // Cross-validate: check the transcribed words actually appear in the lyrics
                   if (gptMatch?.syncedLyrics) {
                     const vWords = transcribed.toLowerCase().replace(/[^\w\s]/g, "").split(/\s+/).filter(w => w.length > 3);
