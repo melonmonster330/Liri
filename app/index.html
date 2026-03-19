@@ -76,7 +76,7 @@
       "sb_publishable_C-NBnfg0ltAoUi46XQTUjA_ozjZW_Nd"
     );
 
-    const APP_VERSION = "1.54";
+    const APP_VERSION = "1.55";
 
     const PROXY_URL = window.Capacitor
       ? "https://getliri.app/api/recognize"
@@ -332,6 +332,8 @@
       const [onboardingStep, setOnboardingStep] = useState(0);
       const ONBOARDING_STEPS = 6;
       const dismissOnboarding = () => { localStorage.setItem("liri_onboarding_done", "true"); setShowOnboarding(false); };
+      // Skip onboarding for returning users — if auth resolves with a logged-in user, they've seen it
+      useEffect(() => { if (user) dismissOnboarding(); }, [user]);
 
       // ── Analytics: persistent anonymous session ID ──
       // Stays in localStorage forever so we can track listening patterns even
