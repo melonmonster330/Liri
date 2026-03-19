@@ -76,7 +76,7 @@
       "sb_publishable_C-NBnfg0ltAoUi46XQTUjA_ozjZW_Nd"
     );
 
-    const APP_VERSION = "1.65";
+    const APP_VERSION = "1.66";
 
     const PROXY_URL = window.Capacitor
       ? "https://getliri.app/api/recognize"
@@ -804,6 +804,29 @@
                   if (row.track_name)      cache[row.track_name]      = row.synced_lyrics;
                 }
                 turntableLyricsCacheRef.current = cache;
+                // Eagerly pre-fetch LRC from LRCLib for any tracks not yet in Supabase cache.
+                // By the time Whisper returns (~6-10s), these will be in memory so
+                // matchTranscriptToTracks can score instantly instead of waiting on LRCLib.
+                const tracksToFetch = mapped.filter(t => {
+                  const key = t.trackId ?? t.trackName;
+                  return key && !cache[key];
+                });
+                if (tracksToFetch.length > 0) {
+                  Promise.all(tracksToFetch.map(async t => {
+                    try {
+                      const [a, b] = await Promise.all([
+                        fetch(`https://lrclib.net/api/search?artist_name=${encodeURIComponent(t.artistName || "")}&track_name=${encodeURIComponent(t.trackName || "")}`).then(r => r.json()).catch(() => []),
+                        fetch(`https://lrclib.net/api/search?q=${encodeURIComponent(`${t.artistName || ""} ${t.trackName || ""}`.trim())}`).then(r => r.json()).catch(() => []),
+                      ]);
+                      const candidates = [...(Array.isArray(a) ? a : []), ...(Array.isArray(b) ? b : [])];
+                      const best = candidates.filter(c => c.syncedLyrics).find(c => !/\*{2,}/.test(c.syncedLyrics)) || candidates.find(c => c.syncedLyrics);
+                      if (best?.syncedLyrics) {
+                        const key = t.trackId ?? t.trackName;
+                        if (key) turntableLyricsCacheRef.current[key] = best.syncedLyrics;
+                      }
+                    } catch {}
+                  })).catch(() => {});
+                }
               }).catch(() => {});
             setTurntableTracksLoading(false);
             return;
@@ -1582,8 +1605,11 @@
           const allChunks  = [];
           let attempts     = 0;
           let sending      = false;
-          // In turntable mode, Whisper is the only recogniser — fire at 2s and retry every 3s.
-          const turntableInterval = 2000;
+          // In turntable mode, Whisper is the only recogniser — fire at 6s and retry every 6s.
+          // 2s was too short: Whisper needs audible vocals to produce a usable transcript.
+          // Most songs have a ≥3s intro so the first attempt with only 2s almost always fails,
+          // wasting ~7s before the retry. 6s gives the song time to reach vocals.
+          const turntableInterval = 6000;
           let nextAttemptAt = turntableAlbumRef.current ? turntableInterval : ATTEMPT_INTERVAL;
 
           recorder.ondataavailable = e => {
