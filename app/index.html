@@ -76,7 +76,7 @@
       "sb_publishable_C-NBnfg0ltAoUi46XQTUjA_ozjZW_Nd"
     );
 
-    const APP_VERSION = "1.61";
+    const APP_VERSION = "1.62";
 
     const PROXY_URL = window.Capacitor
       ? "https://getliri.app/api/recognize"
@@ -1233,7 +1233,7 @@
       // ── Whisper transcription → LRCLib lyrics match (fallback when ACRCloud fails) ──
       // Sends audio to /api/transcribe (Whisper), searches LRCLib by the
       // transcribed words, finds which line matches to get the playback position.
-      const tryLyricsTranscription = async (blob, isAutoAdvance, blobBuiltAt = null, clipDuration = 0) => {
+      const tryLyricsTranscription = async (blob, isAutoAdvance) => {
         try {
           // 1. Transcribe with Whisper
           const audio = await blobToBase64(blob);
@@ -1288,11 +1288,7 @@
               };
               setIdentifiedBy("whisper");
               detectedAtRef.current      = Date.now();
-              // Compensate for time elapsed since the blob was built:
-              // startPos = LRC timestamp of first matched words (= start of our audio clip in song-time)
-              // Add clipDuration (audio we sent) + Whisper API latency = where the song is RIGHT NOW
-              const whisperLatency = blobBuiltAt ? (Date.now() - blobBuiltAt) / 1000 : 0;
-              initialPosRef.current      = startPos + clipDuration + whisperLatency;
+              initialPosRef.current      = startPos;
               autoAdvanceFiredRef.current = false;
               autoRetryCountRef.current  = 0;
               setDetectedSong(song);
@@ -1582,10 +1578,8 @@
           const allChunks  = [];
           let attempts     = 0;
           let sending      = false;
-          // In turntable mode, Whisper is the only recogniser — check every 1s but only fire
-          // once we have ≥15 chunks (~3s of audio). This gives fast retries while still
-          // ensuring the first blob has enough lyric content for a good transcript.
-          const turntableInterval = 1000;
+          // In turntable mode, Whisper is the only recogniser — fire at 3s and retry every 3s.
+          const turntableInterval = 3000;
           let nextAttemptAt = turntableAlbumRef.current ? turntableInterval : ATTEMPT_INTERVAL;
 
           recorder.ondataavailable = e => {
@@ -1628,18 +1622,12 @@
               // still loading — matchTranscriptToTracks handles the empty-tracks case gracefully.
               const hasTurntable = !!turntableAlbumRef.current;
               const shouldFireWhisper = hasTurntable
-                ? (allChunks.length >= 15 && !bgWhisperStarted && !recognitionWonRef.current)
+                ? (attempts >= 1 && !bgWhisperStarted && !recognitionWonRef.current)
                 : (attempts === 4 && !bgWhisperStarted);
               if (shouldFireWhisper) {
                 bgWhisperStarted = true;
-                // Send first chunk (WebM/Ogg stream header, required for decoding)
-                // + last 19 recent chunks (~3.8s of audio). Without the header chunk,
-                // Whisper can't decode the audio and returns an empty transcript.
-                const recentChunks = [allChunks[0], ...allChunks.slice(-19)];
-                const bgBlob = new Blob(recentChunks, { type: mimeType || "audio/webm" });
-                const blobBuiltAt = Date.now();
-                const clipDuration = Math.min(allChunks.length, 19) * 0.2; // 200ms per chunk
-                tryLyricsTranscription(bgBlob, isAutoAdvance, blobBuiltAt, clipDuration).then(found => {
+                const bgBlob = new Blob([...allChunks], { type: mimeType || "audio/webm" });
+                tryLyricsTranscription(bgBlob, isAutoAdvance).then(found => {
                   bgWhisperStarted = false; // allow retry on next attempt if this one failed
                   if (found && listenSessionRef.current === session) {
                     // Whisper won the race — shut down ACRCloud loop
