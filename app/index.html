@@ -430,6 +430,7 @@
       const syncStartRef        = useRef(null);
       const detectedAtRef       = useRef(null);
       const initialPosRef       = useRef(0);
+      const userNudgeRef        = useRef(0); // cumulative nudge applied by user this session
       const recordingStartRef   = useRef(null); // wall-clock time when mic started recording
       const lyricsRef        = useRef([]);
       const progressTimerRef    = useRef(null);
@@ -1658,6 +1659,7 @@
       }, []);
 
       const nudge = (s) => {
+        userNudgeRef.current += s;
         initialPosRef.current = Math.max(0, initialPosRef.current + s);
         // Push updated position to TV
         if (roomCode && detectedSong) {
@@ -1902,7 +1904,7 @@
         setCurrentTrackIndex(nextIdx);
         turntableMatchedIdxRef.current = nextIdx; // keep turntable index in sync
         detectedAtRef.current = Date.now();
-        initialPosRef.current = AUTO_ADVANCE_OFFSET;
+        initialPosRef.current = AUTO_ADVANCE_OFFSET + userNudgeRef.current;
 
         setDetectedSong(nextSong);
         setSongDuration(nextDuration);
@@ -1994,7 +1996,7 @@
         setAlbumTracks([]); setCurrentTrackIndex(-1);
         setShouldAdvanceTrack(false); setIsResyncing(false); setSideEndReason("failed");
         setAlbumCollectionId(null); setVinylDbRelease(null);
-        albumTpsRef.current = 0; vinylDbReleaseRef.current = null;
+        albumTpsRef.current = 0; vinylDbReleaseRef.current = null; userNudgeRef.current = 0;
       };
 
       // ── Jump to a specific track index (vinyl mode back/forward) ──
