@@ -76,7 +76,7 @@
       "sb_publishable_C-NBnfg0ltAoUi46XQTUjA_ozjZW_Nd"
     );
 
-    const APP_VERSION = "1.58";
+    const APP_VERSION = "1.59";
 
     const PROXY_URL = window.Capacitor
       ? "https://getliri.app/api/recognize"
@@ -1578,8 +1578,10 @@
           const allChunks  = [];
           let attempts     = 0;
           let sending      = false;
-          // In turntable mode, Whisper is the only recogniser — fire at 3s and retry every 3s.
-          const turntableInterval = 3000;
+          // In turntable mode, Whisper is the only recogniser — check every 1s but only fire
+          // once we have ≥15 chunks (~3s of audio). This gives fast retries while still
+          // ensuring the first blob has enough lyric content for a good transcript.
+          const turntableInterval = 1000;
           let nextAttemptAt = turntableAlbumRef.current ? turntableInterval : ATTEMPT_INTERVAL;
 
           recorder.ondataavailable = e => {
@@ -1622,11 +1624,14 @@
               // still loading — matchTranscriptToTracks handles the empty-tracks case gracefully.
               const hasTurntable = !!turntableAlbumRef.current;
               const shouldFireWhisper = hasTurntable
-                ? (attempts >= 1 && !bgWhisperStarted && !recognitionWonRef.current)
+                ? (allChunks.length >= 15 && !bgWhisperStarted && !recognitionWonRef.current)
                 : (attempts === 4 && !bgWhisperStarted);
               if (shouldFireWhisper) {
                 bgWhisperStarted = true;
-                const bgBlob = new Blob([...allChunks], { type: mimeType || "audio/webm" });
+                // Cap to last 20 chunks (~4s) — keeps payload small regardless of how long
+                // the session has been running, so Whisper latency stays consistent.
+                const recentChunks = allChunks.slice(-20);
+                const bgBlob = new Blob(recentChunks, { type: mimeType || "audio/webm" });
                 tryLyricsTranscription(bgBlob, isAutoAdvance).then(found => {
                   bgWhisperStarted = false; // allow retry on next attempt if this one failed
                   if (found && listenSessionRef.current === session) {
@@ -2927,6 +2932,7 @@
                   const tTracks = isTT ? turntableTracksRef.current : albumTracks;
                   const atStart = tIdx <= 0;
                   const atEnd   = tIdx >= tTracks.length - 1;
+                  const nextTrackName = !atEnd ? (tTracks[tIdx + 1]?.trackName || tTracks[tIdx + 1]?.title || null) : null;
                   const goPrev  = () => isTT
                     ? advanceToNextTrack(turntableTracksRef.current, tIdx - 2)
                     : jumpToTrack(Math.max(0, currentTrackIndex - 1));
@@ -2939,8 +2945,15 @@
                         style={{ background:"none", border:"none", color: atStart ? "rgba(255,255,255,0.1)" : "rgba(255,255,255,0.3)", cursor: atStart ? "default" : "pointer", fontSize:"12px", padding:"2px 6px", flexShrink:0 }}>
                         ←
                       </button>
-                      <div style={{ fontSize:"10px", color:"rgba(255,255,255,0.25)", textAlign:"center", maxWidth:"160px", overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>
-                        {detectedSong?.title || ""}
+                      <div style={{ textAlign:"center", maxWidth:"160px" }}>
+                        {nextTrackName ? (
+                          <>
+                            <div style={{ fontSize:"8px", color:"rgba(255,255,255,0.15)", letterSpacing:"1px", textTransform:"uppercase", marginBottom:"1px" }}>Next song</div>
+                            <div style={{ fontSize:"10px", color:"rgba(255,255,255,0.25)", overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>{nextTrackName}</div>
+                          </>
+                        ) : (
+                          <div style={{ fontSize:"9px", color:"rgba(255,255,255,0.12)", letterSpacing:"0.5px" }}>Last track</div>
+                        )}
                       </div>
                       <button onClick={goNext} disabled={atEnd}
                         style={{ background:"none", border:"none", color: atEnd ? "rgba(255,255,255,0.1)" : "rgba(255,255,255,0.3)", cursor: atEnd ? "default" : "pointer", fontSize:"12px", padding:"2px 6px", flexShrink:0 }}>
