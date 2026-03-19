@@ -76,7 +76,7 @@
       "sb_publishable_C-NBnfg0ltAoUi46XQTUjA_ozjZW_Nd"
     );
 
-    const APP_VERSION = "1.69";
+    const APP_VERSION = "1.70";
 
     const PROXY_URL = window.Capacitor
       ? "https://getliri.app/api/recognize"
@@ -770,6 +770,9 @@
       // ── Turntable album: sync to ref + localStorage, fetch tracks ──
       const fetchTurntableTracks = async (collectionId) => {
         setTurntableTracksLoading(true);
+        // Clear immediately so we never search stale lyrics from a previous album
+        turntableTracksRef.current      = [];
+        turntableLyricsCacheRef.current = {};
         try {
           const alb = turntableAlbumRef.current;
 
@@ -1198,10 +1201,16 @@
           // Skips GPT — directly matches transcript against every track's LRC lyrics.
           // Best path for obscure tracks, re-recordings, anything ACR misses.
           // Tracks are fetched once at album selection — never re-fetched here.
-          const turntableTracks = turntableTracksRef.current;
-          attemptLogRef.current.push(`turntable: ${turntableTracks.length} tracks loaded`);
-          if (turntableTracks.length > 0) {
-            attemptLogRef.current.push(`whisper: trying vinyl-aware match against ${turntableTracks.length} tracks`);
+          //
+          // IMPORTANT: if turntable album is set, we ALWAYS return here (true or false).
+          // We never fall through to Strategy A/B/C — that would return a random GPT guess.
+          if (turntableAlbumRef.current) {
+            const turntableTracks = turntableTracksRef.current;
+            if (turntableTracks.length === 0) {
+              attemptLogRef.current.push(`turntable: tracks still loading — skipping attempt`);
+              return false;
+            }
+            attemptLogRef.current.push(`turntable: ${turntableTracks.length} tracks, ${Object.keys(turntableLyricsCacheRef.current).length} cached`);
             const vmResult = matchTranscriptToTracks(transcribed, turntableTracks, attemptLogRef.current, turntableLyricsCacheRef.current);
             if (vmResult) {
               if (recognitionWonRef.current) return false;
