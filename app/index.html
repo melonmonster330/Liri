@@ -76,7 +76,7 @@
       "sb_publishable_C-NBnfg0ltAoUi46XQTUjA_ozjZW_Nd"
     );
 
-    const APP_VERSION = "1.53";
+    const APP_VERSION = "1.54";
 
     const PROXY_URL = window.Capacitor
       ? "https://getliri.app/api/recognize"
@@ -787,20 +787,21 @@
             }));
             turntableTracksRef.current = mapped;
 
-            // Pre-load LRC cache by itunes_track_id (for tracks that have one)
-            const trackIds = mapped.map(t => t.trackId).filter(Boolean);
-            if (trackIds.length > 0) {
-              sb.from("liri_lyric_cache")
-                .select("itunes_track_id, synced_lyrics")
-                .in("itunes_track_id", trackIds)
-                .then(({ data }) => {
-                  const cache = {};
-                  for (const row of (data || [])) cache[row.itunes_track_id] = row.synced_lyrics;
-                  turntableLyricsCacheRef.current = cache;
-                }).catch(() => {});
-            } else {
-              turntableLyricsCacheRef.current = {};
-            }
+            // Pre-load LRC cache for the whole album at once.
+            // Index by both itunes_track_id (numeric) and track_name (string) so
+            // matchTranscriptToTracks can hit the cache regardless of whether tracks
+            // came from iTunes (have IDs) or Supabase vinyl_tracks (IDs may be null).
+            sb.from("liri_lyric_cache")
+              .select("itunes_track_id, track_name, synced_lyrics")
+              .eq("itunes_collection_id", collectionId)
+              .then(({ data }) => {
+                const cache = {};
+                for (const row of (data || [])) {
+                  if (row.itunes_track_id) cache[row.itunes_track_id] = row.synced_lyrics;
+                  if (row.track_name)      cache[row.track_name]      = row.synced_lyrics;
+                }
+                turntableLyricsCacheRef.current = cache;
+              }).catch(() => {});
             setTurntableTracksLoading(false);
             return;
           }
@@ -1740,17 +1741,39 @@
       };
 
       const loadLyrics = async (title, artist) => {
+        // 1. Supabase liri_lyric_cache first — no LRCLib call if already cached
         try {
+          const { data: cached } = await sb.from("liri_lyric_cache")
+            .select("synced_lyrics")
+            .ilike("track_name", title)
+            .ilike("artist_name", artist)
+            .limit(1).maybeSingle();
+          if (cached?.synced_lyrics) {
+            const parsed = parseLRC(cached.synced_lyrics);
+            setLyrics(parsed); lyricsRef.current = parsed;
+            return;
+          }
+        } catch {}
+        // 2. LRCLib fetch (only if not in Supabase)
+        try {
+          const isCensored = c => /\*{2,}/.test(c.syncedLyrics || "");
           const [a, b] = await Promise.all([
-            fetch(`https://lrclib.net/api/search?artist_name=${encodeURIComponent(artist)}&track_name=${encodeURIComponent(title)}`).then(r => r.json()),
-            fetch(`https://lrclib.net/api/search?q=${encodeURIComponent(artist + " " + title)}`).then(r => r.json()),
+            fetch(`https://lrclib.net/api/search?artist_name=${encodeURIComponent(artist)}&track_name=${encodeURIComponent(title)}`).then(r => r.json()).catch(() => []),
+            fetch(`https://lrclib.net/api/search?q=${encodeURIComponent(artist + " " + title)}`).then(r => r.json()).catch(() => []),
           ]);
-          const synced = [...a, ...b].find(x => x.syncedLyrics);
-          if (synced) { setLyrics(parseLRC(synced.syncedLyrics)); return; }
+          const withSynced = [...a, ...b].filter(x => x.syncedLyrics);
+          const synced = withSynced.find(c => !isCensored(c)) || withSynced[0];
+          if (synced) {
+            const parsed = parseLRC(synced.syncedLyrics);
+            setLyrics(parsed); lyricsRef.current = parsed;
+            return;
+          }
           const plain = [...a, ...b].find(x => x.plainLyrics);
-          if (plain) setLyrics(plain.plainLyrics.split("\n").filter(l => l.trim()).map((text, i) => ({ time: i * 4, text })));
-          else setLyrics([]);
-        } catch { setLyrics([]); }
+          if (plain) {
+            const parsed = plain.plainLyrics.split("\n").filter(l => l.trim()).map((text, i) => ({ time: i * 4, text }));
+            setLyrics(parsed); lyricsRef.current = parsed;
+          } else { setLyrics([]); lyricsRef.current = []; }
+        } catch { setLyrics([]); lyricsRef.current = []; }
       };
 
       const startSync = useCallback(() => {

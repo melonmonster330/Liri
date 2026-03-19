@@ -248,9 +248,15 @@
 
     // Fetch synced lyrics: Supabase cache → LRCLib get → LRCLib search
     async function fetchLyricsForTrack(trackId, trackName, artistName, albumName, durationMs) {
+      // Check Supabase cache by trackId (fast exact match) or track_name+artist fallback
       if (trackId) {
         const { data } = await sb.from("liri_lyric_cache")
           .select("synced_lyrics").eq("itunes_track_id", trackId).maybeSingle();
+        if (data?.synced_lyrics) return data.synced_lyrics;
+      }
+      if (trackName) {
+        const { data } = await sb.from("liri_lyric_cache")
+          .select("synced_lyrics").ilike("track_name", trackName).ilike("artist_name", artistName).limit(1).maybeSingle();
         if (data?.synced_lyrics) return data.synced_lyrics;
       }
       const dur = durationMs ? Math.round(durationMs / 1000) : 0;
@@ -395,20 +401,69 @@
 
       async function loadTracks() {
         const cid = album.itunes_collection_id;
+        const norm = s => (s || "").toLowerCase().replace(/[^a-z0-9]/g, "");
 
-        // 1. iTunes lookup (via proxy) + vinyl DB in parallel
-        const [itunesData, { data: releaseRow }] = await Promise.all([
-          fetch(`/api/itunes-lookup?id=${cid}&entity=song&limit=200`)
-            .then(r => r.json()).catch(() => null),
-          sb.from("vinyl_releases").select("id")
-            .eq("itunes_collection_id", String(cid)).maybeSingle(),
-        ]);
+        // 1. Supabase vinyl_tracks first — no iTunes call if we already have this album
+        const { data: releaseRow } = await sb.from("vinyl_releases")
+          .select("id").eq("itunes_collection_id", String(cid)).maybeSingle();
+        let releaseId = releaseRow?.id;
+        let vinylTracks = [];
 
+        if (releaseId) {
+          const { data: vt } = await sb.from("vinyl_tracks").select("*")
+            .eq("release_id", releaseId)
+            .order("side", { ascending: true })
+            .order("track_number_on_side", { ascending: true });
+          vinylTracks = vt || [];
+        }
+
+        // Stale data check: duplicate side+track_number_on_side pairs = bad data
+        const hasDuplicatePositions = vinylTracks.length > 0 && (() => {
+          const seen = new Set();
+          return vinylTracks.some(v => {
+            const key = `${v.side}-${v.track_number_on_side}`;
+            if (seen.has(key)) return true; seen.add(key); return false;
+          });
+        })();
+        if (hasDuplicatePositions && releaseId) {
+          await sb.from("vinyl_tracks").delete().eq("release_id", releaseId);
+          await sb.from("vinyl_releases").delete().eq("id", releaseId);
+          releaseId = null; vinylTracks = [];
+        }
+
+        // 2. If Supabase has clean vinyl data, build merged list directly — no iTunes needed
+        if (vinylTracks.length > 0) {
+          const maxTrackNum = Math.max(...vinylTracks.map(v => v.track_number_on_side || 0));
+          const isSequential = maxTrackNum > 0 && maxTrackNum === vinylTracks.length;
+          const merged = vinylTracks.map((vt, i) => {
+            const side = vt.side?.toUpperCase() || "A";
+            const sideTrackNum = isSequential
+              ? vinylTracks.filter(v => v.side === vt.side && v.track_number_on_side <= vt.track_number_on_side).length
+              : vt.track_number_on_side;
+            return {
+              trackName:       vt.title,
+              artistName:      album.artist_name || "",
+              collectionName:  album.album_name  || "",
+              trackId:         vt.itunes_track_id || null,
+              trackTimeMillis: vt.duration_ms    || null,
+              side,
+              trackOnSide: sideTrackNum,
+              position:    side + sideTrackNum,
+            };
+          });
+          setVinylSource("db");
+          setTracks(merged);
+          setLoading(false);
+          return;
+        }
+
+        // 3. Fallback: fetch from iTunes (album not in Supabase yet)
+        const itunesData = await fetch(`/api/itunes-lookup?id=${cid}&entity=song&limit=200`)
+          .then(r => r.json()).catch(() => null);
         let itunesTracks = (itunesData?.results || [])
           .filter(r => r.wrapperType === "track")
           .sort((a, b) => (a.discNumber - b.discNumber) || (a.trackNumber - b.trackNumber));
 
-        // Fallback: search by artist + album if lookup returned nothing
         if (itunesTracks.length === 0) {
           const s = await fetch(
             `/api/itunes-lookup?term=${encodeURIComponent(album.artist_name + " " + album.album_name)}&entity=album&limit=5`
@@ -423,38 +478,8 @@
           }
         }
 
-        // 2. Vinyl tracks from DB
-        let vinylTracks = [];
-        let releaseId = releaseRow?.id;
-
-        if (releaseId) {
-          const { data: vt } = await sb.from("vinyl_tracks").select("*")
-            .eq("release_id", releaseId)
-            .order("side", { ascending: true })
-            .order("track_number_on_side", { ascending: true });
-          vinylTracks = vt || [];
-        }
-
-        // 3. Stale data check: duplicate side+track_number_on_side pairs = bad MusicBrainz data
-        const hasDuplicatePositions = vinylTracks.length > 0 && (() => {
-          const seen = new Set();
-          return vinylTracks.some(v => {
-            const key = `${v.side}-${v.track_number_on_side}`;
-            if (seen.has(key)) return true;
-            seen.add(key);
-            return false;
-          });
-        })();
-
-        if (hasDuplicatePositions && releaseId) {
-          await sb.from("vinyl_tracks").delete().eq("release_id", releaseId);
-          await sb.from("vinyl_releases").delete().eq("id", releaseId);
-          releaseId = null;
-          vinylTracks = [];
-        }
-
-        // 4. Auto-populate from Discogs if no vinyl data
-        if (vinylTracks.length === 0 && itunesTracks.length > 0) {
+        // 4. Auto-populate from Discogs if we got iTunes tracks but no vinyl data
+        if (itunesTracks.length > 0) {
           releaseId = await autoPopulateVinylSides(cid, album.album_name, album.artist_name);
           if (releaseId) {
             const { data: vt } = await sb.from("vinyl_tracks").select("*")
@@ -465,39 +490,28 @@
           }
         }
 
-        const hasVinylData = vinylTracks.length > 0;
-        setVinylSource(hasVinylData ? "db" : "estimated");
+        setVinylSource(vinylTracks.length > 0 ? "db" : "estimated");
 
         // 5. Merge iTunes + vinyl position data
-        // Detect sequential Discogs numbering (e.g. Fearless TV: B5,B6 … F27).
-        // Signature: max(track_number_on_side) == total vinyl tracks.
-        const norm = s => (s || "").toLowerCase().replace(/[^a-z0-9]/g, "");
         const maxTrackNum = vinylTracks.length > 0
           ? Math.max(...vinylTracks.map(v => v.track_number_on_side || 0)) : 0;
         const isSequential = maxTrackNum > 0 && maxTrackNum === vinylTracks.length;
 
         const merged = itunesTracks.map((t, i) => {
-          // Sequential: match by global index position (i+1)
-          // Per-side:   match by title, fall back to index
           const vt = isSequential
             ? vinylTracks.find(v => v.track_number_on_side === (i + 1))
             : (vinylTracks.find(v => norm(v.title) === norm(t.trackName))
                || vinylTracks.find(v => v.track_number_on_side === (i + 1)));
-
           let side, trackOnSide, position;
           if (vt?.side) {
             side = vt.side.toUpperCase();
-            // For sequential Discogs numbering, derive per-side display number
             const sideTrackNum = isSequential
               ? vinylTracks.filter(v => v.side === vt.side && v.track_number_on_side <= vt.track_number_on_side).length
               : vt.track_number_on_side;
-            trackOnSide = sideTrackNum;
-            position    = side + trackOnSide;
+            trackOnSide = sideTrackNum; position = side + trackOnSide;
           } else {
             const d = deriveSideFromIndex(i, itunesTracks);
-            side        = d.side;
-            trackOnSide = d.track;
-            position    = side + trackOnSide;
+            side = d.side; trackOnSide = d.track; position = side + trackOnSide;
           }
           return { ...t, side, trackOnSide, position };
         });
