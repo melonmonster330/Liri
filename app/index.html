@@ -1213,13 +1213,7 @@
           // Only fires when the user has pre-selected their album ("what's on the turntable?").
           // Skips GPT — directly matches transcript against every track's LRC lyrics.
           // Best path for obscure tracks, re-recordings, anything ACR misses.
-          // If turntable album is set but tracks are empty (iTunes fetch failed or race),
-          // retry the fetch now so this attempt isn't wasted.
-          if (turntableAlbumRef.current && turntableTracksRef.current.length === 0) {
-            attemptLogRef.current.push(`turntable: tracks empty, retrying iTunes fetch…`);
-            await fetchTurntableTracks(turntableAlbumRef.current.itunes_collection_id);
-          }
-
+          // Tracks are fetched once at album selection — never re-fetched here.
           const turntableTracks = turntableTracksRef.current;
           attemptLogRef.current.push(`turntable: ${turntableTracks.length} tracks loaded`);
           if (turntableTracks.length > 0) {
@@ -1594,6 +1588,12 @@
               if (recognitionWonRef.current) {
                 clearInterval(progressTimerRef.current);
                 if (recorder.state === "recording") recorder.stop();
+                return;
+              }
+
+              // In turntable mode, Whisper + cached LRC is the only recogniser — skip ACR.
+              if (turntableTracksRef.current.length > 0) {
+                sending = false;
                 return;
               }
 
