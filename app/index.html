@@ -76,7 +76,7 @@
       "sb_publishable_C-NBnfg0ltAoUi46XQTUjA_ozjZW_Nd"
     );
 
-    const APP_VERSION = "1.57";
+    const APP_VERSION = "1.58";
 
     const PROXY_URL = window.Capacitor
       ? "https://getliri.app/api/recognize"
@@ -975,6 +975,9 @@
               }
               setMode("side-end");
             }, 3000);
+          } else {
+            // Mid-side track: advance directly to next track
+            setTimeout(() => advanceToNextTrack(tTracks, tIdx), 3000);
           }
         }
       }, [playbackTime, songDuration, lyrics, mode, vinylMode, turntableAlbum]);
