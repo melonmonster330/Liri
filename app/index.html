@@ -76,7 +76,7 @@
       "sb_publishable_C-NBnfg0ltAoUi46XQTUjA_ozjZW_Nd"
     );
 
-    const APP_VERSION = "1.67";
+    const APP_VERSION = "1.68";
 
     const PROXY_URL = window.Capacitor
       ? "https://getliri.app/api/recognize"
@@ -1107,130 +1107,64 @@
       // for ALL tracks in parallel and score the Whisper transcript against each.
       // Returns { track, lrcMatch, lyrics, startPos, score } or null.
       // Skips GPT entirely — much more accurate for obscure / re-recorded albums.
-      const matchTranscriptToTracks = async (transcript, tracks, logRef, lyricsCache = {}) => {
-        const tWords = transcript.toLowerCase().replace(/[^\w\s]/g, "").split(/\s+/).filter(w => w.length > 2);
-        if (logRef) logRef.push(`stratV: transcript "${transcript.slice(0, 60)}…" → ${tWords.length} words`);
-        if (tWords.length < 2) return null;
+      // ── Unique consecutive-word match against cached lyrics ──
+      // Tries the longest possible run of consecutive words from the Whisper transcript
+      // that appears in exactly ONE track's lyrics. Only returns on a perfect unique match —
+      // no scoring, no guessing. Position is derived from where that phrase ends in the LRC,
+      // giving a precise playback position. All lookups are in-memory (no network calls).
+      const matchTranscriptToTracks = (transcript, tracks, logRef, lyricsCache = {}) => {
+        const norm = s => s.toLowerCase().replace(/[^\w\s]/g, "").replace(/\s+/g, " ").trim();
+        const words = norm(transcript).split(" ").filter(w => w.length > 1);
 
-        // Parallel LRCLib fetch for every track on the album (uses in-memory cache when available).
-        // Cache key: trackId if present, else trackName — so Supabase-sourced tracks (no iTunes ID)
-        // are also cached after the first Whisper attempt, avoiding repeated LRCLib calls.
-        const withLyrics = await Promise.all(tracks.map(async t => {
-          try {
-            const cacheKey = t.trackId ?? t.trackName;
-            if (cacheKey && lyricsCache[cacheKey]) {
-              return { ...t, lrcMatch: { syncedLyrics: lyricsCache[cacheKey] } };
-            }
-            const artist = t.artistName || "";
-            const title  = t.trackName  || "";
-            const [a, b] = await Promise.all([
-              fetch(`https://lrclib.net/api/search?artist_name=${encodeURIComponent(artist)}&track_name=${encodeURIComponent(title)}`).then(r => r.json()).catch(() => []),
-              fetch(`https://lrclib.net/api/search?q=${encodeURIComponent(`${artist} ${title}`.trim())}`).then(r => r.json()).catch(() => []),
-            ]);
-            const candidates = [...(Array.isArray(a) ? a : []), ...(Array.isArray(b) ? b : [])];
-            const withSynced = candidates.filter(c => c.syncedLyrics);
-            // Prefer uncensored lyrics — deprioritise results with obvious asterisk censoring
-            const isCensored = c => /\*{2,}/.test(c.syncedLyrics || "");
-            const best = withSynced.find(c => !isCensored(c)) || withSynced[0] || null;
-            // Store in cache so subsequent Whisper retries skip LRCLib entirely
-            if (cacheKey && best?.syncedLyrics) lyricsCache[cacheKey] = best.syncedLyrics;
-            return { ...t, lrcMatch: best };
-          } catch { return { ...t, lrcMatch: null }; }
-        }));
+        if (logRef) logRef.push(`stratV: ${words.length} words from transcript`);
+        if (words.length < 4) return null;
 
-        const noLrc = withLyrics.filter(t => !t.lrcMatch).map(t => t.trackName);
-        if (logRef && noLrc.length) logRef.push(`stratV: no LRC for: ${noLrc.join(", ")}`);
+        // Build normalised lyrics string for every cached track (pure in-memory, no fetches)
+        const tracksWithLyrics = tracks.map(t => {
+          const key = t.trackId ?? t.trackName;
+          const lrc = key ? lyricsCache[key] : null;
+          if (!lrc) return null;
+          const parsed = parseLRC(lrc);
+          if (!parsed.length) return null;
+          return { ...t, parsed, normLyrics: norm(parsed.map(l => l.text).join(" ")), lrcMatch: { syncedLyrics: lrc } };
+        }).filter(Boolean);
 
-        // ── Phase 1: word-count match (fast, robust to transcription differences) ──
-        // Exact phrase matching fails when Whisper transcribes slightly differently
-        // than the LRC text. Instead: take the first N words (skipping short filler),
-        // count how many appear in each track's lyrics. A track that matches 7/10
-        // words is clearly the right one. Grows from 6 to 15 until a winner emerges.
-        const normStr = s => s.toLowerCase().replace(/[^\w\s]/g, "").replace(/\s+/g, " ").trim();
-        // Include words 3+ chars — filtering only 1-2 char words to keep meaningful signal
-        const tAllWords = normStr(transcript).split(" ").filter(w => w.length > 2);
-        const tracksWithLrc = withLyrics.filter(t => t.lrcMatch?.syncedLyrics);
+        if (logRef) logRef.push(`stratV: ${tracksWithLyrics.length}/${tracks.length} tracks have cached lyrics`);
+        if (!tracksWithLyrics.length) return null;
 
-        if (tAllWords.length >= 4) {
-          for (let n = 4; n <= Math.min(tAllWords.length, 15); n++) {
-            const sample = tAllWords.slice(0, n);
-            let best = null, bestCount = 0, secondCount = 0;
-            for (const t of tracksWithLrc) {
-              const lNorm = normStr(t.lrcMatch.syncedLyrics.replace(/\[[\d:.]+\]/g, ""));
-              const count = sample.filter(w => lNorm.includes(w)).length;
-              if (count > bestCount) { secondCount = bestCount; bestCount = count; best = t; }
-              else if (count > secondCount) { secondCount = count; }
-            }
-            // Need 65%+ of sample words AND a 2-word gap over runner-up
-            if (best && bestCount >= Math.ceil(n * 0.65) && (bestCount - secondCount) >= 2) {
-              if (logRef) logRef.push(`stratV: word-match at n=${n}, score ${bestCount}/${n} \u2192 "${best.trackName}"`);
-              const parsedLyrics = parseLRC(best.lrcMatch.syncedLyrics);
-              // Position: find the 20s window containing the most sample words
-              let bestWindowScore = 0, startPos = 0;
-              for (let wi = 0; wi < parsedLyrics.length; wi++) {
-                const windowEnd  = parsedLyrics[wi].time;
-                const windowText = normStr(parsedLyrics
-                  .filter(l => l.time >= windowEnd - 20 && l.time <= windowEnd)
-                  .map(l => l.text).join(" "));
-                const score = sample.filter(w => windowText.includes(w)).length;
-                if (score > bestWindowScore) { bestWindowScore = score; startPos = Math.max(0, parsedLyrics[wi].time); }
+        // Try decreasing run lengths — longest unique match wins.
+        // Starting long means we find the most specific match first, which also gives
+        // the best position precision (phrase anchors to an exact lyric line).
+        const MAX_RUN = Math.min(words.length, 18);
+        const MIN_RUN = 4;
+
+        for (let len = MAX_RUN; len >= MIN_RUN; len--) {
+          for (let start = 0; start <= words.length - len; start++) {
+            const phrase = words.slice(start, start + len).join(" ");
+            const hits = tracksWithLyrics.filter(t => t.normLyrics.includes(phrase));
+            if (hits.length !== 1) continue;
+
+            const match = hits[0];
+
+            // Find position: accumulate LRC lines until the phrase is fully contained.
+            // The timestamp of that line = where in the song these words were heard.
+            let startPos = 0;
+            let buf = "";
+            for (const line of match.parsed) {
+              buf = (buf + " " + norm(line.text)).trim();
+              if (buf.includes(phrase)) {
+                startPos = line.time;
+                break;
               }
-              if (logRef) logRef.push(`stratV: word-match position \u2192 ${startPos.toFixed(1)}s`);
-              return { track: best, lrcMatch: best.lrcMatch, lyrics: parsedLyrics, startPos, score: bestCount };
             }
+
+            if (logRef) logRef.push(`stratV: unique run (${len}w) → "${match.trackName}" at ${startPos.toFixed(1)}s`);
+            return { track: match, lrcMatch: match.lrcMatch, lyrics: match.parsed, startPos, score: len };
           }
-          if (logRef) logRef.push("stratV: word-match no clear winner, falling back to bigram scoring");
         }
 
-        // ── Phase 2: Bigram frequency scoring (fallback) ─────────────────────────
-        // Used when the n-gram isn't found — e.g. Whisper misheard a word.
-        // Scores each track by how many consecutive word-pairs from the transcript
-        // appear in its lyrics, requiring a clear winner over the runner-up.
-        const allWords = transcript.toLowerCase().replace(/[^\w\s]/g, "").split(/\s+/).filter(w => w.length > 1);
-        const bigrams = [];
-        for (let i = 0; i < allWords.length - 1; i++) {
-          bigrams.push(allWords[i] + " " + allWords[i + 1]);
-        }
-        if (logRef) logRef.push(`stratV: ${bigrams.length} bigrams from transcript`);
-
-        const trackScores = new Map();
-        let bestTrack = null, bestScore = 0;
-        for (const t of withLyrics) {
-          if (!t.lrcMatch?.syncedLyrics) continue;
-          const lyricText = t.lrcMatch.syncedLyrics.toLowerCase().replace(/\[\d+[:.][\d.]+\]/g, "");
-          const hits = bigrams.filter(bg => lyricText.includes(bg)).length;
-          trackScores.set(t, hits);
-          if (logRef) logRef.push(`stratV: "${t.trackName}" score ${hits}`);
-          if (hits > bestScore) { bestScore = hits; bestTrack = t; }
-        }
-
-        // Runner-up: exclude alternate arrangements (Piano Version, Live, etc.) of same song
-        const baseTitle = t => (t.trackName || "").toLowerCase().replace(/[\(\[].*/, "").trim();
-        const winnerBase = bestTrack ? baseTitle(bestTrack) : "";
-        let secondScore = 0;
-        for (const [t, score] of trackScores) {
-          if (t === bestTrack) continue;
-          if (baseTitle(t) === winnerBase) continue;
-          if (score > secondScore) secondScore = score;
-        }
-
-        if (!bestTrack || bestScore < 2 || (bestScore - secondScore) < 2) return null;
-
-        // Sliding-window position finding using bigrams
-        const lyrics = parseLRC(bestTrack.lrcMatch.syncedLyrics);
-        const LISTEN_WINDOW = 20;
-        let bestWindowScore = 0, startPos = 0;
-        for (let wi = 0; wi < lyrics.length; wi++) {
-          const windowEnd  = lyrics[wi].time;
-          const windowText = lyrics
-            .filter(l => l.time >= windowEnd - LISTEN_WINDOW && l.time <= windowEnd)
-            .map(l => l.text).join(" ").toLowerCase().replace(/[^\w\s]/g, "");
-          const score = bigrams.filter(bg => windowText.includes(bg)).length;
-          if (score > bestWindowScore) { bestWindowScore = score; startPos = Math.max(0, windowEnd + 2); }
-        }
-        if (logRef) logRef.push(`stratV: bigram position window score ${bestWindowScore}, startPos ${startPos.toFixed(1)}s`);
-
-        return { track: bestTrack, lrcMatch: bestTrack.lrcMatch, lyrics, startPos, score: bestScore };
+        if (logRef) logRef.push(`stratV: no unique ${MIN_RUN}+ word run found — waiting for more audio`);
+        return null;
       };
 
       // ── Whisper transcription → LRCLib lyrics match (fallback when ACRCloud fails) ──
@@ -1271,7 +1205,7 @@
           attemptLogRef.current.push(`turntable: ${turntableTracks.length} tracks loaded`);
           if (turntableTracks.length > 0) {
             attemptLogRef.current.push(`whisper: trying vinyl-aware match against ${turntableTracks.length} tracks`);
-            const vmResult = await matchTranscriptToTracks(transcribed, turntableTracks, attemptLogRef.current, turntableLyricsCacheRef.current);
+            const vmResult = matchTranscriptToTracks(transcribed, turntableTracks, attemptLogRef.current, turntableLyricsCacheRef.current);
             if (vmResult) {
               if (recognitionWonRef.current) return false;
               recognitionWonRef.current = true;
