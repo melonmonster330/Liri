@@ -2617,7 +2617,7 @@
           {isSyncing && (
             <div style={{ position:"fixed", inset:0, zIndex:10, display:"flex", flexDirection:"column" }}>
               <div className="safe-top" style={{ padding:"0 20px 16px", display:"flex", alignItems:"center", justifyContent:"space-between", flexShrink:0 }}>
-                <button onClick={() => { clearInterval(syncIntervalRef.current); reset(); }} style={{ background:"none", border:"none", color:"rgba(255,255,255,0.35)", fontSize:"20px", cursor:"pointer", padding:"0 10px 0 0", flexShrink:0, lineHeight:1 }} title="Back">‹</button>
+                <button onClick={() => { clearInterval(syncIntervalRef.current); reset(); }} style={{ background:"rgba(255,255,255,0.07)", border:"1px solid rgba(255,255,255,0.14)", color:"rgba(255,255,255,0.6)", fontSize:"13px", fontWeight:"600", cursor:"pointer", padding:"8px 14px", borderRadius:"50px", flexShrink:0, lineHeight:1, fontFamily:"inherit" }} title="Stop">← Stop</button>
                 <div style={{ display:"flex", alignItems:"center", gap:"10px", flex:1, minWidth:0 }}>
                   {artwork && <img src={artwork} alt="" style={{ width:"36px", height:"36px", borderRadius:"8px", flexShrink:0, boxShadow:"0 4px 16px rgba(0,0,0,0.5)" }} />}
                   <div style={{ minWidth:0 }}>
