@@ -76,7 +76,7 @@
       "sb_publishable_C-NBnfg0ltAoUi46XQTUjA_ozjZW_Nd"
     );
 
-    const APP_VERSION = "1.63";
+    const APP_VERSION = "1.64";
 
     const PROXY_URL = window.Capacitor
       ? "https://getliri.app/api/recognize"
@@ -1724,35 +1724,6 @@
         } catch { setError("Microphone access denied."); setMode("error"); }
       };
 
-      // ── Kept for legacy reference — no longer called directly ──
-      const detectSong = async (blob, isAutoAdvance = false) => {
-        setMode("detecting");
-        try {
-          const data = await sendAudioToACR(blob);
-          if (!data) { handleNoMatch(isAutoAdvance); return false; }
-          if (data.status?.code === 3003 || data.status?.code === 3015) {
-            setError("Recognition limit reached. Visit acrcloud.com."); setMode("error"); return false;
-          }
-          if (data.status?.code === 0 && data.metadata?.music?.length > 0) {
-            await handleMatch(data, isAutoAdvance); return true;
-          }
-          handleNoMatch(isAutoAdvance); return false;
-        } catch (err) {
-          if (isAutoAdvance) {
-            autoRetryCountRef.current += 1;
-            if (autoRetryCountRef.current < 2) {
-              setTimeout(() => startListening(true), 4000);
-            } else {
-              autoRetryCountRef.current = 0;
-              setSideEndReason("failed");
-              setMode("side-end");
-            }
-            return false;
-          }
-          setError(`Connection failed: ${err.message}`); setMode("error"); return false;
-        }
-      };
-
       const loadLyrics = async (title, artist) => {
         // 1. Supabase liri_lyric_cache first — no LRCLib call if already cached
         try {
@@ -2128,7 +2099,6 @@
           await new Promise(resolve => setTimeout(resolve, 6000));
           if (recorder.state === "recording") recorder.stop();
           const blob = new Blob(chunks, { type: recorder.mimeType || "audio/webm" });
-          const resyncElapsedMs = Date.now() - resyncStartTime;
           const audio = await blobToBase64(blob);
           const res = await fetch(PROXY_URL, {
             method: "POST", headers: { "Content-Type": "application/json" },
@@ -2676,31 +2646,33 @@
                     {notifyDenied && (
                       <div style={{ fontSize:"11px", color:"#e8a0a8", marginTop:"8px", lineHeight:"1.5" }}>Notifications were blocked. Enable them in your browser settings.</div>
                     )}
-
-                    {/* Links to Liri vinyl pages */}
-                    <a href="/vinyl" style={{ display:"flex", alignItems:"center", justifyContent:"space-between", marginTop:"16px", paddingTop:"14px", borderTop:"1px solid rgba(255,255,255,0.07)", textDecoration:"none" }}>
-                      <div>
-                        <div style={{ fontSize:"13px", color:"#d4a846" }}>Browse the Vinyl Library</div>
-                        <div style={{ fontSize:"11px", color:"rgba(255,255,255,0.3)", marginTop:"2px" }}>Community-verified pressings & flip data</div>
-                      </div>
-                      <div style={{ color:"rgba(212,168,70,0.5)", fontSize:"18px" }}>›</div>
-                    </a>
-                    <a href="/library" style={{ display:"flex", alignItems:"center", justifyContent:"space-between", marginTop:"12px", paddingTop:"12px", borderTop:"1px solid rgba(255,255,255,0.05)", textDecoration:"none" }}>
-                      <div>
-                        <div style={{ fontSize:"13px", color:"#d4a846" }}>My Records</div>
-                        <div style={{ fontSize:"11px", color:"rgba(255,255,255,0.3)", marginTop:"2px" }}>Your personal vinyl library</div>
-                      </div>
-                      <div style={{ color:"rgba(212,168,70,0.5)", fontSize:"18px" }}>›</div>
-                    </a>
-                    <a href="/add-vinyl" style={{ display:"flex", alignItems:"center", justifyContent:"space-between", marginTop:"12px", paddingTop:"12px", borderTop:"1px solid rgba(255,255,255,0.05)", textDecoration:"none" }}>
-                      <div>
-                        <div style={{ fontSize:"13px", color:"#d4a846" }}>Add a vinyl to Liri's collection</div>
-                        <div style={{ fontSize:"11px", color:"rgba(255,255,255,0.3)", marginTop:"2px" }}>Help improve flip detection for everyone</div>
-                      </div>
-                      <div style={{ color:"rgba(212,168,70,0.5)", fontSize:"18px" }}>›</div>
-                    </a>
                   </div>
                 )}
+
+                {/* Links to Liri vinyl pages — always visible */}
+                <div style={{ background:"rgba(255,255,255,0.03)", border:"1px solid rgba(255,255,255,0.07)", borderRadius:"16px", padding:"16px 18px", marginBottom:"16px" }}>
+                  <a href="/library" style={{ display:"flex", alignItems:"center", justifyContent:"space-between", textDecoration:"none" }}>
+                    <div>
+                      <div style={{ fontSize:"13px", color:"#d4a846" }}>My Records</div>
+                      <div style={{ fontSize:"11px", color:"rgba(255,255,255,0.3)", marginTop:"2px" }}>Your personal vinyl library</div>
+                    </div>
+                    <div style={{ color:"rgba(212,168,70,0.5)", fontSize:"18px" }}>›</div>
+                  </a>
+                  <a href="/vinyl" style={{ display:"flex", alignItems:"center", justifyContent:"space-between", marginTop:"12px", paddingTop:"12px", borderTop:"1px solid rgba(255,255,255,0.05)", textDecoration:"none" }}>
+                    <div>
+                      <div style={{ fontSize:"13px", color:"#d4a846" }}>Browse the Vinyl Library</div>
+                      <div style={{ fontSize:"11px", color:"rgba(255,255,255,0.3)", marginTop:"2px" }}>Community-verified pressings & flip data</div>
+                    </div>
+                    <div style={{ color:"rgba(212,168,70,0.5)", fontSize:"18px" }}>›</div>
+                  </a>
+                  <a href="/add-vinyl" style={{ display:"flex", alignItems:"center", justifyContent:"space-between", marginTop:"12px", paddingTop:"12px", borderTop:"1px solid rgba(255,255,255,0.05)", textDecoration:"none" }}>
+                    <div>
+                      <div style={{ fontSize:"13px", color:"#d4a846" }}>Add a vinyl to Liri's collection</div>
+                      <div style={{ fontSize:"11px", color:"rgba(255,255,255,0.3)", marginTop:"2px" }}>Help improve flip detection for everyone</div>
+                    </div>
+                    <div style={{ color:"rgba(212,168,70,0.5)", fontSize:"18px" }}>›</div>
+                  </a>
+                </div>
 
                 {/* Pro section */}
                 <div style={{ background:"rgba(212,168,70,0.07)", border:"1px solid rgba(212,168,70,0.15)", borderRadius:"16px", padding:"16px 18px", marginBottom:"20px" }}>
