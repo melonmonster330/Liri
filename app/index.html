@@ -1094,7 +1094,7 @@
           const score = bigrams.filter(bg => windowText.includes(bg)).length;
           if (score > bestWindowScore) {
             bestWindowScore = score;
-            startPos = Math.max(0, windowEnd + 2);
+            startPos = Math.max(0, windowEnd);
           }
         }
         if (logRef) logRef.push(`stratV: position window score ${bestWindowScore}, startPos ${startPos.toFixed(1)}s`);
@@ -1105,7 +1105,7 @@
       // ── Whisper transcription → LRCLib lyrics match (fallback when ACRCloud fails) ──
       // Sends audio to /api/transcribe (Whisper), searches LRCLib by the
       // transcribed words, finds which line matches to get the playback position.
-      const tryLyricsTranscription = async (blob, isAutoAdvance) => {
+      const tryLyricsTranscription = async (blob, isAutoAdvance, blobCapturedAt = Date.now()) => {
         try {
           // 1. Transcribe with Whisper
           const audio = await blobToBase64(blob);
@@ -1165,7 +1165,7 @@
                 artwork: ta?.artwork_url  || null,
               };
               setIdentifiedBy("whisper");
-              detectedAtRef.current      = Date.now();
+              detectedAtRef.current      = blobCapturedAt; // startSync delay = actual Whisper latency
               initialPosRef.current      = startPos;
               autoAdvanceFiredRef.current = false;
               autoRetryCountRef.current  = 0;
@@ -1339,7 +1339,7 @@
 
           const song = { title, artist, album: match.albumName || "", artwork };
           setIdentifiedBy("whisper");
-          detectedAtRef.current      = Date.now();
+          detectedAtRef.current      = blobCapturedAt; // startSync delay = actual Whisper latency
           initialPosRef.current      = startPos;
           autoAdvanceFiredRef.current = false;
           autoRetryCountRef.current  = 0;
@@ -1499,7 +1499,8 @@
               if (shouldFireWhisper) {
                 bgWhisperStarted = true;
                 const bgBlob = new Blob([...allChunks], { type: mimeType || "audio/webm" });
-                tryLyricsTranscription(bgBlob, isAutoAdvance).then(found => {
+                const bgBlobCapturedAt = Date.now();
+                tryLyricsTranscription(bgBlob, isAutoAdvance, bgBlobCapturedAt).then(found => {
                   bgWhisperStarted = false; // allow retry on next attempt if this one failed
                   if (found && listenSessionRef.current === session) {
                     // Whisper won the race — shut down ACRCloud loop
@@ -1958,12 +1959,17 @@
           const mimeType = rawMimeR.split(";")[0].trim();
           const chunks = [];
           recorder.ondataavailable = e => { if (e.data.size > 0) chunks.push(e.data); };
-          recorder.onstop = () => stream.getTracks().forEach(t => t.stop());
           const resyncStartTime = Date.now();
           recorder.start(200);
           await new Promise(resolve => setTimeout(resolve, 6000));
-          if (recorder.state === "recording") recorder.stop();
-          const blob = new Blob(chunks, { type: recorder.mimeType || "audio/webm" });
+          // Await onstop so the final ondataavailable chunk is flushed before creating the blob.
+          // (On iOS, MediaRecorder may buffer all data until stop — creating the blob synchronously
+          // after recorder.stop() would give an empty or truncated blob.)
+          await new Promise(resolve => {
+            recorder.onstop = () => { stream.getTracks().forEach(t => t.stop()); resolve(); };
+            if (recorder.state === "recording") recorder.stop(); else resolve();
+          });
+          const blob = new Blob(chunks, { type: mimeType });
           const resyncElapsedMs = Date.now() - resyncStartTime;
           const audio = await blobToBase64(blob);
           const res = await fetch(PROXY_URL, {
