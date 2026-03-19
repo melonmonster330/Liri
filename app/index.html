@@ -76,7 +76,7 @@
       "sb_publishable_C-NBnfg0ltAoUi46XQTUjA_ozjZW_Nd"
     );
 
-    const APP_VERSION = "1.51";
+    const APP_VERSION = "1.52";
 
     const PROXY_URL = window.Capacitor
       ? "https://getliri.app/api/recognize"
@@ -768,42 +768,74 @@
       const fetchTurntableTracks = async (collectionId) => {
         setTurntableTracksLoading(true);
         try {
+          const alb = turntableAlbumRef.current;
+
+          // ── Supabase-first: use our vinyl_tracks DB if available (no iTunes call needed) ──
+          const db = await fetchVinylRelease(String(collectionId));
+          if (db?.vinyl_tracks?.length > 0) {
+            setVinylDbRelease(db); albumTpsRef.current = 0;
+            const artistName = db.artist_name || alb?.artist_name || "";
+            const albumName  = db.album_name  || alb?.album_name  || "";
+            const mapped = db.vinyl_tracks.map(t => ({
+              trackName:      t.title,
+              artistName,
+              collectionName: albumName,
+              trackId:        t.itunes_track_id || null,
+              trackTimeMillis: t.duration_ms   || null,
+              trackNumber:    t.track_number_on_side || 1,
+              discNumber:     t.disc_number    || 1,
+            }));
+            turntableTracksRef.current = mapped;
+
+            // Pre-load LRC cache by itunes_track_id (for tracks that have one)
+            const trackIds = mapped.map(t => t.trackId).filter(Boolean);
+            if (trackIds.length > 0) {
+              sb.from("liri_lyric_cache")
+                .select("itunes_track_id, synced_lyrics")
+                .in("itunes_track_id", trackIds)
+                .then(({ data }) => {
+                  const cache = {};
+                  for (const row of (data || [])) cache[row.itunes_track_id] = row.synced_lyrics;
+                  turntableLyricsCacheRef.current = cache;
+                }).catch(() => {});
+            } else {
+              turntableLyricsCacheRef.current = {};
+            }
+            setTurntableTracksLoading(false);
+            return;
+          }
+
+          // ── Fallback: fetch from iTunes if not yet in Supabase ──
           const res = await fetch(`https://itunes.apple.com/lookup?id=${collectionId}&entity=song&limit=200`).then(r => r.json());
           let tracks = (res.results || [])
             .filter(t => t.wrapperType === "track")
             .sort((a, b) => (a.discNumber - b.discNumber) || (a.trackNumber - b.trackNumber));
 
-          // Fallback: if lookup returned no tracks (album not in US store or ID mismatch),
-          // search by artist + album name and filter to tracks whose collectionName matches.
-          if (tracks.length === 0) {
-            const album = turntableAlbumRef.current;
-            if (album?.album_name && album?.artist_name) {
-              const q = encodeURIComponent(`${album.artist_name} ${album.album_name}`);
-              const sr = await fetch(`https://itunes.apple.com/search?term=${q}&entity=song&limit=200`).then(r => r.json()).catch(() => ({ results: [] }));
-              const nameKey = album.album_name.toLowerCase().replace(/[^a-z0-9]/g, "").slice(0, 12);
-              tracks = (sr.results || [])
-                .filter(t => t.wrapperType === "track" &&
-                  t.collectionName?.toLowerCase().replace(/[^a-z0-9]/g, "").includes(nameKey))
-                .sort((a, b) => (a.discNumber - b.discNumber) || (a.trackNumber - b.trackNumber));
-            }
+          if (tracks.length === 0 && alb?.album_name && alb?.artist_name) {
+            const q = encodeURIComponent(`${alb.artist_name} ${alb.album_name}`);
+            const sr = await fetch(`https://itunes.apple.com/search?term=${q}&entity=song&limit=200`).then(r => r.json()).catch(() => ({ results: [] }));
+            const nameKey = alb.album_name.toLowerCase().replace(/[^a-z0-9]/g, "").slice(0, 12);
+            tracks = (sr.results || [])
+              .filter(t => t.wrapperType === "track" &&
+                t.collectionName?.toLowerCase().replace(/[^a-z0-9]/g, "").includes(nameKey))
+              .sort((a, b) => (a.discNumber - b.discNumber) || (a.trackNumber - b.trackNumber));
           }
 
           turntableTracksRef.current = tracks;
 
-          // Auto-populate vinyl side data from MusicBrainz (background)
-          const alb = turntableAlbumRef.current;
+          // Auto-populate vinyl side data from Discogs in background
           if (alb && tracks.length > 0) {
             autoPopulateVinylSides(collectionId, alb.album_name, alb.artist_name)
               .then(releaseId => {
                 if (releaseId) {
-                  fetchVinylRelease(String(collectionId)).then(db => {
-                    if (db?.vinyl_tracks?.length > 0) { setVinylDbRelease(db); albumTpsRef.current = 0; }
+                  fetchVinylRelease(String(collectionId)).then(dbr => {
+                    if (dbr?.vinyl_tracks?.length > 0) { setVinylDbRelease(dbr); albumTpsRef.current = 0; }
                   });
                 }
               });
           }
 
-          // Pre-load cached LRC from Supabase for this album
+          // Pre-load cached LRC from Supabase
           const trackIds = tracks.map(t => t.trackId).filter(Boolean);
           if (trackIds.length > 0) {
             sb.from("liri_lyric_cache")
@@ -1529,7 +1561,9 @@
           const allChunks  = [];
           let attempts     = 0;
           let sending      = false;
-          let nextAttemptAt = ATTEMPT_INTERVAL;
+          // In turntable mode, Whisper is the only recogniser — fire at 3s and retry every 3s.
+          const turntableInterval = 3000;
+          let nextAttemptAt = turntableAlbumRef.current ? turntableInterval : ATTEMPT_INTERVAL;
 
           recorder.ondataavailable = e => {
             if (e.data.size > 0) {
@@ -1561,13 +1595,15 @@
               sending = true;
               attempts++;
               setListenAttempt(attempts);
-              nextAttemptAt = (attempts + 1) * ATTEMPT_INTERVAL;
+              nextAttemptAt += turntableAlbumRef.current ? turntableInterval : ATTEMPT_INTERVAL;
 
               // ── Background Whisper: fire starting at attempt 4 (20s), retry each attempt ──
               // In turntable mode: retry every 5s (at 20s, 25s, 30s) — the first blob may have
               // landed in an intro/instrumental; a later blob with more lyric content often succeeds.
               // In non-turntable mode: fire once at 20s only (GPT/Strategy C need a good transcript).
-              const hasTurntable = turntableTracksRef.current.length > 0;
+              // Fire Whisper from attempt 1 if an album is selected, even while tracks are
+              // still loading — matchTranscriptToTracks handles the empty-tracks case gracefully.
+              const hasTurntable = !!turntableAlbumRef.current;
               const shouldFireWhisper = hasTurntable
                 ? (attempts >= 1 && !bgWhisperStarted && !recognitionWonRef.current)
                 : (attempts === 4 && !bgWhisperStarted);
@@ -1591,8 +1627,8 @@
                 return;
               }
 
-              // In turntable mode, Whisper + cached LRC is the only recogniser — skip ACR.
-              if (turntableTracksRef.current.length > 0) {
+              // In turntable mode, Whisper + cached LRC is the only recogniser — skip ACR entirely.
+              if (turntableAlbumRef.current) {
                 sending = false;
                 return;
               }
