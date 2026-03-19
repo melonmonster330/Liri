@@ -373,7 +373,8 @@
     <!-- Footer -->
     <div class="footer">
       Liri Vinyl Database · Community contributed &amp; verified<br/>
-      <a href="/app">Open Liri App</a> · <a href="/add-vinyl">Add a Pressing</a>
+      <a href="/app">Open Liri App</a> · <a href="/add-vinyl">Add a Pressing</a><br/>
+      <span id="version-label"></span>
     </div>
 
   </div>
@@ -385,6 +386,7 @@
       "sb_publishable_C-NBnfg0ltAoUi46XQTUjA_ozjZW_Nd"
     );
 
+    const APP_VERSION = "1.51";
     const PAGE_SIZE = 30;
     let allReleases   = [];   // full dataset (fetched once)
     let filtered      = [];   // after search filter
@@ -716,6 +718,7 @@
     }
 
     // ── Boot ───────────────────────────────────────────────────────────────
+    document.getElementById("version-label").textContent = `v${APP_VERSION}`;
     loadAll();
   </script>
 </body>

@@ -47,6 +47,8 @@
   <script type="text/babel">
     const { useState, useEffect, useRef, useCallback } = React;
 
+    const APP_VERSION = "1.51";
+
     const sb = supabase.createClient(
       "https://xjdjpaxgymgbvcwmvorc.supabase.co",
       "sb_publishable_C-NBnfg0ltAoUi46XQTUjA_ozjZW_Nd"
@@ -938,7 +940,12 @@
       );
     }
 
-    ReactDOM.createRoot(document.getElementById("root")).render(<Library />);
+    ReactDOM.createRoot(document.getElementById("root")).render(
+      <React.StrictMode>
+        <Library />
+        <div style={{ textAlign:"center", padding:"24px 0 16px", fontSize:"11px", color:"rgba(255,255,255,0.1)" }}>Liri v{APP_VERSION}</div>
+      </React.StrictMode>
+    );
   </script>
 </body>
 </html>
