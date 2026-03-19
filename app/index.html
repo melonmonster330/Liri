@@ -1089,36 +1089,45 @@
         const noLrc = withLyrics.filter(t => !t.lrcMatch).map(t => t.trackName);
         if (logRef && noLrc.length) logRef.push(`stratV: no LRC for: ${noLrc.join(", ")}`);
 
-        // ── Phase 1: n-gram unique match ──────────────────────────────────────────
-        // A 6+ consecutive-word phrase from the transcript is almost always unique
-        // to one position in one song. Start at 6 words and grow until only one
-        // track contains that exact phrase. More precise than bigram scoring and
-        // gives line-level position accuracy when it succeeds.
+        // ── Phase 1: word-count match (fast, robust to transcription differences) ──
+        // Exact phrase matching fails when Whisper transcribes slightly differently
+        // than the LRC text. Instead: take the first N words (skipping short filler),
+        // count how many appear in each track's lyrics. A track that matches 7/10
+        // words is clearly the right one. Grows from 6 to 15 until a winner emerges.
         const normStr = s => s.toLowerCase().replace(/[^\w\s]/g, "").replace(/\s+/g, " ").trim();
-        const tAllWords = normStr(transcript).split(" ").filter(w => w);
+        // Use meaningful words only — skip short fillers like "the", "a", "is"
+        const tAllWords = normStr(transcript).split(" ").filter(w => w.length > 3);
         const tracksWithLrc = withLyrics.filter(t => t.lrcMatch?.syncedLyrics);
 
         if (tAllWords.length >= 6) {
-          for (let n = 6; n <= Math.min(tAllWords.length, 20); n++) {
-            const ngram = tAllWords.slice(0, n).join(" ");
-            const hits  = tracksWithLrc.filter(t =>
-              normStr(t.lrcMatch.syncedLyrics.replace(/\[\d+[:.][\d.]+\]/g, "")).includes(ngram)
-            );
-            if (hits.length === 1) {
-              if (logRef) logRef.push(`stratV: n-gram unique at n=${n} \u2192 "${hits[0].trackName}"`);
-              const matched      = hits[0];
-              const parsedLyrics = parseLRC(matched.lrcMatch.syncedLyrics);
-              // Find the first LRC line whose window contains the n-gram
-              let startPos = 0;
-              for (let i = 0; i < parsedLyrics.length; i++) {
-                const windowText = normStr(parsedLyrics.slice(i, i + 5).map(l => l.text).join(" "));
-                if (windowText.includes(ngram)) { startPos = Math.max(0, parsedLyrics[i].time); break; }
+          for (let n = 6; n <= Math.min(tAllWords.length, 15); n++) {
+            const sample = tAllWords.slice(0, n);
+            let best = null, bestCount = 0, secondCount = 0;
+            for (const t of tracksWithLrc) {
+              const lNorm = normStr(t.lrcMatch.syncedLyrics.replace(/\[[\d:.]+\]/g, ""));
+              const count = sample.filter(w => lNorm.includes(w)).length;
+              if (count > bestCount) { secondCount = bestCount; bestCount = count; best = t; }
+              else if (count > secondCount) { secondCount = count; }
+            }
+            // Need 70%+ of sample words AND a 3-word gap over runner-up
+            if (best && bestCount >= Math.ceil(n * 0.7) && (bestCount - secondCount) >= 3) {
+              if (logRef) logRef.push(`stratV: word-match at n=${n}, score ${bestCount}/${n} \u2192 "${best.trackName}"`);
+              const parsedLyrics = parseLRC(best.lrcMatch.syncedLyrics);
+              // Position: find the 20s window containing the most sample words
+              let bestWindowScore = 0, startPos = 0;
+              for (let wi = 0; wi < parsedLyrics.length; wi++) {
+                const windowEnd  = parsedLyrics[wi].time;
+                const windowText = normStr(parsedLyrics
+                  .filter(l => l.time >= windowEnd - 20 && l.time <= windowEnd)
+                  .map(l => l.text).join(" "));
+                const score = sample.filter(w => windowText.includes(w)).length;
+                if (score > bestWindowScore) { bestWindowScore = score; startPos = Math.max(0, parsedLyrics[wi].time); }
               }
-              if (logRef) logRef.push(`stratV: n-gram position \u2192 ${startPos.toFixed(1)}s`);
-              return { track: matched, lrcMatch: matched.lrcMatch, lyrics: parsedLyrics, startPos, score: n };
+              if (logRef) logRef.push(`stratV: word-match position \u2192 ${startPos.toFixed(1)}s`);
+              return { track: best, lrcMatch: best.lrcMatch, lyrics: parsedLyrics, startPos, score: bestCount };
             }
           }
-          if (logRef) logRef.push("stratV: no unique n-gram, falling back to bigram scoring");
+          if (logRef) logRef.push("stratV: word-match no clear winner, falling back to bigram scoring");
         }
 
         // ── Phase 2: Bigram frequency scoring (fallback) ─────────────────────────
