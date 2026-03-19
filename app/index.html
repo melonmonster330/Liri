@@ -76,7 +76,7 @@
       "sb_publishable_C-NBnfg0ltAoUi46XQTUjA_ozjZW_Nd"
     );
 
-    const APP_VERSION = "1.52";
+    const APP_VERSION = "1.53";
 
     const PROXY_URL = window.Capacitor
       ? "https://getliri.app/api/recognize"
@@ -1096,12 +1096,14 @@
         if (logRef) logRef.push(`stratV: transcript "${transcript.slice(0, 60)}…" → ${tWords.length} words`);
         if (tWords.length < 2) return null;
 
-        // Parallel LRCLib fetch for every track on the album (uses Supabase cache when available)
+        // Parallel LRCLib fetch for every track on the album (uses in-memory cache when available).
+        // Cache key: trackId if present, else trackName — so Supabase-sourced tracks (no iTunes ID)
+        // are also cached after the first Whisper attempt, avoiding repeated LRCLib calls.
         const withLyrics = await Promise.all(tracks.map(async t => {
           try {
-            // Use cached LRC if we have it — skips LRCLib entirely
-            if (t.trackId && lyricsCache[t.trackId]) {
-              return { ...t, lrcMatch: { syncedLyrics: lyricsCache[t.trackId] } };
+            const cacheKey = t.trackId ?? t.trackName;
+            if (cacheKey && lyricsCache[cacheKey]) {
+              return { ...t, lrcMatch: { syncedLyrics: lyricsCache[cacheKey] } };
             }
             const artist = t.artistName || "";
             const title  = t.trackName  || "";
@@ -1114,6 +1116,8 @@
             // Prefer uncensored lyrics — deprioritise results with obvious asterisk censoring
             const isCensored = c => /\*{2,}/.test(c.syncedLyrics || "");
             const best = withSynced.find(c => !isCensored(c)) || withSynced[0] || null;
+            // Store in cache so subsequent Whisper retries skip LRCLib entirely
+            if (cacheKey && best?.syncedLyrics) lyricsCache[cacheKey] = best.syncedLyrics;
             return { ...t, lrcMatch: best };
           } catch { return { ...t, lrcMatch: null }; }
         }));
@@ -1127,12 +1131,12 @@
         // count how many appear in each track's lyrics. A track that matches 7/10
         // words is clearly the right one. Grows from 6 to 15 until a winner emerges.
         const normStr = s => s.toLowerCase().replace(/[^\w\s]/g, "").replace(/\s+/g, " ").trim();
-        // Use meaningful words only — skip short fillers like "the", "a", "is"
-        const tAllWords = normStr(transcript).split(" ").filter(w => w.length > 3);
+        // Include words 3+ chars — filtering only 1-2 char words to keep meaningful signal
+        const tAllWords = normStr(transcript).split(" ").filter(w => w.length > 2);
         const tracksWithLrc = withLyrics.filter(t => t.lrcMatch?.syncedLyrics);
 
-        if (tAllWords.length >= 6) {
-          for (let n = 6; n <= Math.min(tAllWords.length, 15); n++) {
+        if (tAllWords.length >= 4) {
+          for (let n = 4; n <= Math.min(tAllWords.length, 15); n++) {
             const sample = tAllWords.slice(0, n);
             let best = null, bestCount = 0, secondCount = 0;
             for (const t of tracksWithLrc) {
@@ -1141,8 +1145,8 @@
               if (count > bestCount) { secondCount = bestCount; bestCount = count; best = t; }
               else if (count > secondCount) { secondCount = count; }
             }
-            // Need 70%+ of sample words AND a 3-word gap over runner-up
-            if (best && bestCount >= Math.ceil(n * 0.7) && (bestCount - secondCount) >= 3) {
+            // Need 65%+ of sample words AND a 2-word gap over runner-up
+            if (best && bestCount >= Math.ceil(n * 0.65) && (bestCount - secondCount) >= 2) {
               if (logRef) logRef.push(`stratV: word-match at n=${n}, score ${bestCount}/${n} \u2192 "${best.trackName}"`);
               const parsedLyrics = parseLRC(best.lrcMatch.syncedLyrics);
               // Position: find the 20s window containing the most sample words
@@ -2782,6 +2786,7 @@
                 <div
                   style={{ overflowY:"auto", height:"100%", padding:"8vh 28px 0" }}
                   onTouchStart={() => { userScrollingRef.current = true; }}
+                  onWheel={() => { userScrollingRef.current = true; }}
                 >
                   {lyrics.length > 0 ? (
                     <>
