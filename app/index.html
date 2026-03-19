@@ -76,7 +76,7 @@
       "sb_publishable_C-NBnfg0ltAoUi46XQTUjA_ozjZW_Nd"
     );
 
-    const APP_VERSION = "1.62";
+    const APP_VERSION = "1.63";
 
     const PROXY_URL = window.Capacitor
       ? "https://getliri.app/api/recognize"
@@ -1242,6 +1242,7 @@
             ? "https://getliri.app/api/transcribe"
             : "/api/transcribe";
 
+          const whisperSentAt = Date.now();
           const tr = await fetch(transcribeUrl, {
             method: "POST", headers: { "Content-Type": "application/json" },
             body: JSON.stringify({ audio, mimeType: blob.type || "audio/webm" }),
@@ -1288,7 +1289,7 @@
               };
               setIdentifiedBy("whisper");
               detectedAtRef.current      = Date.now();
-              initialPosRef.current      = startPos;
+              initialPosRef.current      = startPos + (Date.now() - whisperSentAt) / 1000;
               autoAdvanceFiredRef.current = false;
               autoRetryCountRef.current  = 0;
               setDetectedSong(song);
@@ -1578,8 +1579,8 @@
           const allChunks  = [];
           let attempts     = 0;
           let sending      = false;
-          // In turntable mode, Whisper is the only recogniser — fire at 3s and retry every 3s.
-          const turntableInterval = 3000;
+          // In turntable mode, Whisper is the only recogniser — fire at 2s and retry every 3s.
+          const turntableInterval = 2000;
           let nextAttemptAt = turntableAlbumRef.current ? turntableInterval : ATTEMPT_INTERVAL;
 
           recorder.ondataavailable = e => {
