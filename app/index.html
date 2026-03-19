@@ -1073,10 +1073,42 @@
         const noLrc = withLyrics.filter(t => !t.lrcMatch).map(t => t.trackName);
         if (logRef && noLrc.length) logRef.push(`stratV: no LRC for: ${noLrc.join(", ")}`);
 
-        // Score each track using consecutive word pairs (bigrams) from the transcript.
-        // Single-word matching is too loose — "love", "know", "night" appear in every song.
-        // Adjacent word pairs like "shake it", "out too late", "knew you were" are specific
-        // to one section of one song and far harder to match by coincidence.
+        // ── Phase 1: n-gram unique match ──────────────────────────────────────────
+        // A 6+ consecutive-word phrase from the transcript is almost always unique
+        // to one position in one song. Start at 6 words and grow until only one
+        // track contains that exact phrase. More precise than bigram scoring and
+        // gives line-level position accuracy when it succeeds.
+        const normStr = s => s.toLowerCase().replace(/[^\w\s]/g, "").replace(/\s+/g, " ").trim();
+        const tAllWords = normStr(transcript).split(" ").filter(w => w);
+        const tracksWithLrc = withLyrics.filter(t => t.lrcMatch?.syncedLyrics);
+
+        if (tAllWords.length >= 6) {
+          for (let n = 6; n <= Math.min(tAllWords.length, 20); n++) {
+            const ngram = tAllWords.slice(0, n).join(" ");
+            const hits  = tracksWithLrc.filter(t =>
+              normStr(t.lrcMatch.syncedLyrics.replace(/\[\d+[:.][\d.]+\]/g, "")).includes(ngram)
+            );
+            if (hits.length === 1) {
+              if (logRef) logRef.push(`stratV: n-gram unique at n=${n} \u2192 "${hits[0].trackName}"`);
+              const matched      = hits[0];
+              const parsedLyrics = parseLRC(matched.lrcMatch.syncedLyrics);
+              // Find the first LRC line whose window contains the n-gram
+              let startPos = 0;
+              for (let i = 0; i < parsedLyrics.length; i++) {
+                const windowText = normStr(parsedLyrics.slice(i, i + 5).map(l => l.text).join(" "));
+                if (windowText.includes(ngram)) { startPos = Math.max(0, parsedLyrics[i].time); break; }
+              }
+              if (logRef) logRef.push(`stratV: n-gram position \u2192 ${startPos.toFixed(1)}s`);
+              return { track: matched, lrcMatch: matched.lrcMatch, lyrics: parsedLyrics, startPos, score: n };
+            }
+          }
+          if (logRef) logRef.push("stratV: no unique n-gram, falling back to bigram scoring");
+        }
+
+        // ── Phase 2: Bigram frequency scoring (fallback) ─────────────────────────
+        // Used when the n-gram isn't found — e.g. Whisper misheard a word.
+        // Scores each track by how many consecutive word-pairs from the transcript
+        // appear in its lyrics, requiring a clear winner over the runner-up.
         const allWords = transcript.toLowerCase().replace(/[^\w\s]/g, "").split(/\s+/).filter(w => w.length > 1);
         const bigrams = [];
         for (let i = 0; i < allWords.length - 1; i++) {
@@ -1084,57 +1116,42 @@
         }
         if (logRef) logRef.push(`stratV: ${bigrams.length} bigrams from transcript`);
 
-        // Score every track
         const trackScores = new Map();
         let bestTrack = null, bestScore = 0;
         for (const t of withLyrics) {
           if (!t.lrcMatch?.syncedLyrics) continue;
-          const lyricText = t.lrcMatch.syncedLyrics.toLowerCase().replace(/\[[\d:\.]+\]/g, "");
+          const lyricText = t.lrcMatch.syncedLyrics.toLowerCase().replace(/\[\d+[:.][\d.]+\]/g, "");
           const hits = bigrams.filter(bg => lyricText.includes(bg)).length;
           trackScores.set(t, hits);
           if (logRef) logRef.push(`stratV: "${t.trackName}" score ${hits}`);
           if (hits > bestScore) { bestScore = hits; bestTrack = t; }
         }
 
-        // Runner-up: best score from a DIFFERENT base song.
-        // Alternate arrangements (Piano Version, Live, Acoustic) of the same song share
-        // identical lyrics and will tie — exclude them so they don't kill the margin check.
+        // Runner-up: exclude alternate arrangements (Piano Version, Live, etc.) of same song
         const baseTitle = t => (t.trackName || "").toLowerCase().replace(/[\(\[].*/, "").trim();
         const winnerBase = bestTrack ? baseTitle(bestTrack) : "";
         let secondScore = 0;
         for (const [t, score] of trackScores) {
           if (t === bestTrack) continue;
-          if (baseTitle(t) === winnerBase) continue; // same song, different arrangement
+          if (baseTitle(t) === winnerBase) continue;
           if (score > secondScore) secondScore = score;
         }
 
-        // Require at least 2 bigram matches AND a clear margin over the best different song.
         if (!bestTrack || bestScore < 2 || (bestScore - secondScore) < 2) return null;
 
-        // Window-based position finding.
-        // Use longer/distinctive words only (> 4 chars) — short words like "the", "you", "and"
-        // appear in every 20s window and make the score uniform, producing random results.
-        // Longer words (e.g. "forever", "trouble", "dancing") are specific enough to peak
-        // in the correct window even when shorter words repeat across choruses.
+        // Sliding-window position finding using bigrams
         const lyrics = parseLRC(bestTrack.lrcMatch.syncedLyrics);
-        // Use transcript bigrams for position — consecutive word pairs are far more
-        // location-specific than individual words that repeat across verses/chorus.
-        const LISTEN_WINDOW = 20; // seconds of audio captured
+        const LISTEN_WINDOW = 20;
         let bestWindowScore = 0, startPos = 0;
         for (let wi = 0; wi < lyrics.length; wi++) {
-          const windowEnd   = lyrics[wi].time;
-          const windowStart = windowEnd - LISTEN_WINDOW;
-          const windowText  = lyrics
-            .filter(l => l.time >= windowStart && l.time <= windowEnd)
-            .map(l => l.text).join(" ")
-            .toLowerCase().replace(/[^\w\s]/g, "");
+          const windowEnd  = lyrics[wi].time;
+          const windowText = lyrics
+            .filter(l => l.time >= windowEnd - LISTEN_WINDOW && l.time <= windowEnd)
+            .map(l => l.text).join(" ").toLowerCase().replace(/[^\w\s]/g, "");
           const score = bigrams.filter(bg => windowText.includes(bg)).length;
-          if (score > bestWindowScore) {
-            bestWindowScore = score;
-            startPos = Math.max(0, windowEnd + 2);
-          }
+          if (score > bestWindowScore) { bestWindowScore = score; startPos = Math.max(0, windowEnd + 2); }
         }
-        if (logRef) logRef.push(`stratV: position window score ${bestWindowScore}, startPos ${startPos.toFixed(1)}s`);
+        if (logRef) logRef.push(`stratV: bigram position window score ${bestWindowScore}, startPos ${startPos.toFixed(1)}s`);
 
         return { track: bestTrack, lrcMatch: bestTrack.lrcMatch, lyrics, startPos, score: bestScore };
       };
