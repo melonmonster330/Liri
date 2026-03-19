@@ -76,7 +76,7 @@
       "sb_publishable_C-NBnfg0ltAoUi46XQTUjA_ozjZW_Nd"
     );
 
-    const APP_VERSION = "1.68";
+    const APP_VERSION = "1.69";
 
     const PROXY_URL = window.Capacitor
       ? "https://getliri.app/api/recognize"
@@ -1108,16 +1108,15 @@
       // Returns { track, lrcMatch, lyrics, startPos, score } or null.
       // Skips GPT entirely — much more accurate for obscure / re-recorded albums.
       // ── Unique consecutive-word match against cached lyrics ──
-      // Tries the longest possible run of consecutive words from the Whisper transcript
-      // that appears in exactly ONE track's lyrics. Only returns on a perfect unique match —
-      // no scoring, no guessing. Position is derived from where that phrase ends in the LRC,
-      // giving a precise playback position. All lookups are in-memory (no network calls).
+      // Tries word runs from 1 upward — shortest unique run wins.
+      // A single rare word is enough if it appears in only one track.
+      // Pure in-memory, no network calls.
       const matchTranscriptToTracks = (transcript, tracks, logRef, lyricsCache = {}) => {
         const norm = s => s.toLowerCase().replace(/[^\w\s]/g, "").replace(/\s+/g, " ").trim();
         const words = norm(transcript).split(" ").filter(w => w.length > 1);
 
         if (logRef) logRef.push(`stratV: ${words.length} words from transcript`);
-        if (words.length < 4) return null;
+        if (!words.length) return null;
 
         // Build normalised lyrics string for every cached track (pure in-memory, no fetches)
         const tracksWithLyrics = tracks.map(t => {
@@ -1132,22 +1131,20 @@
         if (logRef) logRef.push(`stratV: ${tracksWithLyrics.length}/${tracks.length} tracks have cached lyrics`);
         if (!tracksWithLyrics.length) return null;
 
-        // Try decreasing run lengths — longest unique match wins.
-        // Starting long means we find the most specific match first, which also gives
-        // the best position precision (phrase anchors to an exact lyric line).
+        // Try increasing run lengths — shortest unique match wins.
+        // A single rare word is enough if it appears in exactly one track once.
         const MAX_RUN = Math.min(words.length, 18);
-        const MIN_RUN = 4;
 
-        for (let len = MAX_RUN; len >= MIN_RUN; len--) {
+        for (let len = 1; len <= MAX_RUN; len++) {
           for (let start = 0; start <= words.length - len; start++) {
             const phrase = words.slice(start, start + len).join(" ");
-            const hits = tracksWithLyrics.filter(t => t.normLyrics.includes(phrase));
+            // Must appear in exactly 1 track AND only once in that track — truly unique
+            const hits = tracksWithLyrics.filter(t => t.normLyrics.split(phrase).length - 1 === 1);
             if (hits.length !== 1) continue;
 
             const match = hits[0];
 
             // Find position: accumulate LRC lines until the phrase is fully contained.
-            // The timestamp of that line = where in the song these words were heard.
             let startPos = 0;
             let buf = "";
             for (const line of match.parsed) {
@@ -1163,7 +1160,7 @@
           }
         }
 
-        if (logRef) logRef.push(`stratV: no unique ${MIN_RUN}+ word run found — waiting for more audio`);
+        if (logRef) logRef.push(`stratV: no unique word run found — waiting for more audio`);
         return null;
       };
 
