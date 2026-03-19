@@ -2729,7 +2729,7 @@
                       ←
                     </button>
                     <div style={{ fontSize:"11px", color:"rgba(255,255,255,0.35)", textAlign:"center", maxWidth:"180px", overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>
-                      {albumTracks[currentTrackIndex]?.trackName || ""}
+                      {detectedSong?.title || ""}
                     </div>
                     <button
                       onClick={() => advanceToNextTrack(albumTracksRef.current, currentTrackIndexRef.current)}
