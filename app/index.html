@@ -1985,7 +1985,6 @@
         setCurrentTrackIndex(nextIdx);
         turntableMatchedIdxRef.current = nextIdx; // keep turntable index in sync
         detectedAtRef.current = Date.now();
-        initialPosRef.current = AUTO_ADVANCE_OFFSET + userNudgeRef.current;
 
         setDetectedSong(nextSong);
         setSongDuration(nextDuration);
@@ -1998,9 +1997,15 @@
           await loadLyrics(nextTitle, nextArtist);
         }
 
+        // Intro-aware initial position: start 2s before the first lyric line so lyrics
+        // appear right as the vocals kick in, rather than a fixed 2s from track start.
+        // Falls back to AUTO_ADVANCE_OFFSET if no lyrics loaded (instrumental / LRC missing).
+        const firstLyricTime = lyricsRef.current?.[0]?.time ?? AUTO_ADVANCE_OFFSET;
+        initialPosRef.current = Math.max(0, firstLyricTime - 2) + userNudgeRef.current;
+
         saveToHistory(user, nextSong);
         fetchHistory(user);
-        syncCastSession(nextSong, lyricsRef.current, 0);
+        syncCastSession(nextSong, lyricsRef.current, initialPosRef.current);
 
         // ── Log auto-advance to analytics ──
         logListeningEvent({
