@@ -2892,7 +2892,10 @@
                     <Vinyl size={100} spinning={true} />
                     <div style={{ marginTop:"28px", fontSize:"20px", fontWeight:"600", color:"#f0e6d3", marginBottom:"8px" }}>Identifying…</div>
                     <div style={{ fontSize:"14px", color:"rgba(255,255,255,0.3)" }}>Just a moment</div>
-                    <button onClick={() => { listenSessionRef.current++; startListening(false); }} style={{ marginTop:"28px", background:"none", border:"1px solid rgba(255,255,255,0.12)", color:"rgba(255,255,255,0.3)", borderRadius:"50px", padding:"10px 26px", fontSize:"13px", cursor:"pointer", fontFamily:"inherit" }}>↺ Different song</button>
+                    <div style={{ display:"flex", gap:"10px", justifyContent:"center", marginTop:"28px" }}>
+                      <button onClick={reset} style={{ background:"none", border:"1px solid rgba(255,255,255,0.12)", color:"rgba(255,255,255,0.4)", borderRadius:"50px", padding:"10px 26px", fontSize:"13px", cursor:"pointer", fontFamily:"inherit" }}>← Stop</button>
+                      <button onClick={() => { listenSessionRef.current++; startListening(false); }} style={{ background:"none", border:"1px solid rgba(255,255,255,0.12)", color:"rgba(255,255,255,0.3)", borderRadius:"50px", padding:"10px 26px", fontSize:"13px", cursor:"pointer", fontFamily:"inherit" }}>↺ Try again</button>
+                    </div>
                   </div>
                 )}
 
