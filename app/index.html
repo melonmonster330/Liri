@@ -76,7 +76,7 @@
       "sb_publishable_C-NBnfg0ltAoUi46XQTUjA_ozjZW_Nd"
     );
 
-    const APP_VERSION = "1.59";
+    const APP_VERSION = "1.60";
 
     const PROXY_URL = window.Capacitor
       ? "https://getliri.app/api/recognize"
@@ -1233,7 +1233,7 @@
       // ── Whisper transcription → LRCLib lyrics match (fallback when ACRCloud fails) ──
       // Sends audio to /api/transcribe (Whisper), searches LRCLib by the
       // transcribed words, finds which line matches to get the playback position.
-      const tryLyricsTranscription = async (blob, isAutoAdvance) => {
+      const tryLyricsTranscription = async (blob, isAutoAdvance, blobBuiltAt = null, clipDuration = 0) => {
         try {
           // 1. Transcribe with Whisper
           const audio = await blobToBase64(blob);
@@ -1288,7 +1288,11 @@
               };
               setIdentifiedBy("whisper");
               detectedAtRef.current      = Date.now();
-              initialPosRef.current      = startPos;
+              // Compensate for time elapsed since the blob was built:
+              // startPos = LRC timestamp of first matched words (= start of our audio clip in song-time)
+              // Add clipDuration (audio we sent) + Whisper API latency = where the song is RIGHT NOW
+              const whisperLatency = blobBuiltAt ? (Date.now() - blobBuiltAt) / 1000 : 0;
+              initialPosRef.current      = startPos + clipDuration + whisperLatency;
               autoAdvanceFiredRef.current = false;
               autoRetryCountRef.current  = 0;
               setDetectedSong(song);
@@ -1632,7 +1636,9 @@
                 // the session has been running, so Whisper latency stays consistent.
                 const recentChunks = allChunks.slice(-20);
                 const bgBlob = new Blob(recentChunks, { type: mimeType || "audio/webm" });
-                tryLyricsTranscription(bgBlob, isAutoAdvance).then(found => {
+                const blobBuiltAt = Date.now();
+                const clipDuration = recentChunks.length * 0.2; // 200ms per chunk
+                tryLyricsTranscription(bgBlob, isAutoAdvance, blobBuiltAt, clipDuration).then(found => {
                   bgWhisperStarted = false; // allow retry on next attempt if this one failed
                   if (found && listenSessionRef.current === session) {
                     // Whisper won the race — shut down ACRCloud loop
@@ -3049,8 +3055,8 @@
                         <WaveAnimation active={true} level={audioLevel} />
                       </div>
                     </div>
-                    {/* Live volume label — hidden once we move to lyric-matching phase */}
-                    {listenAttempt <= MAX_ATTEMPTS && (
+                    {/* Live volume label — hidden in turntable mode and after ACR phase */}
+                    {!turntableAlbum && listenAttempt <= MAX_ATTEMPTS && (
                       <div style={{ marginBottom:"20px", fontSize:"11px", letterSpacing:"1.5px", textTransform:"uppercase",
                         color: audioLevel > 0.05 ? "#d4a846" : "#c9807a",
                         transition:"color 0.2s ease" }}>
@@ -3060,11 +3066,13 @@
                       </div>
                     )}
                     <div style={{ fontSize:"22px", fontWeight:"600", color:"#f0e6d3", marginBottom:"10px",
-                      marginTop: listenAttempt > MAX_ATTEMPTS ? "20px" : "0" }}>
-                      {listenAttempt > MAX_ATTEMPTS ? "Matching by lyrics…" : "Listening…"}
+                      marginTop: (!turntableAlbum && listenAttempt > MAX_ATTEMPTS) ? "20px" : "0" }}>
+                      {turntableAlbum ? "Finding your place…" : listenAttempt > MAX_ATTEMPTS ? "Matching by lyrics…" : "Listening…"}
                     </div>
                     <div style={{ fontSize:"14px", color:"rgba(255,255,255,0.3)" }}>
-                      {listenAttempt > MAX_ATTEMPTS
+                      {turntableAlbum
+                        ? "Hold near your speakers"
+                        : listenAttempt > MAX_ATTEMPTS
                         ? "Identifying by lyrics"
                         : listenSecs === 0
                         ? "Hold near your speakers"
