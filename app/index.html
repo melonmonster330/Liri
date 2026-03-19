@@ -2881,7 +2881,7 @@
                     </div>
                     <div style={{ display:"flex", gap:"12px", marginTop:"28px", justifyContent:"center" }}>
                       <button onClick={() => { listenSessionRef.current++; clearInterval(progressTimerRef.current); streamRef.current?.getTracks().forEach(t => t.stop()); reset(); }} style={{ background:"none", border:"1px solid rgba(255,255,255,0.12)", color:"rgba(255,255,255,0.4)", borderRadius:"50px", padding:"10px 26px", fontSize:"13px", cursor:"pointer", fontFamily:"inherit" }}>Stop</button>
-                      <button onClick={() => { listenSessionRef.current++; clearInterval(progressTimerRef.current); streamRef.current?.getTracks().forEach(t => t.stop()); startListening(false); }} style={{ background:"none", border:"1px solid rgba(255,255,255,0.12)", color:"rgba(255,255,255,0.3)", borderRadius:"50px", padding:"10px 26px", fontSize:"13px", cursor:"pointer", fontFamily:"inherit" }}>↺ Different song</button>
+                      <button onClick={() => { listenSessionRef.current++; clearInterval(progressTimerRef.current); streamRef.current?.getTracks().forEach(t => t.stop()); startListening(false); }} style={{ background:"none", border:"1px solid rgba(255,255,255,0.12)", color:"rgba(255,255,255,0.3)", borderRadius:"50px", padding:"10px 26px", fontSize:"13px", cursor:"pointer", fontFamily:"inherit" }}>↺ Try again</button>
                     </div>
                   </div>
                 )}
