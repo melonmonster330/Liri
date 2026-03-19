@@ -76,7 +76,7 @@
       "sb_publishable_C-NBnfg0ltAoUi46XQTUjA_ozjZW_Nd"
     );
 
-    const APP_VERSION = "1.64";
+    const APP_VERSION = "1.65";
 
     const PROXY_URL = window.Capacitor
       ? "https://getliri.app/api/recognize"
@@ -1051,12 +1051,15 @@
         const title  = m.title;
         const artist = m.artists?.[0]?.name || "Unknown Artist";
 
-        let artwork = spotifyArt;
-        if (!artwork) {
-          try {
-            const itunes = await fetch(`https://itunes.apple.com/search?term=${encodeURIComponent(artist + " " + title)}&entity=song&limit=1`).then(r => r.json());
-            artwork = itunes.results?.[0]?.artworkUrl100?.replace("100x100bb", "600x600bb") || null;
-          } catch {}
+        // Fetch artwork in background — don't block lyrics on an iTunes round-trip
+        const artwork = spotifyArt || null;
+        if (!spotifyArt) {
+          fetch(`https://itunes.apple.com/search?term=${encodeURIComponent(artist + " " + title)}&entity=song&limit=1`)
+            .then(r => r.json())
+            .then(itunes => {
+              const art = itunes.results?.[0]?.artworkUrl100?.replace("100x100bb", "600x600bb") || null;
+              if (art) setDetectedSong(s => s ? { ...s, artwork: art } : s);
+            }).catch(() => {});
         }
 
         const song = { title, artist, album: m.album?.name || "", artwork };
@@ -1065,16 +1068,16 @@
         setSongDuration(duration);
         await loadLyrics(title, artist);
 
+        setMode("confirmed"); // triggers startSync immediately after lyrics are ready
+
         saveToHistory(user, song);
         fetchHistory(user);
         syncCastSession(song, lyricsRef.current, initialPosRef.current);
         if (!isUnlimited(user)) {
           const newCount = usageCount + 1;
-          await sb.from("user_usage").upsert({ user_id: user.id, recognition_count: newCount });
+          sb.from("user_usage").upsert({ user_id: user.id, recognition_count: newCount }).catch(() => {});
           setUsageCount(newCount);
         }
-
-        setMode("confirmed");
 
         fetchAlbumTracks(title, artist).then(async ({ tracks, collectionId }) => {
           setAlbumTracks(tracks);
@@ -2893,18 +2896,20 @@
                 </div>
                 {/* Prev / track name / next — vinyl mode or turntable mode */}
                 {(() => {
-                  const isTT = !vinylMode && turntableAlbum && turntableTracksRef.current.length > 0 && turntableMatchedIdxRef.current >= 0;
-                  const isVM = vinylMode && albumTracks.length > 0 && currentTrackIndex >= 0;
+                  // Prefer library (turntableTracksRef) over iTunes (albumTracks) whenever available
+                  const hasTT = turntableAlbum && turntableTracksRef.current.length > 0 && turntableMatchedIdxRef.current >= 0;
+                  const isTT = !vinylMode && hasTT;
+                  const isVM = vinylMode && (hasTT || albumTracks.length > 0) && currentTrackIndex >= 0;
                   if (!isTT && !isVM) return null;
-                  const tIdx    = isTT ? turntableMatchedIdxRef.current : currentTrackIndex;
-                  const tTracks = isTT ? turntableTracksRef.current : albumTracks;
+                  const tIdx    = hasTT ? turntableMatchedIdxRef.current : currentTrackIndex;
+                  const tTracks = hasTT ? turntableTracksRef.current : albumTracks;
                   const atStart = tIdx <= 0;
                   const atEnd   = tIdx >= tTracks.length - 1;
                   const nextTrackName = !atEnd ? (tTracks[tIdx + 1]?.trackName || tTracks[tIdx + 1]?.title || null) : null;
-                  const goPrev  = () => isTT
+                  const goPrev  = () => hasTT
                     ? advanceToNextTrack(turntableTracksRef.current, tIdx - 2)
                     : jumpToTrack(Math.max(0, currentTrackIndex - 1));
-                  const goNext  = () => isTT
+                  const goNext  = () => hasTT
                     ? advanceToNextTrack(turntableTracksRef.current, tIdx)
                     : advanceToNextTrack(albumTracksRef.current, currentTrackIndexRef.current);
                   return (
