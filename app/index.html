@@ -2659,11 +2659,7 @@
               <div style={{ flex:1, overflow:"hidden", position:"relative" }}>
                 <div
                   style={{ overflowY:"auto", height:"100%", padding:"8vh 28px 0" }}
-                  onTouchStart={() => {
-                    userScrollingRef.current = true;
-                    clearTimeout(scrollInhibitTimer.current);
-                    scrollInhibitTimer.current = setTimeout(() => { userScrollingRef.current = false; }, 4000);
-                  }}
+                  onTouchStart={() => { userScrollingRef.current = true; }}
                 >
                   {lyrics.length > 0 ? (
                     <>
