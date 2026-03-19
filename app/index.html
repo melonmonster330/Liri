@@ -76,7 +76,7 @@
       "sb_publishable_C-NBnfg0ltAoUi46XQTUjA_ozjZW_Nd"
     );
 
-    const APP_VERSION = "1.70";
+    const APP_VERSION = "1.71";
 
     const PROXY_URL = window.Capacitor
       ? "https://getliri.app/api/recognize"
@@ -1121,27 +1121,37 @@
         if (logRef) logRef.push(`stratV: ${words.length} words from transcript`);
         if (!words.length) return null;
 
-        // Build normalised lyrics string for every cached track (pure in-memory, no fetches)
+        // Build normalised lyrics string for every cached track (pure in-memory, no fetches).
+        // Deduplicate by BASE track name — strips parenthetical suffixes like
+        // "(the long pond studio sessions)", "(bonus track)", "[live]" before comparing.
+        // Albums like folklore include both studio and session versions of every track;
+        // without this, every phrase hits 2 copies → uniqueness check always fails.
+        const baseTrackName = n => norm((n || "").replace(/\s*[\(\[].*/, "").trim());
+        const seenNames = new Set();
         const tracksWithLyrics = tracks.map(t => {
           const key = t.trackId ?? t.trackName;
-          const lrc = key ? lyricsCache[key] : null;
+          const lrc = key ? lyricsCache[key] : (t.trackName ? lyricsCache[t.trackName] : null);
           if (!lrc) return null;
           const parsed = parseLRC(lrc);
           if (!parsed.length) return null;
+          const baseKey = baseTrackName(t.trackName);
+          if (seenNames.has(baseKey)) return null; // skip live/session duplicate
+          seenNames.add(baseKey);
           return { ...t, parsed, normLyrics: norm(parsed.map(l => l.text).join(" ")), lrcMatch: { syncedLyrics: lrc } };
         }).filter(Boolean);
 
         if (logRef) logRef.push(`stratV: ${tracksWithLyrics.length}/${tracks.length} tracks have cached lyrics`);
         if (!tracksWithLyrics.length) return null;
 
-        // Try increasing run lengths — shortest unique match wins.
-        // A single rare word is enough if it appears in exactly one track once.
-        const MAX_RUN = Math.min(words.length, 18);
+        // Try increasing run lengths — no cap, keep going until perfect match.
+        // We know the album, so every phrase should eventually be unique.
+        // Start at 3 words — shorter runs hit wrong tracks (false positives).
+        const MIN_RUN = 3;
 
-        for (let len = 1; len <= MAX_RUN; len++) {
+        for (let len = MIN_RUN; len <= words.length; len++) {
           for (let start = 0; start <= words.length - len; start++) {
             const phrase = words.slice(start, start + len).join(" ");
-            // Must appear in exactly 1 track AND only once in that track — truly unique
+            // Both must be true: phrase in exactly 1 track AND appears exactly once in it
             const hits = tracksWithLyrics.filter(t => t.normLyrics.split(phrase).length - 1 === 1);
             if (hits.length !== 1) continue;
 
