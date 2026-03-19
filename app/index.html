@@ -76,7 +76,7 @@
       "sb_publishable_C-NBnfg0ltAoUi46XQTUjA_ozjZW_Nd"
     );
 
-    const APP_VERSION = "1.50";
+    const APP_VERSION = "1.51";
 
     const PROXY_URL = window.Capacitor
       ? "https://getliri.app/api/recognize"
@@ -1094,7 +1094,7 @@
           const score = bigrams.filter(bg => windowText.includes(bg)).length;
           if (score > bestWindowScore) {
             bestWindowScore = score;
-            startPos = Math.max(0, windowEnd);
+            startPos = Math.max(0, windowEnd + 3); // +3 corrects for windowEnd being line-start, not line-end
           }
         }
         if (logRef) logRef.push(`stratV: position window score ${bestWindowScore}, startPos ${startPos.toFixed(1)}s`);
