@@ -76,7 +76,7 @@
       "sb_publishable_C-NBnfg0ltAoUi46XQTUjA_ozjZW_Nd"
     );
 
-    const APP_VERSION = "1.60";
+    const APP_VERSION = "1.61";
 
     const PROXY_URL = window.Capacitor
       ? "https://getliri.app/api/recognize"
@@ -1632,12 +1632,13 @@
                 : (attempts === 4 && !bgWhisperStarted);
               if (shouldFireWhisper) {
                 bgWhisperStarted = true;
-                // Cap to last 20 chunks (~4s) — keeps payload small regardless of how long
-                // the session has been running, so Whisper latency stays consistent.
-                const recentChunks = allChunks.slice(-20);
+                // Send first chunk (WebM/Ogg stream header, required for decoding)
+                // + last 19 recent chunks (~3.8s of audio). Without the header chunk,
+                // Whisper can't decode the audio and returns an empty transcript.
+                const recentChunks = [allChunks[0], ...allChunks.slice(-19)];
                 const bgBlob = new Blob(recentChunks, { type: mimeType || "audio/webm" });
                 const blobBuiltAt = Date.now();
-                const clipDuration = recentChunks.length * 0.2; // 200ms per chunk
+                const clipDuration = Math.min(allChunks.length, 19) * 0.2; // 200ms per chunk
                 tryLyricsTranscription(bgBlob, isAutoAdvance, blobBuiltAt, clipDuration).then(found => {
                   bgWhisperStarted = false; // allow retry on next attempt if this one failed
                   if (found && listenSessionRef.current === session) {
