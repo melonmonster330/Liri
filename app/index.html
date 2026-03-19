@@ -76,7 +76,7 @@
       "sb_publishable_C-NBnfg0ltAoUi46XQTUjA_ozjZW_Nd"
     );
 
-    const APP_VERSION = "1.56";
+    const APP_VERSION = "1.57";
 
     const PROXY_URL = window.Capacitor
       ? "https://getliri.app/api/recognize"
@@ -439,6 +439,7 @@
       const currentLineRef      = useRef(null);
       const creditsRef          = useRef(null);
       const userScrollingRef    = useRef(false); // true while user is browsing lyrics manually
+      const [userScrolling, setUserScrolling] = useState(false); // reactive mirror for Follow button visibility
       const scrollInhibitTimer  = useRef(null);
       const listenSessionRef    = useRef(0); // increments on each startListening; guards stale async callbacks
       const attemptLogRef       = useRef([]); // collects per-attempt debug info for the error screen
@@ -906,9 +907,15 @@
         syncStartRef.current  = Date.now();
         setCurrentIndex(i);
         setPlaybackTime(targetTime);
-        // Re-enable auto-scroll so it follows from the tapped line
-        clearTimeout(scrollInhibitTimer.current);
         userScrollingRef.current = false;
+        setUserScrolling(false);
+      };
+
+      // ── Re-follow: re-enable auto-scroll and snap back to current line ──
+      const refollow = () => {
+        userScrollingRef.current = false;
+        setUserScrolling(false);
+        currentLineRef.current?.scrollIntoView({ behavior:"smooth", block:"center" });
       };
 
       // ── Scroll to credits once song passes the last lyric (outro roll) ──
@@ -1282,7 +1289,7 @@
               autoAdvanceFiredRef.current = false;
               autoRetryCountRef.current  = 0;
               setDetectedSong(song);
-              setSongDuration(lrcMatch.duration || null);
+              setSongDuration(lrcMatch.duration || (track.trackTimeMillis ? track.trackTimeMillis / 1000 : null));
               setLyrics(lyrics); lyricsRef.current = lyrics;
               setMode("confirmed");
               saveToHistory(user, song); fetchHistory(user);
@@ -2800,8 +2807,8 @@
                 </div>
               </div>
 
-              {/* Song end progress bar (vinyl mode) */}
-              {vinylMode && songDuration && (
+              {/* Song end progress bar (vinyl mode or turntable mode) */}
+              {(vinylMode || turntableAlbum) && songDuration && (
                 <div style={{ height:"2px", background:"rgba(255,255,255,0.05)", flexShrink:0, margin:"0 20px" }}>
                   <div style={{ height:"100%", background:"linear-gradient(to right, #d4a846, #c9807a)", width:`${Math.min(playbackTime/songDuration*100,100)}%`, transition:"width 0.5s linear" }} />
                 </div>
@@ -2810,8 +2817,8 @@
               <div style={{ flex:1, overflow:"hidden", position:"relative" }}>
                 <div
                   style={{ overflowY:"auto", height:"100%", padding:"8vh 28px 0" }}
-                  onTouchStart={() => { userScrollingRef.current = true; }}
-                  onWheel={() => { userScrollingRef.current = true; }}
+                  onTouchStart={() => { userScrollingRef.current = true; setUserScrolling(true); }}
+                  onWheel={() => { userScrollingRef.current = true; setUserScrolling(true); }}
                 >
                   {lyrics.length > 0 ? (
                     <>
@@ -2832,7 +2839,7 @@
                             <div
                               key={i}
                               ref={cur ? currentLineRef : null}
-                              onClick={() => seekToLine(i)}
+                              onClick={() => cur ? refollow() : seekToLine(i)}
                               style={{
                                 textAlign:"center",
                                 padding: near ? "6px 0" : "3px 0",
@@ -2902,29 +2909,43 @@
                 </div>
                 {/* Action buttons */}
                 <div style={{ display:"flex", justifyContent:"center", gap:"10px", marginBottom:"8px" }}>
+                  {userScrolling && (
+                    <button onClick={refollow} style={{ background:"rgba(212,168,70,0.12)", border:"1px solid rgba(212,168,70,0.3)", color:"rgba(212,168,70,0.8)", borderRadius:"50px", padding:"10px 22px", fontSize:"13px", fontWeight:"500", cursor:"pointer", fontFamily:"inherit" }}>↓ Follow</button>
+                  )}
                   <button onClick={resync} disabled={isResyncing} style={{ background:"rgba(255,255,255,0.07)", border:"1px solid rgba(255,255,255,0.15)", color:"rgba(255,255,255,0.55)", borderRadius:"50px", padding:"10px 22px", fontSize:"13px", fontWeight:"500", cursor: isResyncing ? "wait" : "pointer", fontFamily:"inherit", opacity: isResyncing ? 0.4 : 1 }}>↻ Resync</button>
                   <button onClick={() => { reset(); setTimeout(() => startListening(false), 150); }} style={{ background:"rgba(255,255,255,0.04)", border:"1px solid rgba(255,255,255,0.09)", color:"rgba(255,255,255,0.35)", borderRadius:"50px", padding:"10px 22px", fontSize:"13px", cursor:"pointer", fontFamily:"inherit" }}>Wrong song?</button>
                 </div>
-                {/* Vinyl mode: prev / track name / next — smaller, below timing controls */}
-                {vinylMode && albumTracks.length > 0 && currentTrackIndex >= 0 && (
-                  <div style={{ display:"flex", alignItems:"center", justifyContent:"center", gap:"8px", marginTop:"6px", marginBottom:"2px" }}>
-                    <button
-                      onClick={() => jumpToTrack(Math.max(0, currentTrackIndex - 1))}
-                      disabled={currentTrackIndex === 0}
-                      style={{ background:"none", border:"none", color: currentTrackIndex === 0 ? "rgba(255,255,255,0.1)" : "rgba(255,255,255,0.3)", cursor: currentTrackIndex === 0 ? "default" : "pointer", fontSize:"12px", padding:"2px 6px", flexShrink:0 }}>
-                      ←
-                    </button>
-                    <div style={{ fontSize:"10px", color:"rgba(255,255,255,0.25)", textAlign:"center", maxWidth:"160px", overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>
-                      {detectedSong?.title || ""}
+                {/* Prev / track name / next — vinyl mode or turntable mode */}
+                {(() => {
+                  const isTT = !vinylMode && turntableAlbum && turntableTracksRef.current.length > 0 && turntableMatchedIdxRef.current >= 0;
+                  const isVM = vinylMode && albumTracks.length > 0 && currentTrackIndex >= 0;
+                  if (!isTT && !isVM) return null;
+                  const tIdx    = isTT ? turntableMatchedIdxRef.current : currentTrackIndex;
+                  const tTracks = isTT ? turntableTracksRef.current : albumTracks;
+                  const atStart = tIdx <= 0;
+                  const atEnd   = tIdx >= tTracks.length - 1;
+                  const goPrev  = () => isTT
+                    ? advanceToNextTrack(turntableTracksRef.current, tIdx - 2)
+                    : jumpToTrack(Math.max(0, currentTrackIndex - 1));
+                  const goNext  = () => isTT
+                    ? advanceToNextTrack(turntableTracksRef.current, tIdx)
+                    : advanceToNextTrack(albumTracksRef.current, currentTrackIndexRef.current);
+                  return (
+                    <div style={{ display:"flex", alignItems:"center", justifyContent:"center", gap:"8px", marginTop:"6px", marginBottom:"2px" }}>
+                      <button onClick={goPrev} disabled={atStart}
+                        style={{ background:"none", border:"none", color: atStart ? "rgba(255,255,255,0.1)" : "rgba(255,255,255,0.3)", cursor: atStart ? "default" : "pointer", fontSize:"12px", padding:"2px 6px", flexShrink:0 }}>
+                        ←
+                      </button>
+                      <div style={{ fontSize:"10px", color:"rgba(255,255,255,0.25)", textAlign:"center", maxWidth:"160px", overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>
+                        {detectedSong?.title || ""}
+                      </div>
+                      <button onClick={goNext} disabled={atEnd}
+                        style={{ background:"none", border:"none", color: atEnd ? "rgba(255,255,255,0.1)" : "rgba(255,255,255,0.3)", cursor: atEnd ? "default" : "pointer", fontSize:"12px", padding:"2px 6px", flexShrink:0 }}>
+                        →
+                      </button>
                     </div>
-                    <button
-                      onClick={() => advanceToNextTrack(albumTracksRef.current, currentTrackIndexRef.current)}
-                      disabled={currentTrackIndex >= albumTracks.length - 1}
-                      style={{ background:"none", border:"none", color: currentTrackIndex >= albumTracks.length - 1 ? "rgba(255,255,255,0.1)" : "rgba(255,255,255,0.3)", cursor: currentTrackIndex >= albumTracks.length - 1 ? "default" : "pointer", fontSize:"12px", padding:"2px 6px", flexShrink:0 }}>
-                      →
-                    </button>
-                  </div>
-                )}
+                  );
+                })()}
                 <div style={{ textAlign:"center", marginTop:"6px", fontSize:"9px", color:"rgba(255,255,255,0.1)", letterSpacing:"1px" }}>v{APP_VERSION}</div>
               </div>
             </div>
