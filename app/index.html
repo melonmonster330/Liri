@@ -1403,12 +1403,12 @@
         }
       };
 
-      // ── Record audio and detect — rolling 5s attempts ──
-      // Sends a recognition request every 5 seconds using ALL accumulated audio.
+      // ── Record audio and detect — rolling 3s attempts ──
+      // Sends a recognition request every 3 seconds using ALL accumulated audio.
       // On match: stops immediately. On miss: keeps recording and tries a longer clip.
-      // Fast songs get identified in 5s. Quiet/tricky ones keep accumulating up to 30s.
-      const ATTEMPT_INTERVAL = 5000; // ms between attempts
-      const MAX_ATTEMPTS     = 6;    // 5s, 10s, 15s, 20s, 25s, 30s max
+      // Fast songs get identified in 3s. Quiet/tricky ones keep accumulating up to 24s.
+      const ATTEMPT_INTERVAL = 3000; // ms between attempts
+      const MAX_ATTEMPTS     = 8;    // 3s, 6s, 9s, 12s, 15s, 18s, 21s, 24s max
 
       const startListening = async (isAutoAdvance = false) => {
         if (!isAutoAdvance && !isUnlimited(user) && usageCount >= FREE_LIMIT) { setMode("limit"); return; }
@@ -1479,7 +1479,7 @@
           progressTimerRef.current = setInterval(async () => {
             elapsed += 100;
 
-            // Fill the progress ring smoothly over the full 30s max listen window
+            // Fill the progress ring smoothly over the full 24s max listen window
             setListenProgress(Math.min(elapsed / (MAX_ATTEMPTS * ATTEMPT_INTERVAL), 1));
 
             if (elapsed >= nextAttemptAt && !sending) {
@@ -1488,10 +1488,10 @@
               setListenAttempt(attempts);
               nextAttemptAt = (attempts + 1) * ATTEMPT_INTERVAL;
 
-              // ── Background Whisper: fire starting at attempt 4 (20s), retry each attempt ──
-              // In turntable mode: retry every 5s (at 20s, 25s, 30s) — the first blob may have
+              // ── Background Whisper: fire starting at attempt 4 (12s), retry each attempt ──
+              // In turntable mode: retry every 3s (at 12s, 15s, 18s…) — the first blob may have
               // landed in an intro/instrumental; a later blob with more lyric content often succeeds.
-              // In non-turntable mode: fire once at 20s only (GPT/Strategy C need a good transcript).
+              // In non-turntable mode: fire once at 12s only (GPT/Strategy C need a good transcript).
               const hasTurntable = turntableTracksRef.current.length > 0;
               const shouldFireWhisper = hasTurntable
                 ? (attempts >= 1 && !bgWhisperStarted && !recognitionWonRef.current)
