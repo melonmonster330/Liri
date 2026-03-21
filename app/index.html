@@ -76,7 +76,7 @@
       "sb_publishable_C-NBnfg0ltAoUi46XQTUjA_ozjZW_Nd"
     );
 
-    const APP_VERSION = "1.71";
+    const APP_VERSION = "1.72";
 
     const PROXY_URL = window.Capacitor
       ? "https://getliri.app/api/recognize"
@@ -1273,7 +1273,7 @@
               };
               setIdentifiedBy("whisper");
               detectedAtRef.current      = Date.now();
-              initialPosRef.current      = startPos + (Date.now() - whisperSentAt) / 1000;
+              initialPosRef.current      = Math.max(0, startPos + (Date.now() - whisperSentAt) / 1000 - 1.5);
               autoAdvanceFiredRef.current = false;
               autoRetryCountRef.current  = 0;
               setDetectedSong(song);
