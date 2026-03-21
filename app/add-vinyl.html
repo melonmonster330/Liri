@@ -56,7 +56,7 @@
   <script type="text/babel">
     const { useState, useEffect, useRef, useCallback } = React;
 
-    const APP_VERSION = "1.51";
+    const APP_VERSION = "1.72";
 
     const sb = supabase.createClient(
       "https://xjdjpaxgymgbvcwmvorc.supabase.co",
@@ -259,40 +259,80 @@
         try {
           const positioned = computePositions();
 
-          // 1. Insert the release
-          const { data: release, error: relErr } = await sb.from('vinyl_releases').insert({
-            itunes_collection_id: String(selected.collectionId),
-            album_name: selected.collectionName,
-            artist_name: selected.artistName,
-            release_year: pressing.release_year ? Number(pressing.release_year) : null,
-            record_label: pressing.record_label || null,
+          const collectionIdStr = String(selected.collectionId);
+          const artistName      = selected.artistName;
+          const albumName       = selected.collectionName;
+          const artworkUrl      = selected.artworkUrl100?.replace('100x100bb', '600x600bb') || null;
+
+          // 1. Insert the release (upsert so re-adding the same vinyl doesn't error)
+          const { data: release, error: relErr } = await sb.from('vinyl_releases').upsert({
+            itunes_collection_id: collectionIdStr,
+            album_name:    albumName,
+            artist_name:   artistName,
+            release_year:  pressing.release_year ? Number(pressing.release_year) : null,
+            record_label:  pressing.record_label  || null,
             catalog_number: pressing.catalog_number || null,
-            country: pressing.country || null,
-            edition: pressing.edition || null,
-            version_note: pressing.version_note || null,
-            disc_count: pressing.disc_count,
-            artwork_url: selected.artworkUrl100?.replace('100x100bb', '600x600bb') || null,
-            submitted_by: user.id,
-          }).select().single();
+            country:       pressing.country       || null,
+            edition:       pressing.edition       || null,
+            version_note:  pressing.version_note  || null,
+            disc_count:    pressing.disc_count,
+            artwork_url:   artworkUrl,
+            submitted_by:  user.id,
+          }, { onConflict: 'itunes_collection_id' }).select().single();
 
           if (relErr) throw relErr;
 
-          // 2. Insert all tracks
+          // 2. Insert all tracks (delete old ones first so re-adds stay clean)
+          await sb.from('vinyl_tracks').delete().eq('release_id', release.id);
           const trackRows = positioned.map(t => ({
-            release_id: release.id,
-            disc_number: t._disc,
-            side: t._side,
-            position: t._position,
+            release_id:           release.id,
+            disc_number:          t._disc,
+            side:                 t._side,
+            position:             t._position,
             track_number_on_side: t._posNum,
-            title: t.trackName,
-            duration_ms: t.trackTimeMillis || null,
-            itunes_track_id: String(t.trackId),
+            title:                t.trackName,
+            duration_ms:          t.trackTimeMillis || null,
+            itunes_track_id:      t.trackId ? String(t.trackId) : null,
           }));
-
           const { error: trkErr } = await sb.from('vinyl_tracks').insert(trackRows);
           if (trkErr) throw trkErr;
 
+          // 3. Add to user's personal library so it appears in turntable picker
+          await sb.from('user_vinyl_library').upsert({
+            user_id:              user.id,
+            itunes_collection_id: collectionIdStr,
+            album_name:           albumName,
+            artist_name:          artistName,
+            artwork_url:          artworkUrl,
+          }, { onConflict: 'user_id,itunes_collection_id' });
+
           setDone(true);
+
+          // 4. Cache lyrics for every track — fire-and-forget after done screen shows.
+          const eligibleTracks = positioned.filter(t => t.trackId && t.trackName);
+          Promise.all(eligibleTracks.map(async t => {
+            try {
+              const [a, b] = await Promise.all([
+                fetch(`https://lrclib.net/api/search?artist_name=${encodeURIComponent(artistName)}&track_name=${encodeURIComponent(t.trackName)}`).then(r => r.json()).catch(() => []),
+                fetch(`https://lrclib.net/api/search?q=${encodeURIComponent(`${artistName} ${t.trackName}`.trim())}`).then(r => r.json()).catch(() => []),
+              ]);
+              const candidates = [...(Array.isArray(a) ? a : []), ...(Array.isArray(b) ? b : [])];
+              const best = candidates.filter(c => c.syncedLyrics).find(c => !/\*{2,}/.test(c.syncedLyrics))
+                        || candidates.find(c => c.syncedLyrics);
+              if (best?.syncedLyrics) {
+                await sb.from('liri_lyric_cache').upsert({
+                  itunes_track_id:      t.trackId,
+                  itunes_collection_id: selected.collectionId,
+                  track_name:           t.trackName,
+                  artist_name:          artistName,
+                  album_name:           albumName,
+                  track_number:         t.trackNumber,
+                  disc_number:          t._disc,
+                  synced_lyrics:        best.syncedLyrics,
+                }, { onConflict: 'itunes_track_id' });
+              }
+            } catch {}
+          })).catch(() => {});
         } catch (e) {
           setSubmitError(e.message || 'Something went wrong. Please try again.');
         }
