@@ -844,6 +844,7 @@
 
           // Pre-load cached LRC from Supabase
           const trackIds = tracks.map(t => t.trackId).filter(Boolean);
+          const artistName = alb?.artist_name || tracks[0]?.artistName || "";
           if (trackIds.length > 0) {
             sb.from("liri_lyric_cache")
               .select("itunes_track_id, synced_lyrics")
@@ -852,6 +853,36 @@
                 const cache = {};
                 for (const row of (data || [])) cache[row.itunes_track_id] = row.synced_lyrics;
                 turntableLyricsCacheRef.current = cache;
+                // If Supabase has no lyrics (album never added via add-vinyl),
+                // fall back to LRCLib so turntable mode still works.
+                if (Object.keys(cache).length === 0 && tracks.length > 0) {
+                  Promise.all(tracks.map(async t => {
+                    if (!t.trackName) return;
+                    try {
+                      const [a, b] = await Promise.all([
+                        fetch(`https://lrclib.net/api/search?artist_name=${encodeURIComponent(artistName)}&track_name=${encodeURIComponent(t.trackName)}`).then(r => r.json()).catch(() => []),
+                        fetch(`https://lrclib.net/api/search?q=${encodeURIComponent(`${artistName} ${t.trackName}`.trim())}`).then(r => r.json()).catch(() => []),
+                      ]);
+                      const best = [...(Array.isArray(a) ? a : []), ...(Array.isArray(b) ? b : [])].find(c => c.syncedLyrics);
+                      if (best?.syncedLyrics) {
+                        if (t.trackId) turntableLyricsCacheRef.current[t.trackId] = best.syncedLyrics;
+                        turntableLyricsCacheRef.current[t.trackName] = best.syncedLyrics;
+                        // Save to Supabase so next time it loads from cache
+                        const ta2 = turntableAlbumRef.current;
+                        if (t.trackId) {
+                          sb.from("liri_lyric_cache").upsert({
+                            itunes_track_id:      t.trackId,
+                            itunes_collection_id: collectionId,
+                            track_name:           t.trackName,
+                            artist_name:          artistName,
+                            album_name:           ta2?.album_name || alb?.album_name || "",
+                            synced_lyrics:        best.syncedLyrics,
+                          }, { onConflict: "itunes_track_id" }).catch(() => {});
+                        }
+                      }
+                    } catch {}
+                  })).catch(() => {});
+                }
               }).catch(() => {});
           } else {
             turntableLyricsCacheRef.current = {};
@@ -1602,7 +1633,14 @@
               }
 
               // In turntable mode, Whisper + cached LRC is the only recogniser — skip ACR entirely.
+              // After 15 attempts (~90s) give up so the mic doesn't run forever.
               if (turntableAlbumRef.current) {
+                if (attempts >= 15) {
+                  clearInterval(progressTimerRef.current);
+                  if (recorder.state === "recording") recorder.stop();
+                  handleNoMatch(isAutoAdvance, "turntable_no_match");
+                  return;
+                }
                 sending = false;
                 return;
               }
