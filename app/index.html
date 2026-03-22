@@ -73,7 +73,7 @@
       "sb_publishable_C-NBnfg0ltAoUi46XQTUjA_ozjZW_Nd"
     );
 
-    const APP_VERSION = "1.106";
+    const APP_VERSION = "1.107";
 
     const PROXY_URL = window.Capacitor
       ? "https://getliri.app/api/recognize"
@@ -281,6 +281,10 @@
 
       // ── UI panels ──
       const [showSettings, setShowSettings]   = useState(false);
+      const [showBugReport, setShowBugReport] = useState(false);
+      const [bugText, setBugText]             = useState("");
+      const [bugSending, setBugSending]       = useState(false);
+      const [bugSent, setBugSent]             = useState(false);
       const [showHistory, setShowHistory]     = useState(false);
 
       // ── Auth ──
@@ -716,6 +720,57 @@
       };
 
       const handleSignOut = async () => { await sb.auth.signOut(); setShowSettings(false); reset(); };
+
+      // ── Bug report ──────────────────────────────────────────────────────────
+      // SQL to run once in Supabase:
+      //   create table bug_reports (
+      //     id          uuid default gen_random_uuid() primary key,
+      //     created_at  timestamptz default now(),
+      //     user_id     uuid references auth.users(id),
+      //     user_email  text,
+      //     app_version text,
+      //     platform    text,
+      //     description text not null,
+      //     meta        jsonb
+      //   );
+      //   alter table bug_reports enable row level security;
+      //   create policy "users can insert own reports"
+      //     on bug_reports for insert with check (auth.uid() = user_id);
+      const submitBugReport = async () => {
+        if (!bugText.trim()) return;
+        setBugSending(true);
+        try {
+          // 1. Store in Supabase
+          await sb.from("bug_reports").insert({
+            user_id:     user?.id     || null,
+            user_email:  user?.email  || null,
+            app_version: APP_VERSION,
+            platform:    window.Capacitor ? "ios" : "web",
+            description: bugText.trim(),
+            meta: {
+              userAgent:   navigator.userAgent,
+              screen:      `${window.screen.width}x${window.screen.height}`,
+              mode,
+              detectedSong: detectedSong?.title || null,
+            },
+          });
+          // 2. Open mailto so Helen gets an email immediately
+          const subject = encodeURIComponent(`Liri Bug Report — v${APP_VERSION}`);
+          const body = encodeURIComponent(
+            `From: ${user?.email || "anonymous"}\n` +
+            `Version: ${APP_VERSION} · ${window.Capacitor ? "iOS" : "Web"}\n` +
+            `Song: ${detectedSong?.title || "—"}\n\n` +
+            bugText.trim()
+          );
+          window.location.href = `mailto:hmhelenmenne@gmail.com?subject=${subject}&body=${body}`;
+          setBugSent(true);
+          setBugText("");
+          setTimeout(() => { setShowBugReport(false); setBugSent(false); }, 2000);
+        } catch (e) {
+          console.error("bug report failed:", e);
+        }
+        setBugSending(false);
+      };
 
       // ── Turntable album: sync to ref + localStorage, fetch tracks ──
       const fetchTurntableTracks = async (collectionId) => {
@@ -2732,6 +2787,28 @@
                     Music rights belong to their respective artists, labels, and publishers.
                   </div>
                 </div>
+
+                {/* Bug report */}
+                {!showBugReport ? (
+                  <button onClick={() => setShowBugReport(true)} style={{ width:"100%", background:"rgba(255,255,255,0.04)", border:"1px solid rgba(255,255,255,0.08)", color:"rgba(255,255,255,0.4)", borderRadius:"14px", padding:"14px", fontSize:"14px", cursor:"pointer", fontFamily:"inherit", marginBottom:"10px" }}>🐛 Report a bug</button>
+                ) : (
+                  <div style={{ background:"rgba(255,255,255,0.04)", border:"1px solid rgba(255,255,255,0.1)", borderRadius:"16px", padding:"16px", marginBottom:"10px", animation:"fade-up 0.2s ease" }}>
+                    <div style={{ fontSize:"13px", fontWeight:"600", color:"rgba(255,255,255,0.6)", marginBottom:"10px" }}>What's going wrong?</div>
+                    <textarea
+                      value={bugText}
+                      onChange={e => setBugText(e.target.value)}
+                      placeholder="Describe the bug — what happened, what you expected..."
+                      rows={4}
+                      style={{ width:"100%", background:"rgba(255,255,255,0.05)", border:"1px solid rgba(255,255,255,0.1)", borderRadius:"10px", padding:"12px", color:"#f0e6d3", fontSize:"13px", fontFamily:"inherit", resize:"none", outline:"none", lineHeight:"1.5" }}
+                    />
+                    <div style={{ display:"flex", gap:"8px", marginTop:"10px" }}>
+                      <button onClick={() => { setShowBugReport(false); setBugText(""); }} style={{ flex:1, background:"none", border:"1px solid rgba(255,255,255,0.08)", color:"rgba(255,255,255,0.3)", borderRadius:"10px", padding:"10px", fontSize:"13px", cursor:"pointer", fontFamily:"inherit" }}>Cancel</button>
+                      <button onClick={submitBugReport} disabled={bugSending || !bugText.trim()} style={{ flex:2, background: bugSent ? "rgba(100,200,100,0.15)" : "linear-gradient(135deg,#d4a846,#c9807a)", border:"none", borderRadius:"10px", padding:"10px", fontSize:"13px", fontWeight:"600", color: bugSent ? "#6fcf97" : "#080810", cursor:"pointer", fontFamily:"inherit", opacity: (!bugText.trim() || bugSending) ? 0.5 : 1 }}>
+                        {bugSent ? "✓ Sent!" : bugSending ? "Sending…" : "Send report"}
+                      </button>
+                    </div>
+                  </div>
+                )}
 
                 <button onClick={handleSignOut} style={{ width:"100%", background:"rgba(255,255,255,0.04)", border:"1px solid rgba(255,255,255,0.08)", color:"rgba(255,255,255,0.4)", borderRadius:"14px", padding:"14px", fontSize:"14px", cursor:"pointer", fontFamily:"inherit" }}>Sign Out</button>
                 <div style={{ textAlign:"center", marginTop:"16px", fontSize:"11px", color:"rgba(255,255,255,0.1)" }}>Liri v{APP_VERSION} · getliri.com</div>
