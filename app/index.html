@@ -73,7 +73,7 @@
       "sb_publishable_C-NBnfg0ltAoUi46XQTUjA_ozjZW_Nd"
     );
 
-    const APP_VERSION = "1.102";
+    const APP_VERSION = "1.103";
 
     const PROXY_URL = window.Capacitor
       ? "https://getliri.app/api/recognize"
@@ -1249,7 +1249,19 @@
               setLyrics(lyrics); lyricsRef.current = lyrics;
               setMode("confirmed");
               saveToHistory(user, song); fetchHistory(user);
-              // cast removed
+              logListeningEvent({
+                userId: user?.id, title: track.trackName,
+                artist: track.artistName || ta?.artist_name || "",
+                album:  ta?.album_name  || lrcMatch.albumName || "",
+                artwork: ta?.artwork_url || null,
+                itunesTrackId:      track.trackId,
+                collectionId:       ta?.itunes_collection_id || track.collectionId,
+                vinylReleaseId:     null,
+                vinylModeOn:        vinylMode,
+                source:             "turntable",
+                offsetSecs:         startPos,
+                durationSecs:       lrcMatch.duration || (track.trackTimeMillis ? track.trackTimeMillis / 1000 : null),
+              });
               // Cache the LRC to Supabase so future matches for this track skip LRCLib
               if (track.trackId && lrcMatch?.syncedLyrics) {
                 const ta2 = turntableAlbumRef.current;
@@ -1429,14 +1441,20 @@
 
           saveToHistory(user, song);
           fetchHistory(user);
-          // cast removed
 
-          // Non-blocking: fetch album tracklist for vinyl auto-advance
+          // Non-blocking: fetch album tracklist for vinyl auto-advance + log event
           fetchAlbumTracks(title, artist).then(({ tracks, collectionId }) => {
             setAlbumTracks(tracks);
             setAlbumCollectionId(collectionId);
             const tIdx = tracks.findIndex(t => t.trackName?.toLowerCase() === title.toLowerCase());
             setCurrentTrackIndex(tIdx >= 0 ? tIdx : 0);
+            const itunesTrack = tIdx >= 0 ? tracks[tIdx] : null;
+            logListeningEvent({
+              userId: user?.id, title, artist, album: match.albumName || song.album, artwork,
+              itunesTrackId: itunesTrack?.trackId, collectionId,
+              vinylReleaseId: null, vinylModeOn: vinylMode, source: "whisper",
+              offsetSecs: startPos, durationSecs: match.duration,
+            });
             if (!collectionId) return;
             fetchVinylRelease(collectionId).then(db => {
               if (db?.vinyl_tracks?.length > 0) { setVinylDbRelease(db); albumTpsRef.current = 0; }
