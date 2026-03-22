@@ -76,7 +76,7 @@
       "sb_publishable_C-NBnfg0ltAoUi46XQTUjA_ozjZW_Nd"
     );
 
-    const APP_VERSION = "1.83";
+    const APP_VERSION = "1.84";
 
     const PROXY_URL = window.Capacitor
       ? "https://getliri.app/api/recognize"
@@ -195,19 +195,18 @@
       }, [active]);
 
       const hasLevel = typeof level === "number";
-      // Amplitude: when we have real mic data, bias heavily toward the live level.
-      // Sin wave adds subtle shimmer on top. Floor at 0.1 so bars stay visible.
-      const amp = hasLevel ? Math.max(0.1, level * 0.85 + 0.15) : 0.6;
+      // Amplitude: low floor so quiet sounds small, loud sounds tall.
+      const amp = hasLevel ? Math.max(0.07, level) : 0.6;
       const t = tick * 0.05;
 
       return (
         <div style={{ display:"flex", gap:`${4*size}px`, alignItems:"center", height:`${52*size}px`, justifyContent:"center" }}>
           {BAR_MULTS.map((mult, i) => {
             const phase   = i * 0.72;
-            // When we have live level, shimmer is subtle (±15%). Without it, full sway.
-            const shimmer = hasLevel ? 0.15 : 0.5;
+            // Each bar sways a lot — 55% of its max height swings with the sin wave.
+            const shimmer = 0.55;
             const sinVal  = (Math.sin(t * (1.8 + i * 0.18) + phase) + 1) / 2; // 0→1
-            const minH    = 4;
+            const minH    = 3;
             const maxH    = 48 * amp * mult;
             const h       = active ? Math.max(minH, maxH * (1 - shimmer + shimmer * sinVal)) : 3;
             return (
@@ -1573,11 +1572,11 @@
             if (e.data.size > 0) {
               allChunks.push(e.data);
               // Chunk-size proxy for amplitude: 200ms @ 128kbps ≈ 3200 bytes silence → 6000+ bytes music
-              // Normalise to 0–1, fast attack (0.4), slow release (0.07)
+              // Normalise to 0–1, fast attack (0.5), faster release (0.25) for bouncier bars
               const raw = Math.min(1, e.data.size / 5000);
               smoothedLevel = raw > smoothedLevel
-                ? smoothedLevel + (raw - smoothedLevel) * 0.4
-                : smoothedLevel + (raw - smoothedLevel) * 0.07;
+                ? smoothedLevel + (raw - smoothedLevel) * 0.5
+                : smoothedLevel + (raw - smoothedLevel) * 0.25;
               setAudioLevel(smoothedLevel);
             }
           };
