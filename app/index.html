@@ -73,7 +73,7 @@
       "sb_publishable_C-NBnfg0ltAoUi46XQTUjA_ozjZW_Nd"
     );
 
-    const APP_VERSION = "1.107";
+    const APP_VERSION = "1.108";
 
     const PROXY_URL = window.Capacitor
       ? "https://getliri.app/api/recognize"
@@ -127,7 +127,8 @@
       @keyframes wave-2 { from { transform: scaleY(0.2); } to { transform: scaleY(0.9); } }
       @keyframes wave-3 { from { transform: scaleY(0.6); } to { transform: scaleY(1); } }
       @keyframes fade-up  { from { opacity: 0; transform: translateY(12px); } to { opacity: 1; transform: translateY(0); } }
-      @keyframes slide-up { from { transform: translateY(100%); } to { transform: translateY(0); } }
+      @keyframes slide-up    { from { transform: translateY(100%); } to { transform: translateY(0); } }
+      @keyframes slide-right { from { transform: translateX(100%); } to { transform: translateX(0); } }
       @keyframes pulse    { 0%, 100% { opacity: 1; } 50% { opacity: 0.35; } }
       .safe-top { padding-top: max(56px, calc(env(safe-area-inset-top) + 16px)) !important; }
       .safe-bottom { padding-bottom: max(32px, calc(env(safe-area-inset-bottom) + 16px)) !important; }
@@ -281,6 +282,12 @@
 
       // ── UI panels ──
       const [showSettings, setShowSettings]   = useState(false);
+      const [isWide, setIsWide]               = useState(() => window.innerWidth >= 768);
+      useEffect(() => {
+        const onResize = () => setIsWide(window.innerWidth >= 768);
+        window.addEventListener("resize", onResize);
+        return () => window.removeEventListener("resize", onResize);
+      }, []);
       const [showBugReport, setShowBugReport] = useState(false);
       const [bugText, setBugText]             = useState("");
       const [bugSending, setBugSending]       = useState(false);
@@ -754,15 +761,6 @@
               detectedSong: detectedSong?.title || null,
             },
           });
-          // 2. Open mailto so Helen gets an email immediately
-          const subject = encodeURIComponent(`Liri Bug Report — v${APP_VERSION}`);
-          const body = encodeURIComponent(
-            `From: ${user?.email || "anonymous"}\n` +
-            `Version: ${APP_VERSION} · ${window.Capacitor ? "iOS" : "Web"}\n` +
-            `Song: ${detectedSong?.title || "—"}\n\n` +
-            bugText.trim()
-          );
-          window.location.href = `mailto:hmhelenmenne@gmail.com?subject=${subject}&body=${body}`;
           setBugSent(true);
           setBugText("");
           setTimeout(() => { setShowBugReport(false); setBugSent(false); }, 2000);
@@ -2652,13 +2650,29 @@
 
           {/* ── SETTINGS PANEL ── */}
           {showSettings && (
-            <div onClick={() => setShowSettings(false)} style={{ position:"fixed", inset:0, zIndex:200, background:"rgba(0,0,0,0.5)", backdropFilter:"blur(4px)" }}>
-              <div onClick={e => e.stopPropagation()} style={{ position:"absolute", bottom:0, left:0, right:0, background:"#0f0f1c", borderRadius:"24px 24px 0 0", maxHeight:"88vh", overflowY:"auto", boxShadow:"0 -8px 48px rgba(0,0,0,0.6)", animation:"slide-up 0.3s ease" }}>
-                {/* Drag handle — tap to close */}
-                <div onClick={() => setShowSettings(false)} style={{ padding:"12px 24px 4px", cursor:"pointer" }}>
-                  <div style={{ width:"40px", height:"4px", borderRadius:"2px", background:"rgba(255,255,255,0.12)", margin:"0 auto" }} />
-                </div>
-                <div style={{ padding:"16px 24px max(32px, calc(env(safe-area-inset-bottom) + 24px))" }}>
+            <div onClick={() => setShowSettings(false)} style={{ position:"fixed", inset:0, zIndex:200, background: isWide ? "rgba(0,0,0,0.25)" : "rgba(0,0,0,0.5)", backdropFilter: isWide ? "none" : "blur(4px)" }}>
+              <div onClick={e => e.stopPropagation()} style={isWide ? {
+                position:"absolute", top:0, right:0, bottom:0, width:"340px",
+                background:"#0f0f1c", borderRadius:"20px 0 0 20px",
+                overflowY:"auto", boxShadow:"-8px 0 48px rgba(0,0,0,0.7)",
+                animation:"slide-right 0.28s cubic-bezier(0.4,0,0.2,1)"
+              } : {
+                position:"absolute", bottom:0, left:0, right:0, background:"#0f0f1c",
+                borderRadius:"24px 24px 0 0", maxHeight:"88vh", overflowY:"auto",
+                boxShadow:"0 -8px 48px rgba(0,0,0,0.6)", animation:"slide-up 0.3s ease"
+              }}>
+                {/* Header: drag handle (mobile) or close button (wide) */}
+                {isWide ? (
+                  <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", padding:"20px 20px 4px" }}>
+                    <div style={{ fontSize:"13px", fontWeight:"700", letterSpacing:"2px", color:"rgba(255,255,255,0.25)", textTransform:"uppercase" }}>Settings</div>
+                    <button onClick={() => setShowSettings(false)} style={{ background:"rgba(255,255,255,0.07)", border:"none", color:"rgba(255,255,255,0.4)", borderRadius:"50%", width:"28px", height:"28px", display:"flex", alignItems:"center", justifyContent:"center", fontSize:"14px", cursor:"pointer", fontFamily:"inherit", padding:0 }}>×</button>
+                  </div>
+                ) : (
+                  <div onClick={() => setShowSettings(false)} style={{ padding:"12px 24px 4px", cursor:"pointer" }}>
+                    <div style={{ width:"40px", height:"4px", borderRadius:"2px", background:"rgba(255,255,255,0.12)", margin:"0 auto" }} />
+                  </div>
+                )}
+                <div style={{ padding: isWide ? "12px 20px max(20px, calc(env(safe-area-inset-bottom) + 16px))" : "16px 24px max(32px, calc(env(safe-area-inset-bottom) + 24px))" }}>
 
                 {/* Avatar + email */}
                 <div style={{ display:"flex", alignItems:"center", gap:"14px", marginBottom:"28px" }}>
@@ -2810,6 +2824,7 @@
                   </div>
                 )}
 
+                <button onClick={() => { clearInterval(syncIntervalRef.current); reset(); }} style={{ width:"100%", background:"rgba(255,255,255,0.04)", border:"1px solid rgba(255,255,255,0.08)", color:"rgba(255,255,255,0.4)", borderRadius:"14px", padding:"14px", fontSize:"14px", cursor:"pointer", fontFamily:"inherit", marginBottom:"10px" }}>⌂ Home</button>
                 <button onClick={handleSignOut} style={{ width:"100%", background:"rgba(255,255,255,0.04)", border:"1px solid rgba(255,255,255,0.08)", color:"rgba(255,255,255,0.4)", borderRadius:"14px", padding:"14px", fontSize:"14px", cursor:"pointer", fontFamily:"inherit" }}>Sign Out</button>
                 <div style={{ textAlign:"center", marginTop:"16px", fontSize:"11px", color:"rgba(255,255,255,0.1)" }}>Liri v{APP_VERSION} · getliri.com</div>
                 <div style={{ textAlign:"center", marginTop:"6px", fontSize:"10px" }}>
@@ -2859,7 +2874,6 @@
           {isSyncing && (
             <div style={{ position:"fixed", inset:0, zIndex:10, display:"flex", flexDirection:"column" }}>
               <div className="safe-top" style={{ padding:"0 20px 16px", display:"flex", alignItems:"center", justifyContent:"space-between", flexShrink:0 }}>
-                <button onClick={() => { clearInterval(syncIntervalRef.current); reset(); }} style={{ background:"rgba(255,255,255,0.07)", border:"1px solid rgba(255,255,255,0.14)", color:"rgba(255,255,255,0.6)", fontSize:"13px", fontWeight:"600", cursor:"pointer", padding:"8px 14px", borderRadius:"50px", flexShrink:0, lineHeight:1, fontFamily:"inherit" }} title="Stop">← Stop</button>
                 <div style={{ display:"flex", alignItems:"center", gap:"10px", flex:1, minWidth:0 }}>
                   {artwork && <img src={artwork} alt="" style={{ width:"36px", height:"36px", borderRadius:"8px", flexShrink:0, boxShadow:"0 4px 16px rgba(0,0,0,0.5)" }} />}
                   <div style={{ minWidth:0 }}>
