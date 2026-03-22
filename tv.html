@@ -51,40 +51,30 @@
     #waiting {
       position: fixed; inset: 0; z-index: 10;
       display: flex; flex-direction: column; align-items: center; justify-content: center;
-      gap: 24px; transition: opacity 0.6s ease;
+      gap: 0; transition: opacity 0.6s ease;
     }
     #waiting.hidden { opacity: 0; pointer-events: none; }
 
-    .liri-logo { font-size: 48px; letter-spacing: 24px; color: #d4a846; font-weight: 300; }
-    .tagline { font-size: 18px; color: rgba(255,255,255,0.2); letter-spacing: 4px; text-transform: uppercase; }
+    .liri-logo { font-size: 42px; letter-spacing: 20px; color: #d4a846; font-weight: 300; margin-bottom: 8px; }
+    .tagline { font-size: 15px; color: rgba(255,255,255,0.18); letter-spacing: 4px; text-transform: uppercase; margin-bottom: 64px; }
+
+    /* The big code display */
+    #code-block { display: flex; flex-direction: column; align-items: center; gap: 20px; }
+    #code-label { font-size: 14px; letter-spacing: 3px; text-transform: uppercase; color: rgba(255,255,255,0.25); }
+    #tv-code {
+      font-size: 120px; font-weight: 900; letter-spacing: 24px;
+      background: linear-gradient(135deg, #d4a846, #c9807a);
+      -webkit-background-clip: text; -webkit-text-fill-color: transparent;
+      background-clip: text; line-height: 1; padding-right: 24px; /* offset letter-spacing */
+    }
+    #code-hint { font-size: 18px; color: rgba(255,255,255,0.22); text-align: center; line-height: 1.7; margin-top: 8px; }
+    #code-hint strong { color: rgba(255,255,255,0.5); font-weight: 600; }
 
     /* Cast mode waiting */
     #waiting-cast { display: none; flex-direction: column; align-items: center; gap: 16px; margin-top: 40px; text-align: center; }
     #waiting-cast.show { display: flex; }
     #cast-status { font-size: 20px; color: rgba(255,255,255,0.3); }
     #cast-hint { font-size: 16px; color: rgba(255,255,255,0.15); margin-top: 4px; }
-
-    /* Browser mode room entry */
-    #room-entry { display: flex; flex-direction: column; align-items: center; gap: 16px; margin-top: 40px; }
-    #room-entry p { font-size: 20px; color: rgba(255,255,255,0.35); }
-    #room-input {
-      font-size: 36px; letter-spacing: 10px; text-align: center; text-transform: uppercase;
-      background: rgba(255,255,255,0.06); border: 2px solid rgba(255,255,255,0.1);
-      color: #f0e6d3; padding: 16px 32px; border-radius: 16px; width: 320px;
-      font-family: inherit; outline: none;
-    }
-    #room-input:focus { border-color: rgba(212,168,70,0.5); }
-    #connect-btn {
-      background: linear-gradient(135deg, #d4a846, #c9807a); color: #050508;
-      border: none; border-radius: 50px; padding: 18px 56px;
-      font-size: 20px; font-weight: 700; cursor: pointer; font-family: inherit;
-      letter-spacing: 1px;
-    }
-    #connect-error { color: #e8a0a8; font-size: 16px; }
-    #waiting-connected { display: none; flex-direction: column; align-items: center; gap: 16px; margin-top: 40px; }
-    #waiting-connected.show { display: flex; }
-    #waiting-room-code { font-size: 72px; letter-spacing: 16px; color: #d4a846; font-weight: 700; }
-    #waiting-status { font-size: 20px; color: rgba(255,255,255,0.3); }
 
     /* ── LYRICS screen ── */
     #lyrics-screen {
@@ -135,19 +125,13 @@
       <div id="cast-hint">Open Liri on your phone and tap the Cast button</div>
     </div>
 
-    <!-- Browser mode: room code entry -->
-    <div id="room-entry">
-      <p>Enter your room code to connect</p>
-      <input id="room-input" maxlength="6" placeholder="XXXXXX" spellcheck="false" autocomplete="off" />
-      <button id="connect-btn">Connect</button>
-      <div id="connect-error"></div>
-    </div>
-
-    <!-- Browser mode: connected, waiting for song -->
-    <div id="waiting-connected">
-      <div id="waiting-room-code"></div>
-      <div id="waiting-status">Waiting for music…</div>
-      <div style="font-size:16px;color:rgba(255,255,255,0.15);margin-top:8px">Open Liri on your phone and start listening</div>
+    <!-- Browser mode: TV shows its code, phone types it in -->
+    <div id="code-block">
+      <div id="code-label">Your TV code</div>
+      <div id="tv-code">—</div>
+      <div id="code-hint">
+        Open Liri on your phone → tap <strong>📺</strong> → enter this code
+      </div>
     </div>
   </div>
 
@@ -282,43 +266,40 @@
       context.start({ disableIdleTimeout: true });
     }
 
-    // ── BROWSER FALLBACK MODE (QR code / room code) ────────────────────────────
+    // ── BROWSER / TV MODE ──────────────────────────────────────────────────────
+    // The TV generates its own 4-digit code and displays it.
+    // The user types that code into Liri on their phone.
+    // Phone sends lyrics to cast_sessions with that room_code → TV shows them.
 
     function initBrowserMode() {
       const sb = supabase.createClient(SB_URL, SB_KEY);
       let realtimeChannel = null;
 
-      const params  = new URLSearchParams(location.search);
-      const urlRoom = params.get("room")?.toUpperCase().slice(0, 6);
-      if (urlRoom) connectToRoom(urlRoom);
-
-      document.getElementById("connect-btn").addEventListener("click", () => {
-        const val = document.getElementById("room-input").value.trim().toUpperCase();
-        if (val.length < 4) { document.getElementById("connect-error").textContent = "Enter your room code"; return; }
-        connectToRoom(val);
-      });
-      document.getElementById("room-input").addEventListener("keydown", e => {
-        if (e.key === "Enter") document.getElementById("connect-btn").click();
-      });
-
-      async function connectToRoom(code) {
-        document.getElementById("connect-error").textContent = "";
-        document.getElementById("room-entry").style.display = "none";
-        document.getElementById("waiting-room-code").textContent = code;
-        document.getElementById("waiting-connected").classList.add("show");
-        document.getElementById("room-badge").textContent = "Room: " + code;
-        history.replaceState(null, "", "?room=" + code);
-
-        const { data } = await sb.from("cast_sessions")
-          .select("*").eq("room_code", code).eq("is_active", true).single();
-        if (data) showSession(data);
-
-        if (realtimeChannel) sb.removeChannel(realtimeChannel);
-        realtimeChannel = sb.channel("cast:" + code)
-          .on("postgres_changes", { event: "*", schema: "public", table: "cast_sessions", filter: "room_code=eq." + code },
-            payload => { if (payload.new?.is_active) showSession(payload.new); })
-          .subscribe();
+      // Generate or restore a stable 4-digit code (persists across page refresh via hash)
+      let code = location.hash.replace("#", "").toUpperCase();
+      if (!/^\d{4}$/.test(code)) {
+        code = String(Math.floor(1000 + Math.random() * 9000));
+        location.hash = code;
       }
+
+      document.getElementById("tv-code").textContent = code;
+      document.getElementById("room-badge").textContent = "liri.tv · " + code;
+
+      // Subscribe to cast_sessions for this code
+      realtimeChannel = sb.channel("cast:" + code)
+        .on("postgres_changes", {
+          event: "*", schema: "public", table: "cast_sessions",
+          filter: "room_code=eq." + code
+        }, payload => {
+          if (payload.new?.is_active) showSession(payload.new);
+        })
+        .subscribe();
+
+      // Also fetch any existing active session immediately (in case phone already connected)
+      sb.from("cast_sessions")
+        .select("*").eq("room_code", code).eq("is_active", true)
+        .order("updated_at", { ascending: false }).limit(1)
+        .then(({ data }) => { if (data?.[0]) showSession(data[0]); });
     }
   </script>
 </body>

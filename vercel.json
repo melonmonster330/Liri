@@ -2,10 +2,12 @@
   "installCommand": "npm install --omit=dev",
   "outputDirectory": ".",
   "rewrites": [
-    { "source": "/app",       "destination": "/app/index.html"      },
-    { "source": "/add-vinyl", "destination": "/app/add-vinyl.html"  },
-    { "source": "/vinyl",     "destination": "/app/vinyl.html"      },
-    { "source": "/tv",        "destination": "/tv.html"             },
-    { "source": "/library",   "destination": "/app/library.html"   }
+    { "source": "/app",          "destination": "/app/index.html"     },
+    { "source": "/add-vinyl",    "destination": "/app/add-vinyl.html" },
+    { "source": "/vinyl",        "destination": "/app/vinyl.html"     },
+    { "source": "/tv",           "destination": "/tv.html"            },
+    { "source": "/library",      "destination": "/app/library.html"   },
+    { "source": "/stats",        "destination": "/app/stats.html"     },
+    { "source": "/vendor/:file", "destination": "/app/vendor/:file"   }
   ]
 }
