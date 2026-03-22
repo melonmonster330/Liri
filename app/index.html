@@ -73,7 +73,7 @@
       "sb_publishable_C-NBnfg0ltAoUi46XQTUjA_ozjZW_Nd"
     );
 
-    const APP_VERSION = "1.105";
+    const APP_VERSION = "1.106";
 
     const PROXY_URL = window.Capacitor
       ? "https://getliri.app/api/recognize"
@@ -886,6 +886,9 @@
       useEffect(() => {
         if (mode === "confirmed" && detectedSong) {
           startSync();
+          // Always re-enable auto-follow when a song is first confirmed
+          userScrollingRef.current = false;
+          setUserScrolling(false);
         }
       }, [mode, detectedSong]);
 
@@ -1164,8 +1167,11 @@
               }
             }
 
-            if (logRef) logRef.push(`stratV: unique run (${len}w) → "${match.trackName}" at ${startPos.toFixed(1)}s`);
-            return { track: match, lrcMatch: match.lrcMatch, lyrics: match.parsed, startPos, score: len };
+            if (logRef) logRef.push(`stratV: unique run (${len}w) → "${match.trackName}" at ${startPos.toFixed(1)}s (phrase word ${start}/${words.length})`);
+            // phraseWordStart: which word in the transcript the matched phrase begins at.
+            // Used by the caller to estimate how far into the recording clip the phrase appeared,
+            // so the initial sync position can be adjusted backwards accordingly.
+            return { track: match, lrcMatch: match.lrcMatch, lyrics: match.parsed, startPos, score: len, phraseWordStart: start, totalWords: words.length };
           }
         }
 
@@ -1238,10 +1244,26 @@
               };
               setIdentifiedBy("whisper");
               detectedAtRef.current      = Date.now();
-              // startPos = LRC timestamp of matched lyric (≈ song position when recording started).
-              // Add total elapsed since recording started: clip duration + API latency.
-              const _recStart = recordingStartRef.current || whisperSentAt;
-              initialPosRef.current = Math.max(0, startPos + (Date.now() - _recStart) / 1000);
+              // ── Timing fix ──────────────────────────────────────────────────
+              // startPos = LRC timestamp of the lyric line containing the matched phrase.
+              // The phrase is NOT necessarily at the start of the recording clip — it
+              // could be anywhere within the 6s clip.  If we just do
+              //   startPos + elapsed
+              // we overshoot by however many seconds into the clip the phrase appeared.
+              //
+              // Better estimate:
+              //   clipDuration  = time from mic-open to Whisper being sent
+              //   phraseOffset  = (phraseWordStart / totalWords) * clipDuration
+              //               ≈ when in the clip the matched phrase was spoken
+              //   songPosAtRecStart = startPos - phraseOffset
+              //   songPosNow        = songPosAtRecStart + totalElapsed
+              const _recStart    = recordingStartRef.current || whisperSentAt;
+              const clipDuration = Math.max(0, (whisperSentAt - _recStart) / 1000);
+              const phraseOffset = (vmResult.totalWords > 0)
+                ? (vmResult.phraseWordStart / vmResult.totalWords) * clipDuration
+                : clipDuration / 2;
+              const totalElapsed = (Date.now() - _recStart) / 1000;
+              initialPosRef.current = Math.max(0, startPos - phraseOffset + totalElapsed);
               autoAdvanceFiredRef.current = false;
               autoRetryCountRef.current  = 0;
               setDetectedSong(song);
@@ -2160,8 +2182,9 @@
       };
 
       // ── Jump to a specific track index (vinyl mode back/forward) ──
-      // Keeps the album context, resets sync state, then re-listens to
-      // lock onto the right position in the new track.
+      // In turntable mode: loads the track from cached data — no re-listening, no API calls.
+      //   Starts lyrics from position 0; user can Resync if the position is off.
+      // In non-turntable mode: falls back to re-listening (can't know position otherwise).
       const jumpToTrack = (idx) => {
         if (detectedSong) setLastSong(detectedSong);
         clearInterval(syncIntervalRef.current); clearInterval(progressTimerRef.current);
@@ -2170,13 +2193,52 @@
         analyserNodeRef.current = null;
         autoAdvanceFiredRef.current = false;
         autoRetryCountRef.current = 0;
-        setCurrentTrackIndex(idx);
-        currentTrackIndexRef.current = idx;
-        setDetectedSong(null); setIdentifiedBy(null); setSongDuration(null); setLyrics([]);
-        setCurrentIndex(0); setError(null); setListenProgress(0); setPlaybackTime(0);
+        userScrollingRef.current = false; setUserScrolling(false);
+        setCurrentTrackIndex(idx); currentTrackIndexRef.current = idx;
+        setCurrentIndex(-1); setError(null); setListenProgress(0); setPlaybackTime(0);
         setShouldAdvanceTrack(false); setIsResyncing(false);
-        // Re-listen immediately so timing locks onto the right position
-        setTimeout(() => startListening(false), 150);
+
+        const ta = turntableAlbumRef.current;
+        if (ta) {
+          // ── Turntable mode: use cached tracklist + lyrics, start from position 0 ──
+          const track = turntableTracksRef.current[idx];
+          if (!track) return;
+          const song = {
+            title:   track.trackName,
+            artist:  track.artistName || ta.artist_name || "",
+            album:   ta.album_name   || "",
+            artwork: ta.artwork_url  || null,
+          };
+          const cacheKey = track.trackId ?? track.trackName;
+          const lrc      = turntableLyricsCacheRef.current[cacheKey]
+                        || turntableLyricsCacheRef.current[track.trackName];
+          const lyrics   = lrc ? parseLRC(lrc) : [];
+          const duration = track.trackTimeMillis ? track.trackTimeMillis / 1000 : null;
+
+          initialPosRef.current = 0;
+          detectedAtRef.current = null;
+          turntableMatchedIdxRef.current = idx;
+
+          setDetectedSong(song); setIdentifiedBy("whisper");
+          setSongDuration(duration);
+          setLyrics(lyrics); lyricsRef.current = lyrics;
+          setAlbumTracks(turntableTracksRef.current);
+          setAlbumCollectionId(ta.itunes_collection_id ? String(ta.itunes_collection_id) : null);
+          setMode("confirmed"); // triggers startSync + auto-follow via useEffect
+
+          saveToHistory(user, song); fetchHistory(user);
+          logListeningEvent({
+            userId: user?.id, title: song.title, artist: song.artist,
+            album: song.album, artwork: song.artwork,
+            itunesTrackId: track.trackId, collectionId: ta.itunes_collection_id,
+            vinylReleaseId: vinylDbReleaseRef.current?.id || null,
+            vinylModeOn: vinylMode, source: "turntable_jump", durationSecs: duration,
+          });
+        } else {
+          // ── Non-turntable: must re-listen to find position ──
+          setDetectedSong(null); setIdentifiedBy(null); setSongDuration(null); setLyrics([]);
+          setTimeout(() => startListening(false), 150);
+        }
       };
 
       // ─────────────────────────────────────────
@@ -2765,6 +2827,19 @@
               </div>
 
               <div style={{ flex:1, overflow:"hidden", position:"relative" }}>
+                {/* Resync overlay — floats over lyrics while resyncing */}
+                {isResyncing && (
+                  <div style={{ position:"absolute", inset:0, zIndex:20, display:"flex", flexDirection:"column", alignItems:"center", justifyContent:"center", background:"rgba(8,8,16,0.82)", backdropFilter:"blur(8px)", animation:"fade-up 0.2s ease both" }}>
+                    <div style={{ position:"relative", width:"100px", height:"100px", marginBottom:"20px" }}>
+                      <div style={{ position:"absolute", inset:0 }}><ProgressRing progress={listenProgress} size={100} /></div>
+                      <div style={{ position:"absolute", inset:0, display:"flex", alignItems:"center", justifyContent:"center" }}>
+                        <WaveAnimation active={true} analyserRef={analyserNodeRef} level={audioLevel} size={0.85} />
+                      </div>
+                    </div>
+                    <div style={{ fontSize:"16px", fontWeight:"600", color:"rgba(255,255,255,0.7)" }}>Resyncing…</div>
+                    <div style={{ fontSize:"13px", color:"rgba(255,255,255,0.3)", marginTop:"6px" }}>Hold near your speakers</div>
+                  </div>
+                )}
                 <div
                   style={{ overflowY:"auto", height:"100%", padding:"8vh 28px 0" }}
                   onTouchStart={() => { userScrollingRef.current = true; setUserScrolling(true); }}
