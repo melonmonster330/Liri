@@ -76,7 +76,7 @@
       "sb_publishable_C-NBnfg0ltAoUi46XQTUjA_ozjZW_Nd"
     );
 
-    const APP_VERSION = "1.87";
+    const APP_VERSION = "1.88";
 
     const PROXY_URL = window.Capacitor
       ? "https://getliri.app/api/recognize"
@@ -913,6 +913,16 @@
       };
 
       useEffect(() => { if (user) fetchUserLibrary(user.id, true); }, [user]);
+
+      // ── Auto-start listening if redirected from add-vinyl with ?autostart=1 ──
+      useEffect(() => {
+        if (!user || libLoading || mode !== "idle") return;
+        if (new URLSearchParams(window.location.search).get("autostart") === "1") {
+          // Remove the param so refreshing doesn't re-trigger
+          window.history.replaceState({}, "", window.location.pathname);
+          startListening(false);
+        }
+      }, [user, libLoading, mode]);
 
       // ── Real-time seconds counter while listening (UI only — not tied to ACR attempts) ──
       useEffect(() => {
