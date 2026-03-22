@@ -76,7 +76,7 @@
       "sb_publishable_C-NBnfg0ltAoUi46XQTUjA_ozjZW_Nd"
     );
 
-    const APP_VERSION = "1.89";
+    const APP_VERSION = "1.90";
 
     const PROXY_URL = window.Capacitor
       ? "https://getliri.app/api/recognize"
@@ -188,33 +188,40 @@
     const BAR_MULTS = [0.55, 0.85, 1.0, 0.75, 0.95, 0.65, 0.90, 0.70, 1.0, 0.60, 0.80, 0.50];
     function WaveAnimation({ active, size = 1, level }) {
       const [tick, setTick] = useState(0);
-      useEffect(() => {
-        if (!active) return;
-        const id = setInterval(() => setTick(t => t + 1), 30); // 33fps — smoother, bouncier
-        return () => clearInterval(id);
-      }, [active]);
+      const hasLevel = typeof level === "number" && level > 0;
 
-      const hasLevel = typeof level === "number";
-      // Amplify level aggressively so even quiet mic input shows big movement
-      const amp = hasLevel ? Math.max(0.12, Math.pow(level, 0.5) * 1.4) : 0.6;
+      // Idle animation — only when no live audio level is provided
+      useEffect(() => {
+        if (!active || hasLevel) return;
+        const id = setInterval(() => setTick(t => t + 1), 50);
+        return () => clearInterval(id);
+      }, [active, hasLevel]);
+
       const t = tick * 0.05;
 
       return (
         <div style={{ display:"flex", gap:`${4*size}px`, alignItems:"center", height:`${52*size}px`, justifyContent:"center" }}>
           {BAR_MULTS.map((mult, i) => {
-            const phase   = i * 0.72;
-            // 85% swing = very bouncy; each bar has its own speed for organic feel
-            const shimmer = 0.85;
-            const sinVal  = (Math.sin(t * (2.2 + i * 0.3) + phase) + 1) / 2; // 0→1
-            const minH    = 3;
-            const maxH    = 48 * amp * mult;
-            const h       = active ? Math.max(minH, maxH * (1 - shimmer + shimmer * sinVal)) : 3;
+            let h;
+            if (!active) {
+              h = 3;
+            } else if (hasLevel) {
+              // Audio-reactive: each bar scales directly with mic level * its multiplier.
+              // pow(0.4) = aggressive curve so quiet sounds still show movement.
+              const amp = Math.pow(level, 0.4) * 48 * mult;
+              h = Math.max(4, amp);
+            } else {
+              // Idle sine wave — no audio input yet
+              const phase  = i * 0.72;
+              const sinVal = (Math.sin(t * (1.8 + i * 0.18) + phase) + 1) / 2;
+              h = Math.max(3, 48 * 0.55 * mult * (0.45 + 0.55 * sinVal));
+            }
             return (
               <div key={i} style={{
                 width:`${3*size}px`, borderRadius:"2px",
                 background: "linear-gradient(to top, #d4a846, #c9807a)",
                 height: `${h * size}px`,
-                transition: hasLevel ? "height 0.06s ease-out" : "none",
+                transition: hasLevel ? "height 0.08s ease-out" : "none",
                 opacity: active ? 1 : 0.3,
               }} />
             );
@@ -1281,9 +1288,10 @@
               };
               setIdentifiedBy("whisper");
               detectedAtRef.current      = Date.now();
-              // Dynamic offset: startPos is where Whisper matched the lyric.
-              // Add exactly how long the API took to respond — no magic constant.
-              initialPosRef.current      = Math.max(0, startPos + (Date.now() - whisperSentAt) / 1000);
+              // startPos = LRC timestamp of matched lyric (≈ song position when recording started).
+              // Add total elapsed since recording started: clip duration + API latency.
+              const _recStart = recordingStartRef.current || whisperSentAt;
+              initialPosRef.current = Math.max(0, startPos + (Date.now() - _recStart) / 1000);
               autoAdvanceFiredRef.current = false;
               autoRetryCountRef.current  = 0;
               setDetectedSong(song);
