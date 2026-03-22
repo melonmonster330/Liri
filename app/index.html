@@ -841,6 +841,20 @@
           const library = data || [];
           setUserLibrary(library);
 
+          // If the saved album is no longer in the library (e.g. after data wipe), clear it
+          if (library.length === 0) {
+            setTurntableAlbum(null);
+          } else {
+            const saved = localStorage.getItem("liri_turntable");
+            if (saved) {
+              try {
+                const parsed = JSON.parse(saved);
+                const stillExists = library.some(a => String(a.itunes_collection_id) === String(parsed.itunes_collection_id));
+                if (!stillExists) setTurntableAlbum(null);
+              } catch { setTurntableAlbum(null); }
+            }
+          }
+
           // Auto-select most-played album when no album is set (first load only)
           if (autoSelect && !localStorage.getItem("liri_turntable") && library.length > 0) {
             const { data: plays } = await sb.from("listening_events")
