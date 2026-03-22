@@ -36,8 +36,8 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
   <title>Liri — Lyrics for Vinyl</title>
-  <link rel="preload" href="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js" as="script">
-  <link rel="preload" href="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js" as="script">
+  <link rel="preload" href="vendor/react.min.js" as="script">
+  <link rel="preload" href="vendor/react-dom.min.js" as="script">
   <style>
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
     html, body { height: 100%; }
@@ -56,10 +56,10 @@
     </div>
   </div>
 
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.2/babel.min.js"></script>
-  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
+  <script src="vendor/react.min.js"></script>
+  <script src="vendor/react-dom.min.js"></script>
+  <script src="vendor/babel.min.js"></script>
+  <script src="vendor/supabase.min.js"></script>
   <!-- Google Cast Web Sender SDK — loads Cast framework; only activates in Chrome -->
   <script src="https://www.gstatic.com/cv/js/sender/v1/cast_sender.js?loadCastFramework=1"></script>
 
@@ -76,7 +76,7 @@
       "sb_publishable_C-NBnfg0ltAoUi46XQTUjA_ozjZW_Nd"
     );
 
-    const APP_VERSION = "1.91";
+    const APP_VERSION = "1.92";
 
     const PROXY_URL = window.Capacitor
       ? "https://getliri.app/api/recognize"

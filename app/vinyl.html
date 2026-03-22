@@ -383,14 +383,14 @@
 
   </div>
 
-  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
+  <script src="vendor/supabase.min.js"></script>
   <script>
     const sb = supabase.createClient(
       "https://xjdjpaxgymgbvcwmvorc.supabase.co",
       "sb_publishable_C-NBnfg0ltAoUi46XQTUjA_ozjZW_Nd"
     );
 
-    const APP_VERSION = "1.91";
+    const APP_VERSION = "1.92";
     const PAGE_SIZE = 30;
     let allReleases   = [];   // full dataset (fetched once)
     let filtered      = [];   // after search filter
