@@ -1,0 +1,403 @@
+<!--
+  app/stats.html — Liri Listening Stats
+  ──────────────────────────────────────────────────────────────────────────────
+  A personal listening snapshot for the user. Shows highlights from their
+  listening history — not everything (save the deep dive for Wrapped).
+
+  Stats shown:
+  • Total songs identified
+  • Total listening time
+  • Records in library
+  • Side flips (fun vinyl stat)
+  • Most played album
+  • Top 3 artists
+  • Recent listens (last 5)
+
+  Supabase tables: listening_events, flip_events, user_vinyl_library, song_history
+-->
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+  <title>My Stats — Liri</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    html, body { height: 100%; }
+    body { background: #080810; color: #f0e6d3; font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Display', 'Helvetica Neue', sans-serif; }
+    #root { min-height: 100vh; }
+    ::-webkit-scrollbar { display: none; }
+    @keyframes spin    { to { transform: rotate(360deg); } }
+    @keyframes fade-up { from { opacity: 0; transform: translateY(16px); } to { opacity: 1; transform: translateY(0); } }
+    @keyframes shimmer {
+      0%   { background-position: -200% center; }
+      100% { background-position: 200% center; }
+    }
+  </style>
+</head>
+<body>
+  <div id="root"></div>
+
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.2/babel.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
+
+  <script type="text/babel">
+    const { useState, useEffect } = React;
+
+    const APP_VERSION = "1.91";
+
+    const sb = supabase.createClient(
+      "https://xjdjpaxgymgbvcwmvorc.supabase.co",
+      "sb_publishable_C-NBnfg0ltAoUi46XQTUjA_ozjZW_Nd"
+    );
+
+    // ── Helpers ──────────────────────────────────────────────────────────────
+
+    function fmtTime(totalSeconds) {
+      if (!totalSeconds || totalSeconds < 60) return `${Math.round(totalSeconds || 0)}s`;
+      const h = Math.floor(totalSeconds / 3600);
+      const m = Math.floor((totalSeconds % 3600) / 60);
+      if (h === 0) return `${m}m`;
+      if (m === 0) return `${h}h`;
+      return `${h}h ${m}m`;
+    }
+
+    // ── Waveform logo (shared with library) ──────────────────────────────────
+    function LiriMark({ size = 28 }) {
+      return (
+        <svg width={size} height={size} viewBox="0 0 32 32" style={{ flexShrink: 0 }}>
+          <defs>
+            <linearGradient id="liri-g" x1="0" y1="0" x2="0" y2="1">
+              <stop offset="0%" stopColor="#d4a846" />
+              <stop offset="100%" stopColor="#c9807a" />
+            </linearGradient>
+          </defs>
+          <rect x="2"  y="13" width="4" height="7"  rx="2" fill="url(#liri-g)" opacity="0.7" />
+          <rect x="8"  y="8"  width="4" height="16" rx="2" fill="url(#liri-g)" opacity="0.85" />
+          <rect x="14" y="4"  width="4" height="24" rx="2" fill="url(#liri-g)" />
+          <rect x="20" y="8"  width="4" height="16" rx="2" fill="url(#liri-g)" opacity="0.85" />
+          <rect x="26" y="13" width="4" height="7"  rx="2" fill="url(#liri-g)" opacity="0.7" />
+        </svg>
+      );
+    }
+
+    // ── Stat card ─────────────────────────────────────────────────────────────
+    function StatCard({ label, value, sub, delay = 0, accent = false }) {
+      return (
+        <div style={{
+          background: accent
+            ? "linear-gradient(135deg, rgba(212,168,70,0.12), rgba(201,128,122,0.08))"
+            : "rgba(255,255,255,0.04)",
+          border: accent
+            ? "1px solid rgba(212,168,70,0.2)"
+            : "1px solid rgba(255,255,255,0.07)",
+          borderRadius: 20,
+          padding: "22px 20px",
+          animation: `fade-up 0.5s ease ${delay}ms both`,
+        }}>
+          <div style={{ fontSize: 11, letterSpacing: "1.5px", textTransform: "uppercase", color: "rgba(255,255,255,0.35)", marginBottom: 10 }}>{label}</div>
+          <div style={{ fontSize: 36, fontWeight: 800, lineHeight: 1, color: accent ? "#d4a846" : "#f0e6d3", letterSpacing: "-1px" }}>{value ?? "—"}</div>
+          {sub && <div style={{ fontSize: 12, color: "rgba(255,255,255,0.3)", marginTop: 6 }}>{sub}</div>}
+        </div>
+      );
+    }
+
+    // ── Skeleton loader ────────────────────────────────────────────────────────
+    function Skeleton({ w = "100%", h = 80, r = 20 }) {
+      return (
+        <div style={{
+          width: w, height: h, borderRadius: r,
+          background: "linear-gradient(90deg, rgba(255,255,255,0.04) 25%, rgba(255,255,255,0.08) 50%, rgba(255,255,255,0.04) 75%)",
+          backgroundSize: "200% 100%",
+          animation: "shimmer 1.4s ease infinite",
+        }} />
+      );
+    }
+
+    // ── Main component ────────────────────────────────────────────────────────
+    function Stats() {
+      const [user, setUser]       = useState(null);
+      const [loading, setLoading] = useState(true);
+      const [data, setData]       = useState(null);
+
+      // Auth
+      useEffect(() => {
+        sb.auth.getSession().then(({ data: { session } }) => setUser(session?.user ?? null));
+        const { data: { subscription } } = sb.auth.onAuthStateChange((_, s) => setUser(s?.user ?? null));
+        return () => subscription.unsubscribe();
+      }, []);
+
+      // Load all stats once user is known
+      useEffect(() => {
+        if (!user) return;
+        loadStats(user.id);
+      }, [user]);
+
+      const loadStats = async (uid) => {
+        setLoading(true);
+        try {
+          // Parallel fetch everything
+          const [
+            { data: events },
+            { data: flips },
+            { data: library },
+            { data: recent },
+          ] = await Promise.all([
+            sb.from("listening_events")
+              .select("track_title, artist_name, album_name, artwork_url, itunes_collection_id, track_duration_s, logged_at")
+              .eq("user_id", uid)
+              .order("logged_at", { ascending: false }),
+            sb.from("flip_events")
+              .select("id")
+              .eq("user_id", uid),
+            sb.from("user_vinyl_library")
+              .select("itunes_collection_id, album_name, artist_name, artwork_url")
+              .eq("user_id", uid),
+            sb.from("song_history")
+              .select("title, artist, album, artwork_url, listened_at")
+              .eq("user_id", uid)
+              .order("listened_at", { ascending: false })
+              .limit(5),
+          ]);
+
+          const evList = events || [];
+          const totalSongs   = evList.length;
+          const totalSeconds = evList.reduce((s, e) => s + (e.track_duration_s || 0), 0);
+          const flipCount    = (flips || []).length;
+          const libraryCount = (library || []).length;
+
+          // Most played album (by itunes_collection_id)
+          const albumCounts = {};
+          evList.forEach(e => {
+            if (!e.itunes_collection_id) return;
+            const k = String(e.itunes_collection_id);
+            albumCounts[k] = (albumCounts[k] || { count: 0, name: e.album_name, artist: e.artist_name, artwork: e.artwork_url });
+            albumCounts[k].count++;
+          });
+          const topAlbumKey = Object.keys(albumCounts).sort((a, b) => albumCounts[b].count - albumCounts[a].count)[0];
+          const topAlbum    = topAlbumKey ? albumCounts[topAlbumKey] : null;
+
+          // Top 3 artists
+          const artistCounts = {};
+          evList.forEach(e => {
+            if (!e.artist_name) return;
+            artistCounts[e.artist_name] = (artistCounts[e.artist_name] || 0) + 1;
+          });
+          const topArtists = Object.entries(artistCounts)
+            .sort((a, b) => b[1] - a[1])
+            .slice(0, 3)
+            .map(([name, count]) => ({ name, count }));
+
+          // Listening streak — days with at least 1 listen
+          const days = new Set(evList.map(e => e.logged_at?.slice(0, 10)));
+          const sortedDays = [...days].sort();
+          let streak = 0;
+          const today = new Date().toISOString().slice(0, 10);
+          const yesterday = new Date(Date.now() - 86400000).toISOString().slice(0, 10);
+          if (sortedDays.includes(today) || sortedDays.includes(yesterday)) {
+            let check = sortedDays.includes(today) ? today : yesterday;
+            while (sortedDays.includes(check)) {
+              streak++;
+              check = new Date(new Date(check).getTime() - 86400000).toISOString().slice(0, 10);
+            }
+          }
+
+          setData({ totalSongs, totalSeconds, flipCount, libraryCount, topAlbum, topArtists, streak, recent: recent || [] });
+        } catch (e) {
+          console.error(e);
+        }
+        setLoading(false);
+      };
+
+      // ── Auth gate ──
+      if (!user) return (
+        <div style={{ minHeight:"100vh", display:"flex", flexDirection:"column", alignItems:"center", justifyContent:"center", padding:"40px 24px", textAlign:"center" }}>
+          <LiriMark size={48} />
+          <div style={{ fontSize:22, fontWeight:700, marginTop:24, marginBottom:12 }}>Sign in to see your stats</div>
+          <a href="/app" style={{ background:"linear-gradient(135deg,#d4a846,#c9807a)", color:"#080810", borderRadius:50, padding:"14px 32px", fontSize:14, fontWeight:700, textDecoration:"none" }}>
+            Sign in to Liri →
+          </a>
+        </div>
+      );
+
+      return (
+        <div style={{ minHeight:"100vh", paddingBottom:80 }}>
+
+          {/* ── Header ── */}
+          <div style={{ padding:"max(52px, calc(env(safe-area-inset-top) + 24px)) 24px 0" }}>
+            <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", marginBottom:32 }}>
+              <a href="/app/library.html" style={{ display:"flex", alignItems:"center", gap:10, textDecoration:"none" }}>
+                <LiriMark size={28} />
+                <span style={{ fontSize:18, fontWeight:700, color:"#f0e6d3" }}>Liri</span>
+              </a>
+              <a href="/app/library.html" style={{ fontSize:13, color:"rgba(255,255,255,0.35)", textDecoration:"none" }}>← Library</a>
+            </div>
+
+            <div style={{ animation:"fade-up 0.4s ease both" }}>
+              <div style={{ fontSize:11, letterSpacing:"2px", textTransform:"uppercase", color:"rgba(255,255,255,0.25)", marginBottom:8 }}>Your listening</div>
+              <h1 style={{ fontSize:36, fontWeight:800, letterSpacing:"-1px", lineHeight:1.1, marginBottom:4 }}>Stats</h1>
+              <p style={{ fontSize:14, color:"rgba(255,255,255,0.3)", marginTop:6 }}>A snapshot of your vinyl life</p>
+            </div>
+          </div>
+
+          <div style={{ padding:"32px 24px 0" }}>
+
+            {loading ? (
+              // ── Skeleton ──
+              <div style={{ display:"flex", flexDirection:"column", gap:12 }}>
+                <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:12 }}>
+                  <Skeleton h={100} /><Skeleton h={100} />
+                  <Skeleton h={100} /><Skeleton h={100} />
+                </div>
+                <Skeleton h={120} />
+                <Skeleton h={160} />
+              </div>
+            ) : !data || data.totalSongs === 0 ? (
+              // ── Empty state ──
+              <div style={{ textAlign:"center", padding:"60px 0", animation:"fade-up 0.4s ease both" }}>
+                <div style={{ fontSize:48, marginBottom:16, opacity:0.3 }}>📊</div>
+                <div style={{ fontSize:18, fontWeight:600, marginBottom:8 }}>No listening data yet</div>
+                <div style={{ fontSize:14, color:"rgba(255,255,255,0.3)", marginBottom:32, lineHeight:1.6 }}>
+                  Put a record on and tap "Find my place"<br/>to start building your stats
+                </div>
+                <a href="/app" style={{ background:"linear-gradient(135deg,#d4a846,#c9807a)", color:"#080810", borderRadius:50, padding:"14px 28px", fontSize:14, fontWeight:700, textDecoration:"none" }}>
+                  Start listening →
+                </a>
+              </div>
+            ) : (
+              <div style={{ display:"flex", flexDirection:"column", gap:14 }}>
+
+                {/* ── Top 4 stat grid ── */}
+                <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:12 }}>
+                  <StatCard label="Songs identified" value={data.totalSongs.toLocaleString()} delay={0} accent />
+                  <StatCard label="Time listening" value={fmtTime(data.totalSeconds)} delay={60} />
+                  <StatCard label="Records owned" value={data.libraryCount} delay={120} />
+                  <StatCard label="Side flips" value={data.flipCount} sub="times you flipped your record" delay={180} />
+                </div>
+
+                {/* ── Streak ── */}
+                {data.streak > 0 && (
+                  <div style={{
+                    background:"linear-gradient(135deg, rgba(212,168,70,0.08), rgba(201,128,122,0.06))",
+                    border:"1px solid rgba(212,168,70,0.15)",
+                    borderRadius:20, padding:"20px 22px",
+                    display:"flex", alignItems:"center", gap:16,
+                    animation:"fade-up 0.5s ease 220ms both",
+                  }}>
+                    <div style={{ fontSize:36 }}>🔥</div>
+                    <div>
+                      <div style={{ fontSize:28, fontWeight:800, letterSpacing:"-1px", color:"#d4a846" }}>{data.streak} day{data.streak !== 1 ? "s" : ""}</div>
+                      <div style={{ fontSize:12, color:"rgba(255,255,255,0.35)", marginTop:2 }}>listening streak</div>
+                    </div>
+                  </div>
+                )}
+
+                {/* ── Most played album ── */}
+                {data.topAlbum && (
+                  <div style={{ animation:"fade-up 0.5s ease 260ms both" }}>
+                    <div style={{ fontSize:11, letterSpacing:"1.5px", textTransform:"uppercase", color:"rgba(255,255,255,0.25)", marginBottom:10 }}>Most played</div>
+                    <div style={{
+                      background:"rgba(255,255,255,0.04)", border:"1px solid rgba(255,255,255,0.07)",
+                      borderRadius:20, padding:"16px",
+                      display:"flex", alignItems:"center", gap:14,
+                    }}>
+                      {data.topAlbum.artwork
+                        ? <img src={data.topAlbum.artwork.replace("100x100", "300x300")} alt="" style={{ width:64, height:64, borderRadius:12, objectFit:"cover", flexShrink:0 }} />
+                        : <div style={{ width:64, height:64, borderRadius:12, background:"rgba(255,255,255,0.05)", display:"flex", alignItems:"center", justifyContent:"center", fontSize:28, flexShrink:0 }}>💿</div>
+                      }
+                      <div style={{ flex:1, minWidth:0 }}>
+                        <div style={{ fontSize:16, fontWeight:700, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>{data.topAlbum.name || "Unknown album"}</div>
+                        <div style={{ fontSize:13, color:"rgba(255,255,255,0.4)", marginTop:3 }}>{data.topAlbum.artist || "Unknown artist"}</div>
+                        <div style={{ fontSize:12, color:"rgba(212,168,70,0.7)", marginTop:5, fontWeight:600 }}>{data.topAlbum.count} plays</div>
+                      </div>
+                    </div>
+                  </div>
+                )}
+
+                {/* ── Top artists ── */}
+                {data.topArtists.length > 0 && (
+                  <div style={{ animation:"fade-up 0.5s ease 300ms both" }}>
+                    <div style={{ fontSize:11, letterSpacing:"1.5px", textTransform:"uppercase", color:"rgba(255,255,255,0.25)", marginBottom:10 }}>Top artists</div>
+                    <div style={{ display:"flex", flexDirection:"column", gap:8 }}>
+                      {data.topArtists.map((a, i) => (
+                        <div key={a.name} style={{
+                          background:"rgba(255,255,255,0.04)", border:"1px solid rgba(255,255,255,0.07)",
+                          borderRadius:14, padding:"14px 16px",
+                          display:"flex", alignItems:"center", gap:14,
+                        }}>
+                          <div style={{
+                            width:28, height:28, borderRadius:"50%",
+                            background: i === 0 ? "linear-gradient(135deg,#d4a846,#c9807a)" : "rgba(255,255,255,0.07)",
+                            display:"flex", alignItems:"center", justifyContent:"center",
+                            fontSize:12, fontWeight:800, color: i === 0 ? "#080810" : "rgba(255,255,255,0.4)",
+                            flexShrink:0,
+                          }}>{i + 1}</div>
+                          <div style={{ flex:1, fontSize:14, fontWeight:600, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>{a.name}</div>
+                          <div style={{ fontSize:12, color:"rgba(255,255,255,0.3)", flexShrink:0 }}>{a.count} plays</div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {/* ── Recent listens ── */}
+                {data.recent.length > 0 && (
+                  <div style={{ animation:"fade-up 0.5s ease 340ms both" }}>
+                    <div style={{ fontSize:11, letterSpacing:"1.5px", textTransform:"uppercase", color:"rgba(255,255,255,0.25)", marginBottom:10 }}>Recently played</div>
+                    <div style={{ display:"flex", flexDirection:"column", gap:8 }}>
+                      {data.recent.map((s, i) => (
+                        <div key={i} style={{
+                          background:"rgba(255,255,255,0.03)", border:"1px solid rgba(255,255,255,0.06)",
+                          borderRadius:14, padding:"12px 14px",
+                          display:"flex", alignItems:"center", gap:12,
+                        }}>
+                          {s.artwork_url
+                            ? <img src={s.artwork_url} alt="" style={{ width:42, height:42, borderRadius:8, objectFit:"cover", flexShrink:0 }} />
+                            : <div style={{ width:42, height:42, borderRadius:8, background:"rgba(255,255,255,0.04)", display:"flex", alignItems:"center", justifyContent:"center", fontSize:18, flexShrink:0 }}>🎵</div>
+                          }
+                          <div style={{ flex:1, minWidth:0 }}>
+                            <div style={{ fontSize:13, fontWeight:600, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>{s.title}</div>
+                            <div style={{ fontSize:11, color:"rgba(255,255,255,0.35)", marginTop:2, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>{s.artist}{s.album ? ` · ${s.album}` : ""}</div>
+                          </div>
+                          <div style={{ fontSize:10, color:"rgba(255,255,255,0.2)", flexShrink:0 }}>
+                            {s.listened_at ? new Date(s.listened_at).toLocaleDateString("en-US", { month:"short", day:"numeric" }) : ""}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {/* ── Wrapped teaser ── */}
+                <div style={{
+                  marginTop:8,
+                  background:"rgba(255,255,255,0.02)",
+                  border:"1px solid rgba(255,255,255,0.05)",
+                  borderRadius:20, padding:"20px 22px",
+                  textAlign:"center",
+                  animation:"fade-up 0.5s ease 380ms both",
+                }}>
+                  <div style={{ fontSize:20, marginBottom:8 }}>🎁</div>
+                  <div style={{ fontSize:14, fontWeight:600, marginBottom:4, color:"rgba(255,255,255,0.6)" }}>Year in Review coming soon</div>
+                  <div style={{ fontSize:12, color:"rgba(255,255,255,0.2)", lineHeight:1.6 }}>
+                    Your full listening report — top records, listening patterns,<br/>and vinyl moments from the whole year.
+                  </div>
+                </div>
+
+              </div>
+            )}
+          </div>
+
+          <div style={{ textAlign:"center", padding:"32px 0 16px", fontSize:"11px", color:"rgba(255,255,255,0.1)" }}>Liri v{APP_VERSION}</div>
+        </div>
+      );
+    }
+
+    ReactDOM.createRoot(document.getElementById("root")).render(
+      <React.StrictMode><Stats /></React.StrictMode>
+    );
+  </script>
+</body>
+</html>

@@ -47,7 +47,7 @@
   <script type="text/babel">
     const { useState, useEffect, useRef, useCallback } = React;
 
-    const APP_VERSION = "1.90";
+    const APP_VERSION = "1.91";
 
     const sb = supabase.createClient(
       "https://xjdjpaxgymgbvcwmvorc.supabase.co",
@@ -816,10 +816,13 @@
                 <VinylDot size={28} />
                 <span style={{ fontSize: 18, fontWeight: 700, color: "#f0e6d3" }}>Liri</span>
               </a>
-              <button onClick={() => { setShowSearch(true); setQuery(""); setResults([]); }}
-                style={{ background: "linear-gradient(135deg,#d4a846,#c9807a)", color: "#080810", border: "none", borderRadius: 50, padding: "10px 20px", fontSize: 13, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>
-                + Add record
-              </button>
+              <div style={{ display:"flex", alignItems:"center", gap:10 }}>
+                <a href="/app/stats.html" style={{ fontSize:13, color:"rgba(255,255,255,0.4)", textDecoration:"none", padding:"10px 14px", border:"1px solid rgba(255,255,255,0.1)", borderRadius:50 }}>Stats</a>
+                <button onClick={() => { setShowSearch(true); setQuery(""); setResults([]); }}
+                  style={{ background: "linear-gradient(135deg,#d4a846,#c9807a)", color: "#080810", border: "none", borderRadius: 50, padding: "10px 20px", fontSize: 13, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>
+                  + Add record
+                </button>
+              </div>
             </div>
 
             <div style={{ fontSize: 28, fontWeight: 700, letterSpacing: "-0.5px", marginBottom: 6 }}>My Records</div>
