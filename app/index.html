@@ -73,7 +73,7 @@
       "sb_publishable_C-NBnfg0ltAoUi46XQTUjA_ozjZW_Nd"
     );
 
-    const APP_VERSION = "1.98";
+    const APP_VERSION = "1.99";
 
     const PROXY_URL = window.Capacitor
       ? "https://getliri.app/api/recognize"
@@ -161,28 +161,30 @@
     const BAR_MULTS = [0.55, 0.85, 1.0, 0.75, 0.95, 0.65, 0.90, 0.70, 1.0, 0.60, 0.80, 0.50];
     function WaveAnimation({ active, size = 1, level }) {
       const hasLevel = typeof level === "number" && level > 0;
-      const [tick, setTick]   = useState(0);
-      // One delayed level per bar — each bar shows the audio from N*80ms ago,
-      // creating a rolling cascade effect instead of all bars vibrating together.
-      const [bars, setBars] = useState(() => BAR_MULTS.map(() => 0));
+      const [tick, setTick] = useState(0);
+      // Rolling history: index 0 = most recent, index N = N steps ago.
+      // Each new audio value shifts history forward so bars show different
+      // moments in time — no timeouts, no cancellation races.
+      const historyRef = useRef(new Array(BAR_MULTS.length).fill(0));
+      const [history, setHistory] = useState(() => new Array(BAR_MULTS.length).fill(0));
 
-      // Idle sine animation — runs only when there's no live audio
+      // Idle sine animation
       useEffect(() => {
         if (!active || hasLevel) return;
         const id = setInterval(() => setTick(t => t + 1), 50);
         return () => clearInterval(id);
       }, [active, hasLevel]);
 
-      // Cascade: each bar updates after its own staggered delay
+      // Push new level into history on every update
       useEffect(() => {
-        if (!hasLevel) { setBars(BAR_MULTS.map(() => 0)); return; }
-        const timers = BAR_MULTS.map((_, i) =>
-          setTimeout(() => setBars(prev => {
-            const next = [...prev]; next[i] = level; return next;
-          }), i * 80)
-        );
-        return () => timers.forEach(clearTimeout);
-      }, [level, hasLevel]);
+        if (!hasLevel) {
+          historyRef.current = new Array(BAR_MULTS.length).fill(0);
+          setHistory([...historyRef.current]);
+          return;
+        }
+        historyRef.current = [level, ...historyRef.current.slice(0, BAR_MULTS.length - 1)];
+        setHistory([...historyRef.current]);
+      }, [level]);
 
       const t = tick * 0.05;
 
@@ -193,11 +195,11 @@
             if (!active) {
               h = 3;
             } else if (hasLevel) {
-              // Each bar shows its own delayed copy of the audio level
-              const amp = Math.pow(bars[i], 0.4) * 48 * mult;
+              // Bar i shows audio level from i steps ago — true time-history cascade
+              const amp = Math.pow(history[i] || 0, 0.4) * 48 * mult;
               h = Math.max(4, amp);
             } else {
-              // Idle sine — staggered phases so bars move independently
+              // Idle sine — each bar has a different phase so they move independently
               const phase  = i * 0.72;
               const sinVal = (Math.sin(t * (1.8 + i * 0.18) + phase) + 1) / 2;
               h = Math.max(3, 48 * 0.55 * mult * (0.45 + 0.55 * sinVal));
