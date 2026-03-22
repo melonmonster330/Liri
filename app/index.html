@@ -73,7 +73,7 @@
       "sb_publishable_C-NBnfg0ltAoUi46XQTUjA_ozjZW_Nd"
     );
 
-    const APP_VERSION = "1.104";
+    const APP_VERSION = "1.105";
 
     const PROXY_URL = window.Capacitor
       ? "https://getliri.app/api/recognize"
@@ -1279,7 +1279,12 @@
                   attemptLogRef.current.push(`cache: saved LRC for "${track.trackName}"`);
                 }).catch(() => {});
               }
-              // Tracklist already in memory from album selection — no iTunes call needed
+              // ⚠️ NO ITUNES CALLS IN TURNTABLE MODE — ARCHITECTURE RULE ⚠️
+              // Everything was fetched once at album-add time. Use the refs:
+              //   turntableTracksRef.current        → full track list
+              //   turntableAlbumRef.current          → album meta (id, artwork, name)
+              //   vinylDbReleaseRef.current          → vinyl DB release (sides, tps)
+              // Never call fetchAlbumTracks() here — it hits iTunes twice per song.
               {
                 const at  = turntableTracksRef.current;
                 const cid = ta?.itunes_collection_id ? String(ta.itunes_collection_id) : null;
