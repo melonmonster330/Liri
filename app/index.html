@@ -813,81 +813,9 @@
             return;
           }
 
-          // ── Fallback: fetch from iTunes if not yet in Supabase ──
-          const res = await fetch(`https://itunes.apple.com/lookup?id=${collectionId}&entity=song&limit=200`).then(r => r.json());
-          let tracks = (res.results || [])
-            .filter(t => t.wrapperType === "track")
-            .sort((a, b) => (a.discNumber - b.discNumber) || (a.trackNumber - b.trackNumber));
-
-          if (tracks.length === 0 && alb?.album_name && alb?.artist_name) {
-            const q = encodeURIComponent(`${alb.artist_name} ${alb.album_name}`);
-            const sr = await fetch(`https://itunes.apple.com/search?term=${q}&entity=song&limit=200`).then(r => r.json()).catch(() => ({ results: [] }));
-            const nameKey = alb.album_name.toLowerCase().replace(/[^a-z0-9]/g, "").slice(0, 12);
-            tracks = (sr.results || [])
-              .filter(t => t.wrapperType === "track" &&
-                t.collectionName?.toLowerCase().replace(/[^a-z0-9]/g, "").includes(nameKey))
-              .sort((a, b) => (a.discNumber - b.discNumber) || (a.trackNumber - b.trackNumber));
-          }
-
-          turntableTracksRef.current = tracks;
-
-          // Auto-populate vinyl side data from Discogs in background
-          if (alb && tracks.length > 0) {
-            autoPopulateVinylSides(collectionId, alb.album_name, alb.artist_name)
-              .then(releaseId => {
-                if (releaseId) {
-                  fetchVinylRelease(String(collectionId)).then(dbr => {
-                    if (dbr?.vinyl_tracks?.length > 0) { setVinylDbRelease(dbr); albumTpsRef.current = 0; }
-                  });
-                }
-              });
-          }
-
-          // Pre-load cached LRC from Supabase
-          const trackIds = tracks.map(t => t.trackId).filter(Boolean);
-          const artistName = alb?.artist_name || tracks[0]?.artistName || "";
-          if (trackIds.length > 0) {
-            sb.from("liri_lyric_cache")
-              .select("itunes_track_id, synced_lyrics")
-              .in("itunes_track_id", trackIds)
-              .then(({ data }) => {
-                const cache = {};
-                for (const row of (data || [])) cache[row.itunes_track_id] = row.synced_lyrics;
-                turntableLyricsCacheRef.current = cache;
-                // If Supabase has no lyrics (album never added via add-vinyl),
-                // fall back to LRCLib so turntable mode still works.
-                if (Object.keys(cache).length === 0 && tracks.length > 0) {
-                  Promise.all(tracks.map(async t => {
-                    if (!t.trackName) return;
-                    try {
-                      const [a, b] = await Promise.all([
-                        fetch(`https://lrclib.net/api/search?artist_name=${encodeURIComponent(artistName)}&track_name=${encodeURIComponent(t.trackName)}`).then(r => r.json()).catch(() => []),
-                        fetch(`https://lrclib.net/api/search?q=${encodeURIComponent(`${artistName} ${t.trackName}`.trim())}`).then(r => r.json()).catch(() => []),
-                      ]);
-                      const best = [...(Array.isArray(a) ? a : []), ...(Array.isArray(b) ? b : [])].find(c => c.syncedLyrics);
-                      if (best?.syncedLyrics) {
-                        if (t.trackId) turntableLyricsCacheRef.current[t.trackId] = best.syncedLyrics;
-                        turntableLyricsCacheRef.current[t.trackName] = best.syncedLyrics;
-                        // Save to Supabase so next time it loads from cache
-                        const ta2 = turntableAlbumRef.current;
-                        if (t.trackId) {
-                          sb.from("liri_lyric_cache").upsert({
-                            itunes_track_id:      t.trackId,
-                            itunes_collection_id: collectionId,
-                            track_name:           t.trackName,
-                            artist_name:          artistName,
-                            album_name:           ta2?.album_name || alb?.album_name || "",
-                            synced_lyrics:        best.syncedLyrics,
-                          }, { onConflict: "itunes_track_id" }).catch(() => {});
-                        }
-                      }
-                    } catch {}
-                  })).catch(() => {});
-                }
-              }).catch(() => {});
-          } else {
-            turntableLyricsCacheRef.current = {};
-          }
+          // Album is in the user's library but not yet in our vinyl DB — shouldn't happen
+          // after add-vinyl caches everything, but handle gracefully.
+          console.warn("[turntable] album not found in vinyl DB:", collectionId);
         } catch { turntableTracksRef.current = []; }
         setTurntableTracksLoading(false);
       };
@@ -2049,13 +1977,14 @@
 
         setDetectedSong(nextSong);
         setSongDuration(nextDuration);
-        // Use cached LRC if available — skips LRCLib entirely for known tracks
-        const cachedLrc = turntableLyricsCacheRef.current?.[next.trackId];
+        // Load lyrics from cache only — all lyrics are pre-cached at add-vinyl time
+        const cachedLrc = turntableLyricsCacheRef.current?.[next.trackId]
+                       ?? turntableLyricsCacheRef.current?.[next.trackName];
         if (cachedLrc) {
           const parsed = parseLRC(cachedLrc);
           setLyrics(parsed); lyricsRef.current = parsed;
         } else {
-          await loadLyrics(nextTitle, nextArtist);
+          setLyrics([]); lyricsRef.current = [];
         }
 
         // Intro-aware initial position: start 2s before the first lyric line so lyrics
