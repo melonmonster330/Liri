@@ -306,53 +306,45 @@
             artwork_url:          artworkUrl,
           }, { onConflict: 'user_id,itunes_collection_id' });
 
-          setDone(true);
-
-          // 4. Cache lyrics for every track — sequential with delay to avoid LRCLib rate limits.
+          // 4. Cache lyrics for every track before showing done screen.
+          // Must complete before navigation — fire-and-forget caused page unload to kill the loop.
           const eligibleTracks = positioned.filter(t => t.trackId && t.trackName);
-          (async () => {
-            let cached = 0;
-            for (const t of eligibleTracks) {
-              try {
-                // Primary: artist + track search (most precise)
-                let candidates = await fetch(
-                  `https://lrclib.net/api/search?artist_name=${encodeURIComponent(artistName)}&track_name=${encodeURIComponent(t.trackName)}`
+          let cached = 0;
+          for (const t of eligibleTracks) {
+            try {
+              let candidates = await fetch(
+                `https://lrclib.net/api/search?artist_name=${encodeURIComponent(artistName)}&track_name=${encodeURIComponent(t.trackName)}`
+              ).then(r => r.json()).catch(() => []);
+              if (!Array.isArray(candidates)) candidates = [];
+              if (!candidates.some(c => c.syncedLyrics)) {
+                const fb = await fetch(
+                  `https://lrclib.net/api/search?q=${encodeURIComponent(`${artistName} ${t.trackName}`.trim())}`
                 ).then(r => r.json()).catch(() => []);
-                if (!Array.isArray(candidates)) candidates = [];
-
-                // Fallback: full-text search if primary returned nothing with synced lyrics
-                const hasSynced = candidates.some(c => c.syncedLyrics);
-                if (!hasSynced) {
-                  const fb = await fetch(
-                    `https://lrclib.net/api/search?q=${encodeURIComponent(`${artistName} ${t.trackName}`.trim())}`
-                  ).then(r => r.json()).catch(() => []);
-                  if (Array.isArray(fb)) candidates = [...candidates, ...fb];
-                }
-
-                const best = candidates.filter(c => c.syncedLyrics).find(c => !/\*{2,}/.test(c.syncedLyrics))
-                          || candidates.find(c => c.syncedLyrics);
-                if (best?.syncedLyrics) {
-                  const { error: lcErr } = await sb.from('liri_lyric_cache').upsert({
-                    itunes_track_id:      t.trackId,
-                    itunes_collection_id: selected.collectionId,
-                    track_name:           t.trackName,
-                    artist_name:          artistName,
-                    album_name:           albumName,
-                    track_number:         t.trackNumber,
-                    disc_number:          t._disc,
-                    synced_lyrics:        best.syncedLyrics,
-                  }, { onConflict: 'itunes_track_id' });
-                  if (lcErr) console.warn('[lyrics cache] upsert failed for', t.trackName, lcErr);
-                  else cached++;
-                }
-              } catch (e) {
-                console.warn('[lyrics cache] error for', t.trackName, e);
+                if (Array.isArray(fb)) candidates = [...candidates, ...fb];
               }
-              // 300ms between tracks — keeps us well under LRCLib rate limits
-              await new Promise(res => setTimeout(res, 300));
+              const best = candidates.filter(c => c.syncedLyrics).find(c => !/\*{2,}/.test(c.syncedLyrics))
+                        || candidates.find(c => c.syncedLyrics);
+              if (best?.syncedLyrics) {
+                const { error: lcErr } = await sb.from('liri_lyric_cache').upsert({
+                  itunes_track_id:      t.trackId,
+                  itunes_collection_id: selected.collectionId,
+                  track_name:           t.trackName,
+                  artist_name:          artistName,
+                  album_name:           albumName,
+                  track_number:         t.trackNumber,
+                  disc_number:          t._disc,
+                  synced_lyrics:        best.syncedLyrics,
+                }, { onConflict: 'itunes_track_id' });
+                if (lcErr) console.warn('[lyrics cache] upsert failed for', t.trackName, lcErr);
+                else cached++;
+              }
+            } catch (e) {
+              console.warn('[lyrics cache] error for', t.trackName, e);
             }
-            console.log(`[lyrics cache] done: ${cached}/${eligibleTracks.length} tracks cached for "${albumName}"`);
-          })();
+          }
+          console.log(`[lyrics cache] done: ${cached}/${eligibleTracks.length} tracks cached for "${albumName}"`);
+
+          setDone(true);
         } catch (e) {
           setSubmitError(e.message || 'Something went wrong. Please try again.');
         }
