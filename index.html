@@ -1,24 +1,9 @@
 <!DOCTYPE html>
 <html lang="en">
-<!--
-  LIRI — Landing Page
-  ═══════════════════
-  This is the public-facing landing page for building a waitlist
-  before the app launches. Share this link (once hosted) everywhere.
-
-  TO CONNECT EMAIL CAPTURE:
-  1. Go to https://formspree.io and create a free account
-  2. Create a new form — copy your form ID (looks like "xpzgkwqr")
-  3. Replace "YOUR_FORM_ID" below with your actual ID
-  4. Host this file on Netlify (free) by dragging the liri/ folder
-     to netlify.com/drop — you'll get a live URL in 30 seconds
-
-  Alternatively: replace the form section with a Tally or Typeform embed.
--->
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <meta name="description" content="Liri — lyrics that follow your record in real time. Coming soon." />
+  <meta name="description" content="Liri — lyrics that follow your record in real time. Free on any browser and iOS." />
   <title>Liri — Lyrics for Vinyl</title>
   <style>
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
@@ -91,26 +76,7 @@
       .vinyl-hero { right: -120px; opacity: 0.1; width: 320px; height: 320px; }
     }
 
-    /* ─── Email form ─── */
-    .form-row {
-      display: flex; gap: 12px; flex-wrap: wrap;
-      margin-top: 36px; max-width: 480px;
-    }
-    .email-input {
-      flex: 1; min-width: 220px;
-      background: rgba(255,255,255,0.06);
-      border: 1px solid rgba(255,255,255,0.15);
-      color: var(--cream);
-      padding: 14px 20px;
-      border-radius: 50px;
-      font-size: 15px;
-      font-family: inherit;
-      outline: none;
-      transition: border-color 0.2s;
-    }
-    .email-input:focus { border-color: var(--gold); }
-    .email-input::placeholder { color: rgba(240,230,211,0.3); }
-
+    /* ─── CTA button ─── */
     .cta-btn {
       background: linear-gradient(135deg, var(--gold), var(--rose));
       border: none; border-radius: 50px;
@@ -121,15 +87,11 @@
       cursor: pointer; font-family: inherit;
       white-space: nowrap;
       transition: opacity 0.2s, transform 0.1s;
+      text-decoration: none;
+      display: inline-block;
     }
     .cta-btn:hover { opacity: 0.9; }
     .cta-btn:active { transform: scale(0.98); }
-
-    .success-msg {
-      display: none; align-items: center; gap: 10px;
-      color: #6aaa8a; font-size: 15px; margin-top: 16px;
-    }
-    .success-msg.visible { display: flex; }
 
     /* ─── How it works ─── */
     .steps { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 32px; margin-top: 48px; }
@@ -158,7 +120,6 @@
       font-size: 13px; color: var(--dim);
       letter-spacing: 1px;
     }
-    .platform-chip.soon { border-color: var(--gold); color: var(--gold); }
 
     /* ─── Lyric mockup ─── */
     .lyric-mockup {
@@ -169,7 +130,7 @@
       text-align: center;
       margin-top: 48px;
     }
-    .lyric-line { transition: all 0.3s; }
+    .lyric-line { transition: all 0.6s ease; }
     .lyric-line.prev   { font-size: 15px; opacity: 0.25; margin-bottom: 16px; }
     .lyric-line.curr   { font-size: 28px; font-weight: 700; opacity: 1; color: #fff; text-shadow: 0 0 40px rgba(212,168,70,0.35); margin-bottom: 16px; letter-spacing: 0.4px; }
     .lyric-line.next   { font-size: 15px; opacity: 0.25; }
@@ -180,7 +141,6 @@
     /* ─── Footer ─── */
     footer { padding: 40px 32px; display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 16px; }
     footer .logo { font-size: 14px; letter-spacing: 8px; color: var(--gold); font-weight: 300; }
-    footer .footer-note { font-size: 12px; color: rgba(240,230,211,0.2); }
   </style>
 </head>
 <body>
@@ -199,14 +159,13 @@
       </svg>
       <span class="nav-logo">LIRI</span>
     </a>
-    <a href="/app/" class="nav-link" style="background: rgba(212,168,70,0.15); border: 1px solid #d4a846; color: #d4a846; padding: 8px 18px; border-radius: 20px; font-size: 12px;">Try Liri free →</a>
+    <a href="/app/" class="nav-link" style="background: rgba(212,168,70,0.15); border: 1px solid #d4a846; color: #d4a846; padding: 8px 18px; border-radius: 20px; font-size: 12px;">Open Liri →</a>
   </nav>
 
-  <!-- ════════════════════════════════
+  <!-- ═══════════════════════
        HERO
-       ════════════════════════════════ -->
+       ═══════════════════════ -->
   <section class="hero">
-    <!-- Background vinyl record illustration -->
     <svg class="vinyl-hero" viewBox="0 0 400 400">
       <defs>
         <radialGradient id="vg2" cx="50%" cy="50%" r="50%">
@@ -233,21 +192,21 @@
         <span style="background: linear-gradient(135deg, #d4a846, #e8a0a8); -webkit-background-clip: text; -webkit-text-fill-color: transparent; background-clip: text;">follow your record.</span>
       </h1>
       <p class="body" style="margin-top: 24px;">
-        Liri listens to your record player in real time, identifies the song, and displays the lyrics in perfect sync — so you can stay in the moment instead of searching.
+        Liri listens to your turntable, identifies the song, and shows the lyrics perfectly synced to the music — line by line, in real time.
       </p>
 
-      <div style="display:flex;gap:12px;flex-wrap:wrap;margin-top:36px;" id="early-access">
-        <a href="/app/" class="cta-btn" style="text-decoration:none;">Try Liri free →</a>
+      <div style="display:flex;gap:12px;flex-wrap:wrap;margin-top:36px;">
+        <a href="/app/" class="cta-btn">Open Liri →</a>
       </div>
-      <p class="small" style="margin-top:16px;">Free to start · Works on any browser · iOS app available</p>
+      <p class="small" style="margin-top:16px;">Free to use · Any browser · iOS app available</p>
     </div>
   </section>
 
   <div class="divider"></div>
 
-  <!-- ════════════════════════════════
+  <!-- ═══════════════════════
        HOW IT WORKS
-       ════════════════════════════════ -->
+       ═══════════════════════ -->
   <section class="section">
     <div class="container">
       <div class="label">How it works</div>
@@ -256,23 +215,18 @@
       <div class="steps">
         <div class="step">
           <div class="step-num">01</div>
-          <div class="step-title">Liri listens</div>
-          <div class="step-body">Tap Listen and hold your phone near the speakers. Liri captures a few seconds of audio.</div>
+          <div class="step-title">Drop the needle</div>
+          <div class="step-body">Pick your album, put on a record, and tap Listen. Liri uses your phone's mic to hear what's playing.</div>
         </div>
         <div class="step">
           <div class="step-num">02</div>
-          <div class="step-title">Liri identifies</div>
-          <div class="step-body">Audio fingerprinting matches the song and — crucially — detects exactly where in the song the record currently is.</div>
+          <div class="step-title">Liri finds your place</div>
+          <div class="step-body">Within seconds, Liri knows the song and exactly where in the song you are — even if you dropped the needle in the middle.</div>
         </div>
         <div class="step">
           <div class="step-num">03</div>
-          <div class="step-title">Liri syncs</div>
-          <div class="step-body">The correct lyrics appear on screen, advancing line by line as the record plays. You don't have to touch anything.</div>
-        </div>
-        <div class="step">
-          <div class="step-num">04</div>
-          <div class="step-title">You listen</div>
-          <div class="step-body">Stay in the moment. Follow the words. Let the record do its thing.</div>
+          <div class="step-title">Lyrics appear</div>
+          <div class="step-body">Synced lyrics scroll line by line as the record plays. Set your phone down and enjoy. Liri follows along through every track.</div>
         </div>
       </div>
     </div>
@@ -280,66 +234,62 @@
 
   <div class="divider"></div>
 
-  <!-- ════════════════════════════════
-       LYRIC MOCKUP (visual demo)
-       ════════════════════════════════ -->
+  <!-- ═══════════════════════
+       LYRIC MOCKUP
+       ═══════════════════════ -->
   <section class="section">
     <div class="container">
       <div class="label">What it looks like</div>
-      <h2 class="h2">Beautiful. Minimal.<br/>Focused on the words.</h2>
+      <h2 class="h2">Minimal. Beautiful.<br/>Just the words.</h2>
 
-      <!-- Static mockup of the lyric display -->
       <div class="lyric-mockup">
         <div style="display: inline-flex; align-items: center; gap: 10px; background: rgba(255,255,255,0.05); padding: 8px 16px; border-radius: 50px; border: 1px solid rgba(255,255,255,0.08); margin-bottom: 40px;">
-          <div style="width: 24px; height: 24px; border-radius: 4px; background: linear-gradient(135deg, #d4a846, #e8a0a8);"></div>
-          <span style="font-size: 12px; letter-spacing: 1px; color: #f0e6d3;">Detected song · Artist</span>
+          <svg width="20" height="20" viewBox="0 0 26 26">
+            <circle cx="13" cy="13" r="12.5" fill="#1a1a2e"/>
+            <circle cx="13" cy="13" r="8.5" fill="none" stroke="#2a2438" stroke-width="1"/>
+            <circle cx="13" cy="13" r="3" fill="#d4a846" opacity="0.75"/>
+            <circle cx="13" cy="13" r="1.1" fill="#0a0a14"/>
+          </svg>
+          <span style="font-size: 12px; letter-spacing: 1px; color: #f0e6d3;">Now playing</span>
           <span style="font-size: 11px; color: #4a4a6a;">2:34</span>
         </div>
 
-        <div class="lyric-line prev" id="demo-prev">The line that just played</div>
-        <div class="lyric-line curr" id="demo-curr">The current lyric line</div>
-        <div class="lyric-line next" id="demo-next">What's coming up next</div>
-
-        <div style="display: flex; justify-content: center; gap: 12px; margin-top: 40px; flex-wrap: wrap;">
-          <div style="padding: 8px 16px; border-radius: 20px; background: rgba(255,255,255,0.06); border: 1px solid rgba(255,255,255,0.1); font-size: 12px; color: #f0e6d3; letter-spacing: 1px;">← 5s</div>
-          <div style="padding: 8px 16px; border-radius: 20px; background: rgba(255,255,255,0.06); border: 1px solid rgba(255,255,255,0.1); font-size: 12px; color: #f0e6d3; letter-spacing: 1px;">← 2s</div>
-          <div style="padding: 8px 20px; border-radius: 20px; background: rgba(212,168,70,0.12); border: 1px solid #d4a846; font-size: 12px; color: #d4a846; letter-spacing: 1px;">■ STOP</div>
-          <div style="padding: 8px 16px; border-radius: 20px; background: rgba(255,255,255,0.06); border: 1px solid rgba(255,255,255,0.1); font-size: 12px; color: #f0e6d3; letter-spacing: 1px;">2s →</div>
-          <div style="padding: 8px 16px; border-radius: 20px; background: rgba(255,255,255,0.06); border: 1px solid rgba(255,255,255,0.1); font-size: 12px; color: #f0e6d3; letter-spacing: 1px;">5s →</div>
-        </div>
+        <div class="lyric-line prev" id="demo-prev">And I can see us twisted in bedsheets</div>
+        <div class="lyric-line curr" id="demo-curr">August slipped away into a moment in time</div>
+        <div class="lyric-line next" id="demo-next">Because it was never mine</div>
       </div>
     </div>
   </section>
 
   <div class="divider"></div>
 
-  <!-- ════════════════════════════════
-       WHY LIRI EXISTS
-       ════════════════════════════════ -->
+  <!-- ═══════════════════════
+       WHY LIRI
+       ═══════════════════════ -->
   <section class="section">
     <div class="container">
-      <div class="label">Why Liri exists</div>
+      <div class="label">Why Liri</div>
       <h2 class="h2">Vinyl deserves better<br/>than a Google search.</h2>
       <p class="body" style="margin-top: 24px;">
-        Most lyric apps assume you're streaming. They know exactly what's playing and where. A record player doesn't tell software anything. Liri solves that — and makes the experience feel like it always belonged there.
+        Lyric apps assume you're streaming. They know what's playing because Spotify told them. A record player doesn't work that way. Liri was built from scratch to solve that.
       </p>
 
       <div class="features">
         <div class="feature">
-          <div class="feature-title">Works mid-song</div>
-          <div class="feature-body">Drop the needle anywhere. Liri detects where you are and catches up — not just which song, but which second.</div>
+          <div class="feature-title">Drop the needle anywhere</div>
+          <div class="feature-body">Liri doesn't need you to start from the beginning. It picks up wherever the record is and syncs from there.</div>
         </div>
         <div class="feature">
-          <div class="feature-title">Any artist</div>
-          <div class="feature-body">Not locked to one catalog. If your record player plays it, Liri can sync it.</div>
+          <div class="feature-title">Follows through every track</div>
+          <div class="feature-body">When one song ends, Liri automatically detects the next track and keeps the lyrics going. No re-scanning.</div>
         </div>
         <div class="feature">
-          <div class="feature-title">Drift correction</div>
-          <div class="feature-body">Belt-drive turntables drift. Liri has nudge controls so you can stay locked in without re-detecting.</div>
+          <div class="feature-title">Built for your collection</div>
+          <div class="feature-body">Add your vinyl to your library once. Liri remembers it — so recognition gets faster every time you play.</div>
         </div>
         <div class="feature">
-          <div class="feature-title">Beautiful by design</div>
-          <div class="feature-body">Built for the aesthetic of a real listening session. Not karaoke. Not a dashboard. Something that feels right on a shelf next to your records.</div>
+          <div class="feature-title">Designed for the moment</div>
+          <div class="feature-body">Dark, minimal, beautiful. Liri is meant to sit next to your turntable, not demand your attention.</div>
         </div>
       </div>
     </div>
@@ -347,37 +297,57 @@
 
   <div class="divider"></div>
 
-  <!-- ════════════════════════════════
+  <!-- ═══════════════════════
        PLATFORMS
-       ════════════════════════════════ -->
+       ═══════════════════════ -->
   <section class="section">
     <div class="container">
       <div class="label">Available on</div>
-      <h2 class="h2">Browser, iPhone,<br/>and your living room TV.</h2>
+      <h2 class="h2">Your phone, your laptop,<br/>your living room TV.</h2>
       <p class="body" style="margin-top: 24px;">
-        Liri works on any browser today and has a native iPhone app. Cast to your TV with the built-in Cast feature — full-screen lyrics on the big screen while the record spins.
+        Liri works on any browser and has a native iOS app. Use the built-in Cast feature to put full-screen lyrics on your TV while the record spins.
       </p>
       <div class="platforms">
         <div class="platform-chip">Browser</div>
         <div class="platform-chip">iOS</div>
-        <div class="platform-chip soon">Android ✦ coming soon</div>
+        <div class="platform-chip">Chromecast</div>
       </div>
     </div>
   </section>
 
   <div class="divider"></div>
 
-  <!-- ════════════════════════════════
-       SECOND EMAIL CTA
-       ════════════════════════════════ -->
+  <!-- ═══════════════════════
+       BOTTOM CTA
+       ═══════════════════════ -->
   <section class="section" style="text-align: center;">
     <div class="container" style="display: flex; flex-direction: column; align-items: center;">
-      <div class="label">Ready to listen</div>
+
+      <!-- Large spinning record -->
+      <svg width="120" height="120" viewBox="0 0 400 400" style="animation: hero-spin 30s linear infinite; margin-bottom: 40px; opacity: 0.7;">
+        <defs>
+          <radialGradient id="vg3" cx="50%" cy="50%" r="50%">
+            <stop offset="0%" stop-color="#3a3050"/>
+            <stop offset="100%" stop-color="#0a0a14"/>
+          </radialGradient>
+        </defs>
+        <circle cx="200" cy="200" r="196" fill="url(#vg3)" stroke="#2a2438" stroke-width="4"/>
+        <circle cx="200" cy="200" r="178" fill="none" stroke="#1a1a2a" stroke-width="2"/>
+        <circle cx="200" cy="200" r="158" fill="none" stroke="#1e1a2e" stroke-width="1.5"/>
+        <circle cx="200" cy="200" r="138" fill="none" stroke="#1a1a2a" stroke-width="1.5"/>
+        <circle cx="200" cy="200" r="118" fill="none" stroke="#1e1a2e" stroke-width="1"/>
+        <circle cx="200" cy="200" r="98"  fill="none" stroke="#1a1a2a" stroke-width="1"/>
+        <circle cx="200" cy="200" r="78"  fill="none" stroke="#1e1a2e" stroke-width="1"/>
+        <circle cx="200" cy="200" r="58"  fill="none" stroke="#1a1a2a" stroke-width="1"/>
+        <circle cx="200" cy="200" r="44"  fill="#d4a846" opacity="0.6"/>
+        <circle cx="200" cy="200" r="16"  fill="#0a0a14"/>
+      </svg>
+
       <h2 class="h2" style="max-width: 500px;">Put on a record.<br/>Liri does the rest.</h2>
       <p class="body" style="margin-top: 16px; text-align: center;">
-        Free to start. No setup, no playlists, no searching. Just your records.
+        Free to use. No account required. Just your records.
       </p>
-      <a href="/app/" class="cta-btn" style="text-decoration:none;margin-top:32px;">Try Liri free →</a>
+      <a href="/app/" class="cta-btn" style="margin-top:32px;">Open Liri →</a>
     </div>
   </section>
 
@@ -397,51 +367,29 @@
       </svg>
       <div class="logo">LIRI</div>
     </div>
-    <div style="font-size: 12px; color: rgba(240,230,211,0.2);">Lyrics for vinyl. Built with love.</div>
+    <div style="font-size: 12px; color: rgba(240,230,211,0.2);">Lyrics for vinyl.</div>
   </footer>
 
+  <style>
+    @keyframes hero-spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
+  </style>
+
   <script>
-    /* ── Form submission handler ──
-       Replace "YOUR_FORM_ID" in the form action URLs above with your Formspree ID.
-       Until then, this shows the success state locally without actually submitting. */
-    function handleSubmit(event) {
-      event.preventDefault();
-
-      // Show success immediately for instant UX
-      const form = event.target;
-      form.style.display = "none";
-      document.getElementById("success-msg").classList.add("visible");
-      if (document.getElementById("success-msg-2")) {
-        document.getElementById("success-msg-2").classList.add("visible");
-      }
-
-      // Send to Formspree in the background
-      fetch("https://formspree.io/f/xjgakyap", {
-        method: "POST",
-        body: new FormData(form),
-        headers: { "Accept": "application/json" }
-      }).catch(function(err) {
-        console.error("Formspree error:", err);
-      });
-    }
-
-    /* ── Lyric demo animation ──
-       Cycles through example lyric lines in the mockup section
-       so the page feels alive even before the real app is seen. */
+    /* ── Lyric demo — cycles through real lyric lines ── */
     const demoLines = [
-      ["The line that just passed", "The current lyric line", "What comes next"],
-      ["Something you just heard", "Following every word", "The next line waiting"],
-      ["In vinyl we trust", "Lyrics perfectly synced", "No searching required"],
+      ["And I can see us twisted in bedsheets",     "August slipped away into a moment in time", "Because it was never mine"],
+      ["Because it was never mine",                  "Back when we were still changing for the better", "Wanting was enough"],
+      ["Wanting was enough",                         "And I can still see it all in my mind",         "All the colors and the lovers"],
+      ["All the colors and the lovers",              "August slipped away like a bottle of wine",     "Because it was never mine"],
     ];
     let demoIdx = 0;
-    function cycleDemoLyrics() {
+    setInterval(() => {
       demoIdx = (demoIdx + 1) % demoLines.length;
       const [prev, curr, next] = demoLines[demoIdx];
       document.getElementById("demo-prev").textContent = prev;
       document.getElementById("demo-curr").textContent = curr;
       document.getElementById("demo-next").textContent = next;
-    }
-    setInterval(cycleDemoLyrics, 3000);
+    }, 3500);
   </script>
 </body>
 </html>
