@@ -76,7 +76,7 @@
       "sb_publishable_C-NBnfg0ltAoUi46XQTUjA_ozjZW_Nd"
     );
 
-    const APP_VERSION = "1.72";
+    const APP_VERSION = "1.73";
 
     const PROXY_URL = window.Capacitor
       ? "https://getliri.app/api/recognize"
@@ -306,6 +306,7 @@
 
       // ── Resync / advance flags ──
       const [isResyncing, setIsResyncing]             = useState(false);
+      const [isPaused, setIsPaused]                   = useState(false);
       const [shouldAdvanceTrack, setShouldAdvanceTrack] = useState(false);
       const [sideEndReason, setSideEndReason]         = useState("failed"); // "failed" | "flip" | "album-end"
 
@@ -1273,7 +1274,7 @@
               };
               setIdentifiedBy("whisper");
               detectedAtRef.current      = Date.now();
-              initialPosRef.current      = Math.max(0, startPos + (Date.now() - whisperSentAt) / 1000 - 1.5);
+              initialPosRef.current      = Math.max(0, startPos + (Date.now() - whisperSentAt) / 1000 - 2.5);
               autoAdvanceFiredRef.current = false;
               autoRetryCountRef.current  = 0;
               setDetectedSong(song);
@@ -1602,23 +1603,20 @@
               setListenAttempt(attempts);
               nextAttemptAt += turntableAlbumRef.current ? turntableInterval : ATTEMPT_INTERVAL;
 
-              // ── Background Whisper: fire starting at attempt 4 (20s), retry each attempt ──
-              // In turntable mode: retry every 5s (at 20s, 25s, 30s) — the first blob may have
-              // landed in an intro/instrumental; a later blob with more lyric content often succeeds.
-              // In non-turntable mode: fire once at 20s only (GPT/Strategy C need a good transcript).
-              // Fire Whisper from attempt 1 if an album is selected, even while tracks are
-              // still loading — matchTranscriptToTracks handles the empty-tracks case gracefully.
+              // ── Background Whisper ──
+              // Turntable mode: fire on EVERY attempt (every 6s) — don't wait for previous
+              // to finish. Each attempt sends a longer audio blob. First match wins.
+              // Non-turntable: fire once at attempt 4 (~20s).
               const hasTurntable = !!turntableAlbumRef.current;
               const shouldFireWhisper = hasTurntable
-                ? (attempts >= 1 && !bgWhisperStarted && !recognitionWonRef.current)
+                ? (attempts >= 1 && !recognitionWonRef.current)
                 : (attempts === 4 && !bgWhisperStarted);
               if (shouldFireWhisper) {
                 bgWhisperStarted = true;
                 const bgBlob = new Blob([...allChunks], { type: mimeType || "audio/webm" });
                 tryLyricsTranscription(bgBlob, isAutoAdvance).then(found => {
-                  bgWhisperStarted = false; // allow retry on next attempt if this one failed
+                  bgWhisperStarted = false;
                   if (found && listenSessionRef.current === session) {
-                    // Whisper won the race — shut down ACRCloud loop
                     clearInterval(progressTimerRef.current);
                     if (recorder.state === "recording") recorder.stop();
                   }
@@ -1778,6 +1776,28 @@
           setCurrentIndex(idx);
         }, 80);
       }, []);
+
+      const togglePause = () => {
+        if (isPaused) {
+          // Resume: restart sync from current position
+          initialPosRef.current = playbackTime;
+          syncStartRef.current  = Date.now();
+          syncIntervalRef.current = setInterval(() => {
+            const t = initialPosRef.current + (Date.now() - syncStartRef.current) / 1000;
+            setPlaybackTime(t);
+            const lrc = lyricsRef.current;
+            if (!lrc.length) return;
+            let idx = 0;
+            for (let i = 0; i < lrc.length; i++) { if (lrc[i].time <= t) idx = i; else break; }
+            setCurrentIndex(idx);
+          }, 80);
+          setIsPaused(false);
+        } else {
+          // Pause: freeze lyrics at current position
+          clearInterval(syncIntervalRef.current);
+          setIsPaused(true);
+        }
+      };
 
       const nudge = (s) => {
         userNudgeRef.current += s;
@@ -2120,7 +2140,7 @@
         setMode("idle"); setDetectedSong(null); setIdentifiedBy(null); setSongDuration(null); setLyrics([]);
         setCurrentIndex(0); setError(null); setListenProgress(0); setPlaybackTime(0);
         setAlbumTracks([]); setCurrentTrackIndex(-1);
-        setShouldAdvanceTrack(false); setIsResyncing(false); setSideEndReason("failed");
+        setShouldAdvanceTrack(false); setIsResyncing(false); setIsPaused(false); setSideEndReason("failed");
         setAlbumCollectionId(null); setVinylDbRelease(null);
         albumTpsRef.current = 0; vinylDbReleaseRef.current = null; userNudgeRef.current = 0;
       };
@@ -2882,6 +2902,7 @@
                   {userScrolling && (
                     <button onClick={refollow} style={{ background:"rgba(212,168,70,0.12)", border:"1px solid rgba(212,168,70,0.3)", color:"rgba(212,168,70,0.8)", borderRadius:"50px", padding:"10px 22px", fontSize:"13px", fontWeight:"500", cursor:"pointer", fontFamily:"inherit" }}>↓ Follow</button>
                   )}
+                  <button onClick={togglePause} style={{ background: isPaused ? "rgba(212,168,70,0.15)" : "rgba(255,255,255,0.07)", border: isPaused ? "1px solid rgba(212,168,70,0.4)" : "1px solid rgba(255,255,255,0.15)", color: isPaused ? "rgba(212,168,70,0.9)" : "rgba(255,255,255,0.55)", borderRadius:"50px", padding:"10px 22px", fontSize:"13px", fontWeight:"500", cursor:"pointer", fontFamily:"inherit" }}>{isPaused ? "▶ Resume" : "❚❚ Pause"}</button>
                   <button onClick={resync} disabled={isResyncing} style={{ background:"rgba(255,255,255,0.07)", border:"1px solid rgba(255,255,255,0.15)", color:"rgba(255,255,255,0.55)", borderRadius:"50px", padding:"10px 22px", fontSize:"13px", fontWeight:"500", cursor: isResyncing ? "wait" : "pointer", fontFamily:"inherit", opacity: isResyncing ? 0.4 : 1 }}>↻ Resync</button>
                   <button onClick={() => { reset(); setTimeout(() => startListening(false), 150); }} style={{ background:"rgba(255,255,255,0.04)", border:"1px solid rgba(255,255,255,0.09)", color:"rgba(255,255,255,0.35)", borderRadius:"50px", padding:"10px 22px", fontSize:"13px", cursor:"pointer", fontFamily:"inherit" }}>Wrong song?</button>
                 </div>
