@@ -76,7 +76,7 @@
       "sb_publishable_C-NBnfg0ltAoUi46XQTUjA_ozjZW_Nd"
     );
 
-    const APP_VERSION = "1.92";
+    const APP_VERSION = "1.93";
 
     const PROXY_URL = window.Capacitor
       ? "https://getliri.app/api/recognize"
@@ -2812,7 +2812,13 @@
                     </div>
                   )}
                   {!songDuration && <div style={{ fontSize:"12px", color:"rgba(255,255,255,0.3)", fontVariantNumeric:"tabular-nums" }}>{formatTime(playbackTime)}</div>}
-                  <button onClick={() => setShowCast(true)} style={{ background:"none", border:"none", cursor:"pointer", fontSize:"18px", padding:"4px", lineHeight:1, position:"relative" }} title={castConnected ? `Casting to ${castDeviceName || "TV"}` : "Cast to TV"}>
+                  <button onClick={() => {
+                    // On iOS (Capacitor): show native AirPlay picker first, then cast modal
+                    if (window.Capacitor?.isNativePlatform?.()) {
+                      window.Capacitor.Plugins?.AirPlay?.showPicker?.().catch(() => {});
+                    }
+                    setShowCast(true);
+                  }} style={{ background:"none", border:"none", cursor:"pointer", fontSize:"18px", padding:"4px", lineHeight:1, position:"relative" }} title={castConnected ? `Casting to ${castDeviceName || "TV"}` : "Cast to TV"}>
                     <span style={{ opacity: castConnected ? 1 : 0.3 }}>📺</span>
                     {castConnected && <span style={{ position:"absolute", top:"2px", right:"2px", width:"6px", height:"6px", borderRadius:"50%", background:"#d4a846", boxShadow:"0 0 6px rgba(212,168,70,0.9)", display:"block" }} />}
                   </button>
