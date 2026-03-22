@@ -73,7 +73,7 @@
       "sb_publishable_C-NBnfg0ltAoUi46XQTUjA_ozjZW_Nd"
     );
 
-    const APP_VERSION = "1.108";
+    const APP_VERSION = "1.109";
 
     const PROXY_URL = window.Capacitor
       ? "https://getliri.app/api/recognize"
@@ -392,6 +392,10 @@
       const detectedAtRef       = useRef(null);
       const initialPosRef       = useRef(0);
       const userNudgeRef        = useRef(0); // cumulative nudge applied by user this session
+      // Learned timing calibration — persists across sessions in localStorage.
+      // Accumulates 35% of each nudge so it converges on the user's systematic offset.
+      const personalOffsetRef   = useRef(parseFloat(localStorage.getItem("liri_timing_offset") || "0"));
+      const [personalOffset, setPersonalOffset] = useState(() => parseFloat(localStorage.getItem("liri_timing_offset") || "0"));
       const recordingStartRef   = useRef(null); // wall-clock time when mic started recording
       const lyricsRef        = useRef([]);
       const progressTimerRef    = useRef(null);
@@ -1098,7 +1102,7 @@
         // recording began. startSync will add further delay for handleMatch processing time.
         // This is more accurate than the old interval-tick estimate + fixed buffer.
         detectedAtRef.current      = recordingStartRef.current || Date.now();
-        initialPosRef.current      = (m.play_offset_ms || 0) / 1000;
+        initialPosRef.current      = (m.play_offset_ms || 0) / 1000 + personalOffsetRef.current;
         autoAdvanceFiredRef.current = false;
         autoRetryCountRef.current  = 0;
 
@@ -1316,7 +1320,7 @@
                 ? (vmResult.phraseWordStart / vmResult.totalWords) * clipDuration
                 : clipDuration / 2;
               const totalElapsed = (Date.now() - _recStart) / 1000;
-              initialPosRef.current = Math.max(0, startPos - phraseOffset + totalElapsed);
+              initialPosRef.current = Math.max(0, startPos - phraseOffset + totalElapsed + personalOffsetRef.current);
               autoAdvanceFiredRef.current = false;
               autoRetryCountRef.current  = 0;
               setDetectedSong(song);
@@ -1510,7 +1514,7 @@
           const song = { title, artist, album: match.albumName || "", artwork };
           setIdentifiedBy("whisper");
           detectedAtRef.current      = Date.now();
-          initialPosRef.current      = startPos;
+          initialPosRef.current      = startPos + personalOffsetRef.current;
           autoAdvanceFiredRef.current = false;
           autoRetryCountRef.current  = 0;
 
@@ -1892,6 +1896,13 @@
       const nudge = (s) => {
         userNudgeRef.current += s;
         initialPosRef.current = Math.max(0, initialPosRef.current + s);
+        // Accumulate into the learned personal offset — but only for small adjustments.
+        // Large nudges (>2.5s total) likely mean a bad ID, not a systematic timing issue.
+        if (Math.abs(userNudgeRef.current) <= 2.5) {
+          personalOffsetRef.current = +(personalOffsetRef.current + 0.35 * s).toFixed(2);
+          localStorage.setItem("liri_timing_offset", String(personalOffsetRef.current));
+          setPersonalOffset(personalOffsetRef.current);
+        }
       };
 
       const handleNudge = (s) => {
@@ -2176,7 +2187,9 @@
         setMode("confirmed"); // triggers startSync via useEffect
       };
 
-      // ── Resync: re-listen briefly to fix timing without resetting the song ──
+      // ── Resync: re-listen briefly to fix timing without changing the song ──
+      // Uses Whisper transcription + word-overlap match against already-loaded lyrics.
+      // Never calls ACR — that can identify a different song entirely.
       const resync = async () => {
         if (isResyncing) return;
         setIsResyncing(true);
@@ -2184,36 +2197,89 @@
           const stream = await navigator.mediaDevices.getUserMedia({
             audio: { echoCancellation: false, noiseSuppression: false }
           });
-          const preferredMimeR = MediaRecorder.isTypeSupported("audio/webm") ? "audio/webm"
-                              : MediaRecorder.isTypeSupported("audio/ogg")  ? "audio/ogg"
-                              : MediaRecorder.isTypeSupported("audio/mp4")  ? "audio/mp4"
-                              : "";
-          const recorder = preferredMimeR ? new MediaRecorder(stream, { mimeType: preferredMimeR }) : new MediaRecorder(stream);
-          const rawMimeR = recorder.mimeType || preferredMimeR || "audio/webm";
-          const mimeType = rawMimeR.split(";")[0].trim();
+          // Tap an analyser so the wave animation has real frequency data during resync
+          try {
+            if (audioCtxRef.current) { audioCtxRef.current.close().catch(() => {}); }
+            const actx = new (window.AudioContext || window.webkitAudioContext)();
+            const src  = actx.createMediaStreamSource(stream);
+            const node = actx.createAnalyser();
+            node.fftSize = 256; node.smoothingTimeConstant = 0.85;
+            src.connect(node);
+            analyserNodeRef.current = node;
+            audioCtxRef.current     = actx;
+          } catch(e) {}
+
+          const preferredMime = MediaRecorder.isTypeSupported("audio/webm") ? "audio/webm"
+                             : MediaRecorder.isTypeSupported("audio/ogg")  ? "audio/ogg"
+                             : MediaRecorder.isTypeSupported("audio/mp4")  ? "audio/mp4" : "";
+          const recorder = preferredMime ? new MediaRecorder(stream, { mimeType: preferredMime }) : new MediaRecorder(stream);
           const chunks = [];
           recorder.ondataavailable = e => { if (e.data.size > 0) chunks.push(e.data); };
-          recorder.onstop = () => stream.getTracks().forEach(t => t.stop());
-          const resyncStartTime = Date.now();
+          const resyncStart = Date.now();
           recorder.start(200);
           await new Promise(resolve => setTimeout(resolve, 6000));
           if (recorder.state === "recording") recorder.stop();
+          await new Promise(resolve => { recorder.onstop = () => { stream.getTracks().forEach(t => t.stop()); resolve(); }; });
+
           const blob = new Blob(chunks, { type: recorder.mimeType || "audio/webm" });
           const audio = await blobToBase64(blob);
-          const res = await fetch(PROXY_URL, {
+          const transcribeUrl = window.Capacitor ? "https://getliri.app/api/transcribe" : "/api/transcribe";
+          const whisperSentAt = Date.now();
+          const tr = await fetch(transcribeUrl, {
             method: "POST", headers: { "Content-Type": "application/json" },
             body: JSON.stringify({ audio, mimeType: blob.type || "audio/webm" }),
           });
-          if (res.ok) {
-            const data = await res.json();
-            if (data.status?.code === 0 && data.metadata?.music?.length > 0) {
-              const m = data.metadata.music[0];
-              const totalElapsed = (Date.now() - resyncStartTime) / 1000;
-              initialPosRef.current = (m.play_offset_ms || 0) / 1000 + totalElapsed;
-              syncStartRef.current  = Date.now();
+          if (!tr.ok) { setIsResyncing(false); return; }
+          const { text: transcribed } = await tr.json();
+          if (!transcribed || transcribed.trim().length < 4) { setIsResyncing(false); return; }
+
+          const clipDuration = Math.max(0, (whisperSentAt - resyncStart) / 1000);
+          const totalElapsed = (Date.now() - resyncStart) / 1000;
+          let startPos = null, phraseWordStart = 0, totalWords = 1;
+
+          // In turntable mode: use the full matchTranscriptToTracks against the current track only.
+          // This gives an accurate phraseWordStart so the timing formula is as precise as initial ID.
+          if (turntableAlbumRef.current) {
+            const currentIdx = Math.max(0, currentTrackIndexRef.current);
+            const track = turntableTracksRef.current[currentIdx];
+            if (track) {
+              const result = matchTranscriptToTracks(transcribed, [track], [], turntableLyricsCacheRef.current);
+              if (result) {
+                startPos       = result.startPos;
+                phraseWordStart = result.phraseWordStart ?? 0;
+                totalWords     = result.totalWords || 1;
+              }
             }
           }
-        } catch {}
+
+          // Fallback: word-overlap scan against already-parsed lyricsRef.current.
+          // phraseWordStart defaults to 0 so phraseOffset = 0 → use clipDuration/2 instead
+          // to avoid overshooting (the phrase is probably near the middle of the clip).
+          if (startPos === null) {
+            const norm = s => s.toLowerCase().replace(/[^\w\s]/g, "").replace(/\s+/g, " ").trim();
+            const words = norm(transcribed).split(" ").filter(Boolean);
+            totalWords = words.length || 1;
+            const lyr = lyricsRef.current;
+            if (lyr?.length >= 3 && words.length >= 3) {
+              let bestScore = 0;
+              for (let li = 0; li < lyr.length; li++) {
+                const win = lyr.slice(li, li + 4).flatMap(l => norm(l.text).split(" ").filter(Boolean));
+                let wi = 0, score = 0;
+                for (const w of win) { if (wi < words.length && words[wi] === w) { score++; wi++; } }
+                if (score > bestScore) { bestScore = score; startPos = lyr[li].time; }
+              }
+              if (bestScore < 3) startPos = null;
+              // Use mid-clip as phrase offset estimate since we don't know where in the clip it was
+              phraseWordStart = Math.floor(totalWords / 2);
+            }
+          }
+
+          if (startPos !== null) {
+            const phraseOffset = (phraseWordStart / totalWords) * clipDuration;
+            initialPosRef.current = Math.max(0, startPos - phraseOffset + totalElapsed + personalOffsetRef.current);
+            syncStartRef.current  = Date.now();
+          }
+        } catch(e) { console.error("resync error:", e); }
         setIsResyncing(false);
       };
 
@@ -2802,6 +2868,13 @@
                   </div>
                 </div>
 
+                {/* Timing calibration reset — only shown when a learned offset exists */}
+                {personalOffset !== 0 && (
+                  <button onClick={() => { personalOffsetRef.current = 0; setPersonalOffset(0); localStorage.removeItem("liri_timing_offset"); }} style={{ width:"100%", background:"rgba(255,255,255,0.03)", border:"1px solid rgba(255,255,255,0.06)", color:"rgba(255,255,255,0.3)", borderRadius:"14px", padding:"12px", fontSize:"13px", cursor:"pointer", fontFamily:"inherit", marginBottom:"10px" }}>
+                    Reset timing calibration ({personalOffset > 0 ? "+" : ""}{personalOffset}s)
+                  </button>
+                )}
+
                 {/* Bug report */}
                 {!showBugReport ? (
                   <button onClick={() => setShowBugReport(true)} style={{ width:"100%", background:"rgba(255,255,255,0.04)", border:"1px solid rgba(255,255,255,0.08)", color:"rgba(255,255,255,0.4)", borderRadius:"14px", padding:"14px", fontSize:"14px", cursor:"pointer", fontFamily:"inherit", marginBottom:"10px" }}>🐛 Report a bug</button>
@@ -3009,9 +3082,14 @@
               <div className="safe-bottom" style={{ padding:"12px 20px 0", flexShrink:0 }}>
 
                 {/* Nudge label */}
-                <div style={{ textAlign:"center", fontSize:"10px", letterSpacing:"2px", textTransform:"uppercase", marginBottom:"8px", color: isResyncing ? "#d4a846" : "rgba(255,255,255,0.18)", animation: isResyncing ? "pulse 1.2s ease-in-out infinite" : "none" }}>
+                <div style={{ textAlign:"center", fontSize:"10px", letterSpacing:"2px", textTransform:"uppercase", marginBottom: personalOffset !== 0 ? "2px" : "8px", color: isResyncing ? "#d4a846" : "rgba(255,255,255,0.18)", animation: isResyncing ? "pulse 1.2s ease-in-out infinite" : "none" }}>
                   {isResyncing ? "↻ listening for resync…" : "← early · behind →"}
                 </div>
+                {personalOffset !== 0 && !isResyncing && (
+                  <div style={{ textAlign:"center", fontSize:"10px", color:"rgba(212,168,70,0.4)", letterSpacing:"1px", marginBottom:"6px" }}>
+                    auto {personalOffset > 0 ? "+" : ""}{personalOffset}s
+                  </div>
+                )}
                 {/* Nudge buttons — ±1s always visible; ±0.5s floats as dropdown overlay on hover */}
                 <div style={{ display:"flex", justifyContent:"center", gap:"8px", marginBottom:"10px" }}>
                   {/* Left */}
