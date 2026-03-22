@@ -163,6 +163,10 @@ CREATE POLICY "Auth update lyric cache"
   ON liri_lyric_cache FOR UPDATE
   USING (auth.uid() IS NOT NULL);
 
+CREATE POLICY "Auth delete lyric cache"
+  ON liri_lyric_cache FOR DELETE
+  USING (auth.uid() IS NOT NULL);
+
 
 -- -----------------------------------------------------------
 -- user_usage

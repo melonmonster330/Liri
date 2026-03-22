@@ -47,7 +47,7 @@
   <script type="text/babel">
     const { useState, useEffect, useRef, useCallback } = React;
 
-    const APP_VERSION = "1.80";
+    const APP_VERSION = "1.81";
 
     const sb = supabase.createClient(
       "https://xjdjpaxgymgbvcwmvorc.supabase.co",
@@ -739,10 +739,25 @@
       const removeAlbum = async (collectionId) => {
         if (!user || removing) return;
         setRemoving(collectionId);
+        // Remove from personal library
         await sb.from("user_vinyl_library")
           .delete()
           .eq("user_id", user.id)
           .eq("itunes_collection_id", collectionId);
+        // Remove cached lyrics so they're re-fetched fresh on re-add
+        await sb.from("liri_lyric_cache")
+          .delete()
+          .eq("itunes_collection_id", collectionId);
+        // Remove the vinyl release (submitted by this user) — cascades to vinyl_tracks
+        await sb.from("vinyl_releases")
+          .delete()
+          .eq("submitted_by", user.id)
+          .eq("itunes_collection_id", collectionId);
+        // Clear turntable selection if this was the active album
+        try {
+          const saved = JSON.parse(localStorage.getItem("liri_turntable") || "null");
+          if (saved?.itunes_collection_id === collectionId) localStorage.removeItem("liri_turntable");
+        } catch {}
         setLibrary(prev => prev.filter(a => a.itunes_collection_id !== collectionId));
         setRemoving(null);
       };
