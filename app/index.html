@@ -801,13 +801,50 @@
             sb.from("liri_lyric_cache")
               .select("itunes_track_id, track_name, synced_lyrics")
               .eq("itunes_collection_id", collectionId)
-              .then(({ data }) => {
+              .then(async ({ data }) => {
                 const cache = {};
                 for (const row of (data || [])) {
                   if (row.itunes_track_id) cache[row.itunes_track_id] = row.synced_lyrics;
                   if (row.track_name)      cache[row.track_name]      = row.synced_lyrics;
                 }
                 turntableLyricsCacheRef.current = cache;
+
+                // Fallback: cache empty = album added before lyrics caching was fixed, or
+                // LRCLib was down at add time. Fetch now, persist, so next load is instant.
+                if (Object.keys(cache).length === 0 && mapped.length > 0) {
+                  console.log("[lyrics fallback] empty cache — fetching from LRCLib for", albumName);
+                  for (const t of mapped) {
+                    if (!t.trackName) continue;
+                    try {
+                      let candidates = await fetch(
+                        `https://lrclib.net/api/search?artist_name=${encodeURIComponent(artistName)}&track_name=${encodeURIComponent(t.trackName)}`
+                      ).then(r => r.json()).catch(() => []);
+                      if (!Array.isArray(candidates)) candidates = [];
+                      if (!candidates.some(c => c.syncedLyrics)) {
+                        const fb = await fetch(
+                          `https://lrclib.net/api/search?q=${encodeURIComponent(`${artistName} ${t.trackName}`.trim())}`
+                        ).then(r => r.json()).catch(() => []);
+                        if (Array.isArray(fb)) candidates = [...candidates, ...fb];
+                      }
+                      const best = candidates.filter(c => c.syncedLyrics).find(c => !/\*{2,}/.test(c.syncedLyrics))
+                                || candidates.find(c => c.syncedLyrics);
+                      if (best?.syncedLyrics) {
+                        if (t.trackId) turntableLyricsCacheRef.current[t.trackId] = best.syncedLyrics;
+                        turntableLyricsCacheRef.current[t.trackName] = best.syncedLyrics;
+                        if (t.trackId) sb.from("liri_lyric_cache").upsert({
+                          itunes_track_id:      Number(t.trackId),
+                          itunes_collection_id: Number(collectionId),
+                          track_name:           t.trackName,
+                          artist_name:          artistName,
+                          album_name:           albumName,
+                          synced_lyrics:        best.syncedLyrics,
+                        }, { onConflict: "itunes_track_id" }).catch(() => {});
+                      }
+                    } catch (e) { console.warn("[lyrics fallback] failed for", t.trackName, e); }
+                    await new Promise(res => setTimeout(res, 200));
+                  }
+                  console.log("[lyrics fallback] done for", albumName);
+                }
               }).catch(() => {});
             setTurntableTracksLoading(false);
             return;
@@ -2496,12 +2533,18 @@
                   <button onClick={() => setShowAlbumPicker(false)} style={{ background:"rgba(255,255,255,0.07)", border:"none", color:"rgba(255,255,255,0.5)", width:30, height:30, borderRadius:"50%", cursor:"pointer", fontSize:14, fontFamily:"inherit" }}>✕</button>
                 </div>
                 <div style={{ overflowY:"auto", padding:"0 24px", flex:1, paddingBottom:"max(24px, env(safe-area-inset-bottom))" }}>
+                  {/* Add a record shortcut */}
+                  <a href="/app/add-vinyl.html"
+                    style={{ width:"100%", display:"flex", alignItems:"center", gap:12, padding:"12px 0", borderBottom:"1px solid rgba(255,255,255,0.04)", color:"rgba(212,168,70,0.8)", fontSize:13, textDecoration:"none", marginBottom:4 }}>
+                    <div style={{ width:44, height:44, borderRadius:8, background:"rgba(212,168,70,0.08)", border:"1px solid rgba(212,168,70,0.2)", display:"flex", alignItems:"center", justifyContent:"center", fontSize:20, flexShrink:0 }}>+</div>
+                    <span style={{ fontWeight:600 }}>Add a record</span>
+                  </a>
                   {/* Clear / none option */}
                   {turntableAlbum && (
                     <button onClick={() => { setTurntableAlbum(null); setShowAlbumPicker(false); }}
-                      style={{ width:"100%", display:"flex", alignItems:"center", gap:12, padding:"12px 0", background:"none", border:"none", borderBottom:"1px solid rgba(255,255,255,0.04)", cursor:"pointer", fontFamily:"inherit", color:"rgba(255,255,255,0.35)", fontSize:13, textAlign:"left", marginBottom:4 }}>
-                      <div style={{ width:44, height:44, borderRadius:8, background:"rgba(255,255,255,0.03)", border:"1px dashed rgba(255,255,255,0.1)", display:"flex", alignItems:"center", justifyContent:"center", fontSize:16, flexShrink:0 }}>✕</div>
-                      <span>Clear selection — use ACR fingerprinting</span>
+                      style={{ width:"100%", display:"flex", alignItems:"center", gap:12, padding:"12px 0", background:"none", border:"none", borderBottom:"1px solid rgba(255,255,255,0.04)", cursor:"pointer", fontFamily:"inherit", color:"rgba(255,255,255,0.3)", fontSize:13, textAlign:"left", marginBottom:4 }}>
+                      <div style={{ width:44, height:44, borderRadius:8, background:"rgba(255,255,255,0.03)", border:"1px dashed rgba(255,255,255,0.08)", display:"flex", alignItems:"center", justifyContent:"center", fontSize:16, flexShrink:0 }}>✕</div>
+                      <span>Clear selection</span>
                     </button>
                   )}
                   {/* Library albums */}
