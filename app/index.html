@@ -73,7 +73,7 @@
       "sb_publishable_C-NBnfg0ltAoUi46XQTUjA_ozjZW_Nd"
     );
 
-    const APP_VERSION = "1.103";
+    const APP_VERSION = "1.104";
 
     const PROXY_URL = window.Capacitor
       ? "https://getliri.app/api/recognize"
@@ -1279,15 +1279,16 @@
                   attemptLogRef.current.push(`cache: saved LRC for "${track.trackName}"`);
                 }).catch(() => {});
               }
-              // Load full tracklist for vinyl auto-advance
-              fetchAlbumTracks(track.trackName, track.artistName || "").then(({ tracks: at, collectionId }) => {
-                setAlbumTracks(at); setAlbumCollectionId(collectionId);
+              // Tracklist already in memory from album selection — no iTunes call needed
+              {
+                const at  = turntableTracksRef.current;
+                const cid = ta?.itunes_collection_id ? String(ta.itunes_collection_id) : null;
+                setAlbumTracks(at);
+                setAlbumCollectionId(cid);
                 const tIdx = at.findIndex(t => t.trackName?.toLowerCase() === track.trackName.toLowerCase());
                 setCurrentTrackIndex(tIdx >= 0 ? tIdx : 0);
-                if (collectionId) fetchVinylRelease(collectionId).then(db => {
-                  if (db?.vinyl_tracks?.length > 0) { setVinylDbRelease(db); albumTpsRef.current = 0; }
-                });
-              }).catch(() => {});
+                // vinylDbRelease already set by fetchTurntableTracks on album selection
+              }
               return true;
             }
             attemptLogRef.current.push(`whisper: vinyl-aware match failed — stopping (turntable set, not guessing)`);
