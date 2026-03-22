@@ -73,7 +73,7 @@
       "sb_publishable_C-NBnfg0ltAoUi46XQTUjA_ozjZW_Nd"
     );
 
-    const APP_VERSION = "1.94";
+    const APP_VERSION = "1.95";
 
     const PROXY_URL = window.Capacitor
       ? "https://getliri.app/api/recognize"
@@ -1672,10 +1672,13 @@
         syncStartRef.current = Date.now();
         // Jump to correct starting index immediately so the scroll effect lands on the right
         // line without smooth-scrolling from 0 (which caused a ~3s visual lag on load).
+        // Use -1 as sentinel when we're still in the intro (before the first lyric timestamp).
         const lrc0 = lyricsRef.current;
         const t0   = initialPosRef.current;
-        let initIdx = 0;
-        for (let i = 0; i < lrc0.length; i++) { if (lrc0[i].time <= t0) initIdx = i; else break; }
+        let initIdx = -1;
+        if (lrc0.length > 0 && t0 >= lrc0[0].time) {
+          for (let i = 0; i < lrc0.length; i++) { if (lrc0[i].time <= t0) initIdx = i; else break; }
+        }
         setMode("syncing"); setCurrentIndex(initIdx);
         clearInterval(syncIntervalRef.current);
         syncIntervalRef.current = setInterval(() => {
@@ -1683,6 +1686,8 @@
           setPlaybackTime(t);
           const lrc = lyricsRef.current;
           if (!lrc.length) return;
+          // Stay at -1 (no highlight) until playback reaches the first lyric timestamp
+          if (t < lrc[0].time) { setCurrentIndex(-1); return; }
           let idx = 0;
           for (let i = 0; i < lrc.length; i++) { if (lrc[i].time <= t) idx = i; else break; }
           setCurrentIndex(idx);
@@ -1699,6 +1704,7 @@
             setPlaybackTime(t);
             const lrc = lyricsRef.current;
             if (!lrc.length) return;
+            if (t < lrc[0].time) { setCurrentIndex(-1); return; }
             let idx = 0;
             for (let i = 0; i < lrc.length; i++) { if (lrc[i].time <= t) idx = i; else break; }
             setCurrentIndex(idx);
@@ -2650,7 +2656,13 @@
                 >
                   {lyrics.length > 0 ? (
                     <>
-                      {(() => {
+                      {/* Show nothing during intro (before first lyric timestamp) */}
+                      {currentIndex < 0 && (
+                        <div style={{ display:"flex", alignItems:"center", justifyContent:"center", height:"60vh" }}>
+                          <div style={{ width:6, height:6, borderRadius:"50%", background:"rgba(255,255,255,0.12)", animation:"pulse 1.5s ease-in-out infinite" }} />
+                        </div>
+                      )}
+                      {currentIndex >= 0 && (() => {
                         // Adaptive transition: scale with how long the current line lasts.
                         // Fast rap/spoken sections have lines <1s apart — a 0.4s transition
                         // overlaps and looks sluggish. Cap at 0.4s, floor at 0.1s.
@@ -2714,28 +2726,22 @@
 
               <div className="safe-bottom" style={{ padding:"12px 20px 0", flexShrink:0 }}>
 
-                {/* Nudge hint label */}
+                {/* Nudge label */}
                 <div style={{ textAlign:"center", fontSize:"10px", letterSpacing:"2px", textTransform:"uppercase", marginBottom:"8px", color: isResyncing ? "#d4a846" : "rgba(255,255,255,0.18)", animation: isResyncing ? "pulse 1.2s ease-in-out infinite" : "none" }}>
-                  {isResyncing ? "↻ listening for resync…" : nudgeMenu ? "tap to adjust more" : "early ← · behind →"}
+                  {isResyncing ? "↻ listening for resync…" : "early ← · behind →"}
                 </div>
-                {/* Nudge buttons — tap ±1s to expand ±2s/±5s, Stop is the ← Stop button in the header */}
-                <div style={{ display:"flex", justifyContent:"center", alignItems:"center", gap:"6px", marginBottom:"10px" }}>
-                  {nudgeMenu === "left" && (
-                    <>
-                      <button onClick={() => handleNudge(-5)} style={{ background:"rgba(255,255,255,0.06)", border:"1px solid rgba(255,255,255,0.08)", color:"rgba(255,255,255,0.35)", padding:"8px 11px", borderRadius:"20px", cursor:"pointer", fontSize:"11px", fontFamily:"inherit", animation:"fade-up 0.15s ease" }}>−5s</button>
-                      <button onClick={() => handleNudge(-2)} style={{ background:"rgba(255,255,255,0.06)", border:"1px solid rgba(255,255,255,0.08)", color:"rgba(255,255,255,0.35)", padding:"8px 11px", borderRadius:"20px", cursor:"pointer", fontSize:"11px", fontFamily:"inherit", animation:"fade-up 0.15s ease" }}>−2s</button>
-                      <button onClick={() => handleNudge(-0.5)} style={{ background:"rgba(255,255,255,0.06)", border:"1px solid rgba(255,255,255,0.08)", color:"rgba(255,255,255,0.35)", padding:"8px 11px", borderRadius:"20px", cursor:"pointer", fontSize:"11px", fontFamily:"inherit", animation:"fade-up 0.15s ease" }}>−0.5s</button>
-                    </>
-                  )}
-                  <button onClick={() => handleNudge(-1)} style={{ background: nudgeMenu === "left" ? "rgba(255,255,255,0.12)" : "rgba(255,255,255,0.07)", border:"1px solid rgba(255,255,255,0.15)", color:"rgba(255,255,255,0.7)", padding:"10px 20px", borderRadius:"20px", cursor:"pointer", fontSize:"14px", fontFamily:"inherit", fontWeight:"600", transition:"background 0.2s" }}>−1s</button>
-                  <button onClick={() => handleNudge(1)} style={{ background: nudgeMenu === "right" ? "rgba(255,255,255,0.12)" : "rgba(255,255,255,0.07)", border:"1px solid rgba(255,255,255,0.15)", color:"rgba(255,255,255,0.7)", padding:"10px 20px", borderRadius:"20px", cursor:"pointer", fontSize:"14px", fontFamily:"inherit", fontWeight:"600", transition:"background 0.2s" }}>+1s</button>
-                  {nudgeMenu === "right" && (
-                    <>
-                      <button onClick={() => handleNudge(0.5)} style={{ background:"rgba(255,255,255,0.06)", border:"1px solid rgba(255,255,255,0.08)", color:"rgba(255,255,255,0.35)", padding:"8px 11px", borderRadius:"20px", cursor:"pointer", fontSize:"11px", fontFamily:"inherit", animation:"fade-up 0.15s ease" }}>+0.5s</button>
-                      <button onClick={() => handleNudge(2)} style={{ background:"rgba(255,255,255,0.06)", border:"1px solid rgba(255,255,255,0.08)", color:"rgba(255,255,255,0.35)", padding:"8px 11px", borderRadius:"20px", cursor:"pointer", fontSize:"11px", fontFamily:"inherit", animation:"fade-up 0.15s ease" }}>+2s</button>
-                      <button onClick={() => handleNudge(5)} style={{ background:"rgba(255,255,255,0.06)", border:"1px solid rgba(255,255,255,0.08)", color:"rgba(255,255,255,0.35)", padding:"8px 11px", borderRadius:"20px", cursor:"pointer", fontSize:"11px", fontFamily:"inherit", animation:"fade-up 0.15s ease" }}>+5s</button>
-                    </>
-                  )}
+                {/* Nudge buttons — 2×2 grid: ±1s on top, ±0.5s below */}
+                <div style={{ display:"flex", justifyContent:"center", gap:"8px", marginBottom:"10px" }}>
+                  {/* Left column */}
+                  <div style={{ display:"flex", flexDirection:"column", gap:"5px", alignItems:"center" }}>
+                    <button onClick={() => handleNudge(-1)} style={{ background:"rgba(255,255,255,0.07)", border:"1px solid rgba(255,255,255,0.15)", color:"rgba(255,255,255,0.7)", padding:"9px 22px", borderRadius:"20px", cursor:"pointer", fontSize:"14px", fontFamily:"inherit", fontWeight:"600" }}>−1s</button>
+                    <button onClick={() => handleNudge(-0.5)} style={{ background:"rgba(255,255,255,0.04)", border:"1px solid rgba(255,255,255,0.08)", color:"rgba(255,255,255,0.4)", padding:"6px 16px", borderRadius:"16px", cursor:"pointer", fontSize:"11px", fontFamily:"inherit" }}>−0.5s</button>
+                  </div>
+                  {/* Right column */}
+                  <div style={{ display:"flex", flexDirection:"column", gap:"5px", alignItems:"center" }}>
+                    <button onClick={() => handleNudge(1)} style={{ background:"rgba(255,255,255,0.07)", border:"1px solid rgba(255,255,255,0.15)", color:"rgba(255,255,255,0.7)", padding:"9px 22px", borderRadius:"20px", cursor:"pointer", fontSize:"14px", fontFamily:"inherit", fontWeight:"600" }}>+1s</button>
+                    <button onClick={() => handleNudge(0.5)} style={{ background:"rgba(255,255,255,0.04)", border:"1px solid rgba(255,255,255,0.08)", color:"rgba(255,255,255,0.4)", padding:"6px 16px", borderRadius:"16px", cursor:"pointer", fontSize:"11px", fontFamily:"inherit" }}>+0.5s</button>
+                  </div>
                 </div>
                 {/* Action buttons */}
                 <div style={{ display:"flex", justifyContent:"center", gap:"10px", marginBottom:"8px" }}>
