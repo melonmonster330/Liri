@@ -76,7 +76,7 @@
       "sb_publishable_C-NBnfg0ltAoUi46XQTUjA_ozjZW_Nd"
     );
 
-    const APP_VERSION = "1.88";
+    const APP_VERSION = "1.89";
 
     const PROXY_URL = window.Capacitor
       ? "https://getliri.app/api/recognize"
@@ -190,22 +190,22 @@
       const [tick, setTick] = useState(0);
       useEffect(() => {
         if (!active) return;
-        const id = setInterval(() => setTick(t => t + 1), 50);
+        const id = setInterval(() => setTick(t => t + 1), 30); // 33fps — smoother, bouncier
         return () => clearInterval(id);
       }, [active]);
 
       const hasLevel = typeof level === "number";
-      // Amplitude: low floor so quiet sounds small, loud sounds tall.
-      const amp = hasLevel ? Math.max(0.07, level) : 0.6;
+      // Amplify level aggressively so even quiet mic input shows big movement
+      const amp = hasLevel ? Math.max(0.12, Math.pow(level, 0.5) * 1.4) : 0.6;
       const t = tick * 0.05;
 
       return (
         <div style={{ display:"flex", gap:`${4*size}px`, alignItems:"center", height:`${52*size}px`, justifyContent:"center" }}>
           {BAR_MULTS.map((mult, i) => {
             const phase   = i * 0.72;
-            // Each bar sways a lot — 55% of its max height swings with the sin wave.
-            const shimmer = 0.55;
-            const sinVal  = (Math.sin(t * (1.8 + i * 0.18) + phase) + 1) / 2; // 0→1
+            // 85% swing = very bouncy; each bar has its own speed for organic feel
+            const shimmer = 0.85;
+            const sinVal  = (Math.sin(t * (2.2 + i * 0.3) + phase) + 1) / 2; // 0→1
             const minH    = 3;
             const maxH    = 48 * amp * mult;
             const h       = active ? Math.max(minH, maxH * (1 - shimmer + shimmer * sinVal)) : 3;
@@ -214,7 +214,7 @@
                 width:`${3*size}px`, borderRadius:"2px",
                 background: "linear-gradient(to top, #d4a846, #c9807a)",
                 height: `${h * size}px`,
-                transition: hasLevel ? "height 0.1s ease" : "none",
+                transition: hasLevel ? "height 0.06s ease-out" : "none",
                 opacity: active ? 1 : 0.3,
               }} />
             );
@@ -1281,7 +1281,9 @@
               };
               setIdentifiedBy("whisper");
               detectedAtRef.current      = Date.now();
-              initialPosRef.current      = Math.max(0, startPos + (Date.now() - whisperSentAt) / 1000 - 1.5);
+              // Dynamic offset: startPos is where Whisper matched the lyric.
+              // Add exactly how long the API took to respond — no magic constant.
+              initialPosRef.current      = Math.max(0, startPos + (Date.now() - whisperSentAt) / 1000);
               autoAdvanceFiredRef.current = false;
               autoRetryCountRef.current  = 0;
               setDetectedSong(song);

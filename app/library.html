@@ -47,7 +47,7 @@
   <script type="text/babel">
     const { useState, useEffect, useRef, useCallback } = React;
 
-    const APP_VERSION = "1.88";
+    const APP_VERSION = "1.89";
 
     const sb = supabase.createClient(
       "https://xjdjpaxgymgbvcwmvorc.supabase.co",
@@ -281,16 +281,23 @@
       return null;
     }
 
-    // ── Small vinyl disc icon ──────────────────────────────────────────────
+    // ── Liri wordmark icon — minimal soundwave bars ────────────────────────
     function VinylDot({ size = 32 }) {
+      const s = size / 32;
       return (
         <svg width={size} height={size} viewBox="0 0 32 32" style={{ flexShrink: 0 }}>
-          <circle cx="16" cy="16" r="15" fill="#111118" />
-          <circle cx="16" cy="16" r="12.5" fill="none" stroke="rgba(255,255,255,0.07)" strokeWidth="0.9" />
-          <circle cx="16" cy="16" r="10"   fill="none" stroke="rgba(255,255,255,0.06)" strokeWidth="0.9" />
-          <circle cx="16" cy="16" r="7.5"  fill="none" stroke="rgba(255,255,255,0.05)" strokeWidth="0.9" />
-          <circle cx="16" cy="16" r="5" fill="#1e1e2e" />
-          <circle cx="16" cy="16" r="1.8" fill="#d4a846" />
+          <defs>
+            <linearGradient id="liri-grad" x1="0" y1="0" x2="0" y2="1">
+              <stop offset="0%" stopColor="#d4a846" />
+              <stop offset="100%" stopColor="#c9807a" />
+            </linearGradient>
+          </defs>
+          {/* 5-bar waveform: outer bars short, inner bars tall, center tallest */}
+          <rect x="2"  y="13" width="4" height="7"  rx="2" fill="url(#liri-grad)" opacity="0.7" />
+          <rect x="8"  y="8"  width="4" height="16" rx="2" fill="url(#liri-grad)" opacity="0.85" />
+          <rect x="14" y="4"  width="4" height="24" rx="2" fill="url(#liri-grad)" />
+          <rect x="20" y="8"  width="4" height="16" rx="2" fill="url(#liri-grad)" opacity="0.85" />
+          <rect x="26" y="13" width="4" height="7"  rx="2" fill="url(#liri-grad)" opacity="0.7" />
         </svg>
       );
     }
