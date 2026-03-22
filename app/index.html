@@ -73,7 +73,7 @@
       "sb_publishable_C-NBnfg0ltAoUi46XQTUjA_ozjZW_Nd"
     );
 
-    const APP_VERSION = "1.96";
+    const APP_VERSION = "1.97";
 
     const PROXY_URL = window.Capacitor
       ? "https://getliri.app/api/recognize"
@@ -160,15 +160,29 @@
     // Falls back to CSS animation when level === undefined (e.g. onboarding demo).
     const BAR_MULTS = [0.55, 0.85, 1.0, 0.75, 0.95, 0.65, 0.90, 0.70, 1.0, 0.60, 0.80, 0.50];
     function WaveAnimation({ active, size = 1, level }) {
-      const [tick, setTick] = useState(0);
       const hasLevel = typeof level === "number" && level > 0;
+      const [tick, setTick]   = useState(0);
+      // One delayed level per bar — each bar shows the audio from N*80ms ago,
+      // creating a rolling cascade effect instead of all bars vibrating together.
+      const [bars, setBars] = useState(() => BAR_MULTS.map(() => 0));
 
-      // Idle animation — only when no live audio level is provided
+      // Idle sine animation — runs only when there's no live audio
       useEffect(() => {
         if (!active || hasLevel) return;
         const id = setInterval(() => setTick(t => t + 1), 50);
         return () => clearInterval(id);
       }, [active, hasLevel]);
+
+      // Cascade: each bar updates after its own staggered delay
+      useEffect(() => {
+        if (!hasLevel) { setBars(BAR_MULTS.map(() => 0)); return; }
+        const timers = BAR_MULTS.map((_, i) =>
+          setTimeout(() => setBars(prev => {
+            const next = [...prev]; next[i] = level; return next;
+          }), i * 80)
+        );
+        return () => timers.forEach(clearTimeout);
+      }, [level, hasLevel]);
 
       const t = tick * 0.05;
 
@@ -179,12 +193,11 @@
             if (!active) {
               h = 3;
             } else if (hasLevel) {
-              // Audio-reactive: each bar scales directly with mic level * its multiplier.
-              // pow(0.4) = aggressive curve so quiet sounds still show movement.
-              const amp = Math.pow(level, 0.4) * 48 * mult;
+              // Each bar shows its own delayed copy of the audio level
+              const amp = Math.pow(bars[i], 0.4) * 48 * mult;
               h = Math.max(4, amp);
             } else {
-              // Idle sine wave — no audio input yet
+              // Idle sine — staggered phases so bars move independently
               const phase  = i * 0.72;
               const sinVal = (Math.sin(t * (1.8 + i * 0.18) + phase) + 1) / 2;
               h = Math.max(3, 48 * 0.55 * mult * (0.45 + 0.55 * sinVal));
@@ -194,7 +207,7 @@
                 width:`${3*size}px`, borderRadius:"2px",
                 background: "linear-gradient(to top, #d4a846, #c9807a)",
                 height: `${h * size}px`,
-                transition: hasLevel ? "height 0.08s ease-out" : "none",
+                transition: hasLevel ? "height 0.15s ease-out" : "none",
                 opacity: active ? 1 : 0.3,
               }} />
             );
@@ -347,8 +360,6 @@
       const lastRecordingRef    = useRef(null); // stores last recorded blob for debug download
       const recognitionWonRef   = useRef(false); // true once ACRCloud or Whisper wins — prevents double-set
       const [audioLevel, setAudioLevel] = useState(0); // 0–1 live mic amplitude (chunk-size proxy)
-      const ambientAnalyserRef = useRef(null);
-      const ambientTimerRef    = useRef(null);
       const [lastSong, setLastSong] = useState(null);
       const [hoverNudge, setHoverNudge] = useState(null); // null | "left" | "right"
 
@@ -841,7 +852,6 @@
       useEffect(() => {
         if (mode === "confirmed" && detectedSong) {
           startSync();
-          startAmbientMonitor();
         }
       }, [mode, detectedSong]);
 
@@ -2059,10 +2069,6 @@
 
       const reset = () => {
         clearInterval(syncIntervalRef.current); clearInterval(progressTimerRef.current);
-        clearInterval(ambientTimerRef.current); ambientTimerRef.current = null;
-        ambientAnalyserRef.current?.stream.getTracks().forEach(t => t.stop());
-        ambientAnalyserRef.current?.ctx.close().catch(() => {});
-        ambientAnalyserRef.current = null;
         streamRef.current?.getTracks().forEach(t => t.stop());
         setAudioLevel(0);
         autoAdvanceFiredRef.current = false;
@@ -2074,39 +2080,6 @@
         setShouldAdvanceTrack(false); setIsResyncing(false); setIsPaused(false); setSideEndReason("failed");
         setAlbumCollectionId(null); setVinylDbRelease(null);
         albumTpsRef.current = 0; vinylDbReleaseRef.current = null; userNudgeRef.current = 0;
-      };
-
-      const startAmbientMonitor = async () => {
-        // Don't open a second monitor if one's already running
-        if (ambientAnalyserRef.current) return;
-        try {
-          const stream = await navigator.mediaDevices.getUserMedia({
-            audio: { echoCancellation: false, noiseSuppression: false }
-          });
-          const ctx      = new (window.AudioContext || window.webkitAudioContext)();
-          const src      = ctx.createMediaStreamSource(stream);
-          const analyser = ctx.createAnalyser();
-          analyser.fftSize = 128;
-          src.connect(analyser);
-          const buf = new Uint8Array(analyser.frequencyBinCount);
-          ambientTimerRef.current = setInterval(() => {
-            analyser.getByteTimeDomainData(buf);
-            let sum = 0;
-            for (let i = 0; i < buf.length; i++) { const v = (buf[i] - 128) / 128; sum += v * v; }
-            const rms = Math.sqrt(sum / buf.length);
-            setAudioLevel(Math.min(1, rms * 5));
-          }, 50);
-          ambientAnalyserRef.current = { stream, ctx };
-        } catch {}
-      };
-
-      const stopAmbientMonitor = () => {
-        clearInterval(ambientTimerRef.current);
-        ambientTimerRef.current = null;
-        ambientAnalyserRef.current?.stream.getTracks().forEach(t => t.stop());
-        ambientAnalyserRef.current?.ctx.close().catch(() => {});
-        ambientAnalyserRef.current = null;
-        setAudioLevel(0);
       };
 
       // ── Jump to a specific track index (vinyl mode back/forward) ──
@@ -2679,7 +2652,7 @@
                       </div>
                     ) : null; })()}
                   </div>
-                  <WaveAnimation active={audioLevel > 0.02} level={audioLevel} size={0.45} />
+                  <WaveAnimation active={true} size={0.45} />
                 </div>
                 <div style={{ display:"flex", alignItems:"center", gap:"12px", marginLeft:"12px", flexShrink:0 }}>
                   {songDuration && (
@@ -2694,10 +2667,21 @@
                 </div>
               </div>
 
-              {/* Song progress bar — always visible when duration is known */}
-              <div style={{ height:"3px", background:"rgba(255,255,255,0.07)", flexShrink:0 }}>
+              {/* Song progress bar — click to seek */}
+              <div
+                style={{ height:"6px", background:"rgba(255,255,255,0.07)", flexShrink:0, cursor: songDuration ? "pointer" : "default", position:"relative" }}
+                onClick={e => {
+                  if (!songDuration) return;
+                  const r = e.currentTarget.getBoundingClientRect();
+                  const ratio = Math.max(0, Math.min(1, (e.clientX - r.left) / r.width));
+                  const targetTime = ratio * songDuration;
+                  initialPosRef.current = targetTime;
+                  syncStartRef.current  = Date.now();
+                  setPlaybackTime(targetTime);
+                }}
+              >
                 {songDuration && (
-                  <div style={{ height:"100%", background:"linear-gradient(to right, #d4a846, #c9807a)", width:`${Math.min(playbackTime/songDuration*100,100)}%`, transition:"width 0.5s linear" }} />
+                  <div style={{ height:"100%", background:"linear-gradient(to right, #d4a846, #c9807a)", width:`${Math.min(playbackTime/songDuration*100,100)}%`, transition:"width 0.5s linear", borderRadius:"0 2px 2px 0" }} />
                 )}
               </div>
 
