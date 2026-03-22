@@ -1,0 +1,202 @@
+# Liri Database Schema
+# Last updated: 2026-03-22
+#
+# Rule: ALL external API calls happen at add-vinyl time only.
+#       Turntable playback reads from these tables exclusively — no live API calls.
+
+tables:
+
+  # ── Core vinyl data ──────────────────────────────────────────────────────────
+
+  vinyl_releases:
+    purpose: Community database of vinyl pressings. One row per unique edition
+             (UK original, US pressing, 2019 remaster, etc.).
+    written_by: add-vinyl.html (on album submit)
+    read_by: index.html (turntable mode), library.html, vinyl.html
+    rls: public read · authenticated insert · submitter update · authenticated delete
+    key_columns:
+      id: uuid PRIMARY KEY
+      itunes_collection_id: text — links to iTunes; shared key across vinyl_releases, vinyl_tracks, user_vinyl_library
+      album_name: text NOT NULL
+      artist_name: text NOT NULL
+      release_year: int
+      record_label: text
+      catalog_number: text — strongest unique identifier (e.g. "PCS 7088")
+      country: text
+      edition: text — e.g. "Target Exclusive", "Box Set"
+      version_note: text — e.g. "Red vinyl", "2023 Remaster"
+      disc_count: int DEFAULT 1
+      artwork_url: text
+      submitted_by: uuid → auth.users
+      is_verified: boolean DEFAULT false — manually verified by Liri team
+
+  vinyl_tracks:
+    purpose: Track listing for a pressing with exact side/position data.
+             This is the ground truth for turntable auto-advance and side-flip detection.
+    written_by: add-vinyl.html (on album submit; old rows deleted and re-inserted)
+    read_by: index.html (turntable mode), library.html, vinyl.html
+    rls: public read · authenticated insert/delete
+    key_columns:
+      id: uuid PRIMARY KEY
+      release_id: uuid → vinyl_releases (CASCADE delete)
+      disc_number: int — which LP (1, 2, 3…)
+      side: text — "A", "B", "C", "D"…
+      position: text — "A1", "A2", "B1"… (vinyl convention)
+      track_number_on_side: int — 1, 2, 3… within the side
+      title: text NOT NULL
+      duration_ms: int — from iTunes
+      itunes_track_id: text — nullable; used to key into liri_lyric_cache
+
+  user_vinyl_library:
+    purpose: Each user's personal "my records" list. Powers the turntable album picker.
+             Lightweight — just needs an iTunes collection ID, no vinyl_releases dependency.
+    written_by: add-vinyl.html (upsert on album submit)
+    read_by: index.html (album picker on load)
+    rls: users manage only their own rows (ALL operations)
+    key_columns:
+      id: uuid PRIMARY KEY
+      user_id: uuid → auth.users (CASCADE delete)
+      itunes_collection_id: text NOT NULL
+      album_name: text NOT NULL
+      artist_name: text NOT NULL
+      artwork_url: text
+      added_at: timestamptz DEFAULT now()
+    constraints:
+      - UNIQUE (user_id, itunes_collection_id)
+
+  liri_lyric_cache:
+    purpose: Synced LRC-format lyrics cached per track, shared across all users.
+             Populated at add-vinyl time (sequential, 300ms between tracks to avoid LRCLib rate limits).
+             Turntable mode loads this entire album's lyrics on album selection — no LRCLib calls at play time.
+    written_by: add-vinyl.html (background task after album is saved)
+    read_by: index.html (loaded into turntableLyricsCacheRef on album select), match-track.py (API)
+    rls: public read · authenticated insert/update
+    key_columns:
+      itunes_track_id: bigint PRIMARY KEY — numeric iTunes trackId
+      itunes_collection_id: bigint NOT NULL — numeric iTunes collectionId
+      track_name: text NOT NULL
+      artist_name: text NOT NULL
+      album_name: text
+      track_number: int
+      disc_number: int
+      synced_lyrics: text NOT NULL — LRC format ("[mm:ss.xx] lyric line")
+      cached_at: timestamptz DEFAULT now()
+    note: itunes_track_id and itunes_collection_id are bigint here (numeric from iTunes API).
+          Elsewhere (vinyl_releases, user_vinyl_library) these IDs are stored as text.
+          Postgres casts automatically, but be consistent when querying.
+
+  # ── Per-user data ─────────────────────────────────────────────────────────────
+
+  user_usage:
+    purpose: Freemium recognition counter. 10 free recognitions per account.
+             test@test.com is hardcoded as unlimited in the app.
+    written_by: index.html (insert on first use, upsert on every recognition)
+    read_by: index.html (on auth load)
+    rls: users read/write only their own row
+    key_columns:
+      user_id: uuid PRIMARY KEY → auth.users (CASCADE delete)
+      recognition_count: int NOT NULL DEFAULT 0
+      updated_at: timestamptz DEFAULT now()
+
+  song_history:
+    purpose: Per-user listening history. Last 50 entries shown in the sidebar.
+    written_by: index.html (insert on every recognition and auto-advance)
+    read_by: index.html (fetched on load and after each recognition)
+    rls: users manage only their own rows (ALL operations)
+    key_columns:
+      id: uuid PRIMARY KEY
+      user_id: uuid NOT NULL → auth.users (CASCADE delete)
+      title: text NOT NULL
+      artist: text NOT NULL
+      album: text
+      artwork_url: text
+      listened_at: timestamptz DEFAULT now()
+
+  # ── Analytics ─────────────────────────────────────────────────────────────────
+
+  listening_events:
+    purpose: Full analytics log. Every recognition and auto-advance is appended here.
+             Never updated or deleted. Used by get_collection_play_counts() RPC
+             to sort albums by most-played in vinyl.html.
+    written_by: index.html (insert only)
+    read_by: vinyl.html (via get_collection_play_counts RPC)
+    rls: authenticated insert · users read own rows
+    key_columns:
+      id: uuid PRIMARY KEY
+      user_id: uuid → auth.users (SET NULL on delete)
+      session_id: text — random UUID generated per app session
+      track_title: text NOT NULL
+      artist_name: text
+      album_name: text
+      artwork_url: text
+      genre: text
+      itunes_track_id: bigint
+      itunes_collection_id: bigint
+      vinyl_release_id: uuid → vinyl_releases (SET NULL on delete)
+      vinyl_mode_on: boolean DEFAULT false
+      source: text — "recognition" | "auto_advance"
+      platform: text — "web" | "ios"
+      country_code: text
+      playback_offset_s: int — where in the track Whisper/ACR identified
+      track_duration_s: int
+      acr_confidence: numeric
+      logged_at: timestamptz DEFAULT now()
+
+  flip_events:
+    purpose: Analytics log for vinyl side flips. Appended when a side change is detected
+             (user-triggered or heuristic). Used to understand vinyl interaction patterns.
+    written_by: index.html (insert only)
+    read_by: not currently read by any app page
+    rls: authenticated insert · users read own rows
+    key_columns:
+      id: uuid PRIMARY KEY
+      user_id: uuid → auth.users (SET NULL on delete)
+      session_id: text
+      vinyl_release_id: uuid → vinyl_releases (SET NULL on delete)
+      itunes_collection_id: bigint
+      album_name: text
+      artist_name: text
+      from_side: text — e.g. "A"
+      to_side: text — e.g. "B"
+      detection_method: text — "heuristic" | "user_confirmed"
+      logged_at: timestamptz DEFAULT now()
+
+  # ── Real-time / casting ───────────────────────────────────────────────────────
+
+  cast_sessions:
+    purpose: Real-time sync state for Chromecast and TV browser receivers.
+             One row per room_code. Upserted when a song is identified,
+             updated when user nudges playback timing.
+    written_by: index.html (upsert on recognition, update on nudge)
+    read_by: TV receiver page (via Supabase Realtime subscription)
+    rls: public read · authenticated insert/update
+    key_columns:
+      room_code: text PRIMARY KEY — short code displayed on TV screen
+      user_id: uuid → auth.users (SET NULL on delete)
+      song_title: text
+      song_artist: text
+      artwork_url: text
+      lyrics_json: jsonb — parsed LRC array sent to TV
+      initial_position: numeric — playback offset in seconds
+      detected_at: timestamptz
+      is_active: boolean DEFAULT true
+      updated_at: timestamptz DEFAULT now()
+
+# ── RPCs ──────────────────────────────────────────────────────────────────────
+
+rpcs:
+
+  get_collection_play_counts:
+    purpose: Returns play count per itunes_collection_id from listening_events.
+             Used by vinyl.html to sort a user's library by most-played.
+    returns: TABLE(collection_id text, play_count bigint)
+    reads_from: listening_events
+    called_by: vinyl.html
+
+# ── Removed tables ────────────────────────────────────────────────────────────
+
+removed:
+  user_vinyl_collections:
+    reason: Never referenced anywhere in the app. Was a placeholder for a future
+            "tag records you own" feature. Removed to keep the schema clean.
+            Can be re-added if the feature is built.
