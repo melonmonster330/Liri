@@ -73,7 +73,7 @@
       "sb_publishable_C-NBnfg0ltAoUi46XQTUjA_ozjZW_Nd"
     );
 
-    const APP_VERSION = "1.101";
+    const APP_VERSION = "1.102";
 
     const PROXY_URL = window.Capacitor
       ? "https://getliri.app/api/recognize"
@@ -192,18 +192,19 @@
             }
             an.getByteFrequencyData(freqBuf);
             const bins = freqBuf.length;
-            // Spread all bars across the musically active range only (~0–40% of bins).
-            // At 44100Hz / fftSize 256: bin 0 ≈ 0Hz, bin 51 ≈ 8.8kHz — where all the
-            // musical energy lives. Avoids the dead high-frequency bins that looked like dots.
-            const maxBin = Math.floor(bins * 0.42);
+            // Focus on bass + low-mids only (bins 1–22, roughly 170Hz–3.8kHz).
+            // These are the sustained, energy-rich frequencies that bounce smoothly
+            // with the beat. High-freq bins flicker too fast and cause jitter.
+            // Average 2 adjacent bins per bar to further reduce noise.
+            const firstBin = 1, lastBin = Math.min(bins - 2, 22);
             BAR_MULTS.forEach((mult, i) => {
-              const binIdx = Math.min(maxBin, Math.floor((i / (n - 1)) * maxBin));
-              const raw  = freqBuf[binIdx] / 255;
+              const binIdx = Math.round(firstBin + (i / (n - 1)) * (lastBin - firstBin));
+              const raw  = ((freqBuf[binIdx] + freqBuf[binIdx + 1]) / 2) / 255;
               const prev = smoothRef.current[i];
               smoothRef.current[i] = raw > prev
-                ? prev + (raw - prev) * 0.45  // punchy attack
-                : prev * 0.92;                 // smooth release
-              const h = Math.max(4, Math.pow(smoothRef.current[i], 0.38) * 58 * mult) * size;
+                ? prev + (raw - prev) * 0.2   // gentle attack — no jitter
+                : prev * 0.94;                 // slow, smooth release
+              const h = Math.max(4, Math.pow(smoothRef.current[i], 0.38) * 60 * mult) * size;
               if (barRefs.current[i]) barRefs.current[i].style.height = h + "px";
             });
 
@@ -1519,7 +1520,7 @@
             const src  = actx.createMediaStreamSource(stream);
             const node = actx.createAnalyser();
             node.fftSize = 256;              // 128 frequency bins
-            node.smoothingTimeConstant = 0.6; // mild built-in smoothing
+            node.smoothingTimeConstant = 0.85; // heavy built-in smoothing — kills frame-to-frame jitter
             src.connect(node);
             analyserNodeRef.current = node;
             audioCtxRef.current     = actx;
