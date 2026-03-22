@@ -73,7 +73,7 @@
       "sb_publishable_C-NBnfg0ltAoUi46XQTUjA_ozjZW_Nd"
     );
 
-    const APP_VERSION = "1.95";
+    const APP_VERSION = "1.96";
 
     const PROXY_URL = window.Capacitor
       ? "https://getliri.app/api/recognize"
@@ -347,6 +347,10 @@
       const lastRecordingRef    = useRef(null); // stores last recorded blob for debug download
       const recognitionWonRef   = useRef(false); // true once ACRCloud or Whisper wins — prevents double-set
       const [audioLevel, setAudioLevel] = useState(0); // 0–1 live mic amplitude (chunk-size proxy)
+      const ambientAnalyserRef = useRef(null);
+      const ambientTimerRef    = useRef(null);
+      const [lastSong, setLastSong] = useState(null);
+      const [hoverNudge, setHoverNudge] = useState(null); // null | "left" | "right"
 
       useEffect(() => { lyricsRef.current = lyrics; }, [lyrics]);
       useEffect(() => { albumTracksRef.current = albumTracks; }, [albumTracks]);
@@ -834,7 +838,12 @@
       }, [mode]);
 
       // ── Auto-start sync after detection ──
-      useEffect(() => { if (mode === "confirmed" && detectedSong) startSync(); }, [mode, detectedSong]);
+      useEffect(() => {
+        if (mode === "confirmed" && detectedSong) {
+          startSync();
+          startAmbientMonitor();
+        }
+      }, [mode, detectedSong]);
 
       // ── Scroll to current lyric (skip if user is manually browsing) ──
       useEffect(() => {
@@ -917,6 +926,7 @@
                 showAlbumEndPushNotification(detectedSong);
                 setSideEndReason("album-end");
               }
+              if (detectedSong) setLastSong(detectedSong);
               setMode("side-end");
             }, 3000);
           } else {
@@ -939,6 +949,7 @@
           advanceToNextTrack(tracks, idx);
         } else {
           setSideEndReason("flip");
+          if (detectedSong) setLastSong(detectedSong);
           setMode("side-end");
         }
       }, [shouldAdvanceTrack]);
@@ -1401,6 +1412,7 @@
           } else {
             autoRetryCountRef.current = 0;
             setSideEndReason("failed");
+            if (detectedSong) setLastSong(detectedSong);
             setMode("side-end");
           }
         } else {
@@ -1920,6 +1932,7 @@
         if (isLastTrack) {
           showAlbumEndPushNotification(detectedSong);
           setSideEndReason("album-end");
+          if (detectedSong) setLastSong(detectedSong);
           setMode("side-end");
           return;
         }
@@ -1944,6 +1957,7 @@
             method,
           });
 
+          if (detectedSong) setLastSong(detectedSong);
           setMode("side-end");
           return;
         }
@@ -2045,16 +2059,54 @@
 
       const reset = () => {
         clearInterval(syncIntervalRef.current); clearInterval(progressTimerRef.current);
+        clearInterval(ambientTimerRef.current); ambientTimerRef.current = null;
+        ambientAnalyserRef.current?.stream.getTracks().forEach(t => t.stop());
+        ambientAnalyserRef.current?.ctx.close().catch(() => {});
+        ambientAnalyserRef.current = null;
         streamRef.current?.getTracks().forEach(t => t.stop());
         setAudioLevel(0);
         autoAdvanceFiredRef.current = false;
         autoRetryCountRef.current = 0;
+        if (detectedSong) setLastSong(detectedSong);
         setMode("idle"); setDetectedSong(null); setIdentifiedBy(null); setSongDuration(null); setLyrics([]);
         setCurrentIndex(0); setError(null); setListenProgress(0); setPlaybackTime(0);
         setAlbumTracks([]); setCurrentTrackIndex(-1);
         setShouldAdvanceTrack(false); setIsResyncing(false); setIsPaused(false); setSideEndReason("failed");
         setAlbumCollectionId(null); setVinylDbRelease(null);
         albumTpsRef.current = 0; vinylDbReleaseRef.current = null; userNudgeRef.current = 0;
+      };
+
+      const startAmbientMonitor = async () => {
+        // Don't open a second monitor if one's already running
+        if (ambientAnalyserRef.current) return;
+        try {
+          const stream = await navigator.mediaDevices.getUserMedia({
+            audio: { echoCancellation: false, noiseSuppression: false }
+          });
+          const ctx      = new (window.AudioContext || window.webkitAudioContext)();
+          const src      = ctx.createMediaStreamSource(stream);
+          const analyser = ctx.createAnalyser();
+          analyser.fftSize = 128;
+          src.connect(analyser);
+          const buf = new Uint8Array(analyser.frequencyBinCount);
+          ambientTimerRef.current = setInterval(() => {
+            analyser.getByteTimeDomainData(buf);
+            let sum = 0;
+            for (let i = 0; i < buf.length; i++) { const v = (buf[i] - 128) / 128; sum += v * v; }
+            const rms = Math.sqrt(sum / buf.length);
+            setAudioLevel(Math.min(1, rms * 5));
+          }, 50);
+          ambientAnalyserRef.current = { stream, ctx };
+        } catch {}
+      };
+
+      const stopAmbientMonitor = () => {
+        clearInterval(ambientTimerRef.current);
+        ambientTimerRef.current = null;
+        ambientAnalyserRef.current?.stream.getTracks().forEach(t => t.stop());
+        ambientAnalyserRef.current?.ctx.close().catch(() => {});
+        ambientAnalyserRef.current = null;
+        setAudioLevel(0);
       };
 
       // ── Jump to a specific track index (vinyl mode back/forward) ──
@@ -2627,6 +2679,7 @@
                       </div>
                     ) : null; })()}
                   </div>
+                  <WaveAnimation active={audioLevel > 0.02} level={audioLevel} size={0.45} />
                 </div>
                 <div style={{ display:"flex", alignItems:"center", gap:"12px", marginLeft:"12px", flexShrink:0 }}>
                   {songDuration && (
@@ -2728,19 +2781,29 @@
 
                 {/* Nudge label */}
                 <div style={{ textAlign:"center", fontSize:"10px", letterSpacing:"2px", textTransform:"uppercase", marginBottom:"8px", color: isResyncing ? "#d4a846" : "rgba(255,255,255,0.18)", animation: isResyncing ? "pulse 1.2s ease-in-out infinite" : "none" }}>
-                  {isResyncing ? "↻ listening for resync…" : "early ← · behind →"}
+                  {isResyncing ? "↻ listening for resync…" : "← early · behind →"}
                 </div>
-                {/* Nudge buttons — 2×2 grid: ±1s on top, ±0.5s below */}
+                {/* Nudge buttons — ±1s always visible; ±0.5s appears below on hover/touch */}
                 <div style={{ display:"flex", justifyContent:"center", gap:"8px", marginBottom:"10px" }}>
                   {/* Left column */}
-                  <div style={{ display:"flex", flexDirection:"column", gap:"5px", alignItems:"center" }}>
+                  <div style={{ display:"flex", flexDirection:"column", gap:"5px", alignItems:"center" }}
+                    onPointerEnter={() => setHoverNudge("left")}
+                    onPointerLeave={() => setHoverNudge(null)}
+                  >
                     <button onClick={() => handleNudge(-1)} style={{ background:"rgba(255,255,255,0.07)", border:"1px solid rgba(255,255,255,0.15)", color:"rgba(255,255,255,0.7)", padding:"9px 22px", borderRadius:"20px", cursor:"pointer", fontSize:"14px", fontFamily:"inherit", fontWeight:"600" }}>−1s</button>
-                    <button onClick={() => handleNudge(-0.5)} style={{ background:"rgba(255,255,255,0.04)", border:"1px solid rgba(255,255,255,0.08)", color:"rgba(255,255,255,0.4)", padding:"6px 16px", borderRadius:"16px", cursor:"pointer", fontSize:"11px", fontFamily:"inherit" }}>−0.5s</button>
+                    {hoverNudge === "left" && (
+                      <button onClick={() => handleNudge(-0.5)} style={{ background:"rgba(255,255,255,0.04)", border:"1px solid rgba(255,255,255,0.08)", color:"rgba(255,255,255,0.4)", padding:"6px 16px", borderRadius:"16px", cursor:"pointer", fontSize:"11px", fontFamily:"inherit", animation:"fade-up 0.12s ease" }}>−0.5s</button>
+                    )}
                   </div>
                   {/* Right column */}
-                  <div style={{ display:"flex", flexDirection:"column", gap:"5px", alignItems:"center" }}>
+                  <div style={{ display:"flex", flexDirection:"column", gap:"5px", alignItems:"center" }}
+                    onPointerEnter={() => setHoverNudge("right")}
+                    onPointerLeave={() => setHoverNudge(null)}
+                  >
                     <button onClick={() => handleNudge(1)} style={{ background:"rgba(255,255,255,0.07)", border:"1px solid rgba(255,255,255,0.15)", color:"rgba(255,255,255,0.7)", padding:"9px 22px", borderRadius:"20px", cursor:"pointer", fontSize:"14px", fontFamily:"inherit", fontWeight:"600" }}>+1s</button>
-                    <button onClick={() => handleNudge(0.5)} style={{ background:"rgba(255,255,255,0.04)", border:"1px solid rgba(255,255,255,0.08)", color:"rgba(255,255,255,0.4)", padding:"6px 16px", borderRadius:"16px", cursor:"pointer", fontSize:"11px", fontFamily:"inherit" }}>+0.5s</button>
+                    {hoverNudge === "right" && (
+                      <button onClick={() => handleNudge(0.5)} style={{ background:"rgba(255,255,255,0.04)", border:"1px solid rgba(255,255,255,0.08)", color:"rgba(255,255,255,0.4)", padding:"6px 16px", borderRadius:"16px", cursor:"pointer", fontSize:"11px", fontFamily:"inherit", animation:"fade-up 0.12s ease" }}>+0.5s</button>
+                    )}
                   </div>
                 </div>
                 {/* Action buttons */}
@@ -2823,6 +2886,14 @@
                 {mode === "idle" && (
                   <div style={{ animation:"fade-up 0.5s ease both", width:"100%", maxWidth:"320px" }}>
                     <Vinyl size={130} spinning={false} />
+
+                    {lastSong && (
+                      <div style={{ marginBottom:"20px", padding:"10px 14px", background:"rgba(255,255,255,0.03)", border:"1px solid rgba(255,255,255,0.06)", borderRadius:"14px", textAlign:"left" }}>
+                        <div style={{ fontSize:"10px", letterSpacing:"2px", textTransform:"uppercase", color:"rgba(255,255,255,0.2)", marginBottom:"6px" }}>Last played</div>
+                        <div style={{ fontSize:"14px", fontWeight:"600", color:"rgba(255,255,255,0.7)", overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>{lastSong.title}</div>
+                        <div style={{ fontSize:"12px", color:"rgba(255,255,255,0.3)", marginTop:"2px" }}>{lastSong.artist}</div>
+                      </div>
+                    )}
 
                     {/* ── Turntable album selector ── */}
                     <div style={{ marginTop:"32px", marginBottom:"24px" }}>
@@ -2974,6 +3045,11 @@
                           Flip your record, drop the needle,<br/>then tap Listen.
                         </div>
                         <button onClick={() => { reset(); setTimeout(() => startListening(false), 300); }} style={{ background:"linear-gradient(135deg, #d4a846, #c9807a)", color:"#080810", border:"none", borderRadius:"50px", padding:"14px 36px", fontSize:"14px", fontWeight:"700", cursor:"pointer", fontFamily:"inherit" }}>Flip &amp; Listen →</button>
+                        {lastSong && (
+                          <button onClick={() => setMode("idle")} style={{ marginTop:"12px", background:"none", border:"none", color:"rgba(255,255,255,0.25)", fontSize:"13px", cursor:"pointer", fontFamily:"inherit" }}>
+                            ← Back
+                          </button>
+                        )}
                       </>
                     )}
                     {sideEndReason === "album-end" && (
@@ -2983,6 +3059,11 @@
                           You've reached the end.<br/>Put on another record to keep going.
                         </div>
                         <button onClick={reset} style={{ background:"linear-gradient(135deg, #d4a846, #c9807a)", color:"#080810", border:"none", borderRadius:"50px", padding:"14px 36px", fontSize:"14px", fontWeight:"700", cursor:"pointer", fontFamily:"inherit" }}>New Record →</button>
+                        {lastSong && (
+                          <button onClick={() => setMode("idle")} style={{ marginTop:"12px", background:"none", border:"none", color:"rgba(255,255,255,0.25)", fontSize:"13px", cursor:"pointer", fontFamily:"inherit" }}>
+                            ← Back
+                          </button>
+                        )}
                       </>
                     )}
                     {sideEndReason === "failed" && (
@@ -2992,6 +3073,11 @@
                           Couldn't detect another track.<br/>Flip your record and tap Listen to continue.
                         </div>
                         <button onClick={reset} style={{ background:"linear-gradient(135deg, #d4a846, #c9807a)", color:"#080810", border:"none", borderRadius:"50px", padding:"14px 36px", fontSize:"14px", fontWeight:"700", cursor:"pointer", fontFamily:"inherit" }}>← Back</button>
+                        {lastSong && (
+                          <button onClick={() => setMode("idle")} style={{ marginTop:"12px", background:"none", border:"none", color:"rgba(255,255,255,0.25)", fontSize:"13px", cursor:"pointer", fontFamily:"inherit" }}>
+                            ← Back
+                          </button>
+                        )}
                       </>
                     )}
                   </div>
