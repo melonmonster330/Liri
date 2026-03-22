@@ -76,7 +76,7 @@
       "sb_publishable_C-NBnfg0ltAoUi46XQTUjA_ozjZW_Nd"
     );
 
-    const APP_VERSION = "1.86";
+    const APP_VERSION = "1.87";
 
     const PROXY_URL = window.Capacitor
       ? "https://getliri.app/api/recognize"
@@ -2891,12 +2891,14 @@
                     <>
                       <button onClick={() => handleNudge(-5)} style={{ background:"rgba(255,255,255,0.06)", border:"1px solid rgba(255,255,255,0.08)", color:"rgba(255,255,255,0.35)", padding:"8px 11px", borderRadius:"20px", cursor:"pointer", fontSize:"11px", fontFamily:"inherit", animation:"fade-up 0.15s ease" }}>−5s</button>
                       <button onClick={() => handleNudge(-2)} style={{ background:"rgba(255,255,255,0.06)", border:"1px solid rgba(255,255,255,0.08)", color:"rgba(255,255,255,0.35)", padding:"8px 11px", borderRadius:"20px", cursor:"pointer", fontSize:"11px", fontFamily:"inherit", animation:"fade-up 0.15s ease" }}>−2s</button>
+                      <button onClick={() => handleNudge(-0.5)} style={{ background:"rgba(255,255,255,0.06)", border:"1px solid rgba(255,255,255,0.08)", color:"rgba(255,255,255,0.35)", padding:"8px 11px", borderRadius:"20px", cursor:"pointer", fontSize:"11px", fontFamily:"inherit", animation:"fade-up 0.15s ease" }}>−0.5s</button>
                     </>
                   )}
                   <button onClick={() => handleNudge(-1)} style={{ background: nudgeMenu === "left" ? "rgba(255,255,255,0.12)" : "rgba(255,255,255,0.07)", border:"1px solid rgba(255,255,255,0.15)", color:"rgba(255,255,255,0.7)", padding:"10px 20px", borderRadius:"20px", cursor:"pointer", fontSize:"14px", fontFamily:"inherit", fontWeight:"600", transition:"background 0.2s" }}>−1s</button>
                   <button onClick={() => handleNudge(1)} style={{ background: nudgeMenu === "right" ? "rgba(255,255,255,0.12)" : "rgba(255,255,255,0.07)", border:"1px solid rgba(255,255,255,0.15)", color:"rgba(255,255,255,0.7)", padding:"10px 20px", borderRadius:"20px", cursor:"pointer", fontSize:"14px", fontFamily:"inherit", fontWeight:"600", transition:"background 0.2s" }}>+1s</button>
                   {nudgeMenu === "right" && (
                     <>
+                      <button onClick={() => handleNudge(0.5)} style={{ background:"rgba(255,255,255,0.06)", border:"1px solid rgba(255,255,255,0.08)", color:"rgba(255,255,255,0.35)", padding:"8px 11px", borderRadius:"20px", cursor:"pointer", fontSize:"11px", fontFamily:"inherit", animation:"fade-up 0.15s ease" }}>+0.5s</button>
                       <button onClick={() => handleNudge(2)} style={{ background:"rgba(255,255,255,0.06)", border:"1px solid rgba(255,255,255,0.08)", color:"rgba(255,255,255,0.35)", padding:"8px 11px", borderRadius:"20px", cursor:"pointer", fontSize:"11px", fontFamily:"inherit", animation:"fade-up 0.15s ease" }}>+2s</button>
                       <button onClick={() => handleNudge(5)} style={{ background:"rgba(255,255,255,0.06)", border:"1px solid rgba(255,255,255,0.08)", color:"rgba(255,255,255,0.35)", padding:"8px 11px", borderRadius:"20px", cursor:"pointer", fontSize:"11px", fontFamily:"inherit", animation:"fade-up 0.15s ease" }}>+5s</button>
                     </>
