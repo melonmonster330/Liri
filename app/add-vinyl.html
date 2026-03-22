@@ -46,7 +46,7 @@
   <script type="text/babel">
     const { useState, useEffect, useRef, useCallback } = React;
 
-    const APP_VERSION = "1.78";
+    const APP_VERSION = "1.79";
 
     const sb = supabase.createClient(
       "https://xjdjpaxgymgbvcwmvorc.supabase.co",
@@ -338,6 +338,15 @@
           }
           console.log(`[lyrics cache] done: ${cached}/${eligibleTracks.length} tracks cached for "${albumName}"`);
           setCacheProgress(null);
+          // Auto-select this album on the turntable when the user returns to Liri
+          try {
+            localStorage.setItem("liri_turntable", JSON.stringify({
+              itunes_collection_id: collectionIdStr,
+              album_name:  albumName,
+              artist_name: artistName,
+              artwork_url: artworkUrl,
+            }));
+          } catch {}
           setDone(true);
         } catch (e) {
           setSubmitError(e.message || 'Something went wrong. Please try again.');
