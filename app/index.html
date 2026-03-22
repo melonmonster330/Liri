@@ -73,7 +73,7 @@
       "sb_publishable_C-NBnfg0ltAoUi46XQTUjA_ozjZW_Nd"
     );
 
-    const APP_VERSION = "2.00";
+    const APP_VERSION = "2.01";
 
     const PROXY_URL = window.Capacitor
       ? "https://getliri.app/api/recognize"
@@ -156,64 +156,93 @@
       );
     }
 
-    // level: 0–1 real mic amplitude. When > 0 the bars are driven by actual audio.
-    // Falls back to CSS animation when level === undefined (e.g. onboarding demo).
+    // WaveAnimation — frequency-domain visualiser.
+    // When analyserRef.current is set: reads live frequency bins via rAF (60fps).
+    // Falls back to chunk-size history stagger when no analyser (iOS fallback).
+    // Falls back to idle sine when no audio at all.
+    // Updates DOM directly via refs — no setState in the rAF loop.
     const BAR_MULTS = [0.55, 0.85, 1.0, 0.75, 0.95, 0.65, 0.90, 0.70, 1.0, 0.60, 0.80, 0.50];
-    function WaveAnimation({ active, size = 1, level }) {
-      const hasLevel = typeof level === "number" && level > 0;
-      const [tick, setTick] = useState(0);
-      // Rolling history: index 0 = most recent, index N = N steps ago.
-      // Each new audio value shifts history forward so bars show different
-      // moments in time — no timeouts, no cancellation races.
-      const historyRef = useRef(new Array(BAR_MULTS.length).fill(0));
-      const [history, setHistory] = useState(() => new Array(BAR_MULTS.length).fill(0));
+    function WaveAnimation({ active, size = 1, analyserRef, level }) {
+      const barRefs   = useRef([]);
+      const rafRef    = useRef(null);
+      const smoothRef = useRef(new Float32Array(BAR_MULTS.length));
+      const histRef   = useRef([]); // { t, v } for chunk-size fallback
 
-      // Idle sine animation
+      // Build timestamped history from chunk-size level prop (fallback path)
       useEffect(() => {
-        if (!active || hasLevel) return;
-        const id = setInterval(() => setTick(t => t + 1), 50);
-        return () => clearInterval(id);
-      }, [active, hasLevel]);
-
-      // Push new level into history on every update
-      useEffect(() => {
-        if (!hasLevel) {
-          historyRef.current = new Array(BAR_MULTS.length).fill(0);
-          setHistory([...historyRef.current]);
-          return;
-        }
-        historyRef.current = [level, ...historyRef.current.slice(0, BAR_MULTS.length - 1)];
-        setHistory([...historyRef.current]);
+        if (!level || level <= 0) { histRef.current = []; return; }
+        const now = Date.now();
+        histRef.current.push({ t: now, v: level });
+        histRef.current = histRef.current.filter(e => now - e.t < 3000);
       }, [level]);
 
-      const t = tick * 0.05;
+      useEffect(() => {
+        if (!active) { cancelAnimationFrame(rafRef.current); return; }
+        let freqBuf = null;
+        const n = BAR_MULTS.length;
+
+        const tick = () => {
+          const an  = analyserRef?.current;
+          const now = Date.now();
+
+          if (an) {
+            // ── Frequency bins (AnalyserNode) ──────────────────────────────────
+            if (!freqBuf || freqBuf.length !== an.frequencyBinCount) {
+              freqBuf = new Uint8Array(an.frequencyBinCount);
+            }
+            an.getByteFrequencyData(freqBuf);
+            const bins = freqBuf.length;
+            BAR_MULTS.forEach((mult, i) => {
+              // Log-scale bin mapping: more bars in bass/mids, fewer in treble
+              const binIdx = Math.min(bins - 1,
+                Math.floor(Math.pow(i / (n - 1), 1.6) * bins * 0.8));
+              const raw  = freqBuf[binIdx] / 255;
+              const prev = smoothRef.current[i];
+              smoothRef.current[i] = raw > prev
+                ? prev + (raw - prev) * 0.4   // fast attack
+                : prev * 0.88;                 // slow release
+              const h = Math.max(4, Math.pow(smoothRef.current[i], 0.5) * 48 * mult) * size;
+              if (barRefs.current[i]) barRefs.current[i].style.height = h + "px";
+            });
+
+          } else if (histRef.current.length > 0) {
+            // ── Chunk-size stagger fallback ─────────────────────────────────────
+            BAR_MULTS.forEach((mult, i) => {
+              const targetT = now - i * 150;
+              let v = histRef.current[0].v;
+              for (const e of histRef.current) { if (e.t <= targetT) v = e.v; else break; }
+              const prev = smoothRef.current[i];
+              smoothRef.current[i] = v > prev ? prev + (v - prev) * 0.35 : prev * 0.90;
+              const h = Math.max(4, Math.pow(smoothRef.current[i], 0.45) * 48 * mult) * size;
+              if (barRefs.current[i]) barRefs.current[i].style.height = h + "px";
+            });
+
+          } else {
+            // ── Idle sine — bars have staggered phases so they move independently ─
+            const t = now * 0.001;
+            BAR_MULTS.forEach((mult, i) => {
+              const sinVal = (Math.sin(t * (1.8 + i * 0.18) + i * 0.72) + 1) / 2;
+              const h = Math.max(3, 48 * 0.55 * mult * (0.45 + 0.55 * sinVal)) * size;
+              if (barRefs.current[i]) barRefs.current[i].style.height = h + "px";
+            });
+          }
+
+          rafRef.current = requestAnimationFrame(tick);
+        };
+        rafRef.current = requestAnimationFrame(tick);
+        return () => cancelAnimationFrame(rafRef.current);
+      }, [active]);
 
       return (
         <div style={{ display:"flex", gap:`${4*size}px`, alignItems:"center", height:`${52*size}px`, justifyContent:"center" }}>
-          {BAR_MULTS.map((mult, i) => {
-            let h;
-            if (!active) {
-              h = 3;
-            } else if (hasLevel) {
-              // Bar i shows audio level from i steps ago — true time-history cascade
-              const amp = Math.pow(history[i] || 0, 0.4) * 48 * mult;
-              h = Math.max(4, amp);
-            } else {
-              // Idle sine — each bar has a different phase so they move independently
-              const phase  = i * 0.72;
-              const sinVal = (Math.sin(t * (1.8 + i * 0.18) + phase) + 1) / 2;
-              h = Math.max(3, 48 * 0.55 * mult * (0.45 + 0.55 * sinVal));
-            }
-            return (
-              <div key={i} style={{
-                width:`${3*size}px`, borderRadius:"2px",
-                background: "linear-gradient(to top, #d4a846, #c9807a)",
-                height: `${h * size}px`,
-                transition: hasLevel ? "height 0.15s ease-out" : "none",
-                opacity: active ? 1 : 0.3,
-              }} />
-            );
-          })}
+          {BAR_MULTS.map((mult, i) => (
+            <div key={i} ref={el => barRefs.current[i] = el} style={{
+              width:`${3*size}px`, borderRadius:"2px",
+              background:"linear-gradient(to top, #d4a846, #c9807a)",
+              height:`${3 * size}px`,
+              opacity: active ? 1 : 0.3,
+            }} />
+          ))}
         </div>
       );
     }
@@ -344,6 +373,8 @@
 
       // ── Refs ──
       const streamRef           = useRef(null);
+      const analyserNodeRef     = useRef(null); // AnalyserNode for frequency-bar wave
+      const audioCtxRef         = useRef(null); // AudioContext for the analyser
       const syncIntervalRef     = useRef(null);
       const syncStartRef        = useRef(null);
       const detectedAtRef       = useRef(null);
@@ -1480,9 +1511,21 @@
           });
           streamRef.current = stream;
 
-          // ── Live mic level metering via chunk-size proxy ──
-          // Uses the size of each 200ms audio chunk as a proxy for amplitude.
-          // Avoids creating an AudioContext (which can interfere with MediaRecorder on iOS Safari).
+          // ── AnalyserNode for frequency-bar wave visualisation ──
+          // Taps the same mic stream as MediaRecorder (no extra permission).
+          // On iOS Safari AudioContext + MediaRecorder coexist fine since iOS 15.
+          try {
+            const actx = new (window.AudioContext || window.webkitAudioContext)();
+            const src  = actx.createMediaStreamSource(stream);
+            const node = actx.createAnalyser();
+            node.fftSize = 256;              // 128 frequency bins
+            node.smoothingTimeConstant = 0.6; // mild built-in smoothing
+            src.connect(node);
+            analyserNodeRef.current = node;
+            audioCtxRef.current     = actx;
+          } catch(e) { /* fall back to chunk-size proxy level for the wave */ }
+
+          // ── Live mic level metering via chunk-size proxy (signal indicator + wave fallback) ──
           let smoothedLevel = 0;
           const stopMetering = () => { setAudioLevel(0); };
 
@@ -1519,7 +1562,12 @@
               setAudioLevel(smoothedLevel);
             }
           };
-          recorder.onstop = () => { stream.getTracks().forEach(t => t.stop()); stopMetering(); };
+          recorder.onstop = () => {
+            stream.getTracks().forEach(t => t.stop());
+            stopMetering();
+            if (audioCtxRef.current) { audioCtxRef.current.close().catch(()=>{}); audioCtxRef.current = null; }
+            analyserNodeRef.current = null;
+          };
           recorder.start(200);
           recordingStartRef.current = Date.now();
           // Log the detected audio format so it shows in the error screen if things go wrong
@@ -2072,6 +2120,8 @@
       const reset = () => {
         clearInterval(syncIntervalRef.current); clearInterval(progressTimerRef.current);
         streamRef.current?.getTracks().forEach(t => t.stop());
+        if (audioCtxRef.current) { audioCtxRef.current.close().catch(()=>{}); audioCtxRef.current = null; }
+        analyserNodeRef.current = null;
         setAudioLevel(0);
         autoAdvanceFiredRef.current = false;
         autoRetryCountRef.current = 0;
@@ -2088,8 +2138,11 @@
       // Keeps the album context, resets sync state, then re-listens to
       // lock onto the right position in the new track.
       const jumpToTrack = (idx) => {
+        if (detectedSong) setLastSong(detectedSong);
         clearInterval(syncIntervalRef.current); clearInterval(progressTimerRef.current);
         streamRef.current?.getTracks().forEach(t => t.stop());
+        if (audioCtxRef.current) { audioCtxRef.current.close().catch(()=>{}); audioCtxRef.current = null; }
+        analyserNodeRef.current = null;
         autoAdvanceFiredRef.current = false;
         autoRetryCountRef.current = 0;
         setCurrentTrackIndex(idx);
@@ -2933,7 +2986,7 @@
                     <div style={{ position:"relative", width:"120px", height:"120px", margin:"0 auto 16px" }}>
                       <div style={{ position:"absolute", inset:0 }}><ProgressRing progress={listenProgress} size={120} /></div>
                       <div style={{ position:"absolute", inset:0, display:"flex", alignItems:"center", justifyContent:"center" }}>
-                        <WaveAnimation active={true} level={audioLevel} />
+                        <WaveAnimation active={true} analyserRef={analyserNodeRef} level={audioLevel} />
                       </div>
                     </div>
                     {/* Live volume label — hidden in turntable mode and after ACR phase */}
