@@ -46,7 +46,7 @@
   <script type="text/babel">
     const { useState, useEffect, useRef, useCallback } = React;
 
-    const APP_VERSION = "1.85";
+    const APP_VERSION = "1.86";
 
     const sb = supabase.createClient(
       "https://xjdjpaxgymgbvcwmvorc.supabase.co",
@@ -386,12 +386,11 @@
             Every listener who plays this record will benefit from your contribution.
           </div>
           <div style={{ display: 'flex', gap: '12px', flexWrap: 'wrap', justifyContent: 'center' }}>
-            <button onClick={() => { setDone(false); setStep(1); setSelected(null); setQuery(''); setResults([]); setShowDetails(false); }}
-              style={{ background: 'linear-gradient(135deg,#d4a846,#c9807a)', color: '#080810', border: 'none', borderRadius: '50px', padding: '14px 28px', fontSize: '14px', fontWeight: '700', cursor: 'pointer', fontFamily: 'inherit' }}>
-              Add another record
-            </button>
-            <a href="/app/index.html" style={{ background: 'rgba(255,255,255,0.06)', color: '#f0e6d3', border: '1px solid rgba(255,255,255,0.1)', borderRadius: '50px', padding: '14px 28px', fontSize: '14px', textDecoration: 'none', fontWeight: '600' }}>
-              Back to Liri
+            <a href="/app/index.html" style={{ background: 'linear-gradient(135deg,#d4a846,#c9807a)', color: '#080810', borderRadius: '50px', padding: '14px 28px', fontSize: '14px', fontWeight: '700', textDecoration: 'none' }}>
+              Listen →
+            </a>
+            <a href="/app/library.html" style={{ background: 'rgba(255,255,255,0.06)', color: '#f0e6d3', border: '1px solid rgba(255,255,255,0.1)', borderRadius: '50px', padding: '14px 28px', fontSize: '14px', textDecoration: 'none', fontWeight: '600' }}>
+              My library
             </a>
           </div>
         </div>
