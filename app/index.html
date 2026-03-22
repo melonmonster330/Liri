@@ -73,7 +73,7 @@
       "sb_publishable_C-NBnfg0ltAoUi46XQTUjA_ozjZW_Nd"
     );
 
-    const APP_VERSION = "1.100";
+    const APP_VERSION = "1.101";
 
     const PROXY_URL = window.Capacitor
       ? "https://getliri.app/api/recognize"
@@ -192,28 +192,28 @@
             }
             an.getByteFrequencyData(freqBuf);
             const bins = freqBuf.length;
+            // Spread all bars across the musically active range only (~0–40% of bins).
+            // At 44100Hz / fftSize 256: bin 0 ≈ 0Hz, bin 51 ≈ 8.8kHz — where all the
+            // musical energy lives. Avoids the dead high-frequency bins that looked like dots.
+            const maxBin = Math.floor(bins * 0.42);
             BAR_MULTS.forEach((mult, i) => {
-              // Log-scale bin mapping: more bars in bass/mids, fewer in treble
-              const binIdx = Math.min(bins - 1,
-                Math.floor(Math.pow(i / (n - 1), 1.6) * bins * 0.8));
+              const binIdx = Math.min(maxBin, Math.floor((i / (n - 1)) * maxBin));
               const raw  = freqBuf[binIdx] / 255;
               const prev = smoothRef.current[i];
               smoothRef.current[i] = raw > prev
-                ? prev + (raw - prev) * 0.4   // fast attack
-                : prev * 0.88;                 // slow release
-              const h = Math.max(4, Math.pow(smoothRef.current[i], 0.5) * 48 * mult) * size;
+                ? prev + (raw - prev) * 0.45  // punchy attack
+                : prev * 0.92;                 // smooth release
+              const h = Math.max(4, Math.pow(smoothRef.current[i], 0.38) * 58 * mult) * size;
               if (barRefs.current[i]) barRefs.current[i].style.height = h + "px";
             });
 
           } else if (histRef.current.length > 0) {
-            // ── Chunk-size stagger fallback ─────────────────────────────────────
+            // ── Chunk-size fallback (no stagger — all bars react to current level) ──
+            const v = histRef.current[histRef.current.length - 1]?.v || 0;
             BAR_MULTS.forEach((mult, i) => {
-              const targetT = now - i * 150;
-              let v = histRef.current[0].v;
-              for (const e of histRef.current) { if (e.t <= targetT) v = e.v; else break; }
               const prev = smoothRef.current[i];
-              smoothRef.current[i] = v > prev ? prev + (v - prev) * 0.35 : prev * 0.90;
-              const h = Math.max(4, Math.pow(smoothRef.current[i], 0.45) * 48 * mult) * size;
+              smoothRef.current[i] = v > prev ? prev + (v - prev) * 0.45 : prev * 0.92;
+              const h = Math.max(4, Math.pow(smoothRef.current[i], 0.38) * 58 * mult) * size;
               if (barRefs.current[i]) barRefs.current[i].style.height = h + "px";
             });
 
