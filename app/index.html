@@ -834,16 +834,36 @@
       }, [turntableAlbum]);
 
       // ── User's personal vinyl library (for the album picker) ──
-      const fetchUserLibrary = async (uid) => {
+      const fetchUserLibrary = async (uid, autoSelect = false) => {
         setLibLoading(true);
         try {
           const { data } = await sb.from("user_vinyl_library").select("*").eq("user_id", uid).order("added_at", { ascending: false });
-          setUserLibrary(data || []);
+          const library = data || [];
+          setUserLibrary(library);
+
+          // Auto-select most-played album when no album is set (first load only)
+          if (autoSelect && !localStorage.getItem("liri_turntable") && library.length > 0) {
+            const { data: plays } = await sb.from("listening_events")
+              .select("itunes_collection_id")
+              .eq("user_id", uid)
+              .not("itunes_collection_id", "is", null);
+            if (plays?.length > 0) {
+              const counts = {};
+              for (const row of plays) counts[row.itunes_collection_id] = (counts[row.itunes_collection_id] || 0) + 1;
+              const topId = Object.entries(counts).sort((a, b) => b[1] - a[1])[0]?.[0];
+              const topAlbum = library.find(a => String(a.itunes_collection_id) === String(topId));
+              if (topAlbum) setTurntableAlbum({ itunes_collection_id: topAlbum.itunes_collection_id, album_name: topAlbum.album_name, artist_name: topAlbum.artist_name, artwork_url: topAlbum.artwork_url });
+            } else {
+              // No play history — default to most recently added
+              const a = library[0];
+              setTurntableAlbum({ itunes_collection_id: a.itunes_collection_id, album_name: a.album_name, artist_name: a.artist_name, artwork_url: a.artwork_url });
+            }
+          }
         } catch {}
         setLibLoading(false);
       };
 
-      useEffect(() => { if (user) fetchUserLibrary(user.id); }, [user]);
+      useEffect(() => { if (user) fetchUserLibrary(user.id, true); }, [user]);
 
       // ── Real-time seconds counter while listening (UI only — not tied to ACR attempts) ──
       useEffect(() => {
@@ -2476,10 +2496,11 @@
                       <div style={{ width:24, height:24, borderRadius:"50%", border:"2px solid rgba(255,255,255,0.06)", borderTopColor:"#d4a846", animation:"spin 0.8s linear infinite" }} />
                     </div>
                   ) : userLibrary.length === 0 ? (
-                    <div style={{ textAlign:"center", padding:"32px 0", color:"rgba(255,255,255,0.2)" }}>
-                      <div style={{ fontSize:32, marginBottom:10, opacity:0.4 }}>💿</div>
-                      <div style={{ fontSize:14, marginBottom:8 }}>Your library is empty</div>
-                      <a href="/library" style={{ fontSize:12, color:"rgba(212,168,70,0.6)", textDecoration:"none" }}>Go to My Records →</a>
+                    <div style={{ textAlign:"center", padding:"40px 0", color:"rgba(255,255,255,0.2)" }}>
+                      <div style={{ fontSize:40, marginBottom:12, opacity:0.3 }}>💿</div>
+                      <div style={{ fontSize:15, fontWeight:600, color:"rgba(255,255,255,0.35)", marginBottom:8 }}>Your library is empty</div>
+                      <div style={{ fontSize:13, color:"rgba(255,255,255,0.2)", marginBottom:20, lineHeight:1.6 }}>Add a record to get started —<br/>Liri will cache everything so it<br/>works offline at play time.</div>
+                      <a href="/app/add-vinyl.html" style={{ display:"inline-block", background:"linear-gradient(135deg,#d4a846,#c9807a)", color:"#080810", borderRadius:"50px", padding:"10px 22px", fontSize:"13px", fontWeight:"700", textDecoration:"none" }}>Add your first record →</a>
                     </div>
                   ) : (
                     userLibrary.map(album => {
@@ -2726,12 +2747,12 @@
                 </div>
               </div>
 
-              {/* Song end progress bar (vinyl mode or turntable mode) */}
-              {(vinylMode || turntableAlbum) && songDuration && (
-                <div style={{ height:"2px", background:"rgba(255,255,255,0.05)", flexShrink:0, margin:"0 20px" }}>
+              {/* Song progress bar — always visible when duration is known */}
+              <div style={{ height:"3px", background:"rgba(255,255,255,0.07)", flexShrink:0 }}>
+                {songDuration && (
                   <div style={{ height:"100%", background:"linear-gradient(to right, #d4a846, #c9807a)", width:`${Math.min(playbackTime/songDuration*100,100)}%`, transition:"width 0.5s linear" }} />
-                </div>
-              )}
+                )}
+              </div>
 
               <div style={{ flex:1, overflow:"hidden", position:"relative" }}>
                 <div
