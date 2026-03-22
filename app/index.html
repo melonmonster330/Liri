@@ -76,7 +76,7 @@
       "sb_publishable_C-NBnfg0ltAoUi46XQTUjA_ozjZW_Nd"
     );
 
-    const APP_VERSION = "1.79";
+    const APP_VERSION = "1.80";
 
     const PROXY_URL = window.Capacitor
       ? "https://getliri.app/api/recognize"
@@ -195,28 +195,27 @@
       }, [active]);
 
       const hasLevel = typeof level === "number";
-      // Amplitude: always animate, but scale with level. Floor at 0.12 so bars never go flat.
-      const amp = hasLevel ? Math.max(0.12, level) : 0.6;
-      // Color: gold when audible, rose/pink when too quiet, plain gold when no level data
-      const color = hasLevel
-        ? (level > 0.05 ? "#d4a846" : "#c9807a")
-        : "#d4a846";
+      // Amplitude: when we have real mic data, bias heavily toward the live level.
+      // Sin wave adds subtle shimmer on top. Floor at 0.1 so bars stay visible.
+      const amp = hasLevel ? Math.max(0.1, level * 0.85 + 0.15) : 0.6;
       const t = tick * 0.05;
 
       return (
         <div style={{ display:"flex", gap:`${4*size}px`, alignItems:"center", height:`${52*size}px`, justifyContent:"center" }}>
           {BAR_MULTS.map((mult, i) => {
             const phase   = i * 0.72;
+            // When we have live level, shimmer is subtle (±15%). Without it, full sway.
+            const shimmer = hasLevel ? 0.15 : 0.5;
             const sinVal  = (Math.sin(t * (1.8 + i * 0.18) + phase) + 1) / 2; // 0→1
             const minH    = 4;
             const maxH    = 48 * amp * mult;
-            const h       = active ? Math.max(minH, minH + (maxH - minH) * sinVal) : 3;
+            const h       = active ? Math.max(minH, maxH * (1 - shimmer + shimmer * sinVal)) : 3;
             return (
               <div key={i} style={{
                 width:`${3*size}px`, borderRadius:"2px",
-                background: `linear-gradient(to top, ${color}, ${color}88)`,
+                background: "linear-gradient(to top, #d4a846, #c9807a)",
                 height: `${h * size}px`,
-                transition: "background 0.3s ease",
+                transition: hasLevel ? "height 0.1s ease" : "none",
                 opacity: active ? 1 : 0.3,
               }} />
             );
