@@ -1,29 +1,19 @@
 <!--
-  app/add-vinyl.html — Liri Vinyl Database Contribution Form
+  app/add-vinyl.html — Liri Add a Record
   ──────────────────────────────────────────────────────────────────────────────
-  Community form for adding vinyl release data to the Liri Vinyl Database.
-  Accessible at /add-vinyl (see vercel.json rewrite → app/add-vinyl.html).
+  Two-step flow:
+  • Step 1: Search iTunes by album/artist
+  • Step 2: Album card + quick-add button, with optional collapsible pressing
+    details + side assignment. Quick path skips vinyl_releases/vinyl_tracks.
 
-  What it does (4-step wizard):
-  • Step 1: Search iTunes by album/artist — auto-populates the full track list
-    and artwork so contributors don't have to type tracks manually
-  • Step 2: Collect pressing details — year, label, catalog number, country,
-    edition, version note, and LP count (handles multiple pressings of the same
-    album, e.g. Taylor Swift variants, coloured vinyl, regional editions)
-  • Step 3: Visual side-assignment UI — ↑/↓ arrows move a FLIP divider between
-    tracks per disc to define Side A vs B (and C/D, E/F for multi-LP sets)
-  • Step 4: Review summary and submit to Supabase
-
-  Why this data matters:
-  The submitted track/side data powers flip detection in Vinyl Auto Mode. Every
-  confirmed contribution makes Liri smarter about when to chime and prompt a flip.
-
-  Supabase tables written:
+  Supabase tables written (full path):
   • vinyl_releases — one row per unique pressing/edition
   • vinyl_tracks   — one row per track with side, position, disc metadata
+  Always written:
+  • user_vinyl_library — personal library entry
+  • liri_lyric_cache   — synced lyrics for every track
 
-  Auth: requires a signed-in Supabase user (Google sign-in). Unauthenticated
-  visitors see a sign-in prompt before they can submit.
+  Auth: requires a signed-in Supabase user (Google sign-in).
 
   Dependencies (CDN, no build step): React 18, Babel standalone, Supabase JS client
 -->
@@ -32,7 +22,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
-  <title>Add a Vinyl — Liri</title>
+  <title>Add a Record — Liri</title>
   <style>
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
     html, body { height: 100%; }
@@ -84,41 +74,6 @@
       fontFamily: 'inherit', transition: 'border-color 0.2s',
     };
 
-    // ── Step indicator ──
-    function Steps({ current }) {
-      const labels = ['Search', 'Details', 'Sides', 'Submit'];
-      return (
-        <div style={{ display: 'flex', alignItems: 'center', gap: '0', marginBottom: '36px' }}>
-          {labels.map((label, i) => {
-            const num = i + 1;
-            const done = num < current;
-            const active = num === current;
-            return (
-              <React.Fragment key={i}>
-                <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '6px' }}>
-                  <div style={{
-                    width: '28px', height: '28px', borderRadius: '50%', fontSize: '12px', fontWeight: '700',
-                    display: 'flex', alignItems: 'center', justifyContent: 'center',
-                    background: done ? '#6aaa8a' : active ? 'linear-gradient(135deg,#d4a846,#c9807a)' : 'rgba(255,255,255,0.07)',
-                    color: done || active ? '#080810' : 'rgba(255,255,255,0.3)',
-                    transition: 'all 0.3s',
-                  }}>
-                    {done ? '✓' : num}
-                  </div>
-                  <div style={{ fontSize: '10px', color: active ? '#d4a846' : 'rgba(255,255,255,0.25)', letterSpacing: '0.5px', whiteSpace: 'nowrap' }}>
-                    {label}
-                  </div>
-                </div>
-                {i < labels.length - 1 && (
-                  <div style={{ flex: 1, height: '1px', background: done ? '#6aaa8a' : 'rgba(255,255,255,0.08)', margin: '0 8px', marginBottom: '20px', transition: 'background 0.3s' }} />
-                )}
-              </React.Fragment>
-            );
-          })}
-        </div>
-      );
-    }
-
     function AddVinyl() {
       const [user, setUser]             = useState(null);
       const [authLoading, setAuthLoading] = useState(true);
@@ -129,21 +84,22 @@
       const [searching, setSearching]   = useState(false);
       const searchTimer                 = useRef(null);
 
-      // Step 2 — Pressing details
+      // Step 2 — Album + optional details
       const [selected, setSelected]     = useState(null);  // iTunes album result
+      const [step, setStep]             = useState(1);
+      const [showDetails, setShowDetails] = useState(false);
       const [pressing, setPressing]     = useState({
         release_year: '', record_label: '', catalog_number: '',
         country: '', edition: '', version_note: '', disc_count: 1,
       });
 
-      // Step 3 — Side assignment
+      // Side assignment
       const [tracks, setTracks]         = useState([]); // grouped by disc
       // breaks: { discNum: breakIdx } — breakIdx is the index (within that disc's tracks) of the LAST track on the first side
       const [breaks, setBreaks]         = useState({});
       const [loadingTracks, setLoadingTracks] = useState(false);
 
       // Submission
-      const [step, setStep]             = useState(1);
       const [submitting, setSubmitting] = useState(false);
       const [submitError, setSubmitError] = useState(null);
       const [done, setDone]             = useState(false);
@@ -179,16 +135,17 @@
         }, 350);
       }, [query]);
 
-      // ── Select an album → fetch tracklist ──
+      // ── Select an album → fetch tracklist + auto-populate pressing details ──
       const selectAlbum = async (album) => {
         setSelected(album);
+        // Pre-fill year from iTunes immediately
         setPressing(p => ({
           ...p,
-          release_year: album.releaseDate ? new Date(album.releaseDate).getFullYear() : '',
-          record_label: album.artistName || '',
+          release_year: album.releaseDate ? String(new Date(album.releaseDate).getFullYear()) : '',
         }));
         setLoadingTracks(true);
         try {
+          // iTunes tracklist — sets LP count and side breaks
           const res = await fetch(
             `https://itunes.apple.com/lookup?id=${album.collectionId}&entity=song`
           ).then(r => r.json());
@@ -196,23 +153,42 @@
             .filter(t => t.wrapperType === 'track')
             .sort((a, b) => (a.discNumber - b.discNumber) || (a.trackNumber - b.trackNumber));
 
-          // Group by discNumber
           const byDisc = {};
           raw.forEach(t => {
             const d = t.discNumber || 1;
             if (!byDisc[d]) byDisc[d] = [];
             byDisc[d].push(t);
           });
-
-          // Auto-set breaks at midpoint of each disc
           const autoBreaks = {};
           Object.entries(byDisc).forEach(([d, ts]) => {
             autoBreaks[Number(d)] = Math.ceil(ts.length / 2) - 1;
           });
-
           setTracks(byDisc);
           setBreaks(autoBreaks);
           setPressing(p => ({ ...p, disc_count: Object.keys(byDisc).length }));
+
+          // MusicBrainz — one call for label, catalog number, country (no API key needed)
+          // Fires in background; pre-fills optional fields if a match is found.
+          fetch(
+            `https://musicbrainz.org/ws/2/release?query=release:${encodeURIComponent(album.collectionName)}%20AND%20artist:${encodeURIComponent(album.artistName)}&fmt=json&limit=5`,
+            { headers: { 'User-Agent': 'Liri/1.74 (https://getliri.com)' } }
+          ).then(r => r.json()).then(mb => {
+            const releases = mb.releases || [];
+            // Prefer releases with label info; fall back to first result
+            const best = releases.find(r => r['label-info']?.length > 0) || releases[0];
+            if (!best) return;
+            const labelInfo = best['label-info']?.[0];
+            const label   = labelInfo?.label?.name   || '';
+            const catalog = labelInfo?.['catalog-number'] || '';
+            const country = best.country || '';
+            // Only fill fields that are still empty
+            setPressing(p => ({
+              ...p,
+              record_label:   p.record_label   || label,
+              catalog_number: p.catalog_number || catalog,
+              country:        p.country        || country,
+            }));
+          }).catch(() => {});
         } catch { setTracks({}); setBreaks({}); }
         setLoadingTracks(false);
         setStep(2);
@@ -252,11 +228,25 @@
         return result;
       };
 
+      // ── Check if any pressing field has content (beyond defaults) ──
+      const hasPressingData = () => {
+        return (
+          pressing.disc_count > 1 ||
+          pressing.catalog_number.trim() ||
+          pressing.country.trim() ||
+          pressing.edition.trim() ||
+          pressing.version_note.trim()
+        );
+      };
+
       // ── Submit to Supabase ──
+      // withDetails = true  → full path: vinyl_releases + vinyl_tracks + library + lyrics
+      // withDetails = false → quick path: library + lyrics only
       const handleSubmit = async () => {
         if (!user) return;
         setSubmitting(true);
         setSubmitError(null);
+        const withDetails = showDetails && hasPressingData();
         try {
           const positioned = computePositions();
 
@@ -265,38 +255,40 @@
           const albumName       = selected.collectionName;
           const artworkUrl      = selected.artworkUrl100?.replace('100x100bb', '600x600bb') || null;
 
-          // 1. Insert the release (upsert so re-adding the same vinyl doesn't error)
-          const { data: release, error: relErr } = await sb.from('vinyl_releases').upsert({
-            itunes_collection_id: collectionIdStr,
-            album_name:    albumName,
-            artist_name:   artistName,
-            release_year:  pressing.release_year ? Number(pressing.release_year) : null,
-            record_label:  pressing.record_label  || null,
-            catalog_number: pressing.catalog_number || null,
-            country:       pressing.country       || null,
-            edition:       pressing.edition       || null,
-            version_note:  pressing.version_note  || null,
-            disc_count:    pressing.disc_count,
-            artwork_url:   artworkUrl,
-            submitted_by:  user.id,
-          }, { onConflict: 'itunes_collection_id' }).select().single();
+          if (withDetails) {
+            // 1. Insert the release (upsert so re-adding the same vinyl doesn't error)
+            const { data: release, error: relErr } = await sb.from('vinyl_releases').upsert({
+              itunes_collection_id: collectionIdStr,
+              album_name:    albumName,
+              artist_name:   artistName,
+              release_year:  pressing.release_year ? Number(pressing.release_year) : null,
+              record_label:  pressing.record_label  || null,
+              catalog_number: pressing.catalog_number || null,
+              country:       pressing.country       || null,
+              edition:       pressing.edition       || null,
+              version_note:  pressing.version_note  || null,
+              disc_count:    pressing.disc_count,
+              artwork_url:   artworkUrl,
+              submitted_by:  user.id,
+            }, { onConflict: 'itunes_collection_id' }).select().single();
 
-          if (relErr) throw relErr;
+            if (relErr) throw relErr;
 
-          // 2. Insert all tracks (delete old ones first so re-adds stay clean)
-          await sb.from('vinyl_tracks').delete().eq('release_id', release.id);
-          const trackRows = positioned.map(t => ({
-            release_id:           release.id,
-            disc_number:          t._disc,
-            side:                 t._side,
-            position:             t._position,
-            track_number_on_side: t._posNum,
-            title:                t.trackName,
-            duration_ms:          t.trackTimeMillis || null,
-            itunes_track_id:      t.trackId ? String(t.trackId) : null,
-          }));
-          const { error: trkErr } = await sb.from('vinyl_tracks').insert(trackRows);
-          if (trkErr) throw trkErr;
+            // 2. Insert all tracks (delete old ones first so re-adds stay clean)
+            await sb.from('vinyl_tracks').delete().eq('release_id', release.id);
+            const trackRows = positioned.map(t => ({
+              release_id:           release.id,
+              disc_number:          t._disc,
+              side:                 t._side,
+              position:             t._position,
+              track_number_on_side: t._posNum,
+              title:                t.trackName,
+              duration_ms:          t.trackTimeMillis || null,
+              itunes_track_id:      t.trackId ? String(t.trackId) : null,
+            }));
+            const { error: trkErr } = await sb.from('vinyl_tracks').insert(trackRows);
+            if (trkErr) throw trkErr;
+          }
 
           // 3. Add to user's personal library so it appears in turntable picker
           await sb.from('user_vinyl_library').upsert({
@@ -386,7 +378,7 @@
             Every listener who plays this record will benefit from your contribution.
           </div>
           <div style={{ display: 'flex', gap: '12px', flexWrap: 'wrap', justifyContent: 'center' }}>
-            <button onClick={() => { setDone(false); setStep(1); setSelected(null); setQuery(''); setResults([]); }}
+            <button onClick={() => { setDone(false); setStep(1); setSelected(null); setQuery(''); setResults([]); setShowDetails(false); }}
               style={{ background: 'linear-gradient(135deg,#d4a846,#c9807a)', color: '#080810', border: 'none', borderRadius: '50px', padding: '14px 28px', fontSize: '14px', fontWeight: '700', cursor: 'pointer', fontFamily: 'inherit' }}>
               Add another record
             </button>
@@ -397,25 +389,25 @@
         </div>
       );
 
-      const positioned = step >= 3 ? computePositions() : [];
-
       return (
         <div style={{ minHeight: '100vh', padding: 'max(48px, calc(env(safe-area-inset-top) + 24px)) 0 max(48px, calc(env(safe-area-inset-bottom) + 24px))' }}>
 
           {/* Header */}
           <div style={{ maxWidth: '560px', margin: '0 auto', padding: '0 24px' }}>
-            <a href="/app/index.html" style={{ display: 'inline-flex', alignItems: 'center', gap: '6px', color: 'rgba(255,255,255,0.3)', textDecoration: 'none', fontSize: '13px', marginBottom: '28px' }}>
-              ← Liri
-            </a>
-            <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '8px' }}>
+            {step === 1 ? (
+              <a href="/app/index.html" style={{ display: 'inline-flex', alignItems: 'center', gap: '6px', color: 'rgba(255,255,255,0.3)', textDecoration: 'none', fontSize: '13px', marginBottom: '28px' }}>
+                ← Liri
+              </a>
+            ) : (
+              <button onClick={() => { setStep(1); setSelected(null); setShowDetails(false); }}
+                style={{ display: 'inline-flex', alignItems: 'center', gap: '6px', background: 'none', border: 'none', color: 'rgba(255,255,255,0.3)', fontSize: '13px', cursor: 'pointer', fontFamily: 'inherit', padding: '0', marginBottom: '28px' }}>
+                ← Back
+              </button>
+            )}
+            <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '36px' }}>
               <div style={{ fontSize: '22px' }}>💿</div>
-              <div style={{ fontSize: '22px', fontWeight: '700', color: '#f0e6d3' }}>Add a Vinyl</div>
+              <div style={{ fontSize: '22px', fontWeight: '700', color: '#f0e6d3' }}>Add a Record</div>
             </div>
-            <div style={{ fontSize: '14px', color: 'rgba(255,255,255,0.35)', marginBottom: '36px', lineHeight: '1.6' }}>
-              Help build the world's most accurate vinyl side database. Your submission helps every Liri listener who plays this record.
-            </div>
-
-            <Steps current={step} />
           </div>
 
           {/* ── STEP 1: SEARCH ── */}
@@ -466,236 +458,184 @@
             </div>
           )}
 
-          {/* ── STEP 2: PRESSING DETAILS ── */}
+          {/* ── STEP 2: ADD PAGE ── */}
           {step === 2 && selected && (
             <div style={{ maxWidth: '560px', margin: '0 auto', padding: '0 24px' }}>
 
               {/* Album card */}
               <div style={{ display: 'flex', gap: '16px', alignItems: 'center', background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.08)', borderRadius: '16px', padding: '16px', marginBottom: '28px' }}>
                 {selected.artworkUrl100 && (
-                  <img src={selected.artworkUrl100.replace('100x100bb','300x300bb')} alt="" style={{ width: '64px', height: '64px', borderRadius: '10px', objectFit: 'cover', flexShrink: 0 }} />
+                  <img src={selected.artworkUrl100.replace('100x100bb','300x300bb')} alt="" style={{ width: '72px', height: '72px', borderRadius: '10px', objectFit: 'cover', flexShrink: 0 }} />
                 )}
-                <div>
-                  <div style={{ fontSize: '16px', fontWeight: '700', color: '#f0e6d3', marginBottom: '4px' }}>{selected.collectionName}</div>
-                  <div style={{ fontSize: '14px', color: 'rgba(255,255,255,0.45)' }}>{selected.artistName}</div>
-                </div>
-              </div>
-
-              <div style={{ fontSize: '16px', fontWeight: '600', marginBottom: '6px' }}>Pressing details</div>
-              <div style={{ fontSize: '13px', color: 'rgba(255,255,255,0.3)', marginBottom: '20px', lineHeight: '1.6' }}>
-                These distinguish different editions. At minimum, a catalog number or country is helpful.
-              </div>
-
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px', marginBottom: '12px' }}>
-                {[
-                  { key: 'release_year', label: 'Year', placeholder: '1969', type: 'number' },
-                  { key: 'catalog_number', label: 'Catalog number', placeholder: 'PCS 7088' },
-                ].map(f => (
-                  <div key={f.key}>
-                    <label style={{ display: 'block', fontSize: '11px', color: 'rgba(255,255,255,0.35)', letterSpacing: '0.5px', textTransform: 'uppercase', marginBottom: '6px' }}>{f.label}</label>
-                    <input type={f.type || 'text'} style={inp} placeholder={f.placeholder}
-                      value={pressing[f.key]} onChange={e => setPressing(p => ({ ...p, [f.key]: e.target.value }))} />
-                  </div>
-                ))}
-              </div>
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px', marginBottom: '12px' }}>
-                {[
-                  { key: 'record_label', label: 'Label', placeholder: 'Apple Records' },
-                  { key: 'country', label: 'Country', placeholder: 'UK' },
-                ].map(f => (
-                  <div key={f.key}>
-                    <label style={{ display: 'block', fontSize: '11px', color: 'rgba(255,255,255,0.35)', letterSpacing: '0.5px', textTransform: 'uppercase', marginBottom: '6px' }}>{f.label}</label>
-                    <input style={inp} placeholder={f.placeholder}
-                      value={pressing[f.key]} onChange={e => setPressing(p => ({ ...p, [f.key]: e.target.value }))} />
-                  </div>
-                ))}
-              </div>
-              <div style={{ marginBottom: '12px' }}>
-                <label style={{ display: 'block', fontSize: '11px', color: 'rgba(255,255,255,0.35)', letterSpacing: '0.5px', textTransform: 'uppercase', marginBottom: '6px' }}>Edition <span style={{ color: 'rgba(255,255,255,0.2)' }}>optional</span></label>
-                <input style={inp} placeholder='e.g. "Target Exclusive", "Box Set", "Deluxe"'
-                  value={pressing.edition} onChange={e => setPressing(p => ({ ...p, edition: e.target.value }))} />
-              </div>
-              <div style={{ marginBottom: '28px' }}>
-                <label style={{ display: 'block', fontSize: '11px', color: 'rgba(255,255,255,0.35)', letterSpacing: '0.5px', textTransform: 'uppercase', marginBottom: '6px' }}>Version note <span style={{ color: 'rgba(255,255,255,0.2)' }}>optional</span></label>
-                <input style={inp} placeholder='e.g. "Red vinyl", "Picture disc", "2023 Remaster"'
-                  value={pressing.version_note} onChange={e => setPressing(p => ({ ...p, version_note: e.target.value }))} />
-              </div>
-
-              {/* LP count */}
-              <div style={{ marginBottom: '32px' }}>
-                <label style={{ display: 'block', fontSize: '11px', color: 'rgba(255,255,255,0.35)', letterSpacing: '0.5px', textTransform: 'uppercase', marginBottom: '12px' }}>Number of LPs in this release</label>
-                <div style={{ display: 'flex', gap: '10px' }}>
-                  {[1,2,3,4].map(n => (
-                    <button key={n} onClick={() => setPressing(p => ({ ...p, disc_count: n }))}
-                      style={{ flex: 1, padding: '14px 8px', background: pressing.disc_count === n ? 'linear-gradient(135deg,#d4a846,#c9807a)' : 'rgba(255,255,255,0.05)', border: `1px solid ${pressing.disc_count === n ? 'transparent' : 'rgba(255,255,255,0.1)'}`, color: pressing.disc_count === n ? '#080810' : '#f0e6d3', borderRadius: '12px', fontSize: '15px', fontWeight: '700', cursor: 'pointer', fontFamily: 'inherit', transition: 'all 0.2s' }}>
-                      {n}
-                    </button>
-                  ))}
-                </div>
-                <div style={{ display: 'flex', gap: '10px', marginTop: '6px' }}>
-                  {['Side','Sides','Sides','Sides'].map((s, i) => (
-                    <div key={i} style={{ flex: 1, textAlign: 'center', fontSize: '10px', color: 'rgba(255,255,255,0.2)' }}>{i + 1} LP · {(i+1)*2} {s}</div>
-                  ))}
-                </div>
-              </div>
-
-              {loadingTracks ? (
-                <div style={{ textAlign: 'center', padding: '16px', color: 'rgba(255,255,255,0.3)', fontSize: '14px' }}>Loading tracklist…</div>
-              ) : (
-                <div style={{ display: 'flex', gap: '12px' }}>
-                  <button onClick={() => setStep(1)} style={{ flex: 1, background: 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.1)', color: 'rgba(255,255,255,0.5)', borderRadius: '50px', padding: '14px', fontSize: '14px', cursor: 'pointer', fontFamily: 'inherit' }}>← Back</button>
-                  <button onClick={() => setStep(3)} style={{ flex: 2, background: 'linear-gradient(135deg,#d4a846,#c9807a)', color: '#080810', border: 'none', borderRadius: '50px', padding: '14px', fontSize: '14px', fontWeight: '700', cursor: 'pointer', fontFamily: 'inherit' }}>Set sides →</button>
-                </div>
-              )}
-            </div>
-          )}
-
-          {/* ── STEP 3: SIDE ASSIGNMENT ── */}
-          {step === 3 && (
-            <div style={{ maxWidth: '560px', margin: '0 auto', padding: '0 24px' }}>
-              <div style={{ fontSize: '16px', fontWeight: '600', marginBottom: '6px' }}>Mark where each side ends</div>
-              <div style={{ fontSize: '13px', color: 'rgba(255,255,255,0.3)', marginBottom: '24px', lineHeight: '1.6' }}>
-                Use the arrows to move the flip point. We pre-set it at the midpoint — adjust to match your record.
-              </div>
-
-              {Object.keys(tracks).map(Number).sort().map(discNum => {
-                const discTracks = tracks[discNum] || [];
-                const breakIdx = breaks[discNum] ?? Math.ceil(discTracks.length / 2) - 1;
-                const [sideA, sideB] = discSides(discNum);
-
-                return (
-                  <div key={discNum} style={{ marginBottom: '32px' }}>
-                    {Object.keys(tracks).length > 1 && (
-                      <div style={{ fontSize: '11px', letterSpacing: '2px', color: 'rgba(255,255,255,0.3)', textTransform: 'uppercase', marginBottom: '12px' }}>LP {discNum}</div>
-                    )}
-                    {discTracks.map((t, i) => {
-                      const isBreak = i === breakIdx;
-                      const side = i <= breakIdx ? sideA : sideB;
-                      const posInSide = i <= breakIdx ? i + 1 : i - breakIdx;
-                      const isFirstB = i === breakIdx + 1;
-
-                      return (
-                        <React.Fragment key={t.trackId || i}>
-                          {/* Side header */}
-                          {i === 0 && (
-                            <div style={{ fontSize: '11px', letterSpacing: '2px', color: '#d4a846', textTransform: 'uppercase', marginBottom: '8px', paddingBottom: '8px', borderBottom: '1px solid rgba(212,168,70,0.15)' }}>
-                              Side {sideA}
-                            </div>
-                          )}
-                          {isFirstB && (
-                            <div style={{ fontSize: '11px', letterSpacing: '2px', color: '#d4a846', textTransform: 'uppercase', marginBottom: '8px', marginTop: '8px', paddingBottom: '8px', borderBottom: '1px solid rgba(212,168,70,0.15)' }}>
-                              Side {sideB}
-                            </div>
-                          )}
-
-                          {/* Track row */}
-                          <div style={{ display: 'flex', alignItems: 'center', gap: '12px', padding: '9px 0', borderBottom: '1px solid rgba(255,255,255,0.04)' }}>
-                            <div style={{ width: '28px', fontSize: '11px', color: 'rgba(255,255,255,0.3)', flexShrink: 0, fontVariantNumeric: 'tabular-nums' }}>
-                              {side}{posInSide}
-                            </div>
-                            <div style={{ flex: 1, fontSize: '14px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{t.trackName}</div>
-                            <div style={{ fontSize: '12px', color: 'rgba(255,255,255,0.3)', flexShrink: 0 }}>{fmtMs(t.trackTimeMillis)}</div>
-                          </div>
-
-                          {/* Flip point indicator — shown after the last track of Side A */}
-                          {isBreak && (
-                            <div style={{ display: 'flex', alignItems: 'center', gap: '12px', padding: '10px 0', margin: '4px 0' }}>
-                              <div style={{ flex: 1, height: '2px', background: 'linear-gradient(90deg,#d4a846,#c9807a)', borderRadius: '1px', opacity: 0.6 }} />
-                              <div style={{ display: 'flex', gap: '6px', flexShrink: 0 }}>
-                                <button onClick={() => moveBreak(discNum, -1)} disabled={breakIdx === 0}
-                                  style={{ width: '30px', height: '30px', background: 'rgba(255,255,255,0.07)', border: '1px solid rgba(255,255,255,0.12)', color: breakIdx === 0 ? 'rgba(255,255,255,0.15)' : '#f0e6d3', borderRadius: '8px', cursor: breakIdx === 0 ? 'default' : 'pointer', fontSize: '14px', display: 'flex', alignItems: 'center', justifyContent: 'center', fontFamily: 'inherit' }}>
-                                  ↑
-                                </button>
-                                <div style={{ display: 'flex', alignItems: 'center', fontSize: '11px', color: 'rgba(212,168,70,0.7)', letterSpacing: '1px', padding: '0 4px', whiteSpace: 'nowrap' }}>
-                                  FLIP
-                                </div>
-                                <button onClick={() => moveBreak(discNum, 1)} disabled={breakIdx >= discTracks.length - 2}
-                                  style={{ width: '30px', height: '30px', background: 'rgba(255,255,255,0.07)', border: '1px solid rgba(255,255,255,0.12)', color: breakIdx >= discTracks.length - 2 ? 'rgba(255,255,255,0.15)' : '#f0e6d3', borderRadius: '8px', cursor: breakIdx >= discTracks.length - 2 ? 'default' : 'pointer', fontSize: '14px', display: 'flex', alignItems: 'center', justifyContent: 'center', fontFamily: 'inherit' }}>
-                                  ↓
-                                </button>
-                              </div>
-                              <div style={{ flex: 1, height: '2px', background: 'linear-gradient(90deg,#c9807a,#d4a846)', borderRadius: '1px', opacity: 0.6 }} />
-                            </div>
-                          )}
-                        </React.Fragment>
-                      );
-                    })}
-                  </div>
-                );
-              })}
-
-              <div style={{ display: 'flex', gap: '12px', marginTop: '8px' }}>
-                <button onClick={() => setStep(2)} style={{ flex: 1, background: 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.1)', color: 'rgba(255,255,255,0.5)', borderRadius: '50px', padding: '14px', fontSize: '14px', cursor: 'pointer', fontFamily: 'inherit' }}>← Back</button>
-                <button onClick={() => setStep(4)} style={{ flex: 2, background: 'linear-gradient(135deg,#d4a846,#c9807a)', color: '#080810', border: 'none', borderRadius: '50px', padding: '14px', fontSize: '14px', fontWeight: '700', cursor: 'pointer', fontFamily: 'inherit' }}>Looks right →</button>
-              </div>
-            </div>
-          )}
-
-          {/* ── STEP 4: REVIEW & SUBMIT ── */}
-          {step === 4 && (
-            <div style={{ maxWidth: '560px', margin: '0 auto', padding: '0 24px' }}>
-              <div style={{ fontSize: '16px', fontWeight: '600', marginBottom: '6px' }}>Review before submitting</div>
-              <div style={{ fontSize: '13px', color: 'rgba(255,255,255,0.3)', marginBottom: '24px' }}>Double-check the side split looks right.</div>
-
-              {/* Summary card */}
-              <div style={{ background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.08)', borderRadius: '16px', padding: '16px', marginBottom: '20px' }}>
-                <div style={{ display: 'flex', gap: '14px', alignItems: 'center', marginBottom: '16px' }}>
-                  {selected?.artworkUrl100 && (
-                    <img src={selected.artworkUrl100.replace('100x100bb','200x200bb')} alt="" style={{ width: '52px', height: '52px', borderRadius: '8px', flexShrink: 0 }} />
+                <div style={{ minWidth: 0 }}>
+                  <div style={{ fontSize: '17px', fontWeight: '700', color: '#f0e6d3', marginBottom: '4px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{selected.collectionName}</div>
+                  <div style={{ fontSize: '14px', color: 'rgba(255,255,255,0.45)', marginBottom: '4px' }}>{selected.artistName}</div>
+                  {selected.releaseDate && (
+                    <div style={{ fontSize: '12px', color: 'rgba(255,255,255,0.25)' }}>{new Date(selected.releaseDate).getFullYear()}</div>
                   )}
-                  <div>
-                    <div style={{ fontWeight: '700', fontSize: '15px', marginBottom: '3px' }}>{selected?.collectionName}</div>
-                    <div style={{ fontSize: '13px', color: 'rgba(255,255,255,0.45)', marginBottom: '3px' }}>{selected?.artistName}</div>
-                    <div style={{ fontSize: '11px', color: 'rgba(255,255,255,0.25)' }}>
-                      {[pressing.release_year, pressing.record_label, pressing.catalog_number, pressing.country].filter(Boolean).join(' · ')}
-                    </div>
-                  </div>
-                </div>
-                {pressing.edition || pressing.version_note ? (
-                  <div style={{ fontSize: '12px', color: 'rgba(212,168,70,0.6)', background: 'rgba(212,168,70,0.08)', borderRadius: '6px', padding: '6px 10px', display: 'inline-block', marginBottom: '16px' }}>
-                    {[pressing.edition, pressing.version_note].filter(Boolean).join(' — ')}
-                  </div>
-                ) : null}
-
-                {/* Final tracklist */}
-                <div style={{ display: 'flex', flexDirection: 'column', gap: '2px' }}>
-                  {positioned.map((t, i) => {
-                    const prevSide = i > 0 ? positioned[i-1]._side : null;
-                    const showHeader = t._side !== prevSide;
-                    return (
-                      <React.Fragment key={i}>
-                        {showHeader && (
-                          <div style={{ fontSize: '10px', letterSpacing: '2px', color: '#d4a846', textTransform: 'uppercase', padding: '8px 0 4px', opacity: 0.8 }}>Side {t._side}</div>
-                        )}
-                        <div style={{ display: 'flex', gap: '10px', alignItems: 'center', padding: '5px 0' }}>
-                          <div style={{ width: '24px', fontSize: '11px', color: 'rgba(255,255,255,0.3)', flexShrink: 0 }}>{t._position}</div>
-                          <div style={{ flex: 1, fontSize: '13px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{t.trackName}</div>
-                          <div style={{ fontSize: '11px', color: 'rgba(255,255,255,0.25)' }}>{fmtMs(t.trackTimeMillis)}</div>
-                        </div>
-                      </React.Fragment>
-                    );
-                  })}
                 </div>
               </div>
 
+              {/* Primary CTA */}
               {submitError && (
                 <div style={{ background: 'rgba(232,160,168,0.1)', border: '1px solid rgba(232,160,168,0.3)', borderRadius: '12px', padding: '12px 16px', fontSize: '13px', color: '#e8a0a8', marginBottom: '16px', lineHeight: '1.6' }}>
                   {submitError}
                 </div>
               )}
 
-              <div style={{ display: 'flex', gap: '12px' }}>
-                <button onClick={() => setStep(3)} style={{ flex: 1, background: 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.1)', color: 'rgba(255,255,255,0.5)', borderRadius: '50px', padding: '14px', fontSize: '14px', cursor: 'pointer', fontFamily: 'inherit' }}>← Edit</button>
-                <button onClick={handleSubmit} disabled={submitting}
-                  style={{ flex: 2, background: submitting ? 'rgba(255,255,255,0.1)' : 'linear-gradient(135deg,#d4a846,#c9807a)', color: submitting ? 'rgba(255,255,255,0.4)' : '#080810', border: 'none', borderRadius: '50px', padding: '14px', fontSize: '14px', fontWeight: '700', cursor: submitting ? 'wait' : 'pointer', fontFamily: 'inherit', transition: 'all 0.2s' }}>
-                  {submitting ? 'Saving…' : 'Submit to Liri 💿'}
-                </button>
-              </div>
+              <button onClick={handleSubmit} disabled={submitting || loadingTracks}
+                style={{ width: '100%', background: submitting ? 'rgba(255,255,255,0.1)' : 'linear-gradient(135deg,#d4a846,#c9807a)', color: submitting ? 'rgba(255,255,255,0.4)' : '#080810', border: 'none', borderRadius: '50px', padding: '16px', fontSize: '15px', fontWeight: '700', cursor: submitting || loadingTracks ? 'wait' : 'pointer', fontFamily: 'inherit', transition: 'all 0.2s', marginBottom: '16px' }}>
+                {submitting ? 'Saving…' : loadingTracks ? 'Loading tracklist…' : showDetails && hasPressingData() ? 'Add to library + contribute data →' : 'Add to my library →'}
+              </button>
 
-              <div style={{ textAlign: 'center', fontSize: '11px', color: 'rgba(255,255,255,0.2)', marginTop: '16px', lineHeight: '1.7' }}>
-                Submissions are public and visible to all Liri users.<br/>
-                Only track order and side data is stored — never lyrics.
-              </div>
+              {/* Collapsible pressing details toggle */}
+              <button onClick={() => setShowDetails(v => !v)}
+                style={{ width: '100%', background: 'none', border: '1px solid rgba(255,255,255,0.1)', borderRadius: '12px', padding: '14px 16px', color: showDetails ? '#d4a846' : 'rgba(255,255,255,0.4)', fontSize: '14px', cursor: 'pointer', fontFamily: 'inherit', textAlign: 'left', display: 'flex', alignItems: 'center', justifyContent: 'space-between', transition: 'color 0.2s, border-color 0.2s', marginBottom: showDetails ? '0' : '0', borderBottomLeftRadius: showDetails ? '0' : '12px', borderBottomRightRadius: showDetails ? '0' : '12px' }}>
+                <span>{showDetails ? '− Pressing details (optional)' : '+ Contribute pressing details (optional)'}</span>
+                <span style={{ fontSize: '12px', opacity: 0.5 }}>{showDetails ? 'collapse' : 'expand'}</span>
+              </button>
+
+              {/* Expanded pressing details + side assignment */}
+              {showDetails && (
+                <div style={{ border: '1px solid rgba(255,255,255,0.1)', borderTop: 'none', borderRadius: '0 0 12px 12px', padding: '20px 16px 24px', marginBottom: '0' }}>
+
+                  <div style={{ fontSize: '12px', color: 'rgba(255,255,255,0.25)', marginBottom: '20px', lineHeight: '1.6' }}>
+                    These distinguish different editions. At minimum, a catalog number or country is helpful.
+                  </div>
+
+                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px', marginBottom: '12px' }}>
+                    {[
+                      { key: 'release_year', label: 'Year', placeholder: '1969', type: 'number' },
+                      { key: 'catalog_number', label: 'Catalog number', placeholder: 'PCS 7088' },
+                    ].map(f => (
+                      <div key={f.key}>
+                        <label style={{ display: 'block', fontSize: '11px', color: 'rgba(255,255,255,0.35)', letterSpacing: '0.5px', textTransform: 'uppercase', marginBottom: '6px' }}>{f.label}</label>
+                        <input type={f.type || 'text'} style={inp} placeholder={f.placeholder}
+                          value={pressing[f.key]} onChange={e => setPressing(p => ({ ...p, [f.key]: e.target.value }))} />
+                      </div>
+                    ))}
+                  </div>
+                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px', marginBottom: '12px' }}>
+                    {[
+                      { key: 'record_label', label: 'Label', placeholder: 'Apple Records' },
+                      { key: 'country', label: 'Country', placeholder: 'UK' },
+                    ].map(f => (
+                      <div key={f.key}>
+                        <label style={{ display: 'block', fontSize: '11px', color: 'rgba(255,255,255,0.35)', letterSpacing: '0.5px', textTransform: 'uppercase', marginBottom: '6px' }}>{f.label}</label>
+                        <input style={inp} placeholder={f.placeholder}
+                          value={pressing[f.key]} onChange={e => setPressing(p => ({ ...p, [f.key]: e.target.value }))} />
+                      </div>
+                    ))}
+                  </div>
+                  <div style={{ marginBottom: '12px' }}>
+                    <label style={{ display: 'block', fontSize: '11px', color: 'rgba(255,255,255,0.35)', letterSpacing: '0.5px', textTransform: 'uppercase', marginBottom: '6px' }}>Edition <span style={{ color: 'rgba(255,255,255,0.2)' }}>optional</span></label>
+                    <input style={inp} placeholder='e.g. "Target Exclusive", "Box Set", "Deluxe"'
+                      value={pressing.edition} onChange={e => setPressing(p => ({ ...p, edition: e.target.value }))} />
+                  </div>
+                  <div style={{ marginBottom: '24px' }}>
+                    <label style={{ display: 'block', fontSize: '11px', color: 'rgba(255,255,255,0.35)', letterSpacing: '0.5px', textTransform: 'uppercase', marginBottom: '6px' }}>Version note <span style={{ color: 'rgba(255,255,255,0.2)' }}>optional</span></label>
+                    <input style={inp} placeholder='e.g. "Red vinyl", "Picture disc", "2023 Remaster"'
+                      value={pressing.version_note} onChange={e => setPressing(p => ({ ...p, version_note: e.target.value }))} />
+                  </div>
+
+                  {/* LP count */}
+                  <div style={{ marginBottom: '32px' }}>
+                    <label style={{ display: 'block', fontSize: '11px', color: 'rgba(255,255,255,0.35)', letterSpacing: '0.5px', textTransform: 'uppercase', marginBottom: '12px' }}>Number of LPs in this release</label>
+                    <div style={{ display: 'flex', gap: '10px' }}>
+                      {[1,2,3,4].map(n => (
+                        <button key={n} onClick={() => setPressing(p => ({ ...p, disc_count: n }))}
+                          style={{ flex: 1, padding: '14px 8px', background: pressing.disc_count === n ? 'linear-gradient(135deg,#d4a846,#c9807a)' : 'rgba(255,255,255,0.05)', border: `1px solid ${pressing.disc_count === n ? 'transparent' : 'rgba(255,255,255,0.1)'}`, color: pressing.disc_count === n ? '#080810' : '#f0e6d3', borderRadius: '12px', fontSize: '15px', fontWeight: '700', cursor: 'pointer', fontFamily: 'inherit', transition: 'all 0.2s' }}>
+                          {n}
+                        </button>
+                      ))}
+                    </div>
+                    <div style={{ display: 'flex', gap: '10px', marginTop: '6px' }}>
+                      {['Side','Sides','Sides','Sides'].map((s, i) => (
+                        <div key={i} style={{ flex: 1, textAlign: 'center', fontSize: '10px', color: 'rgba(255,255,255,0.2)' }}>{i + 1} LP · {(i+1)*2} {s}</div>
+                      ))}
+                    </div>
+                  </div>
+
+                  {/* Side assignment */}
+                  <div style={{ borderTop: '1px solid rgba(255,255,255,0.07)', paddingTop: '24px' }}>
+                    <div style={{ fontSize: '13px', fontWeight: '600', marginBottom: '6px', color: '#f0e6d3' }}>Side assignment</div>
+                    <div style={{ fontSize: '12px', color: 'rgba(255,255,255,0.3)', marginBottom: '20px', lineHeight: '1.6' }}>
+                      Use the arrows to move the flip point. We pre-set it at the midpoint — adjust to match your record.
+                    </div>
+
+                    {loadingTracks ? (
+                      <div style={{ textAlign: 'center', padding: '16px', color: 'rgba(255,255,255,0.3)', fontSize: '14px' }}>Loading tracklist…</div>
+                    ) : (
+                      Object.keys(tracks).map(Number).sort().map(discNum => {
+                        const discTracks = tracks[discNum] || [];
+                        const breakIdx = breaks[discNum] ?? Math.ceil(discTracks.length / 2) - 1;
+                        const [sideA, sideB] = discSides(discNum);
+
+                        return (
+                          <div key={discNum} style={{ marginBottom: '28px' }}>
+                            {Object.keys(tracks).length > 1 && (
+                              <div style={{ fontSize: '11px', letterSpacing: '2px', color: 'rgba(255,255,255,0.3)', textTransform: 'uppercase', marginBottom: '12px' }}>LP {discNum}</div>
+                            )}
+                            {discTracks.map((t, i) => {
+                              const isBreak = i === breakIdx;
+                              const side = i <= breakIdx ? sideA : sideB;
+                              const posInSide = i <= breakIdx ? i + 1 : i - breakIdx;
+                              const isFirstB = i === breakIdx + 1;
+
+                              return (
+                                <React.Fragment key={t.trackId || i}>
+                                  {/* Side header */}
+                                  {i === 0 && (
+                                    <div style={{ fontSize: '11px', letterSpacing: '2px', color: '#d4a846', textTransform: 'uppercase', marginBottom: '8px', paddingBottom: '8px', borderBottom: '1px solid rgba(212,168,70,0.15)' }}>
+                                      Side {sideA}
+                                    </div>
+                                  )}
+                                  {isFirstB && (
+                                    <div style={{ fontSize: '11px', letterSpacing: '2px', color: '#d4a846', textTransform: 'uppercase', marginBottom: '8px', marginTop: '8px', paddingBottom: '8px', borderBottom: '1px solid rgba(212,168,70,0.15)' }}>
+                                      Side {sideB}
+                                    </div>
+                                  )}
+
+                                  {/* Track row */}
+                                  <div style={{ display: 'flex', alignItems: 'center', gap: '12px', padding: '9px 0', borderBottom: '1px solid rgba(255,255,255,0.04)' }}>
+                                    <div style={{ width: '28px', fontSize: '11px', color: 'rgba(255,255,255,0.3)', flexShrink: 0, fontVariantNumeric: 'tabular-nums' }}>
+                                      {side}{posInSide}
+                                    </div>
+                                    <div style={{ flex: 1, fontSize: '14px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{t.trackName}</div>
+                                    <div style={{ fontSize: '12px', color: 'rgba(255,255,255,0.3)', flexShrink: 0 }}>{fmtMs(t.trackTimeMillis)}</div>
+                                  </div>
+
+                                  {/* Flip point indicator — shown after the last track of Side A */}
+                                  {isBreak && (
+                                    <div style={{ display: 'flex', alignItems: 'center', gap: '12px', padding: '10px 0', margin: '4px 0' }}>
+                                      <div style={{ flex: 1, height: '2px', background: 'linear-gradient(90deg,#d4a846,#c9807a)', borderRadius: '1px', opacity: 0.6 }} />
+                                      <div style={{ display: 'flex', gap: '6px', flexShrink: 0 }}>
+                                        <button onClick={() => moveBreak(discNum, -1)} disabled={breakIdx === 0}
+                                          style={{ width: '30px', height: '30px', background: 'rgba(255,255,255,0.07)', border: '1px solid rgba(255,255,255,0.12)', color: breakIdx === 0 ? 'rgba(255,255,255,0.15)' : '#f0e6d3', borderRadius: '8px', cursor: breakIdx === 0 ? 'default' : 'pointer', fontSize: '14px', display: 'flex', alignItems: 'center', justifyContent: 'center', fontFamily: 'inherit' }}>
+                                          ↑
+                                        </button>
+                                        <div style={{ display: 'flex', alignItems: 'center', fontSize: '11px', color: 'rgba(212,168,70,0.7)', letterSpacing: '1px', padding: '0 4px', whiteSpace: 'nowrap' }}>
+                                          FLIP
+                                        </div>
+                                        <button onClick={() => moveBreak(discNum, 1)} disabled={breakIdx >= discTracks.length - 2}
+                                          style={{ width: '30px', height: '30px', background: 'rgba(255,255,255,0.07)', border: '1px solid rgba(255,255,255,0.12)', color: breakIdx >= discTracks.length - 2 ? 'rgba(255,255,255,0.15)' : '#f0e6d3', borderRadius: '8px', cursor: breakIdx >= discTracks.length - 2 ? 'default' : 'pointer', fontSize: '14px', display: 'flex', alignItems: 'center', justifyContent: 'center', fontFamily: 'inherit' }}>
+                                          ↓
+                                        </button>
+                                      </div>
+                                      <div style={{ flex: 1, height: '2px', background: 'linear-gradient(90deg,#c9807a,#d4a846)', borderRadius: '1px', opacity: 0.6 }} />
+                                    </div>
+                                  )}
+                                </React.Fragment>
+                              );
+                            })}
+                          </div>
+                        );
+                      })
+                    )}
+                  </div>
+                </div>
+              )}
+
             </div>
           )}
 
