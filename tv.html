@@ -239,9 +239,8 @@
     // ── CAST RECEIVER MODE ─────────────────────────────────────────────────────
 
     function initCastReceiverMode() {
-      // Hide browser-mode UI, show Cast waiting screen
-      document.getElementById("room-entry").style.display       = "none";
-      document.getElementById("waiting-connected").style.display = "none";
+      // Hide browser-mode UI (code block), show Cast waiting screen
+      document.getElementById("code-block").style.display = "none";
       document.getElementById("waiting-cast").classList.add("show");
       document.getElementById("room-badge").textContent = "Cast";
 
@@ -293,13 +292,20 @@
         }, payload => {
           if (payload.new?.is_active) showSession(payload.new);
         })
-        .subscribe();
+        .subscribe(status => {
+          if (status === "CHANNEL_ERROR" || status === "TIMED_OUT") {
+            document.getElementById("code-hint").textContent = "Connection error — refresh to try again.";
+          }
+        });
 
       // Also fetch any existing active session immediately (in case phone already connected)
       sb.from("cast_sessions")
         .select("*").eq("room_code", code).eq("is_active", true)
         .order("updated_at", { ascending: false }).limit(1)
-        .then(({ data }) => { if (data?.[0]) showSession(data[0]); });
+        .then(({ data, error }) => {
+          if (error) { document.getElementById("code-hint").textContent = "Connection error — refresh to try again."; return; }
+          if (data?.[0]) showSession(data[0]);
+        });
     }
   </script>
 </body>

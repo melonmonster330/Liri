@@ -73,16 +73,12 @@
       "sb_publishable_C-NBnfg0ltAoUi46XQTUjA_ozjZW_Nd"
     );
 
-    const APP_VERSION = "1.110";
+    const APP_VERSION = "1.111";
 
     const PROXY_URL = window.Capacitor
       ? "https://getliri.app/api/recognize"
       : "/api/recognize";
 
-    // ── ART TODO — replace all emoji placeholders with original Liri illustrations ──────────────
-    // Search "TODO ART" to find all locations. Priority order:
-    //   1. Onboarding Step 2 (⏱)  → custom "song history / time" illustration
-    //   2. Onboarding Step 4 (📺)  → custom "cast to TV" illustration
     //   3. Landing page feature cards (🎵 → sound/wave art, 💿 → vinyl art)
     //      Note: ✦ (sparkle character) is intentional Liri type — keep it
     //   4. Settings panel — consider a custom Liri icon or wordmark instead of generic text
@@ -720,14 +716,26 @@
           if (authMode === "signup") {
             const { error } = await sb.auth.signUp({ email: authEmail, password: authPassword });
             if (error) throw error;
-            setAuthError("Check your email to confirm your account, then sign in.");
+            // Switch to sign-in mode so the user knows to check email then sign in
             setAuthMode("signin");
+            setAuthSheet("signin");
+            setAuthPassword("");
+            setAuthError("Check your email to confirm your account, then sign in here.");
           } else {
             const { error } = await sb.auth.signInWithPassword({ email: authEmail, password: authPassword });
             if (error) throw error;
+            setAuthSheet(null);
           }
         } catch (e) { setAuthError(e.message); }
         finally { setAuthWorking(false); }
+      };
+
+      const handleForgotPassword = async () => {
+        if (!authEmail.trim()) { setAuthError("Enter your email address first."); return; }
+        setAuthWorking(true);
+        const { error } = await sb.auth.resetPasswordForEmail(authEmail.trim(), { redirectTo: window.location.origin + "/app" });
+        setAuthWorking(false);
+        setAuthError(error ? error.message : "Password reset link sent — check your email.");
       };
 
       const handleSignOut = async () => { await sb.auth.signOut(); setShowSettings(false); reset(); };
@@ -2379,8 +2387,6 @@
         // authSheet: null | "signin" | "signup"
         const openSheet = (mode) => { setAuthMode(mode); setAuthError(null); setAuthEmail(""); setAuthPassword(""); setAuthSheet(mode); };
 
-        // TODO ART: 🎵 → original sound/wave illustration, 💿 → original vinyl illustration
-        // ✦ is an intentional Liri typographic mark — keep it
         const features = [
           { icon:"🎵", label:"Identify", sub:"8-second song fingerprinting" },
           { icon:"✦",  label:"Sync",     sub:"Real-time scrolling lyrics" },
@@ -2455,10 +2461,15 @@
                     {authWorking ? "…" : authSheet === "signin" ? "Sign In" : "Create Account"}
                   </button>
 
-                  <div style={{ textAlign:"center", marginTop:"16px" }}>
+                  <div style={{ textAlign:"center", marginTop:"16px", display:"flex", flexDirection:"column", gap:"8px" }}>
                     <button onClick={() => openSheet(authSheet === "signin" ? "signup" : "signin")} style={{ background:"none", border:"none", color:"rgba(255,255,255,0.3)", cursor:"pointer", fontSize:"13px", fontFamily:"inherit" }}>
                       {authSheet === "signin" ? "New here? Create an account →" : "Already have an account? Sign in →"}
                     </button>
+                    {authSheet === "signin" && (
+                      <button onClick={handleForgotPassword} disabled={authWorking} style={{ background:"none", border:"none", color:"rgba(255,255,255,0.18)", cursor:"pointer", fontSize:"12px", fontFamily:"inherit" }}>
+                        Forgot password?
+                      </button>
+                    )}
                   </div>
                 </div>
               </div>
@@ -2524,7 +2535,6 @@
               )}
 
               {/* Step 2: History */}
-              {/* TODO ART: ⏱ placeholder — replace with original Liri history/time illustration */}
               {onboardingStep === 2 && (
                 <div style={{ textAlign:"center", animation:"fade-up 0.4s ease both" }}>
                   <div style={{ fontSize:"72px", marginBottom:"24px", filter:"drop-shadow(0 0 20px rgba(212,168,70,0.4))" }}>⏱</div>
@@ -2575,7 +2585,6 @@
               )}
 
               {/* Step 4: Cast to TV */}
-              {/* TODO ART: 📺 placeholder — replace with original Liri TV/cast illustration */}
               {onboardingStep === 4 && (
                 <div style={{ textAlign:"center", animation:"fade-up 0.4s ease both" }}>
                   <div style={{ fontSize:"72px", marginBottom:"24px", filter:"drop-shadow(0 0 24px rgba(200,120,120,0.4))" }}>📺</div>
@@ -2662,7 +2671,7 @@
                 </div>
                 <div style={{ overflowY:"auto", padding:"0 24px", flex:1, paddingBottom:"max(24px, env(safe-area-inset-bottom))" }}>
                   {/* Add a record shortcut */}
-                  <a href="/app/add-vinyl.html"
+                  <a href="/add-vinyl"
                     style={{ width:"100%", display:"flex", alignItems:"center", gap:10, padding:"7px 0", borderBottom:"1px solid rgba(255,255,255,0.04)", color:"rgba(212,168,70,0.8)", fontSize:12, textDecoration:"none", marginBottom:2 }}>
                     <div style={{ width:28, height:28, borderRadius:6, background:"rgba(212,168,70,0.08)", border:"1px solid rgba(212,168,70,0.2)", display:"flex", alignItems:"center", justifyContent:"center", fontSize:15, flexShrink:0 }}>+</div>
                     <span style={{ fontWeight:600 }}>Add a record</span>
@@ -2685,7 +2694,7 @@
                       <div style={{ fontSize:40, marginBottom:12, opacity:0.3 }}>💿</div>
                       <div style={{ fontSize:15, fontWeight:600, color:"rgba(255,255,255,0.35)", marginBottom:8 }}>Your library is empty</div>
                       <div style={{ fontSize:13, color:"rgba(255,255,255,0.2)", marginBottom:20, lineHeight:1.6 }}>Add a record to get started —<br/>Liri will cache everything so it<br/>works offline at play time.</div>
-                      <a href="/app/add-vinyl.html" style={{ display:"inline-block", background:"linear-gradient(135deg,#d4a846,#c9807a)", color:"#080810", borderRadius:"50px", padding:"10px 22px", fontSize:"13px", fontWeight:"700", textDecoration:"none" }}>Add your first record →</a>
+                      <a href="/add-vinyl" style={{ display:"inline-block", background:"linear-gradient(135deg,#d4a846,#c9807a)", color:"#080810", borderRadius:"50px", padding:"10px 22px", fontSize:"13px", fontWeight:"700", textDecoration:"none" }}>Add your first record →</a>
                     </div>
                   ) : (
                     userLibrary.map(album => {
@@ -2894,11 +2903,6 @@
                 <button onClick={() => { clearInterval(syncIntervalRef.current); reset(); }} style={{ width:"100%", background:"rgba(255,255,255,0.04)", border:"1px solid rgba(255,255,255,0.08)", color:"rgba(255,255,255,0.4)", borderRadius:"14px", padding:"14px", fontSize:"14px", cursor:"pointer", fontFamily:"inherit", marginBottom:"10px" }}>⌂ Home</button>
                 <button onClick={handleSignOut} style={{ width:"100%", background:"rgba(255,255,255,0.04)", border:"1px solid rgba(255,255,255,0.08)", color:"rgba(255,255,255,0.4)", borderRadius:"14px", padding:"14px", fontSize:"14px", cursor:"pointer", fontFamily:"inherit" }}>Sign Out</button>
                 <div style={{ textAlign:"center", marginTop:"16px", fontSize:"11px", color:"rgba(255,255,255,0.1)" }}>Liri v{APP_VERSION} · getliri.com</div>
-                <div style={{ textAlign:"center", marginTop:"6px", fontSize:"10px" }}>
-                  <a href="/api/ping-whisper" target="_blank" rel="noopener" style={{ color:"rgba(255,255,255,0.1)", textDecoration:"none" }}>test openai key</a>
-                  <span style={{ color:"rgba(255,255,255,0.07)", margin:"0 6px" }}>·</span>
-                  <a href="/api/ping-acr" target="_blank" rel="noopener" style={{ color:"rgba(255,255,255,0.1)", textDecoration:"none" }}>test acr key</a>
-                </div>
                 </div>{/* end inner padding div */}
               </div>
             </div>
