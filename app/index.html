@@ -73,7 +73,7 @@
       "sb_publishable_C-NBnfg0ltAoUi46XQTUjA_ozjZW_Nd"
     );
 
-    const APP_VERSION = "1.111";
+    const APP_VERSION = "1.112";
 
     const PROXY_URL = window.Capacitor
       ? "https://getliri.app/api/recognize"
@@ -292,13 +292,16 @@
 
       // ── Auth ──
       const [user, setUser]                   = useState(null);
-      const [authLoading, setAuthLoading]     = useState(true);
-      const [authMode, setAuthMode]           = useState("signin");
-      const [authEmail, setAuthEmail]         = useState("");
-      const [authPassword, setAuthPassword]   = useState("");
-      const [authError, setAuthError]         = useState(null);
-      const [authWorking, setAuthWorking]     = useState(false);
-      const [authSheet, setAuthSheet]         = useState(null);
+      const [authLoading, setAuthLoading]         = useState(true);
+      const [authMode, setAuthMode]               = useState("signin");
+      const [authEmail, setAuthEmail]             = useState("");
+      const [authPassword, setAuthPassword]       = useState("");
+      const [authConfirmPw, setAuthConfirmPw]     = useState("");
+      const [authName, setAuthName]               = useState("");
+      const [authError, setAuthError]             = useState(null);
+      const [authWorking, setAuthWorking]         = useState(false);
+      const [authSheet, setAuthSheet]             = useState(null);
+      const [authVerifyPending, setAuthVerifyPending] = useState(false); // show email-confirm waiting screen
 
       // ── Usage ──
       const [usageCount, setUsageCount]       = useState(0);
@@ -711,18 +714,29 @@
       }, []);
 
       const handleAuth = async () => {
-        setAuthError(null); setAuthWorking(true);
+        setAuthError(null);
+        // ── Client-side validation ──
+        if (authMode === "signup") {
+          if (!authName.trim())              { setAuthError("Please enter your name."); return; }
+          if (!authEmail.trim())             { setAuthError("Please enter your email."); return; }
+          if (authPassword.length < 8)       { setAuthError("Password must be at least 8 characters."); return; }
+          if (authPassword !== authConfirmPw){ setAuthError("Passwords don't match."); return; }
+        } else {
+          if (!authEmail.trim() || !authPassword) { setAuthError("Please enter your email and password."); return; }
+        }
+        setAuthWorking(true);
         try {
           if (authMode === "signup") {
-            const { error } = await sb.auth.signUp({ email: authEmail, password: authPassword });
+            const { error } = await sb.auth.signUp({
+              email: authEmail.trim(),
+              password: authPassword,
+              options: { data: { name: authName.trim() } },
+            });
             if (error) throw error;
-            // Switch to sign-in mode so the user knows to check email then sign in
-            setAuthMode("signin");
-            setAuthSheet("signin");
-            setAuthPassword("");
-            setAuthError("Check your email to confirm your account, then sign in here.");
+            // Show the email-verification waiting screen
+            setAuthVerifyPending(true);
           } else {
-            const { error } = await sb.auth.signInWithPassword({ email: authEmail, password: authPassword });
+            const { error } = await sb.auth.signInWithPassword({ email: authEmail.trim(), password: authPassword });
             if (error) throw error;
             setAuthSheet(null);
           }
@@ -736,6 +750,13 @@
         const { error } = await sb.auth.resetPasswordForEmail(authEmail.trim(), { redirectTo: window.location.origin + "/app" });
         setAuthWorking(false);
         setAuthError(error ? error.message : "Password reset link sent — check your email.");
+      };
+
+      const handleResendVerification = async () => {
+        setAuthWorking(true);
+        const { error } = await sb.auth.resend({ type: "signup", email: authEmail.trim() });
+        setAuthWorking(false);
+        setAuthError(error ? error.message : "Verification email resent!");
       };
 
       const handleSignOut = async () => { await sb.auth.signOut(); setShowSettings(false); reset(); };
@@ -2385,7 +2406,11 @@
         const inp = { width:"100%", background:"rgba(255,255,255,0.05)", border:"1px solid rgba(255,255,255,0.1)", color:"#f0e6d3", padding:"16px 18px", borderRadius:"14px", fontSize:"16px", fontFamily:"inherit", transition:"border-color 0.2s" };
 
         // authSheet: null | "signin" | "signup"
-        const openSheet = (mode) => { setAuthMode(mode); setAuthError(null); setAuthEmail(""); setAuthPassword(""); setAuthSheet(mode); };
+        const openSheet = (mode) => {
+          setAuthMode(mode); setAuthError(null);
+          setAuthEmail(""); setAuthPassword(""); setAuthConfirmPw(""); setAuthName("");
+          setAuthVerifyPending(false); setAuthSheet(mode);
+        };
 
         const features = [
           { icon:"🎵", label:"Identify", sub:"8-second song fingerprinting" },
@@ -2433,44 +2458,101 @@
 
             {/* ── Auth sheet (slides up) ── */}
             {authSheet && (
-              <div onClick={() => setAuthSheet(null)} style={{ position:"fixed", inset:0, zIndex:300, background:"rgba(0,0,0,0.5)", backdropFilter:"blur(6px)" }}>
+              <div onClick={() => { if (!authVerifyPending) setAuthSheet(null); }} style={{ position:"fixed", inset:0, zIndex:300, background:"rgba(0,0,0,0.5)", backdropFilter:"blur(6px)" }}>
                 <div onClick={e => e.stopPropagation()} style={{ position:"absolute", bottom:0, left:0, right:0, background:"#0f0f1c", borderRadius:"24px 24px 0 0", padding:"8px 28px max(40px,calc(env(safe-area-inset-bottom)+28px))", animation:"slide-up 0.3s ease", maxWidth:"520px", margin:"0 auto" }}>
 
-                  {/* Drag handle */}
-                  <div onClick={() => setAuthSheet(null)} style={{ padding:"12px 0 20px", cursor:"pointer", textAlign:"center" }}>
-                    <div style={{ width:"40px", height:"4px", borderRadius:"2px", background:"rgba(255,255,255,0.12)", display:"inline-block" }} />
-                  </div>
-
-                  <h2 style={{ fontSize:"22px", fontWeight:"600", color:"#f0e6d3", textAlign:"center", marginBottom:"6px" }}>
-                    {authSheet === "signin" ? "Welcome back" : "Create your account"}
-                  </h2>
-                  <p style={{ fontSize:"14px", color:"rgba(255,255,255,0.25)", textAlign:"center", marginBottom:"28px" }}>
-                    {authSheet === "signin" ? "Sign in to continue listening" : "Free to start — no credit card"}
-                  </p>
-
-                  <div style={{ display:"flex", flexDirection:"column", gap:"12px" }}>
-                    <input type="email" placeholder="Email" value={authEmail} onChange={e => setAuthEmail(e.target.value)} onKeyDown={e => e.key === "Enter" && handleAuth()} style={inp} autoFocus />
-                    <input type="password" placeholder="Password" value={authPassword} onChange={e => setAuthPassword(e.target.value)} onKeyDown={e => e.key === "Enter" && handleAuth()} style={inp} />
-                  </div>
-
-                  {authError && (
-                    <div style={{ fontSize:"13px", color: authError.includes("Check") ? "#6aaa8a" : "#e8a0a8", textAlign:"center", margin:"14px 0 0", lineHeight:"1.6" }}>{authError}</div>
+                  {/* Drag handle / close */}
+                  {!authVerifyPending && (
+                    <div onClick={() => setAuthSheet(null)} style={{ padding:"12px 0 20px", cursor:"pointer", textAlign:"center" }}>
+                      <div style={{ width:"40px", height:"4px", borderRadius:"2px", background:"rgba(255,255,255,0.12)", display:"inline-block" }} />
+                    </div>
                   )}
 
-                  <button onClick={handleAuth} disabled={authWorking} style={{ width:"100%", marginTop:"20px", background:"linear-gradient(135deg, #d4a846, #c9807a)", color:"#080810", border:"none", borderRadius:"14px", padding:"18px", fontSize:"15px", fontWeight:"700", letterSpacing:"0.5px", cursor: authWorking ? "wait" : "pointer", opacity: authWorking ? 0.6 : 1, fontFamily:"inherit", transition:"opacity 0.2s" }}>
-                    {authWorking ? "…" : authSheet === "signin" ? "Sign In" : "Create Account"}
-                  </button>
-
-                  <div style={{ textAlign:"center", marginTop:"16px", display:"flex", flexDirection:"column", gap:"8px" }}>
-                    <button onClick={() => openSheet(authSheet === "signin" ? "signup" : "signin")} style={{ background:"none", border:"none", color:"rgba(255,255,255,0.3)", cursor:"pointer", fontSize:"13px", fontFamily:"inherit" }}>
-                      {authSheet === "signin" ? "New here? Create an account →" : "Already have an account? Sign in →"}
-                    </button>
-                    {authSheet === "signin" && (
-                      <button onClick={handleForgotPassword} disabled={authWorking} style={{ background:"none", border:"none", color:"rgba(255,255,255,0.18)", cursor:"pointer", fontSize:"12px", fontFamily:"inherit" }}>
-                        Forgot password?
+                  {/* ── Email verification pending screen ── */}
+                  {authVerifyPending ? (
+                    <div style={{ textAlign:"center", padding:"24px 0 8px", animation:"fade-up 0.3s ease" }}>
+                      <div style={{ fontSize:"52px", marginBottom:"20px" }}>📬</div>
+                      <h2 style={{ fontSize:"22px", fontWeight:"700", color:"#f0e6d3", marginBottom:"10px" }}>Check your email</h2>
+                      <p style={{ fontSize:"14px", color:"rgba(255,255,255,0.4)", lineHeight:"1.7", marginBottom:"8px" }}>
+                        We sent a verification link to
+                      </p>
+                      <p style={{ fontSize:"14px", fontWeight:"600", color:"#d4a846", marginBottom:"28px" }}>{authEmail}</p>
+                      <p style={{ fontSize:"13px", color:"rgba(255,255,255,0.3)", lineHeight:"1.7", marginBottom:"28px", maxWidth:"260px", margin:"0 auto 28px" }}>
+                        Click the link in that email to confirm your account, then come back and sign in.
+                      </p>
+                      {authError && (
+                        <div style={{ fontSize:"13px", color: authError.includes("resent") || authError.includes("sent") ? "#6aaa8a" : "#e8a0a8", textAlign:"center", marginBottom:"16px", lineHeight:"1.6" }}>{authError}</div>
+                      )}
+                      <button onClick={handleResendVerification} disabled={authWorking} style={{ background:"none", border:"1px solid rgba(255,255,255,0.12)", color:"rgba(255,255,255,0.4)", borderRadius:"50px", padding:"10px 24px", fontSize:"13px", cursor:"pointer", fontFamily:"inherit", marginBottom:"14px", opacity: authWorking ? 0.5 : 1 }}>
+                        {authWorking ? "Sending…" : "Resend email"}
                       </button>
-                    )}
-                  </div>
+                      <div>
+                        <button onClick={() => openSheet("signin")} style={{ background:"none", border:"none", color:"rgba(255,255,255,0.25)", cursor:"pointer", fontSize:"13px", fontFamily:"inherit" }}>
+                          Already confirmed? Sign in →
+                        </button>
+                      </div>
+                    </div>
+
+                  ) : authSheet === "signup" ? (
+                    /* ── Sign Up form ── */
+                    <>
+                      <h2 style={{ fontSize:"22px", fontWeight:"600", color:"#f0e6d3", textAlign:"center", marginBottom:"6px" }}>Create your account</h2>
+                      <p style={{ fontSize:"14px", color:"rgba(255,255,255,0.25)", textAlign:"center", marginBottom:"24px" }}>Free to start — no credit card</p>
+
+                      <div style={{ display:"flex", flexDirection:"column", gap:"10px" }}>
+                        <input type="text" placeholder="Your name" value={authName} onChange={e => setAuthName(e.target.value)} onKeyDown={e => e.key === "Enter" && handleAuth()} style={inp} autoFocus />
+                        <input type="email" placeholder="Email" value={authEmail} onChange={e => setAuthEmail(e.target.value)} onKeyDown={e => e.key === "Enter" && handleAuth()} style={inp} />
+                        <input type="password" placeholder="Password (min 8 characters)" value={authPassword} onChange={e => setAuthPassword(e.target.value)} onKeyDown={e => e.key === "Enter" && handleAuth()} style={inp} />
+                        <input type="password" placeholder="Confirm password" value={authConfirmPw} onChange={e => setAuthConfirmPw(e.target.value)} onKeyDown={e => e.key === "Enter" && handleAuth()} style={{
+                          ...inp,
+                          borderColor: authConfirmPw && authConfirmPw !== authPassword ? "rgba(232,160,168,0.5)" : inp.borderColor
+                        }} />
+                      </div>
+
+                      {authError && (
+                        <div style={{ fontSize:"13px", color:"#e8a0a8", textAlign:"center", margin:"12px 0 0", lineHeight:"1.6" }}>{authError}</div>
+                      )}
+
+                      <button onClick={handleAuth} disabled={authWorking} style={{ width:"100%", marginTop:"18px", background:"linear-gradient(135deg, #d4a846, #c9807a)", color:"#080810", border:"none", borderRadius:"14px", padding:"18px", fontSize:"15px", fontWeight:"700", letterSpacing:"0.5px", cursor: authWorking ? "wait" : "pointer", opacity: authWorking ? 0.6 : 1, fontFamily:"inherit", transition:"opacity 0.2s" }}>
+                        {authWorking ? "Creating account…" : "Create Account"}
+                      </button>
+
+                      <div style={{ textAlign:"center", marginTop:"16px" }}>
+                        <button onClick={() => openSheet("signin")} style={{ background:"none", border:"none", color:"rgba(255,255,255,0.3)", cursor:"pointer", fontSize:"13px", fontFamily:"inherit" }}>
+                          Already have an account? Sign in →
+                        </button>
+                      </div>
+                    </>
+
+                  ) : (
+                    /* ── Sign In form ── */
+                    <>
+                      <h2 style={{ fontSize:"22px", fontWeight:"600", color:"#f0e6d3", textAlign:"center", marginBottom:"6px" }}>Welcome back</h2>
+                      <p style={{ fontSize:"14px", color:"rgba(255,255,255,0.25)", textAlign:"center", marginBottom:"24px" }}>Sign in to continue listening</p>
+
+                      <div style={{ display:"flex", flexDirection:"column", gap:"10px" }}>
+                        <input type="email" placeholder="Email" value={authEmail} onChange={e => setAuthEmail(e.target.value)} onKeyDown={e => e.key === "Enter" && handleAuth()} style={inp} autoFocus />
+                        <input type="password" placeholder="Password" value={authPassword} onChange={e => setAuthPassword(e.target.value)} onKeyDown={e => e.key === "Enter" && handleAuth()} style={inp} />
+                      </div>
+
+                      {authError && (
+                        <div style={{ fontSize:"13px", color: authError.includes("reset") || authError.includes("sent") ? "#6aaa8a" : "#e8a0a8", textAlign:"center", margin:"12px 0 0", lineHeight:"1.6" }}>{authError}</div>
+                      )}
+
+                      <button onClick={handleAuth} disabled={authWorking} style={{ width:"100%", marginTop:"18px", background:"linear-gradient(135deg, #d4a846, #c9807a)", color:"#080810", border:"none", borderRadius:"14px", padding:"18px", fontSize:"15px", fontWeight:"700", letterSpacing:"0.5px", cursor: authWorking ? "wait" : "pointer", opacity: authWorking ? 0.6 : 1, fontFamily:"inherit", transition:"opacity 0.2s" }}>
+                        {authWorking ? "Signing in…" : "Sign In"}
+                      </button>
+
+                      <div style={{ textAlign:"center", marginTop:"16px", display:"flex", flexDirection:"column", gap:"8px" }}>
+                        <button onClick={() => openSheet("signup")} style={{ background:"none", border:"none", color:"rgba(255,255,255,0.3)", cursor:"pointer", fontSize:"13px", fontFamily:"inherit" }}>
+                          New here? Create an account →
+                        </button>
+                        <button onClick={handleForgotPassword} disabled={authWorking} style={{ background:"none", border:"none", color:"rgba(255,255,255,0.18)", cursor:"pointer", fontSize:"12px", fontFamily:"inherit" }}>
+                          Forgot password?
+                        </button>
+                      </div>
+                    </>
+                  )}
                 </div>
               </div>
             )}
@@ -2750,18 +2832,27 @@
                 )}
                 <div style={{ padding: isWide ? "12px 20px max(20px, calc(env(safe-area-inset-bottom) + 16px))" : "16px 24px max(32px, calc(env(safe-area-inset-bottom) + 24px))" }}>
 
-                {/* Avatar + email */}
-                <div style={{ display:"flex", alignItems:"center", gap:"14px", marginBottom:"28px" }}>
-                  <div style={{ width:"48px", height:"48px", borderRadius:"50%", background:"linear-gradient(135deg, #d4a846, #c9807a)", display:"flex", alignItems:"center", justifyContent:"center", fontSize:"18px", fontWeight:"700", color:"#080810", flexShrink:0 }}>
-                    {user?.email?.[0]?.toUpperCase() || "?"}
-                  </div>
-                  <div>
-                    <div style={{ fontSize:"15px", fontWeight:"600", color:"#f0e6d3" }}>{user?.email}</div>
-                    <div style={{ fontSize:"12px", color:"rgba(255,255,255,0.3)", marginTop:"2px" }}>
-                      {isUnlimited(user) ? "✦ Unlimited access" : `${usageCount} of ${FREE_LIMIT} free songs used`}
+                {/* Avatar + name/email */}
+                {(() => {
+                  const displayName = user?.user_metadata?.name || "";
+                  const initial = (displayName?.[0] || user?.email?.[0] || "?").toUpperCase();
+                  return (
+                    <div style={{ display:"flex", alignItems:"center", gap:"14px", marginBottom:"28px" }}>
+                      <div style={{ width:"48px", height:"48px", borderRadius:"50%", background:"linear-gradient(135deg, #d4a846, #c9807a)", display:"flex", alignItems:"center", justifyContent:"center", fontSize:"18px", fontWeight:"700", color:"#080810", flexShrink:0 }}>
+                        {initial}
+                      </div>
+                      <div style={{ minWidth:0 }}>
+                        {displayName ? (
+                          <div style={{ fontSize:"15px", fontWeight:"600", color:"#f0e6d3", overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>{displayName}</div>
+                        ) : null}
+                        <div style={{ fontSize: displayName ? "12px" : "15px", fontWeight: displayName ? "400" : "600", color: displayName ? "rgba(255,255,255,0.35)" : "#f0e6d3", overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>{user?.email}</div>
+                        <div style={{ fontSize:"12px", color:"rgba(255,255,255,0.3)", marginTop:"2px" }}>
+                          {isUnlimited(user) ? "✦ Unlimited access" : `${usageCount} of ${FREE_LIMIT} free songs used`}
+                        </div>
+                      </div>
                     </div>
-                  </div>
-                </div>
+                  );
+                })()}
 
                 {/* Usage bar */}
                 {!isUnlimited(user) && (
