@@ -11,12 +11,18 @@
 // Body: { audio: <base64 string>, mimeType: "audio/webm" }
 // Response: { text: "transcribed lyrics fragment" }
 
+const { verifyAuth } = require("./_lib/auth");
+
 module.exports = async (req, res) => {
-  res.setHeader("Access-Control-Allow-Origin", "*");
+  const ALLOWED_ORIGINS = ["https://getliri.com", "capacitor://localhost"];
+  const origin = req.headers.origin || "";
+  res.setHeader("Access-Control-Allow-Origin", ALLOWED_ORIGINS.includes(origin) ? origin : "https://getliri.com");
   res.setHeader("Access-Control-Allow-Methods", "POST, OPTIONS");
-  res.setHeader("Access-Control-Allow-Headers", "Content-Type");
+  res.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization");
   if (req.method === "OPTIONS") return res.status(200).end();
   if (req.method !== "POST") return res.status(405).json({ error: "Method not allowed" });
+
+  if (!verifyAuth(req)) return res.status(401).json({ error: "Unauthorized" });
 
   const apiKey = process.env.OPENAI_API_KEY;
   if (!apiKey) return res.status(500).json({ error: "OPENAI_API_KEY not configured" });
@@ -84,9 +90,8 @@ module.exports = async (req, res) => {
     });
 
     if (result.status !== 200) {
-      const msg = result.body?.error?.message || "Whisper failed";
       console.error("Whisper error:", result.status, result.body);
-      return res.status(502).json({ error: msg, whisperStatus: result.status });
+      return res.status(502).json({ error: "Transcription failed. Please try again." });
     }
 
     const raw = result.body.text || "";
@@ -120,6 +125,6 @@ module.exports = async (req, res) => {
 
   } catch (err) {
     console.error("Transcribe error:", err);
-    return res.status(500).json({ error: err.message });
+    return res.status(500).json({ error: "Transcription failed. Please try again." });
   }
 };

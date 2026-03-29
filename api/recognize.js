@@ -4,6 +4,9 @@
 
 const crypto = require("crypto");
 const https  = require("https");
+const { verifyAuth, getUsageCount, incrementUsage } = require("./_lib/auth");
+
+const FREE_LIMIT = 10;
 
 // Simple https POST helper — returns parsed JSON
 function httpsPost(hostname, path, headers, body) {
@@ -29,15 +32,33 @@ function httpsPost(hostname, path, headers, body) {
 }
 
 module.exports = async (req, res) => {
+  const ALLOWED_ORIGINS = ["https://getliri.com", "capacitor://localhost"];
+  const origin = req.headers.origin || "";
+  const allowedOrigin = ALLOWED_ORIGINS.includes(origin) ? origin : "https://getliri.com";
   const cors = {
-    "Access-Control-Allow-Origin":  "*",
-    "Access-Control-Allow-Headers": "Content-Type",
+    "Access-Control-Allow-Origin":  allowedOrigin,
+    "Access-Control-Allow-Headers": "Content-Type, Authorization",
     "Access-Control-Allow-Methods": "POST, OPTIONS",
   };
   Object.entries(cors).forEach(([k, v]) => res.setHeader(k, v));
 
   if (req.method === "OPTIONS") { res.status(200).end(); return; }
   if (req.method !== "POST")    { res.status(405).send("Method Not Allowed"); return; }
+
+  // ── Auth & usage enforcement ────────────────────────────────────────────────
+  const auth = verifyAuth(req);
+  if (!auth) {
+    res.status(401).json({ error: "Unauthorized" });
+    return;
+  }
+
+  if (!auth.isUnlimited) {
+    const count = await getUsageCount(auth.userId);
+    if (count >= FREE_LIMIT) {
+      res.status(429).json({ error: "Free limit reached", limitReached: true });
+      return;
+    }
+  }
 
   try {
     const { audio, mimeType = "audio/webm" } = req.body;
@@ -108,6 +129,14 @@ module.exports = async (req, res) => {
     // Log ACRCloud's response so we can debug in Vercel logs
     console.log("ACRCloud response:", JSON.stringify(result));
 
+    // Increment usage counter server-side on a successful match (code 0).
+    // Don't count misses (1001) or errors against the user's limit.
+    if (!auth.isUnlimited && result?.status?.code === 0) {
+      incrementUsage(auth.userId).catch(err =>
+        console.error("Usage increment failed:", err.message)
+      );
+    }
+
     // Attach the user's country (from Vercel's edge network headers) so the
     // client can store it in listening_events without a separate geo lookup.
     const countryCode = req.headers["x-vercel-ip-country"] || null;
@@ -115,6 +144,6 @@ module.exports = async (req, res) => {
 
   } catch (err) {
     console.error("Recognize error:", err.message);
-    res.status(500).json({ error: "Recognition failed", message: err.message });
+    res.status(500).json({ error: "Recognition failed. Please try again." });
   }
 };

@@ -30,11 +30,14 @@
     input { outline: none; }
     input:focus { border-color: rgba(212,168,70,0.6) !important; }
     ::-webkit-scrollbar { display: none; }
+    button, a, [role="button"] { -webkit-tap-highlight-color: transparent; cursor: pointer; }
+    button:active, a:active, [role="button"]:active { opacity: 0.65; transform: scale(0.97); transition: opacity 0s, transform 0s; }
     @keyframes spin    { to { transform: rotate(360deg); } }
     @keyframes fade-up { from { opacity: 0; transform: translateY(12px); } to { opacity: 1; transform: translateY(0); } }
     @keyframes slide-in { from { transform: translateX(100%); } to { transform: translateX(0); } }
     @keyframes sheet-up { from { transform: translateY(100%); } to { transform: translateY(0); } }
   </style>
+  <script>document.addEventListener('touchstart', function(){}, {passive: true});</script>
 </head>
 <body>
   <div id="root"></div>
@@ -47,7 +50,7 @@
   <script type="text/babel">
     const { useState, useEffect, useRef, useCallback } = React;
 
-    const APP_VERSION = "1.112";
+    const APP_VERSION = "1.116";
 
     const sb = supabase.createClient(
       "https://xjdjpaxgymgbvcwmvorc.supabase.co",
@@ -666,6 +669,10 @@
       const [removing, setRemoving]       = useState(null);
       const searchTimer                   = useRef(null);
 
+      // Freemium
+      const FREE_LIMIT = 10;
+      const [showUpgradePopup, setShowUpgradePopup] = useState(false);
+
       // ── Auth ──
       useEffect(() => {
         sb.auth.getSession().then(({ data: { session } }) => {
@@ -726,6 +733,11 @@
       // ── Add album to library ──
       const addAlbum = async (album) => {
         if (!user || adding) return;
+        const isUnlimited = user.email === "test@test.com";
+        if (!isUnlimited && library.length >= FREE_LIMIT) {
+          setShowUpgradePopup(true);
+          return;
+        }
         setAdding(String(album.collectionId));
         const { error } = await sb.from("user_vinyl_library").upsert({
           user_id: user.id,
@@ -805,9 +817,30 @@
       );
 
       const inLibraryIds = new Set(library.map(a => a.itunes_collection_id));
+      const isUnlimited = user?.email === "test@test.com";
 
       return (
         <div style={{ minHeight: "100vh", paddingBottom: 80 }}>
+
+          {/* ── Upgrade popup ── */}
+          {showUpgradePopup && (
+            <div onClick={() => setShowUpgradePopup(false)} style={{ position:"fixed", inset:0, zIndex:500, background:"rgba(0,0,0,0.7)", backdropFilter:"blur(8px)", display:"flex", alignItems:"flex-end", justifyContent:"center" }}>
+              <div onClick={e => e.stopPropagation()} style={{ background:"#0f0f1c", borderRadius:"24px 24px 0 0", padding:"32px 28px max(40px, calc(env(safe-area-inset-bottom) + 32px))", width:"100%", maxWidth:480, animation:"slide-up 0.3s ease" }}>
+                <div style={{ width:40, height:4, borderRadius:2, background:"rgba(255,255,255,0.12)", margin:"0 auto 28px" }} />
+                <div style={{ fontSize:40, textAlign:"center", marginBottom:16 }}>💿</div>
+                <div style={{ fontSize:22, fontWeight:700, color:"#f0e6d3", textAlign:"center", marginBottom:10 }}>You've hit your free limit</div>
+                <div style={{ fontSize:14, color:"rgba(255,255,255,0.4)", textAlign:"center", lineHeight:1.7, marginBottom:28 }}>
+                  Your free plan includes <strong style={{color:"rgba(255,255,255,0.7)"}}>10 records</strong>. Upgrade to add unlimited records to your collection.
+                </div>
+                <button onClick={() => setShowUpgradePopup(false)} style={{ width:"100%", background:"linear-gradient(135deg,#d4a846,#c9807a)", color:"#080810", border:"none", borderRadius:50, padding:"16px", fontSize:15, fontWeight:700, cursor:"pointer", fontFamily:"inherit", marginBottom:12 }}>
+                  Upgrade — coming soon
+                </button>
+                <button onClick={() => setShowUpgradePopup(false)} style={{ width:"100%", background:"none", border:"none", color:"rgba(255,255,255,0.3)", fontSize:14, cursor:"pointer", fontFamily:"inherit", padding:"10px" }}>
+                  Maybe later
+                </button>
+              </div>
+            </div>
+          )}
 
           {/* ── Header ── */}
           <div style={{ padding: "max(52px, calc(env(safe-area-inset-top) + 24px)) 24px 0" }}>
@@ -829,7 +862,9 @@
             <div style={{ fontSize: 14, color: "rgba(255,255,255,0.3)", marginBottom: 32 }}>
               {library.length === 0 && !libLoading
                 ? "Add your first record to get started"
-                : `${library.length} album${library.length !== 1 ? "s" : ""} in your collection`}
+                : user?.email === "test@test.com"
+                  ? `${library.length} album${library.length !== 1 ? "s" : ""} in your collection`
+                  : `${library.length} / ${FREE_LIMIT} free records`}
             </div>
           </div>
 

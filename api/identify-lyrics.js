@@ -38,12 +38,18 @@ function callOpenAI(apiKey, payload) {
   });
 }
 
+const { verifyAuth } = require("./_lib/auth");
+
 module.exports = async (req, res) => {
-  res.setHeader("Access-Control-Allow-Origin", "*");
+  const ALLOWED_ORIGINS = ["https://getliri.com", "capacitor://localhost"];
+  const origin = req.headers.origin || "";
+  res.setHeader("Access-Control-Allow-Origin", ALLOWED_ORIGINS.includes(origin) ? origin : "https://getliri.com");
   res.setHeader("Access-Control-Allow-Methods", "POST, OPTIONS");
-  res.setHeader("Access-Control-Allow-Headers", "Content-Type");
+  res.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization");
   if (req.method === "OPTIONS") return res.status(200).end();
   if (req.method !== "POST") return res.status(405).json({ error: "Method not allowed" });
+
+  if (!verifyAuth(req)) return res.status(401).json({ error: "Unauthorized" });
 
   const apiKey = process.env.OPENAI_API_KEY;
   if (!apiKey) return res.status(500).json({ error: "OPENAI_API_KEY not configured" });
@@ -76,6 +82,6 @@ module.exports = async (req, res) => {
 
   } catch (err) {
     console.error("identify-lyrics error:", err.message);
-    return res.status(500).json({ error: err.message });
+    return res.status(500).json({ error: "Song identification failed. Please try again." });
   }
 };

@@ -17,6 +17,13 @@ function httpsGet(url) {
 }
 
 module.exports = async (req, res) => {
+  const ALLOWED_ORIGINS = ["https://getliri.com", "capacitor://localhost"];
+  const origin = req.headers.origin || "";
+  res.setHeader("Access-Control-Allow-Origin", ALLOWED_ORIGINS.includes(origin) ? origin : "https://getliri.com");
+  res.setHeader("Access-Control-Allow-Methods", "GET, OPTIONS");
+  res.setHeader("Access-Control-Allow-Headers", "Content-Type");
+  if (req.method === "OPTIONS") return res.status(200).end();
+
   const { id, term, entity, limit } = req.query;
 
   if (!id && !term) {
@@ -35,6 +42,7 @@ module.exports = async (req, res) => {
     res.setHeader("Cache-Control", "s-maxage=3600, stale-while-revalidate=86400");
     res.json(data || { resultCount: 0, results: [] });
   } catch (e) {
-    res.status(500).json({ error: "iTunes API error", detail: e.message });
+    console.error("iTunes lookup error:", e.message);
+    res.status(500).json({ error: "Lookup failed. Please try again." });
   }
 };

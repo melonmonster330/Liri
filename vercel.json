@@ -1,6 +1,14 @@
 {
   "installCommand": "npm install --omit=dev",
   "outputDirectory": ".",
+  "redirects": [
+    { "source": "/vercel.json",        "destination": "/404", "statusCode": 404 },
+    { "source": "/package.json",       "destination": "/404", "statusCode": 404 },
+    { "source": "/package-lock.json",  "destination": "/404", "statusCode": 404 },
+    { "source": "/.env",               "destination": "/404", "statusCode": 404 },
+    { "source": "/.env.:file",         "destination": "/404", "statusCode": 404 },
+    { "source": "/.git/:path*",        "destination": "/404", "statusCode": 404 }
+  ],
   "rewrites": [
     { "source": "/app",          "destination": "/app/index.html"     },
     { "source": "/add-vinyl",    "destination": "/app/add-vinyl.html" },
