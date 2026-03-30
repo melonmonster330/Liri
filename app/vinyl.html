@@ -524,7 +524,7 @@
     // ── Single card HTML ───────────────────────────────────────────────────
     function cardHTML(r) {
       const img = r.artwork_url
-        ? `<img class="artwork" src="${r.artwork_url}" alt="" loading="lazy" onerror="this.style.display='none';this.nextElementSibling.style.display='flex'">`
+        ? `<img class="artwork" src="${esc(r.artwork_url)}" alt="" loading="lazy" onerror="this.style.display='none';this.nextElementSibling.style.display='flex'">`
         : "";
       const placeholder = `<div class="artwork-placeholder" style="${r.artwork_url ? 'display:none' : ''}">💿</div>`;
 
@@ -588,11 +588,14 @@
       expandedId = id;
 
       if (tracksCache[id]) {
+        // If still loading (another click fired mid-fetch), do nothing
+        if (tracksCache[id] === "loading") return;
         renderTracks(trackDiv, tracksCache[id]);
         if (animate) card.scrollIntoView({ behavior: "smooth", block: "nearest" });
         return;
       }
 
+      tracksCache[id] = "loading"; // guard against concurrent fetches
       const { data: tracks } = await sb
         .from("vinyl_tracks")
         .select("position, side, track_number_on_side, title, duration_ms, disc_number")

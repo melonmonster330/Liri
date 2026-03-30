@@ -46,7 +46,7 @@ module.exports = async (req, res) => {
   if (req.method !== "POST")    { res.status(405).send("Method Not Allowed"); return; }
 
   // ── Auth & usage enforcement ────────────────────────────────────────────────
-  const auth = verifyAuth(req);
+  const auth = await verifyAuth(req);
   if (!auth) {
     res.status(401).json({ error: "Unauthorized" });
     return;

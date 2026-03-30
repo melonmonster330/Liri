@@ -413,6 +413,7 @@ function Liri() {
 
   // ── Refs ──
   const streamRef = useRef(null);
+  const speechRecRef = useRef(null); // active SpeechRecognition instance (turntable mode)
   const analyserNodeRef = useRef(null); // AnalyserNode for frequency-bar wave
   const audioCtxRef = useRef(null); // AudioContext for the analyser
   const syncIntervalRef = useRef(null);
@@ -1838,8 +1839,196 @@ function Liri() {
   // Each attempt records a fixed-duration M4A segment natively and sends it
   // to ACRCloud / Whisper via the same proxy endpoints as the web version.
   // ─────────────────────────────────────────────────────────────────────────
+  // ── Turntable mode: real-time speech recognition → lyric word match ──────────
+  // When an album is selected in the library, Liri already has all lyrics cached.
+  // Instead of recording + sending to ACRCloud/Whisper, we use the Web Speech API
+  // to transcribe words in real time and match them against the known lyrics.
+  // No server calls, no delays — match fires the moment enough words are recognised.
+  const startListeningSpeech = (isAutoAdvance = false) => {
+    clearInterval(progressTimerRef.current);
+    const session = ++listenSessionRef.current;
+    attemptLogRef.current = [];
+    recognitionWonRef.current = false;
+    turntableMatchedIdxRef.current = -1;
+    setError(null);
+    setMode("listening");
+    setListenProgress(0);
+    setListenAttempt(1);
+    setAudioLevel(0);
+    clearInterval(syncIntervalRef.current);
+
+    const tracks = turntableTracksRef.current;
+    if (!tracks.length) {
+      setError("Album tracks still loading — try again in a moment.");
+      setMode("error");
+      return;
+    }
+
+    const SpeechRec = window.SpeechRecognition || window.webkitSpeechRecognition;
+    if (!SpeechRec) {
+      // Speech API not available — caller should not have branched here
+      setError("Speech recognition unavailable on this device.");
+      setMode("error");
+      return;
+    }
+
+    const MIN_SCORE = 4; // words needed for a confident match
+    const rec = new SpeechRec();
+    rec.continuous = true;
+    rec.interimResults = true;
+    rec.lang = "en-US";
+    rec.maxAlternatives = 1;
+    speechRecRef.current = rec;
+
+    let finalTranscript = "";
+
+    rec.onstart = () => {
+      recordingStartRef.current = Date.now();
+      attemptLogRef.current.push("speech: recognition started");
+    };
+
+    rec.onresult = (event) => {
+      if (listenSessionRef.current !== session || recognitionWonRef.current) { rec.stop(); return; }
+
+      let interim = "";
+      for (let i = event.resultIndex; i < event.results.length; i++) {
+        if (event.results[i].isFinal) {
+          finalTranscript += event.results[i][0].transcript + " ";
+        } else {
+          interim = event.results[i][0].transcript;
+        }
+      }
+
+      const combined = (finalTranscript + interim).trim();
+      if (!combined) return;
+
+      const wordCount = combined.split(/\s+/).filter(Boolean).length;
+      // Animate progress ring and wave bars while listening
+      setListenProgress(Math.min(wordCount / 16, 0.95));
+      setAudioLevel(0.3 + Math.sin(Date.now() / 300) * 0.15 + Math.random() * 0.1);
+
+      if (wordCount < MIN_SCORE) return;
+
+      const vmResult = matchTranscriptToTracks(combined, tracks, attemptLogRef.current, turntableLyricsCacheRef.current);
+      if (!vmResult || vmResult.score < MIN_SCORE) return;
+
+      // ── Match found ──────────────────────────────────────────────────────
+      if (recognitionWonRef.current) return;
+      recognitionWonRef.current = true;
+      try { rec.stop(); } catch {}
+
+      const { track, lrcMatch, lyrics, startPos, score } = vmResult;
+      const ta = turntableAlbumRef.current;
+
+      attemptLogRef.current.push(`speech: matched "${track.trackName}" at ${startPos.toFixed(1)}s (${score} words)`);
+
+      const matchedIdx = tracks.findIndex(t => t.trackName?.toLowerCase() === track.trackName?.toLowerCase());
+      turntableMatchedIdxRef.current = matchedIdx >= 0 ? matchedIdx : (track.trackNumber ? track.trackNumber - 1 : 0);
+
+      const song = {
+        title: track.trackName,
+        artist: track.artistName || ta?.artist_name || "",
+        album: ta?.album_name || lrcMatch.albumName || "",
+        artwork: ta?.artwork_url || null
+      };
+
+      setIdentifiedBy("whisper"); // reuses the existing whisper badge in the UI
+      detectedAtRef.current = Date.now();
+
+      // Timing: speech recognition is real-time — startPos is where those words
+      // appear in the lyrics right now. phraseOffset = 0 (no recording buffer).
+      // syncCalcRef lets startSync recompute the final position at the last moment,
+      // after all React renders settle — same pattern as the Whisper path.
+      syncCalcRef.current = { startPos, phraseOffset: 0, recStart: Date.now() };
+      initialPosRef.current = startPos; // rough estimate; startSync refines it
+      autoAdvanceFiredRef.current = false;
+      autoRetryCountRef.current = 0;
+
+      setDetectedSong(song);
+      setSongDuration(lrcMatch.duration || (track.trackTimeMillis ? track.trackTimeMillis / 1000 : null));
+      setLyrics(lyrics);
+      lyricsRef.current = lyrics;
+      setMode("confirmed");
+      saveToHistory(user, song);
+      fetchHistory(user);
+      logListeningEvent({
+        userId: user?.id,
+        title: track.trackName,
+        artist: track.artistName || ta?.artist_name || "",
+        album: ta?.album_name || lrcMatch.albumName || "",
+        artwork: ta?.artwork_url || null,
+        itunesTrackId: track.trackId,
+        collectionId: ta?.itunes_collection_id || track.collectionId,
+        vinylReleaseId: null,
+        vinylModeOn: vinylMode,
+        source: "turntable",
+        offsetSecs: startPos,
+        durationSecs: lrcMatch.duration || (track.trackTimeMillis ? track.trackTimeMillis / 1000 : null)
+      });
+
+      // Cache the LRC so future matches skip the LRCLib fetch
+      if (track.trackId && lrcMatch?.syncedLyrics) {
+        const ta2 = turntableAlbumRef.current;
+        sb.from("liri_lyric_cache").upsert({
+          itunes_track_id: track.trackId,
+          itunes_collection_id: ta2?.itunes_collection_id || track.collectionId,
+          track_name: track.trackName,
+          artist_name: track.artistName,
+          album_name: ta2?.album_name,
+          track_number: track.trackNumber,
+          disc_number: track.discNumber,
+          synced_lyrics: lrcMatch.syncedLyrics
+        }, { onConflict: "itunes_track_id" }).then(() => {
+          turntableLyricsCacheRef.current[track.trackId] = lrcMatch.syncedLyrics;
+        }).catch(() => {});
+      }
+
+      // Set album track context so vinyl auto-advance works after sync starts
+      const at = turntableTracksRef.current;
+      setAlbumTracks(at);
+      setAlbumCollectionId(ta?.itunes_collection_id ? String(ta.itunes_collection_id) : null);
+      const tIdx = at.findIndex(t => t.trackName?.toLowerCase() === track.trackName.toLowerCase());
+      setCurrentTrackIndex(tIdx >= 0 ? tIdx : 0);
+    };
+
+    rec.onerror = (event) => {
+      if (listenSessionRef.current !== session) return;
+      if (event.error === "aborted") return; // intentional stop, not an error
+      if (event.error === "no-speech") {
+        // Silence between words — keep listening, don't reset
+        if (!recognitionWonRef.current) {
+          try { rec.start(); } catch {}
+        }
+        return;
+      }
+      attemptLogRef.current.push(`speech: error — ${event.error}`);
+      if (!recognitionWonRef.current) {
+        setError("Speech recognition unavailable. Try the web app instead.");
+        setMode("error");
+      }
+    };
+
+    rec.onend = () => {
+      // Recognition can stop on its own (iOS ~60s limit, network interruption, etc.)
+      // Restart unless we found a match or the user reset
+      if (recognitionWonRef.current || listenSessionRef.current !== session) return;
+      try { rec.start(); } catch {}
+    };
+
+    try {
+      rec.start();
+    } catch (err) {
+      setError("Could not start speech recognition. Check microphone permission.");
+      setMode("error");
+    }
+  };
+
   const startListeningNative = async (isAutoAdvance = false) => {
     if (!isAutoAdvance && !isUnlimited(user) && usageCount >= FREE_LIMIT) { setMode("limit"); return; }
+    // Turntable mode: use real-time speech recognition instead of recording + Whisper
+    if (turntableAlbumRef.current && (window.SpeechRecognition || window.webkitSpeechRecognition)) {
+      return startListeningSpeech(isAutoAdvance);
+    }
     clearInterval(progressTimerRef.current);
     const session = ++listenSessionRef.current;
     attemptLogRef.current = [];
@@ -1976,6 +2165,10 @@ function Liri() {
     // WKWebView's unreliable MediaRecorder ondataavailable timeslice bug.
     if (window.Capacitor?.isNativePlatform?.() && (_nativeAudioPlugin || window.Capacitor?.Plugins?.NativeAudio)) {
       return startListeningNative(isAutoAdvance);
+    }
+    // Turntable mode (web): use real-time speech recognition instead of recording + Whisper
+    if (turntableAlbumRef.current && (window.SpeechRecognition || window.webkitSpeechRecognition)) {
+      return startListeningSpeech(isAutoAdvance);
     }
     // Kill any leftover interval from a previous session immediately — before awaiting mic
     // so a resumed stale callback can't accidentally clear the new session's interval.
@@ -2787,6 +2980,8 @@ function Liri() {
     clearInterval(syncIntervalRef.current);
     clearInterval(progressTimerRef.current);
     streamRef.current?.getTracks().forEach(t => t.stop());
+    try { speechRecRef.current?.stop(); } catch {}
+    speechRecRef.current = null;
     if (audioCtxRef.current) {
       audioCtxRef.current.close().catch(() => {});
       audioCtxRef.current = null;
