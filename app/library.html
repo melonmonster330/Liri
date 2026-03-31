@@ -694,17 +694,25 @@
         setAdding(cid);
         setAddError(null);
         try {
+          // Always get a fresh session token — don't rely on the ref which may be stale
+          const { data: { session: freshSession } } = await sb.auth.getSession();
+          const token = freshSession?.access_token || sessionTokenRef.current;
+
           const res = await fetch("/api/add-to-library", {
             method: "POST",
             headers: {
               "Content-Type": "application/json",
-              ...(sessionTokenRef.current ? { "Authorization": `Bearer ${sessionTokenRef.current}` } : {}),
+              ...(token ? { "Authorization": `Bearer ${token}` } : {}),
             },
             body: JSON.stringify({ itunes_collection_id: album.collectionId }),
           });
           const json = await res.json().catch(() => ({}));
           if (!res.ok) {
-            setAddError(json.error || "Failed to add album. Please try again.");
+            if (res.status === 401) {
+              setAddError("Session expired — please sign out and back in, then try again.");
+            } else {
+              setAddError(json.error || "Failed to add album. Please try again.");
+            }
           } else {
             await fetchLibrary(user.id);
             setShowSearch(false);
