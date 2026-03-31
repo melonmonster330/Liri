@@ -1,6 +1,9 @@
 {
   "installCommand": "npm install --omit=dev",
   "outputDirectory": ".",
+  "crons": [
+    { "path": "/api/sync-catalogue", "schedule": "0 3 1 * *" }
+  ],
   "redirects": [
     { "source": "/vercel.json",        "destination": "/404", "statusCode": 404 },
     { "source": "/package.json",       "destination": "/404", "statusCode": 404 },
@@ -10,12 +13,11 @@
     { "source": "/.git/:path*",        "destination": "/404", "statusCode": 404 }
   ],
   "rewrites": [
-    { "source": "/app",          "destination": "/app/index.html"     },
-    { "source": "/add-vinyl",    "destination": "/app/add-vinyl.html" },
-    { "source": "/vinyl",        "destination": "/app/vinyl.html"     },
-    { "source": "/tv",           "destination": "/tv.html"            },
-    { "source": "/library",      "destination": "/app/library.html"   },
-    { "source": "/stats",        "destination": "/app/stats.html"     },
-    { "source": "/vendor/:file", "destination": "/app/vendor/:file"   }
+    { "source": "/app",          "destination": "/app/index.html"   },
+    { "source": "/vinyl",        "destination": "/app/vinyl.html"   },
+    { "source": "/tv",           "destination": "/tv.html"          },
+    { "source": "/library",      "destination": "/app/library.html" },
+    { "source": "/stats",        "destination": "/app/stats.html"   },
+    { "source": "/vendor/:file", "destination": "/app/vendor/:file" }
   ]
 }

@@ -323,9 +323,7 @@ function Liri() {
   const [authVerifyPending, setAuthVerifyPending] = useState(false); // show email-confirm waiting screen
 
   // ── Usage ──
-  const [usageCount, setUsageCount] = useState(0);
-  const FREE_LIMIT = 10;
-  const isUnlimited = u => u?.email === "test@test.com";
+  const isUnlimited = u => true; // recognition is now free — no API costs at listen time
 
   // ── Auth token ref — kept current for API Authorization headers ──
   const sessionTokenRef = useRef(null);
@@ -353,7 +351,8 @@ function Liri() {
   const turntableAlbumRef = useRef(turntableAlbum);
   const turntableTracksRef = useRef([]); // iTunes tracks for selected album (pre-fetched)
   const turntableMatchedIdxRef = useRef(-1); // 0-based index of last vinyl-matched track
-  const turntableLyricsCacheRef = useRef({}); // trackId → syncedLyrics string (from Supabase cache)
+  const turntableLyricsCacheRef = useRef({}); // legacy — kept for dead-code paths only
+  const wordsDataRef = useRef({}); // trackId → { words, lrc_raw, lyrics_plain } from track_lyrics table
   const autoRetryCountRef = useRef(0);
 
   // ── Album tracklist (for vinyl auto-advance without re-listening) ──
@@ -664,20 +663,8 @@ function Liri() {
     }
   };
 
-  // ── Usage fetch ──
-  const fetchUsage = async u => {
-    if (!u || isUnlimited(u)) return;
-    const {
-      data
-    } = await sb.from("user_usage").select("recognition_count").eq("user_id", u.id).single();
-    if (data) setUsageCount(data.recognition_count);else {
-      await sb.from("user_usage").insert({
-        user_id: u.id,
-        recognition_count: 0
-      });
-      setUsageCount(0);
-    }
-  };
+  // ── Usage fetch — removed (no API costs at listen time, no free limit) ──
+  const fetchUsage = async () => {};
 
   // ── History fetch ──
   const fetchHistory = async u => {
@@ -1082,15 +1069,6 @@ function Liri() {
     if (user) fetchUserLibrary(user.id, true);
   }, [user]);
 
-  // ── Auto-start listening if redirected from add-vinyl with ?autostart=1 ──
-  useEffect(() => {
-    if (!user || libLoading || mode !== "idle") return;
-    if (new URLSearchParams(window.location.search).get("autostart") === "1") {
-      // Remove the param so refreshing doesn't re-trigger
-      window.history.replaceState({}, "", window.location.pathname);
-      startListening(false);
-    }
-  }, [user, libLoading, mode]);
 
   // ── Real-time seconds counter while listening (UI only — not tied to ACR attempts) ──
   useEffect(() => {
@@ -1315,11 +1293,6 @@ function Liri() {
     saveToHistory(user, song);
     fetchHistory(user);
     // cast removed
-    if (!isUnlimited(user)) {
-      // Server increments the real count in /api/recognize.
-      // Optimistically update local display only.
-      setUsageCount(c => c + 1);
-    }
     fetchAlbumTracks(title, artist).then(async ({
       tracks,
       collectionId
@@ -1371,78 +1344,86 @@ function Liri() {
   // Tries word runs from 1 upward — shortest unique run wins.
   // A single rare word is enough if it appears in only one track.
   // Pure in-memory, no network calls.
-  const matchTranscriptToTracks = (transcript, tracks, logRef, lyricsCache = {}) => {
-    const norm = s => s.toLowerCase().replace(/[^\w\s]/g, "").replace(/\s+/g, " ").trim();
-    const words = norm(transcript).split(" ").filter(w => w.length > 1);
-    if (logRef) logRef.push(`stratV: ${words.length} words from transcript`);
-    if (!words.length) return null;
+  const matchTranscriptToTracks = (transcript, tracks, wordsData, logRef) => {
+    // Normalise a single word: lowercase, strip non-alphanumeric except apostrophe
+    const normWord = w => w.toLowerCase().replace(/[^a-z0-9']/g, "");
+    const heardWords = transcript.toLowerCase().split(/\s+/).map(normWord).filter(w => w.length > 1);
+    if (logRef) logRef.push(`match: ${heardWords.length} words from transcript`);
+    if (!heardWords.length) return null;
 
-    // Build normalised lyrics string for every cached track (pure in-memory, no fetches).
-    // Deduplicate by BASE track name — strips parenthetical suffixes like
-    // "(the long pond studio sessions)", "(bonus track)", "[live]" before comparing.
-    // Albums like folklore include both studio and session versions of every track;
-    // without this, every phrase hits 2 copies → uniqueness check always fails.
-    const baseTrackName = n => norm((n || "").replace(/\s*[\(\[].*/, "").trim());
+    // Deduplicate by base track name — strips suffixes like "(live)", "[bonus]"
+    // so albums with studio + session versions don't always block uniqueness.
+    const baseName = n => (n || "").toLowerCase().replace(/\s*[\(\[].*/, "").trim();
     const seenNames = new Set();
-    const tracksWithLyrics = tracks.map(t => {
-      const key = t.trackId ?? t.trackName;
-      const lrc = key ? lyricsCache[key] : t.trackName ? lyricsCache[t.trackName] : null;
-      if (!lrc) return null;
-      const parsed = parseLRC(lrc);
-      if (!parsed.length) return null;
-      const baseKey = baseTrackName(t.trackName);
-      if (seenNames.has(baseKey)) return null; // skip live/session duplicate
-      seenNames.add(baseKey);
+
+    // Build per-track word arrays from words_json stored in Supabase
+    const tracksWithWords = tracks.map(t => {
+      const data = wordsData[t.trackId];
+      if (!data?.words?.length) return null;
+      const base = baseName(t.trackName);
+      if (seenNames.has(base)) return null; // skip duplicates
+      seenNames.add(base);
       return {
         ...t,
-        parsed,
-        normLyrics: norm(parsed.map(l => l.text).join(" ")),
-        lrcMatch: {
-          syncedLyrics: lrc
-        }
+        wordArr: data.words.map(w => w.word), // already normalised at store time
+        wordTimings: data.words,               // [{word, start_ms}] for position lookup
+        lrc_raw: data.lrc_raw,
+        lyrics_plain: data.lyrics_plain,
       };
     }).filter(Boolean);
-    if (logRef) logRef.push(`stratV: ${tracksWithLyrics.length}/${tracks.length} tracks have cached lyrics`);
-    if (!tracksWithLyrics.length) return null;
 
-    // Try increasing run lengths — no cap, keep going until perfect match.
-    // We know the album, so every phrase should eventually be unique.
-    // Start at 3 words — shorter runs hit wrong tracks (false positives).
-    const MIN_RUN = 3;
-    for (let len = MIN_RUN; len <= words.length; len++) {
-      for (let start = 0; start <= words.length - len; start++) {
-        const phrase = words.slice(start, start + len).join(" ");
-        // Both must be true: phrase in exactly 1 track AND appears exactly once in it
-        const hits = tracksWithLyrics.filter(t => t.normLyrics.split(phrase).length - 1 === 1);
-        if (hits.length !== 1) continue;
+    if (logRef) logRef.push(`match: ${tracksWithWords.length}/${tracks.length} tracks have lyrics`);
+    if (!tracksWithWords.length) return null;
+
+    // Try consecutive word runs from MIN_RUN upward.
+    // Keep going until we find a run that appears in EXACTLY ONE track EXACTLY ONCE.
+    // This guarantees a confident, unambiguous match — no fuzzy logic needed.
+    const MIN_RUN = 4;
+    for (let len = MIN_RUN; len <= heardWords.length; len++) {
+      for (let start = 0; start <= heardWords.length - len; start++) {
+        const phrase = heardWords.slice(start, start + len);
+
+        const hits = tracksWithWords.filter(t => {
+          let count = 0;
+          const arr = t.wordArr;
+          for (let i = 0; i <= arr.length - len; i++) {
+            let ok = true;
+            for (let j = 0; j < len; j++) {
+              if (arr[i + j] !== phrase[j]) { ok = false; break; }
+            }
+            if (ok) { count++; if (count > 1) return false; } // more than once → not unique
+          }
+          return count === 1;
+        });
+
+        if (hits.length !== 1) continue; // not unique across tracks
+
         const match = hits[0];
 
-        // Find position: accumulate LRC lines until the phrase is fully contained.
-        let startPos = 0;
-        let buf = "";
-        for (const line of match.parsed) {
-          buf = (buf + " " + norm(line.text)).trim();
-          if (buf.includes(phrase)) {
-            startPos = line.time;
-            break;
+        // Find the position (in seconds) of the matched phrase in this track
+        let matchWordIdx = -1;
+        const arr = match.wordArr;
+        for (let i = 0; i <= arr.length - len; i++) {
+          let ok = true;
+          for (let j = 0; j < len; j++) {
+            if (arr[i + j] !== phrase[j]) { ok = false; break; }
           }
+          if (ok) { matchWordIdx = i; break; }
         }
-        if (logRef) logRef.push(`stratV: unique run (${len}w) → "${match.trackName}" at ${startPos.toFixed(1)}s (phrase word ${start}/${words.length})`);
-        // phraseWordStart: which word in the transcript the matched phrase begins at.
-        // Used by the caller to estimate how far into the recording clip the phrase appeared,
-        // so the initial sync position can be adjusted backwards accordingly.
-        return {
-          track: match,
-          lrcMatch: match.lrcMatch,
-          lyrics: match.parsed,
-          startPos,
-          score: len,
-          phraseWordStart: start,
-          totalWords: words.length
-        };
+        const startPos = matchWordIdx >= 0 ? (match.wordTimings[matchWordIdx].start_ms / 1000) : 0;
+
+        // Build lyrics array for display — prefer timestamped LRC, fall back to plain
+        const lyrics = match.lrc_raw
+          ? parseLRC(match.lrc_raw)
+          : (match.lyrics_plain || "").split("\n").filter(l => l.trim()).map((text, i) => ({ time: i * 4, text }));
+
+        if (logRef) logRef.push(`match: unique run (${len}w) → "${match.trackName}" at ${startPos.toFixed(1)}s`);
+
+        return { track: match, lyrics, startPos, score: len, phraseWordStart: start, totalWords: heardWords.length };
       }
     }
-    if (logRef) logRef.push(`stratV: no unique word run found — waiting for more audio`);
+
+    if (logRef) logRef.push(`match: no unique run yet — keep listening`);
     return null;
   };
 
@@ -1844,7 +1825,7 @@ function Liri() {
   // Instead of recording + sending to ACRCloud/Whisper, we use the Web Speech API
   // to transcribe words in real time and match them against the known lyrics.
   // No server calls, no delays — match fires the moment enough words are recognised.
-  const startListeningSpeech = (isAutoAdvance = false) => {
+  const startListeningSpeech = async (isAutoAdvance = false) => {
     clearInterval(progressTimerRef.current);
     const session = ++listenSessionRef.current;
     attemptLogRef.current = [];
@@ -1866,11 +1847,37 @@ function Liri() {
 
     const SpeechRec = window.SpeechRecognition || window.webkitSpeechRecognition;
     if (!SpeechRec) {
-      // Speech API not available — caller should not have branched here
       setError("Speech recognition unavailable on this device.");
       setMode("error");
       return;
     }
+
+    // ── Fetch words_json + lrc for all tracks in this album ──────────────────
+    // This is the only network call at listen time — reads our own Supabase DB.
+    let wordsData = {}; // { trackId: { words: [{word, start_ms}], lrc_raw, lyrics_plain } }
+    try {
+      const trackIds = tracks.map(t => t.trackId).filter(Boolean);
+      const { data: lyricsRows } = await sb
+        .from("track_lyrics")
+        .select("itunes_track_id, lrc_raw, lyrics_plain, words_json")
+        .in("itunes_track_id", trackIds);
+      for (const row of lyricsRows || []) {
+        wordsData[row.itunes_track_id] = {
+          words: row.words_json || [],
+          lrc_raw: row.lrc_raw,
+          lyrics_plain: row.lyrics_plain,
+        };
+      }
+    } catch (e) {
+      console.warn("[listen] Failed to load lyrics from DB:", e.message);
+    }
+
+    if (!Object.keys(wordsData).length) {
+      setError("No lyrics found for this album. Make sure it's been added to your library.");
+      setMode("error");
+      return;
+    }
+    wordsDataRef.current = wordsData; // persist for auto-advance and manual track selection
 
     const MIN_SCORE = 4; // words needed for a confident match
     const rec = new SpeechRec();
@@ -1909,7 +1916,7 @@ function Liri() {
 
       if (wordCount < MIN_SCORE) return;
 
-      const vmResult = matchTranscriptToTracks(combined, tracks, attemptLogRef.current, turntableLyricsCacheRef.current);
+      const vmResult = matchTranscriptToTracks(combined, tracks, wordsData, attemptLogRef.current);
       if (!vmResult || vmResult.score < MIN_SCORE) return;
 
       // ── Match found ──────────────────────────────────────────────────────
@@ -1917,7 +1924,7 @@ function Liri() {
       recognitionWonRef.current = true;
       try { rec.stop(); } catch {}
 
-      const { track, lrcMatch, lyrics, startPos, score } = vmResult;
+      const { track, lyrics, startPos, score } = vmResult;
       const ta = turntableAlbumRef.current;
 
       attemptLogRef.current.push(`speech: matched "${track.trackName}" at ${startPos.toFixed(1)}s (${score} words)`);
@@ -1928,24 +1935,20 @@ function Liri() {
       const song = {
         title: track.trackName,
         artist: track.artistName || ta?.artist_name || "",
-        album: ta?.album_name || lrcMatch.albumName || "",
+        album: ta?.album_name || "",
         artwork: ta?.artwork_url || null
       };
 
-      setIdentifiedBy("whisper"); // reuses the existing whisper badge in the UI
+      setIdentifiedBy("speech");
       detectedAtRef.current = Date.now();
 
-      // Timing: speech recognition is real-time — startPos is where those words
-      // appear in the lyrics right now. phraseOffset = 0 (no recording buffer).
-      // syncCalcRef lets startSync recompute the final position at the last moment,
-      // after all React renders settle — same pattern as the Whisper path.
       syncCalcRef.current = { startPos, phraseOffset: 0, recStart: Date.now() };
-      initialPosRef.current = startPos; // rough estimate; startSync refines it
+      initialPosRef.current = startPos;
       autoAdvanceFiredRef.current = false;
       autoRetryCountRef.current = 0;
 
       setDetectedSong(song);
-      setSongDuration(lrcMatch.duration || (track.trackTimeMillis ? track.trackTimeMillis / 1000 : null));
+      setSongDuration(track.trackTimeMillis ? track.trackTimeMillis / 1000 : null);
       setLyrics(lyrics);
       lyricsRef.current = lyrics;
       setMode("confirmed");
@@ -1955,33 +1958,16 @@ function Liri() {
         userId: user?.id,
         title: track.trackName,
         artist: track.artistName || ta?.artist_name || "",
-        album: ta?.album_name || lrcMatch.albumName || "",
+        album: ta?.album_name || "",
         artwork: ta?.artwork_url || null,
         itunesTrackId: track.trackId,
         collectionId: ta?.itunes_collection_id || track.collectionId,
         vinylReleaseId: null,
-        vinylModeOn: vinylMode,
-        source: "turntable",
+        vinylModeOn: true,
+        source: "speech",
         offsetSecs: startPos,
-        durationSecs: lrcMatch.duration || (track.trackTimeMillis ? track.trackTimeMillis / 1000 : null)
+        durationSecs: track.trackTimeMillis ? track.trackTimeMillis / 1000 : null
       });
-
-      // Cache the LRC so future matches skip the LRCLib fetch
-      if (track.trackId && lrcMatch?.syncedLyrics) {
-        const ta2 = turntableAlbumRef.current;
-        sb.from("liri_lyric_cache").upsert({
-          itunes_track_id: track.trackId,
-          itunes_collection_id: ta2?.itunes_collection_id || track.collectionId,
-          track_name: track.trackName,
-          artist_name: track.artistName,
-          album_name: ta2?.album_name,
-          track_number: track.trackNumber,
-          disc_number: track.discNumber,
-          synced_lyrics: lrcMatch.syncedLyrics
-        }, { onConflict: "itunes_track_id" }).then(() => {
-          turntableLyricsCacheRef.current[track.trackId] = lrcMatch.syncedLyrics;
-        }).catch(() => {});
-      }
 
       // Set album track context so vinyl auto-advance works after sync starts
       const at = turntableTracksRef.current;
@@ -2024,11 +2010,8 @@ function Liri() {
   };
 
   const startListeningNative = async (isAutoAdvance = false) => {
-    if (!isAutoAdvance && !isUnlimited(user) && usageCount >= FREE_LIMIT) { setMode("limit"); return; }
-    // Turntable mode: use real-time speech recognition instead of recording + Whisper
-    if (turntableAlbumRef.current && (window.SpeechRecognition || window.webkitSpeechRecognition)) {
-      return startListeningSpeech(isAutoAdvance);
-    }
+    // startListeningNative is no longer called — startListening always routes to startListeningSpeech
+    return startListeningSpeech(isAutoAdvance);
     clearInterval(progressTimerRef.current);
     const session = ++listenSessionRef.current;
     attemptLogRef.current = [];
@@ -2160,16 +2143,21 @@ function Liri() {
   };
 
   const startListening = async (isAutoAdvance = false) => {
-    if (!isAutoAdvance && !isUnlimited(user) && usageCount >= FREE_LIMIT) { setMode("limit"); return; }
-    // On iOS native: use AVAudioRecorder via NativeAudioPlugin — bypasses
-    // WKWebView's unreliable MediaRecorder ondataavailable timeslice bug.
-    if (window.Capacitor?.isNativePlatform?.() && (_nativeAudioPlugin || window.Capacitor?.Plugins?.NativeAudio)) {
-      return startListeningNative(isAutoAdvance);
+    if (!turntableAlbumRef.current) {
+      setError("Select an album first.");
+      setMode("error");
+      return;
     }
-    // Turntable mode (web): use real-time speech recognition instead of recording + Whisper
-    if (turntableAlbumRef.current && (window.SpeechRecognition || window.webkitSpeechRecognition)) {
-      return startListeningSpeech(isAutoAdvance);
+    if (!(window.SpeechRecognition || window.webkitSpeechRecognition)) {
+      setError("Speech recognition is not available on this browser. Try Chrome or Safari.");
+      setMode("error");
+      return;
     }
+    return startListeningSpeech(isAutoAdvance);
+    // ── REMOVED: ACRCloud, Whisper, MediaRecorder, iOS native paths ──
+    // All recognition now goes through startListeningSpeech (Web Speech API)
+    // which matches against lyrics pre-stored in Supabase track_lyrics table.
+    if (false) { // dead code fence — keeps linter happy during cleanup
     // Kill any leftover interval from a previous session immediately — before awaiting mic
     // so a resumed stale callback can't accidentally clear the new session's interval.
     clearInterval(progressTimerRef.current);
@@ -2417,52 +2405,33 @@ function Liri() {
           sending = false; // ready for next attempt
         }
       }, 100);
-    } catch {
-      setError("Microphone access denied.");
-      setMode("error");
-    }
+    } // end dead code fence
   };
-  const loadLyrics = async (title, artist) => {
-    // 1. Supabase liri_lyric_cache first — no LRCLib call if already cached
+  const loadLyrics = async (trackId, title, artist) => {
+    // Load from track_lyrics table (pre-fetched when album was added to library)
     try {
-      const {
-        data: cached
-      } = await sb.from("liri_lyric_cache").select("synced_lyrics").ilike("track_name", title).ilike("artist_name", artist).limit(1).maybeSingle();
-      if (cached?.synced_lyrics) {
-        const parsed = parseLRC(cached.synced_lyrics);
-        setLyrics(parsed);
-        lyricsRef.current = parsed;
-        return;
+      if (trackId) {
+        const { data } = await sb
+          .from("track_lyrics")
+          .select("lrc_raw, lyrics_plain")
+          .eq("itunes_track_id", trackId)
+          .maybeSingle();
+        if (data?.lrc_raw) {
+          const parsed = parseLRC(data.lrc_raw);
+          setLyrics(parsed);
+          lyricsRef.current = parsed;
+          return;
+        }
+        if (data?.lyrics_plain) {
+          const parsed = data.lyrics_plain.split("\n").filter(l => l.trim()).map((text, i) => ({ time: i * 4, text }));
+          setLyrics(parsed);
+          lyricsRef.current = parsed;
+          return;
+        }
       }
     } catch {}
-    // 2. LRCLib fetch (only if not in Supabase)
-    try {
-      const isCensored = c => /\*{2,}/.test(c.syncedLyrics || "");
-      const [a, b] = await Promise.all([fetch(`https://lrclib.net/api/search?artist_name=${encodeURIComponent(artist)}&track_name=${encodeURIComponent(title)}`).then(r => r.json()).catch(() => []), fetch(`https://lrclib.net/api/search?q=${encodeURIComponent(artist + " " + title)}`).then(r => r.json()).catch(() => [])]);
-      const withSynced = [...a, ...b].filter(x => x.syncedLyrics);
-      const synced = withSynced.find(c => !isCensored(c)) || withSynced[0];
-      if (synced) {
-        const parsed = parseLRC(synced.syncedLyrics);
-        setLyrics(parsed);
-        lyricsRef.current = parsed;
-        return;
-      }
-      const plain = [...a, ...b].find(x => x.plainLyrics);
-      if (plain) {
-        const parsed = plain.plainLyrics.split("\n").filter(l => l.trim()).map((text, i) => ({
-          time: i * 4,
-          text
-        }));
-        setLyrics(parsed);
-        lyricsRef.current = parsed;
-      } else {
-        setLyrics([]);
-        lyricsRef.current = [];
-      }
-    } catch {
-      setLyrics([]);
-      lyricsRef.current = [];
-    }
+    setLyrics([]);
+    lyricsRef.current = [];
   };
   const startSync = useCallback(() => {
     // Safe to re-arm auto-advance now — new sync is actually starting
@@ -2799,10 +2768,14 @@ function Liri() {
     detectedAtRef.current = Date.now();
     setDetectedSong(nextSong);
     setSongDuration(nextDuration);
-    // Load lyrics from cache only — all lyrics are pre-cached at add-vinyl time
-    const cachedLrc = turntableLyricsCacheRef.current?.[next.trackId] ?? turntableLyricsCacheRef.current?.[next.trackName];
-    if (cachedLrc) {
-      const parsed = parseLRC(cachedLrc);
+    // Load lyrics from wordsDataRef (fetched from track_lyrics at listen start)
+    const nextTrackData = wordsDataRef.current?.[next.trackId];
+    if (nextTrackData?.lrc_raw) {
+      const parsed = parseLRC(nextTrackData.lrc_raw);
+      setLyrics(parsed);
+      lyricsRef.current = parsed;
+    } else if (nextTrackData?.lyrics_plain) {
+      const parsed = nextTrackData.lyrics_plain.split("\n").filter(l => l.trim()).map((text, i) => ({ time: i * 4, text }));
       setLyrics(parsed);
       lyricsRef.current = parsed;
     } else {
@@ -2833,11 +2806,6 @@ function Liri() {
       source: "auto_advance",
       durationSecs: nextDuration
     });
-    if (!isUnlimited(user)) {
-      // Auto-advance increments are tracked by the server on the recognize call.
-      // Update local display only.
-      setUsageCount(c => c + 1);
-    }
     setMode("confirmed"); // triggers startSync via useEffect
   };
 
@@ -3050,9 +3018,9 @@ function Liri() {
         album: ta.album_name || "",
         artwork: ta.artwork_url || null
       };
-      const cacheKey = track.trackId ?? track.trackName;
-      const lrc = turntableLyricsCacheRef.current[cacheKey] || turntableLyricsCacheRef.current[track.trackName];
-      const lyrics = lrc ? parseLRC(lrc) : [];
+      const trackData = wordsDataRef.current?.[track.trackId];
+      const lrc = trackData?.lrc_raw;
+      const lyrics = lrc ? parseLRC(lrc) : (trackData?.lyrics_plain ? trackData.lyrics_plain.split("\n").filter(l => l.trim()).map((text, i) => ({ time: i * 4, text })) : []);
       const duration = track.trackTimeMillis ? track.trackTimeMillis / 1000 : null;
       initialPosRef.current = 0;
       detectedAtRef.current = null;
@@ -4282,38 +4250,7 @@ function Liri() {
       flex: 1,
       paddingBottom: "max(24px, env(safe-area-inset-bottom))"
     }
-  }, /*#__PURE__*/React.createElement("a", {
-    href: "/add-vinyl",
-    style: {
-      width: "100%",
-      display: "flex",
-      alignItems: "center",
-      gap: 10,
-      padding: "7px 0",
-      borderBottom: "1px solid rgba(255,255,255,0.04)",
-      color: "rgba(212,168,70,0.8)",
-      fontSize: 12,
-      textDecoration: "none",
-      marginBottom: 2
-    }
-  }, /*#__PURE__*/React.createElement("div", {
-    style: {
-      width: 28,
-      height: 28,
-      borderRadius: 6,
-      background: "rgba(212,168,70,0.08)",
-      border: "1px solid rgba(212,168,70,0.2)",
-      display: "flex",
-      alignItems: "center",
-      justifyContent: "center",
-      fontSize: 15,
-      flexShrink: 0
-    }
-  }, "+"), /*#__PURE__*/React.createElement("span", {
-    style: {
-      fontWeight: 600
-    }
-  }, "Add a record")), turntableAlbum && /*#__PURE__*/React.createElement("button", {
+  }, turntableAlbum && /*#__PURE__*/React.createElement("button", {
     onClick: () => {
       setTurntableAlbum(null);
       setShowAlbumPicker(false);
@@ -4388,19 +4325,7 @@ function Liri() {
       marginBottom: 20,
       lineHeight: 1.6
     }
-  }, "Add a record to get started \u2014", /*#__PURE__*/React.createElement("br", null), "Liri will cache everything so it", /*#__PURE__*/React.createElement("br", null), "works offline at play time."), /*#__PURE__*/React.createElement("a", {
-    href: "/add-vinyl",
-    style: {
-      display: "inline-block",
-      background: "linear-gradient(135deg,#d4a846,#c9807a)",
-      color: "#080810",
-      borderRadius: "50px",
-      padding: "10px 22px",
-      fontSize: "13px",
-      fontWeight: "700",
-      textDecoration: "none"
-    }
-  }, "Add your first record \u2192")) : userLibrary.map(album => {
+  }, "Your library is empty. Add an album to get started.")) : userLibrary.map(album => {
     const isSelected = turntableAlbum?.itunes_collection_id === album.itunes_collection_id;
     return /*#__PURE__*/React.createElement("button", {
       key: album.id,
@@ -4872,34 +4797,7 @@ function Liri() {
       color: "rgba(212,168,70,0.5)",
       fontSize: "18px"
     }
-  }, "\u203A")), /*#__PURE__*/React.createElement("a", {
-    href: "/add-vinyl",
-    style: {
-      display: "flex",
-      alignItems: "center",
-      justifyContent: "space-between",
-      marginTop: "12px",
-      paddingTop: "12px",
-      borderTop: "1px solid rgba(255,255,255,0.05)",
-      textDecoration: "none"
-    }
-  }, /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("div", {
-    style: {
-      fontSize: "13px",
-      color: "#d4a846"
-    }
-  }, "Add a vinyl to Liri's collection"), /*#__PURE__*/React.createElement("div", {
-    style: {
-      fontSize: "11px",
-      color: "rgba(255,255,255,0.3)",
-      marginTop: "2px"
-    }
-  }, "Help improve flip detection for everyone")), /*#__PURE__*/React.createElement("div", {
-    style: {
-      color: "rgba(212,168,70,0.5)",
-      fontSize: "18px"
-    }
-  }, "\u203A"))), /*#__PURE__*/React.createElement("div", {
+  }, "\u203A")), /*#__PURE__*/React.createElement("div", {
     style: {
       background: "rgba(212,168,70,0.07)",
       border: "1px solid rgba(212,168,70,0.15)",
