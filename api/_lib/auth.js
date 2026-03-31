@@ -131,21 +131,49 @@ async function decodeAndVerifyJWT(token) {
 
 // ── Main: extract + verify auth from a request ───────────────────────────────
 // Returns { userId, email, isUnlimited } or null if the token is missing/invalid.
-// IMPORTANT: This is now async — callers must await it.
+// Uses Supabase's /auth/v1/user endpoint to validate the token — works with
+// any JWT algorithm Supabase uses (HS256, ES256, sb_publishable_ keys, etc.)
+// without needing SUPABASE_JWT_SECRET or manual JWKS verification.
 async function verifyAuth(req) {
   const authHeader = req.headers.authorization || "";
   if (!authHeader.startsWith("Bearer ")) return null;
 
-  const token   = authHeader.slice(7);
-  const payload = await decodeAndVerifyJWT(token);
-  if (!payload) return null;
+  const token      = authHeader.slice(7);
+  const supabaseUrl = process.env.SUPABASE_URL || "";
+  const serviceKey  = process.env.SUPABASE_SERVICE_ROLE_KEY || "";
+  const hostname    = supabaseUrl.replace(/^https?:\/\//, "");
+  if (!hostname || !serviceKey) {
+    console.error("verifyAuth: SUPABASE_URL or SUPABASE_SERVICE_ROLE_KEY not set");
+    return null;
+  }
 
-  const userId = payload.sub;
-  const email  = (payload.email || "").toLowerCase();
-  if (!userId) return null;
-
-  const isUnlimited = getUnlimitedEmails().has(email);
-  return { userId, email, isUnlimited };
+  return new Promise((resolve) => {
+    const options = {
+      hostname,
+      path: "/auth/v1/user",
+      method: "GET",
+      headers: {
+        "apikey":        serviceKey,
+        "Authorization": `Bearer ${token}`,
+      },
+    };
+    const r = https.request(options, (res) => {
+      const chunks = [];
+      res.on("data", c => chunks.push(c));
+      res.on("end", () => {
+        if (res.statusCode !== 200) { resolve(null); return; }
+        try {
+          const user = JSON.parse(Buffer.concat(chunks).toString());
+          if (!user?.id) { resolve(null); return; }
+          const email = (user.email || "").toLowerCase();
+          resolve({ userId: user.id, email, isUnlimited: getUnlimitedEmails().has(email) });
+        } catch { resolve(null); }
+      });
+    });
+    r.on("error", () => resolve(null));
+    r.setTimeout(8000, () => { r.destroy(); resolve(null); });
+    r.end();
+  });
 }
 
 // ── Supabase REST helpers (service role — bypasses RLS) ──────────────────────
