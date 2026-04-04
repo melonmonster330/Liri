@@ -997,9 +997,41 @@ function Liri() {
         return;
       }
 
-      // Album is in the user's library but not yet in our vinyl DB — shouldn't happen
-      // after add-vinyl caches everything, but handle gracefully.
-      console.warn("[turntable] album not found in vinyl DB:", collectionId);
+      // Fallback: album not in vinyl_releases — load from album_tracks (populated by add-to-library)
+      console.warn("[turntable] not in vinyl DB, falling back to album_tracks:", collectionId);
+      setTurntableTracksProgress({ percent: 40, stage: "Loading tracks…" });
+      const alb2 = turntableAlbumRef.current;
+      const artistName2 = alb2?.artist_name || "";
+      const albumName2 = alb2?.album_name || "";
+      const { data: trackRows } = await sb
+        .from("album_tracks")
+        .select("itunes_track_id, track_name, artist_name, track_number, disc_number, duration_ms")
+        .eq("itunes_collection_id", collectionId)
+        .order("disc_number", { ascending: true })
+        .order("track_number", { ascending: true });
+      if (trackRows?.length > 0) {
+        turntableTracksRef.current = trackRows.map(t => ({
+          trackName: t.track_name,
+          artistName: t.artist_name || artistName2,
+          collectionName: albumName2,
+          trackId: t.itunes_track_id || null,
+          trackTimeMillis: t.duration_ms || null,
+          trackNumber: t.track_number || 1,
+          discNumber: t.disc_number || 1,
+        }));
+        setTurntableTracksProgress({ percent: 70, stage: "Loading lyrics…" });
+        const { data: lrcRows } = await sb
+          .from("track_lyrics")
+          .select("itunes_track_id, lrc_raw")
+          .in("itunes_track_id", trackRows.map(t => t.itunes_track_id).filter(Boolean));
+        const cache = {};
+        for (const row of lrcRows || []) {
+          if (row.itunes_track_id) cache[row.itunes_track_id] = row.lrc_raw;
+        }
+        turntableLyricsCacheRef.current = cache;
+      } else {
+        console.warn("[turntable] album_tracks also empty for:", collectionId);
+      }
     } catch (e) {
       turntableTracksRef.current = [];
       console.error("[turntable] fetch error:", e);
