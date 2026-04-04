@@ -988,9 +988,12 @@ function Liri() {
             }
             console.log("[lyrics fallback] done for", albumName);
           }
-        }).catch(() => {});
-        setTurntableTracksLoading(false);
-        setTurntableTracksProgress({ percent: 100, stage: "" });
+          setTurntableTracksLoading(false);
+          setTurntableTracksProgress({ percent: 100, stage: "" });
+        }).catch(() => {
+          setTurntableTracksLoading(false);
+          setTurntableTracksProgress({ percent: 100, stage: "" });
+        });
         return;
       }
 
