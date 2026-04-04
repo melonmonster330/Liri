@@ -9,7 +9,7 @@ if (typeof supabase === 'undefined') {
   throw new Error('Supabase not loaded');
 }
 const sb = supabase.createClient("https://xjdjpaxgymgbvcwmvorc.supabase.co", "sb_publishable_C-NBnfg0ltAoUi46XQTUjA_ozjZW_Nd");
-const APP_VERSION = "1.120";
+const APP_VERSION = "1.121";
 const PROXY_URL      = window.Capacitor ? "https://getliri.com/api/recognize"      : "/api/recognize";
 const TRANSCRIBE_PROXY = window.Capacitor ? "https://getliri.com/api/transcribe"    : "/api/transcribe";
 const IDENTIFY_PROXY = window.Capacitor ? "https://getliri.com/api/identify-lyrics" : "/api/identify-lyrics";
@@ -1815,34 +1815,21 @@ function Liri() {
       return;
     }
 
-    // ── Fetch words_json + lrc for all tracks in this album ──────────────────
-    // This is the only network call at listen time — reads our own Supabase DB.
-    let wordsData = {}; // { trackId: { words: [{word, start_ms}], lrc_raw, lyrics_plain } }
-    try {
-      const trackIds = tracks.map(t => t.trackId).filter(Boolean);
-      const { data: lyricsRows } = await sb
-        .from("track_lyrics")
-        .select("itunes_track_id, lrc_raw, lyrics_plain, words_json")
-        .in("itunes_track_id", trackIds);
-      for (const row of lyricsRows || []) {
-        let words = row.words_json || [];
-        // Derive word timings from lrc_raw when words_json wasn't pre-populated
-        if (!words.length && row.lrc_raw) {
-          for (const line of parseLRC(row.lrc_raw)) {
-            for (const raw of (line.text || "").split(/\s+/)) {
-              const word = raw.toLowerCase().replace(/[^a-z0-9']/g, "");
-              if (word) words.push({ word, start_ms: Math.round(line.time * 1000) });
-            }
-          }
+    // ── Build wordsData from already-loaded lrc cache (no extra DB call) ──────
+    const lrcCache = turntableLyricsCacheRef.current; // { trackId: lrc_raw } loaded at album select
+    const wordsData = {};
+    for (const track of tracks) {
+      if (!track.trackId) continue;
+      const lrc_raw = lrcCache[track.trackId];
+      if (!lrc_raw) continue;
+      const words = [];
+      for (const line of parseLRC(lrc_raw)) {
+        for (const raw of (line.text || "").split(/\s+/)) {
+          const word = raw.toLowerCase().replace(/[^a-z0-9']/g, "");
+          if (word) words.push({ word, start_ms: Math.round(line.time * 1000) });
         }
-        wordsData[row.itunes_track_id] = {
-          words,
-          lrc_raw: row.lrc_raw,
-          lyrics_plain: row.lyrics_plain,
-        };
       }
-    } catch (e) {
-      console.warn("[listen] Failed to load lyrics from DB:", e.message);
+      wordsData[track.trackId] = { words, lrc_raw, lyrics_plain: null };
     }
 
     const tracksWithWordData = Object.values(wordsData).filter(d => d.words?.length > 0);
@@ -1851,7 +1838,7 @@ function Liri() {
       setMode("error");
       return;
     }
-    wordsDataRef.current = wordsData; // persist for auto-advance and manual track selection
+    wordsDataRef.current = wordsData;
 
     const MIN_SCORE = 4; // words needed for a confident match
     const rec = new SpeechRec();
