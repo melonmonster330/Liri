@@ -694,8 +694,8 @@
         setAdding(cid);
         setAddError(null);
         try {
-          // Always get a fresh session token — don't rely on the ref which may be stale
-          const { data: { session: freshSession } } = await sb.auth.getSession();
+          // Force a token refresh so we never send an expired access token
+          const { data: { session: freshSession } } = await sb.auth.refreshSession();
           const token = freshSession?.access_token || sessionTokenRef.current;
 
           const res = await fetch("/api/add-to-library", {
