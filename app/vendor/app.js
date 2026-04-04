@@ -9,7 +9,7 @@ if (typeof supabase === 'undefined') {
   throw new Error('Supabase not loaded');
 }
 const sb = supabase.createClient("https://xjdjpaxgymgbvcwmvorc.supabase.co", "sb_publishable_C-NBnfg0ltAoUi46XQTUjA_ozjZW_Nd");
-const APP_VERSION = "1.119";
+const APP_VERSION = "1.120";
 const PROXY_URL      = window.Capacitor ? "https://getliri.com/api/recognize"      : "/api/recognize";
 const TRANSCRIBE_PROXY = window.Capacitor ? "https://getliri.com/api/transcribe"    : "/api/transcribe";
 const IDENTIFY_PROXY = window.Capacitor ? "https://getliri.com/api/identify-lyrics" : "/api/identify-lyrics";
@@ -292,6 +292,7 @@ function Liri() {
   const [playbackTime, setPlaybackTime] = useState(0);
   const [error, setError] = useState(null);
   const [listenProgress, setListenProgress] = useState(0);
+  const [liveTranscript, setLiveTranscript] = useState("");
   const [listenAttempt, setListenAttempt] = useState(0); // which rolling attempt we're on
   const [listenSecs, setListenSecs] = useState(0); // real-time seconds counter (UI only)
 
@@ -1795,6 +1796,7 @@ function Liri() {
     setError(null);
     setMode("listening");
     setListenProgress(0);
+    setLiveTranscript("");
     setListenAttempt(1);
     setAudioLevel(0);
     clearInterval(syncIntervalRef.current);
@@ -1880,6 +1882,7 @@ function Liri() {
 
       const combined = (finalTranscript + interim).trim();
       if (!combined) return;
+      setLiveTranscript(combined);
 
       const wordCount = combined.split(/\s+/).filter(Boolean).length;
       // Animate progress ring and wave bars while listening
@@ -5755,7 +5758,20 @@ function Liri() {
       fontSize: "14px",
       color: "rgba(255,255,255,0.3)"
     }
-  }, turntableAlbum ? "Hold near your speakers" : listenAttempt > MAX_ATTEMPTS ? "Identifying by lyrics" : listenSecs === 0 ? "Hold near your speakers" : `${listenSecs}s — hold steady`), /*#__PURE__*/React.createElement("div", {
+  }, turntableAlbum ? "Hold near your speakers" : listenAttempt > MAX_ATTEMPTS ? "Identifying by lyrics" : listenSecs === 0 ? "Hold near your speakers" : `${listenSecs}s — hold steady`), liveTranscript ? /*#__PURE__*/React.createElement("div", {
+    style: {
+      marginTop: "16px",
+      padding: "10px 16px",
+      background: "rgba(255,255,255,0.06)",
+      borderRadius: "12px",
+      fontSize: "13px",
+      color: "rgba(255,255,255,0.5)",
+      maxWidth: "260px",
+      textAlign: "center",
+      fontStyle: "italic",
+      lineHeight: 1.4
+    }
+  }, `"${liveTranscript.split(/\s+/).slice(-12).join(" ")}"`) : null, /*#__PURE__*/React.createElement("div", {
     style: {
       display: "flex",
       gap: "12px",
