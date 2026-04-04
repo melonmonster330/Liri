@@ -9,7 +9,7 @@ if (typeof supabase === 'undefined') {
   throw new Error('Supabase not loaded');
 }
 const sb = supabase.createClient("https://xjdjpaxgymgbvcwmvorc.supabase.co", "sb_publishable_C-NBnfg0ltAoUi46XQTUjA_ozjZW_Nd");
-const APP_VERSION = "1.121";
+const APP_VERSION = "1.122";
 const PROXY_URL      = window.Capacitor ? "https://getliri.com/api/recognize"      : "/api/recognize";
 const TRANSCRIBE_PROXY = window.Capacitor ? "https://getliri.com/api/transcribe"    : "/api/transcribe";
 const IDENTIFY_PROXY = window.Capacitor ? "https://getliri.com/api/identify-lyrics" : "/api/identify-lyrics";
@@ -955,6 +955,22 @@ function Liri() {
     }
     setTurntableTracksLoading(false);
     setTurntableTracksProgress({ percent: 100, stage: "" });
+
+    // Pre-warm the speech recognition engine so the mic is ready instantly on tap
+    try {
+      const SpeechRec = window.SpeechRecognition || window.webkitSpeechRecognition;
+      if (SpeechRec && turntableTracksRef.current.length > 0) {
+        const warmup = new SpeechRec();
+        warmup.continuous = true;
+        warmup.interimResults = true;
+        warmup.lang = "en-US";
+        warmup.onresult = () => {};
+        warmup.onerror = () => {};
+        warmup.onend = () => {};
+        warmup.start();
+        speechRecRef.current = warmup;
+      }
+    } catch {}
   };
   useEffect(() => {
     turntableAlbumRef.current = turntableAlbum;
@@ -1841,12 +1857,13 @@ function Liri() {
     wordsDataRef.current = wordsData;
 
     const MIN_SCORE = 4; // words needed for a confident match
-    const rec = new SpeechRec();
+    // Reuse pre-warmed instance if available, otherwise create fresh
+    const rec = speechRecRef.current || new SpeechRec();
+    speechRecRef.current = rec;
     rec.continuous = true;
     rec.interimResults = true;
     rec.lang = "en-US";
     rec.maxAlternatives = 1;
-    speechRecRef.current = rec;
 
     let finalTranscript = "";
 
@@ -1963,11 +1980,16 @@ function Liri() {
       try { rec.start(); } catch {}
     };
 
+    // If pre-warmed instance is already running, handlers are now attached — no need to restart
+    // If not running yet (e.g. pre-warm failed), start fresh
     try {
       rec.start();
     } catch (err) {
-      setError("Could not start speech recognition. Check microphone permission.");
-      setMode("error");
+      // InvalidStateError means it's already started — that's fine, handlers are attached
+      if (err.name !== "InvalidStateError") {
+        setError("Could not start speech recognition. Check microphone permission.");
+        setMode("error");
+      }
     }
   };
 
