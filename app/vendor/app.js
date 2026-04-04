@@ -9,7 +9,7 @@ if (typeof supabase === 'undefined') {
   throw new Error('Supabase not loaded');
 }
 const sb = supabase.createClient("https://xjdjpaxgymgbvcwmvorc.supabase.co", "sb_publishable_C-NBnfg0ltAoUi46XQTUjA_ozjZW_Nd");
-const APP_VERSION = "1.125";
+const APP_VERSION = "1.126";
 const PROXY_URL      = window.Capacitor ? "https://getliri.com/api/recognize"      : "/api/recognize";
 const TRANSCRIBE_PROXY = window.Capacitor ? "https://getliri.com/api/transcribe"    : "/api/transcribe";
 const IDENTIFY_PROXY = window.Capacitor ? "https://getliri.com/api/identify-lyrics" : "/api/identify-lyrics";
@@ -1887,7 +1887,12 @@ function Liri() {
       const song = { title: track.trackName, artist: track.artistName || ta?.artist_name || "", album: ta?.album_name || "", artwork: ta?.artwork_url || null };
       setIdentifiedBy("speech");
       detectedAtRef.current = Date.now();
-      syncCalcRef.current = { startPos, phraseOffset: 0, recStart: Date.now() };
+      const _recStart = recordingStartRef.current || Date.now();
+      const _elapsed = (Date.now() - _recStart) / 1000;
+      const _phraseOffset = vmResult.totalWords > 0
+        ? Math.min(vmResult.phraseWordStart / vmResult.totalWords * _elapsed, _elapsed / 2)
+        : 0;
+      syncCalcRef.current = { startPos, phraseOffset: _phraseOffset, recStart: _recStart };
       initialPosRef.current = startPos;
       autoAdvanceFiredRef.current = false;
       autoRetryCountRef.current = 0;
