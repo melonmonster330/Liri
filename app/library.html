@@ -695,8 +695,15 @@
         setAddError(null);
         try {
           // Force a token refresh so we never send an expired access token
-          const { data: { session: freshSession } } = await sb.auth.refreshSession();
+          const { data: { session: freshSession }, error: refreshError } = await sb.auth.refreshSession();
           const token = freshSession?.access_token || sessionTokenRef.current;
+
+          // Catch expired/missing session before hitting the server
+          if (!token) {
+            setAddError("Session expired — please sign out and back in, then try again.");
+            setAdding(null);
+            return;
+          }
 
           const res = await fetch("/api/add-to-library", {
             method: "POST",

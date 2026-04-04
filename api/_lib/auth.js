@@ -161,7 +161,11 @@ async function verifyAuth(req) {
       const chunks = [];
       res.on("data", c => chunks.push(c));
       res.on("end", () => {
-        if (res.statusCode !== 200) { resolve(null); return; }
+        if (res.statusCode !== 200) {
+            const body = Buffer.concat(chunks).toString();
+            console.error(`verifyAuth: Supabase /auth/v1/user returned ${res.statusCode}:`, body.slice(0, 300));
+            resolve(null); return;
+          }
         try {
           const user = JSON.parse(Buffer.concat(chunks).toString());
           if (!user?.id) { resolve(null); return; }
