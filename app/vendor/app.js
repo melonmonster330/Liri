@@ -348,6 +348,7 @@ function Liri() {
   const [userLibrary, setUserLibrary] = useState([]);
   const [libLoading, setLibLoading] = useState(false);
   const [turntableTracksLoading, setTurntableTracksLoading] = useState(false);
+  const [turntableTracksProgress, setTurntableTracksProgress] = useState({ percent: 0, stage: "" });
   const turntableAlbumRef = useRef(turntableAlbum);
   const turntableTracksRef = useRef([]); // iTunes tracks for selected album (pre-fetched)
   const turntableMatchedIdxRef = useRef(-1); // 0-based index of last vinyl-matched track
@@ -908,6 +909,7 @@ function Liri() {
   // ── Turntable album: sync to ref + localStorage, fetch tracks ──
   const fetchTurntableTracks = async collectionId => {
     setTurntableTracksLoading(true);
+    setTurntableTracksProgress({ percent: 0, stage: "Loading vinyl data…" });
     // Clear immediately so we never search stale lyrics from a previous album
     turntableTracksRef.current = [];
     turntableLyricsCacheRef.current = {};
@@ -936,6 +938,7 @@ function Liri() {
         // Index by both itunes_track_id (numeric) and track_name (string) so
         // matchTranscriptToTracks can hit the cache regardless of whether tracks
         // came from iTunes (have IDs) or Supabase vinyl_tracks (IDs may be null).
+        setTurntableTracksProgress({ percent: 50, stage: "Loading lyrics…" });
         sb.from("liri_lyric_cache").select("itunes_track_id, track_name, synced_lyrics").eq("itunes_collection_id", collectionId).then(async ({
           data
         }) => {
@@ -950,7 +953,9 @@ function Liri() {
           // LRCLib was down at add time. Fetch now, persist, so next load is instant.
           if (Object.keys(cache).length === 0 && mapped.length > 0) {
             console.log("[lyrics fallback] empty cache — fetching from LRCLib for", albumName);
-            for (const t of mapped) {
+            setTurntableTracksProgress({ percent: 60, stage: `Fetching lyrics for ${mapped.length} tracks…` });
+            for (let i = 0; i < mapped.length; i++) {
+              const t = mapped[i];
               if (!t.trackName) continue;
               try {
                 let candidates = await fetch(`https://lrclib.net/api/search?artist_name=${encodeURIComponent(artistName)}&track_name=${encodeURIComponent(t.trackName)}`).then(r => r.json()).catch(() => []);
@@ -977,22 +982,27 @@ function Liri() {
               } catch (e) {
                 console.warn("[lyrics fallback] failed for", t.trackName, e);
               }
+              const progress = Math.min(90, 60 + Math.round((i / mapped.length) * 30));
+              setTurntableTracksProgress({ percent: progress, stage: `${i + 1}/${mapped.length} lyrics` });
               await new Promise(res => setTimeout(res, 200));
             }
             console.log("[lyrics fallback] done for", albumName);
           }
         }).catch(() => {});
         setTurntableTracksLoading(false);
+        setTurntableTracksProgress({ percent: 100, stage: "" });
         return;
       }
 
       // Album is in the user's library but not yet in our vinyl DB — shouldn't happen
       // after add-vinyl caches everything, but handle gracefully.
       console.warn("[turntable] album not found in vinyl DB:", collectionId);
-    } catch {
+    } catch (e) {
       turntableTracksRef.current = [];
+      console.error("[turntable] fetch error:", e);
     }
     setTurntableTracksLoading(false);
+    setTurntableTracksProgress({ percent: 100, stage: "" });
   };
   useEffect(() => {
     turntableAlbumRef.current = turntableAlbum;
@@ -5707,7 +5717,23 @@ function Liri() {
       width: "100%",
       transition: "all 0.2s"
     }
-  }, turntableTracksLoading ? "Loading tracks…" : turntableAlbum ? "Find my place" : "Listen"), vinylMode && /*#__PURE__*/React.createElement("div", {
+  }, turntableTracksLoading ? `${turntableTracksProgress.percent}% — ${turntableTracksProgress.stage}` : turntableAlbum ? "Find my place" : "Listen"), turntableTracksLoading && /*#__PURE__*/React.createElement("div", {
+    style: {
+      width: "100%",
+      height: 3,
+      background: "rgba(255,255,255,0.1)",
+      borderRadius: 2,
+      marginTop: 8,
+      overflow: "hidden"
+    }
+  }, /*#__PURE__*/React.createElement("div", {
+    style: {
+      height: "100%",
+      width: `${turntableTracksProgress.percent}%`,
+      background: "linear-gradient(90deg, #d4a846, #c9807a)",
+      transition: "width 0.3s ease"
+    }
+  })), vinylMode && /*#__PURE__*/React.createElement("div", {
     style: {
       marginTop: "16px",
       fontSize: "12px",
