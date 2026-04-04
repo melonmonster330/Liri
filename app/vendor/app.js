@@ -9,7 +9,7 @@ if (typeof supabase === 'undefined') {
   throw new Error('Supabase not loaded');
 }
 const sb = supabase.createClient("https://xjdjpaxgymgbvcwmvorc.supabase.co", "sb_publishable_C-NBnfg0ltAoUi46XQTUjA_ozjZW_Nd");
-const APP_VERSION = "1.123";
+const APP_VERSION = "1.124";
 const PROXY_URL      = window.Capacitor ? "https://getliri.com/api/recognize"      : "/api/recognize";
 const TRANSCRIBE_PROXY = window.Capacitor ? "https://getliri.com/api/transcribe"    : "/api/transcribe";
 const IDENTIFY_PROXY = window.Capacitor ? "https://getliri.com/api/identify-lyrics" : "/api/identify-lyrics";
@@ -1833,109 +1833,102 @@ function Liri() {
     }
     wordsDataRef.current = wordsData;
 
-    // ── Get mic ──────────────────────────────────────────────────────────────
-    let stream;
-    try {
-      stream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: false, noiseSuppression: false } });
-    } catch {
-      setError("Could not access microphone. Check permissions.");
+    const SpeechRec = window.SpeechRecognition || window.webkitSpeechRecognition;
+    if (!SpeechRec) {
+      setError("Speech recognition unavailable on this device.");
       setMode("error");
       return;
     }
-    streamRef.current = stream;
-    recordingStartRef.current = Date.now();
 
-    const MIN_SCORE = 4;
-    const CLIP_MS = 3000;
-    let accumulatedTranscript = "";
+    const MIN_SCORE = 3;
+    const rec = new SpeechRec();
+    speechRecRef.current = rec;
+    rec.continuous = true;
+    rec.interimResults = true;
+    rec.lang = "en-US";
+    rec.maxAlternatives = 1;
 
-    // ── 3-second record → Whisper → match loop ───────────────────────────────
-    while (!recognitionWonRef.current && listenSessionRef.current === session) {
-      const chunks = [];
-      const mimeType = ["audio/webm", "audio/ogg", "audio/mp4"].find(t => MediaRecorder.isTypeSupported(t)) || "";
-      const recorder = mimeType ? new MediaRecorder(stream, { mimeType }) : new MediaRecorder(stream);
-      recorder.ondataavailable = e => { if (e.data.size > 0) chunks.push(e.data); };
-      recorder.start(250);
+    let finalTranscript = "";
 
-      // Animate while recording
-      const clipStart = Date.now();
-      const animId = setInterval(() => {
-        if (listenSessionRef.current !== session) { clearInterval(animId); return; }
-        setAudioLevel(0.3 + Math.sin(Date.now() / 300) * 0.2 + Math.random() * 0.1);
-        setListenProgress(Math.min(0.9, (Date.now() - clipStart) / CLIP_MS * 0.5));
-      }, 80);
+    // Pulse animation immediately so it doesn't feel frozen while mic warms up
+    const pulseId = setInterval(() => {
+      setAudioLevel(0.15 + Math.sin(Date.now() / 400) * 0.1);
+    }, 80);
 
-      await new Promise(r => setTimeout(r, CLIP_MS));
-      clearInterval(animId);
+    rec.onstart = () => {
+      clearInterval(pulseId);
+      recordingStartRef.current = Date.now();
+    };
 
-      if (listenSessionRef.current !== session) {
-        try { recorder.stop(); } catch {}
-        stream.getTracks().forEach(t => t.stop());
-        return;
+    rec.onresult = (event) => {
+      if (listenSessionRef.current !== session || recognitionWonRef.current) { rec.stop(); return; }
+      let interim = "";
+      for (let i = event.resultIndex; i < event.results.length; i++) {
+        if (event.results[i].isFinal) finalTranscript += event.results[i][0].transcript + " ";
+        else interim = event.results[i][0].transcript;
       }
+      const combined = (finalTranscript + interim).trim();
+      if (!combined) return;
+      setLiveTranscript(combined);
+      const wordCount = combined.split(/\s+/).filter(Boolean).length;
+      setListenProgress(Math.min(wordCount / 12, 0.95));
+      setAudioLevel(0.4 + Math.sin(Date.now() / 200) * 0.2 + Math.random() * 0.15);
+      if (wordCount < MIN_SCORE) return;
+      const vmResult = matchTranscriptToTracks(combined, tracks, wordsData, attemptLogRef.current);
+      if (!vmResult || vmResult.score < MIN_SCORE) return;
+      if (recognitionWonRef.current) return;
+      recognitionWonRef.current = true;
+      try { rec.stop(); } catch {}
+      clearInterval(pulseId);
+      const { track, lyrics, startPos } = vmResult;
+      const ta = turntableAlbumRef.current;
+      const matchedIdx = tracks.findIndex(t => t.trackName?.toLowerCase() === track.trackName?.toLowerCase());
+      turntableMatchedIdxRef.current = matchedIdx >= 0 ? matchedIdx : (track.trackNumber ? track.trackNumber - 1 : 0);
+      const song = { title: track.trackName, artist: track.artistName || ta?.artist_name || "", album: ta?.album_name || "", artwork: ta?.artwork_url || null };
+      setIdentifiedBy("speech");
+      detectedAtRef.current = Date.now();
+      syncCalcRef.current = { startPos, phraseOffset: 0, recStart: Date.now() };
+      initialPosRef.current = startPos;
+      autoAdvanceFiredRef.current = false;
+      autoRetryCountRef.current = 0;
+      setDetectedSong(song);
+      setSongDuration(track.trackTimeMillis ? track.trackTimeMillis / 1000 : null);
+      setLyrics(lyrics);
+      lyricsRef.current = lyrics;
+      setMode("confirmed");
+      saveToHistory(user, song);
+      fetchHistory(user);
+      logListeningEvent({ userId: user?.id, title: track.trackName, artist: track.artistName || ta?.artist_name || "", album: ta?.album_name || "", artwork: ta?.artwork_url || null, itunesTrackId: track.trackId, collectionId: ta?.itunes_collection_id || track.collectionId, vinylReleaseId: null, vinylModeOn: true, source: "speech", offsetSecs: startPos, durationSecs: track.trackTimeMillis ? track.trackTimeMillis / 1000 : null });
+      const at = turntableTracksRef.current;
+      setAlbumTracks(at);
+      setAlbumCollectionId(ta?.itunes_collection_id ? String(ta.itunes_collection_id) : null);
+      const tIdx = at.findIndex(t => t.trackName?.toLowerCase() === track.trackName.toLowerCase());
+      setCurrentTrackIndex(tIdx >= 0 ? tIdx : 0);
+    };
 
-      recorder.stop();
-      await new Promise(r => { recorder.onstop = r; });
+    rec.onerror = (event) => {
+      if (listenSessionRef.current !== session) return;
+      if (event.error === "aborted") return;
+      if (event.error === "no-speech") { if (!recognitionWonRef.current) { try { rec.start(); } catch {} } return; }
+      clearInterval(pulseId);
+      if (!recognitionWonRef.current) { setError(`Mic error: ${event.error}. Check permissions.`); setMode("error"); }
+    };
 
-      const blob = new Blob(chunks, { type: recorder.mimeType || "audio/webm" });
-      try {
-        const audio = await blobToBase64(blob);
-        const headers = { "Content-Type": "application/json" };
-        if (sessionTokenRef.current) headers["Authorization"] = `Bearer ${sessionTokenRef.current}`;
-        const tr = await fetch(TRANSCRIBE_PROXY, {
-          method: "POST",
-          headers,
-          body: JSON.stringify({ audio, mimeType: blob.type || "audio/webm" })
-        });
-        if (tr.ok) {
-          const { text: transcribed } = await tr.json();
-          if (transcribed?.trim()) {
-            accumulatedTranscript = (accumulatedTranscript + " " + transcribed).trim();
-            setLiveTranscript(accumulatedTranscript.split(/\s+/).slice(-12).join(" "));
-            setListenProgress(Math.min(0.95, accumulatedTranscript.split(/\s+/).length / 20));
+    rec.onend = () => {
+      if (recognitionWonRef.current || listenSessionRef.current !== session) return;
+      try { rec.start(); } catch {}
+    };
 
-            const vmResult = matchTranscriptToTracks(accumulatedTranscript, tracks, wordsData, attemptLogRef.current);
-            if (vmResult && vmResult.score >= MIN_SCORE) {
-              recognitionWonRef.current = true;
-              stream.getTracks().forEach(t => t.stop());
-
-              const { track, lyrics, startPos, score } = vmResult;
-              const ta = turntableAlbumRef.current;
-              attemptLogRef.current.push(`whisper: matched "${track.trackName}" at ${startPos.toFixed(1)}s (${score} words)`);
-
-              const matchedIdx = tracks.findIndex(t => t.trackName?.toLowerCase() === track.trackName?.toLowerCase());
-              turntableMatchedIdxRef.current = matchedIdx >= 0 ? matchedIdx : (track.trackNumber ? track.trackNumber - 1 : 0);
-
-              const song = { title: track.trackName, artist: track.artistName || ta?.artist_name || "", album: ta?.album_name || "", artwork: ta?.artwork_url || null };
-              setIdentifiedBy("speech");
-              detectedAtRef.current = Date.now();
-              syncCalcRef.current = { startPos, phraseOffset: 0, recStart: Date.now() };
-              initialPosRef.current = startPos;
-              autoAdvanceFiredRef.current = false;
-              autoRetryCountRef.current = 0;
-              setDetectedSong(song);
-              setSongDuration(track.trackTimeMillis ? track.trackTimeMillis / 1000 : null);
-              setLyrics(lyrics);
-              lyricsRef.current = lyrics;
-              setMode("confirmed");
-              saveToHistory(user, song);
-              fetchHistory(user);
-              logListeningEvent({ userId: user?.id, title: track.trackName, artist: track.artistName || ta?.artist_name || "", album: ta?.album_name || "", artwork: ta?.artwork_url || null, itunesTrackId: track.trackId, collectionId: ta?.itunes_collection_id || track.collectionId, vinylReleaseId: null, vinylModeOn: true, source: "speech", offsetSecs: startPos, durationSecs: track.trackTimeMillis ? track.trackTimeMillis / 1000 : null });
-              const at = turntableTracksRef.current;
-              setAlbumTracks(at);
-              setAlbumCollectionId(ta?.itunes_collection_id ? String(ta.itunes_collection_id) : null);
-              const tIdx = at.findIndex(t => t.trackName?.toLowerCase() === track.trackName.toLowerCase());
-              setCurrentTrackIndex(tIdx >= 0 ? tIdx : 0);
-              return;
-            }
-          }
-        }
-      } catch (e) {
-        attemptLogRef.current.push(`whisper: error — ${e.message}`);
-      }
+    try {
+      rec.start();
+    } catch (err) {
+      clearInterval(pulseId);
+      setError("Could not start microphone. Check permissions.");
+      setMode("error");
     }
+  };
 
-    stream.getTracks().forEach(t => t.stop());
+
   };
 
   const startListeningNative = async (isAutoAdvance = false) => {
