@@ -1,0 +1,327 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Liri — Auth Diagnostics</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      background: #080810; color: #f0e6d3;
+      font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Display', 'Helvetica Neue', monospace;
+      padding: 24px; font-size: 14px; line-height: 1.6;
+    }
+    h1 { font-size: 20px; font-weight: 700; margin-bottom: 6px; color: #d4a846; }
+    h2 { font-size: 14px; font-weight: 600; margin: 20px 0 8px; color: #d4a846; text-transform: uppercase; letter-spacing: .05em; }
+    p.sub { font-size: 12px; color: rgba(255,255,255,0.4); margin-bottom: 20px; }
+    .card {
+      background: rgba(255,255,255,0.05); border: 1px solid rgba(255,255,255,0.1);
+      border-radius: 12px; padding: 16px; margin-bottom: 12px;
+    }
+    .row { display: flex; justify-content: space-between; align-items: flex-start; gap: 12px; margin: 4px 0; }
+    .label { color: rgba(255,255,255,0.5); flex-shrink: 0; }
+    .value { color: #f0e6d3; word-break: break-all; text-align: right; }
+    .ok    { color: #6dc47a; }
+    .fail  { color: #e87070; }
+    .warn  { color: #d4a846; }
+    .mono  { font-family: monospace; font-size: 12px; }
+    button {
+      background: linear-gradient(135deg, #d4a846, #c9807a); color: #080810;
+      border: none; border-radius: 50px; padding: 10px 24px;
+      font-size: 14px; font-weight: 700; cursor: pointer; font-family: inherit;
+      margin-right: 8px; margin-bottom: 8px;
+    }
+    button:disabled { opacity: 0.4; cursor: default; }
+    button.secondary {
+      background: rgba(255,255,255,0.08); color: rgba(255,255,255,0.7);
+      border: 1px solid rgba(255,255,255,0.15);
+    }
+    pre {
+      background: rgba(0,0,0,0.4); border: 1px solid rgba(255,255,255,0.08);
+      border-radius: 8px; padding: 12px; overflow-x: auto;
+      font-size: 12px; color: #c8e6c9; white-space: pre-wrap; word-break: break-all;
+      margin-top: 8px; max-height: 400px; overflow-y: auto;
+    }
+    .section { margin-bottom: 28px; }
+    .spinner {
+      display: inline-block; width: 14px; height: 14px;
+      border: 2px solid rgba(255,255,255,0.2); border-top-color: #d4a846;
+      border-radius: 50%; animation: spin .7s linear infinite; vertical-align: middle; margin-right: 6px;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+    #status-bar {
+      position: fixed; top: 0; left: 0; right: 0;
+      background: rgba(8,8,16,0.95); border-bottom: 1px solid rgba(255,255,255,0.1);
+      padding: 10px 24px; display: flex; align-items: center; gap: 12px;
+      font-size: 13px; z-index: 100;
+    }
+    body { padding-top: 52px; }
+  </style>
+</head>
+<body>
+
+<div id="status-bar">
+  <span style="color:#d4a846;font-weight:700">Liri Diagnostics</span>
+  <span id="auth-status" style="color:rgba(255,255,255,0.4)">Checking session…</span>
+</div>
+
+<h1>Auth Diagnostics</h1>
+<p class="sub">Use this page to troubleshoot the "Session expired" 401 error on Add Record.</p>
+
+<!-- ── Section 1: Client session ── -->
+<div class="section">
+  <h2>1 · Client-side session</h2>
+  <div class="card" id="session-card">Checking…</div>
+  <button onclick="runSessionTests()">Re-run session tests</button>
+  <button class="secondary" onclick="signOut()">Sign out</button>
+</div>
+
+<!-- ── Section 2: Server diagnostics ── -->
+<div class="section">
+  <h2>2 · Server env + Supabase connectivity</h2>
+  <p class="sub">Hits <code>/api/test-auth</code> — checks env vars, reachability, and (if signed in) validates your token three different ways.</p>
+  <button onclick="runServerTest()">Run server test</button>
+  <div id="server-result"></div>
+</div>
+
+<!-- ── Section 3: Live add-to-library simulation ── -->
+<div class="section">
+  <h2>3 · Simulate add-to-library request</h2>
+  <p class="sub">Uses your current session token to POST a dummy collection ID and shows the raw response.</p>
+  <button onclick="simulateAdd()">Simulate add (collection ID 12345)</button>
+  <div id="add-result"></div>
+</div>
+
+<!-- ── Section 4: Token refresh test ── -->
+<div class="section">
+  <h2>4 · Token refresh comparison</h2>
+  <p class="sub">Compares getSession() vs refreshSession() — shows which returns a valid token and whether they differ.</p>
+  <button onclick="runRefreshTest()">Run refresh comparison</button>
+  <div id="refresh-result"></div>
+</div>
+
+<script src="vendor/supabase.min.js"></script>
+<script>
+  const SUPABASE_URL = "https://xjdjpaxgymgbvcwmvorc.supabase.co";
+  const SUPABASE_KEY = "sb_publishable_C-NBnfg0ltAoUi46XQTUjA_ozjZW_Nd";
+  const sb = supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
+
+  let currentSession = null;
+
+  function esc(s) {
+    return String(s ?? "").replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;");
+  }
+
+  function statusRow(label, value, cls = "") {
+    return `<div class="row"><span class="label">${esc(label)}</span><span class="value ${cls} mono">${esc(value)}</span></div>`;
+  }
+
+  function tick(v)  { return v ? '<span class="ok">✓</span>' : '<span class="fail">✗</span>'; }
+  function badge(v) { return v ? '<span class="ok">PASS</span>' : '<span class="fail">FAIL</span>'; }
+
+  // ── Initial session check ────────────────────────────────────────────────
+  async function checkSession() {
+    const card = document.getElementById("session-card");
+    card.innerHTML = '<span class="spinner"></span> Loading…';
+
+    const { data: { session }, error } = await sb.auth.getSession();
+    currentSession = session;
+
+    const authBar = document.getElementById("auth-status");
+
+    if (session) {
+      const expiresAt   = new Date(session.expires_at * 1000);
+      const msUntilExp  = expiresAt - Date.now();
+      const expired     = msUntilExp < 0;
+      const expLabel    = expired
+        ? `<span class="fail">EXPIRED ${Math.abs(Math.round(msUntilExp/60000))}m ago</span>`
+        : `<span class="ok">in ${Math.round(msUntilExp/60000)}m</span>`;
+
+      authBar.innerHTML = `<span class="ok">✓ Signed in as ${esc(session.user.email)}</span>`;
+
+      card.innerHTML = `
+        ${statusRow("User email",    session.user.email,                     "ok")}
+        ${statusRow("User ID",       session.user.id)}
+        ${statusRow("Token prefix",  session.access_token.slice(0,20) + "…")}
+        ${statusRow("Token is JWT",  session.access_token.startsWith("eyJ") ? "yes ✓" : "NO — unexpected format", session.access_token.startsWith("eyJ") ? "ok" : "fail")}
+        ${statusRow("Refresh token", session.refresh_token ? "present ✓" : "MISSING", session.refresh_token ? "ok" : "fail")}
+        <div class="row"><span class="label">Token expires</span><span class="value">${expLabel} (${expiresAt.toLocaleTimeString()})</span></div>
+        ${statusRow("getSession() error", error ? error.message : "none", error ? "fail" : "ok")}
+      `;
+    } else {
+      authBar.innerHTML = `<span class="fail">✗ Not signed in</span>`;
+      card.innerHTML = `
+        <div class="fail">No active session found. <br/>
+        ${error ? "Error: " + esc(error.message) : "Sign in at <a href='/library' style='color:#d4a846'>/library</a> first."}</div>
+      `;
+    }
+  }
+
+  async function runSessionTests() {
+    await checkSession();
+  }
+
+  async function signOut() {
+    await sb.auth.signOut();
+    await checkSession();
+  }
+
+  // ── Server test ──────────────────────────────────────────────────────────
+  async function runServerTest() {
+    const el = document.getElementById("server-result");
+    el.innerHTML = '<span class="spinner"></span> Calling /api/test-auth…';
+
+    const { data: { session } } = await sb.auth.getSession();
+    const headers = { "Content-Type": "application/json" };
+    if (session?.access_token) headers["Authorization"] = `Bearer ${session.access_token}`;
+
+    try {
+      const res  = await fetch("/api/test-auth", { headers });
+      const json = await res.json();
+
+      const env = json.env || {};
+      const con = json.connectivity || {};
+      const tok = json.token_test;
+
+      let html = `
+        <h2 style="margin-top:16px">Env vars</h2>
+        <div class="card">
+          ${statusRow("SUPABASE_URL",              env.SUPABASE_URL)}
+          ${statusRow("SERVICE_ROLE_KEY (masked)", env.SUPABASE_SERVICE_ROLE_KEY)}
+          ${statusRow("SERVICE_ROLE_KEY format",   env.SUPABASE_SERVICE_ROLE_KEY_format,
+            env.SUPABASE_SERVICE_ROLE_KEY_format === "legacy-jwt" ? "ok" :
+            env.SUPABASE_SERVICE_ROLE_KEY_format === "new-secret (service role)" ? "warn" : "fail")}
+          ${statusRow("JWT_SECRET",                env.SUPABASE_JWT_SECRET)}
+        </div>
+
+        <h2>Supabase connectivity</h2>
+        <div class="card">
+          <div class="row"><span class="label">JWKS endpoint</span><span class="value">${tick(con.jwks?.ok)} HTTP ${esc(con.jwks?.status)} — ${con.jwks?.key_count ?? "?"} keys${con.jwks?.error ? " ("+esc(con.jwks.error)+")" : ""}</span></div>
+          <div class="row"><span class="label">REST API (service key)</span><span class="value">${tick(con.rest_api?.ok)} HTTP ${esc(con.rest_api?.status)}${con.rest_api?.error ? " ("+esc(con.rest_api.error)+")" : ""}</span></div>
+        </div>
+      `;
+
+      if (tok && !tok.skipped) {
+        const a1 = tok["attempt1_serviceKey_as_apikey"];
+        const a2 = tok["attempt2_no_apikey"];
+        const a3 = tok["attempt3_serviceKey_as_bearer_admin_mode"];
+        html += `
+          <h2>Token validation (/auth/v1/user)</h2>
+          <div class="card">
+            ${statusRow("Token prefix",    tok.token_prefix)}
+            ${statusRow("Looks like JWT",  tok.token_looks_like_jwt ? "yes ✓" : "NO — unexpected", tok.token_looks_like_jwt ? "ok" : "fail")}
+          </div>
+          <div class="card">
+            <b>Attempt 1</b>: apikey = SERVICE_ROLE_KEY, Bearer = user token (current approach)<br/>
+            <div style="margin-top:8px">
+              ${statusRow("Status", a1.status, a1.ok ? "ok" : "fail")}
+              ${statusRow("Result", a1.ok ? "User ID: "+a1.user_id : "Error: "+(a1.error||"unknown"), a1.ok ? "ok" : "fail")}
+            </div>
+          </div>
+          <div class="card">
+            <b>Attempt 2</b>: no apikey header, Bearer = user token<br/>
+            <div style="margin-top:8px">
+              ${statusRow("Status", a2.status, a2.ok ? "ok" : "fail")}
+              ${statusRow("Result", a2.ok ? "User ID: "+a2.user_id : "Error: "+(a2.error||"unknown"), a2.ok ? "ok" : "fail")}
+            </div>
+          </div>
+          <div class="card">
+            <b>Attempt 3</b>: SERVICE_ROLE_KEY as Bearer (admin mode reference)<br/>
+            <div style="margin-top:8px">
+              ${statusRow("Status", a3.status, a3.ok ? "ok" : "warn")}
+              ${statusRow("Result", a3.ok ? "OK (admin)" : "Error: "+(a3.error||"unknown"), a3.ok ? "ok" : "warn")}
+            </div>
+          </div>
+        `;
+      } else if (tok?.skipped) {
+        html += `<div class="card warn">⚠ Token test skipped: ${esc(tok.reason)}</div>`;
+      }
+
+      html += `<h2>Full JSON response</h2><pre>${esc(JSON.stringify(json, null, 2))}</pre>`;
+      el.innerHTML = html;
+    } catch (e) {
+      el.innerHTML = `<div class="card fail">Network error calling /api/test-auth: ${esc(e.message)}</div>`;
+    }
+  }
+
+  // ── Simulate add ─────────────────────────────────────────────────────────
+  async function simulateAdd() {
+    const el = document.getElementById("add-result");
+    el.innerHTML = '<span class="spinner"></span> Sending test request…';
+
+    const { data: { session } } = await sb.auth.getSession();
+    const token = session?.access_token;
+
+    try {
+      const res = await fetch("/api/add-to-library", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          ...(token ? { "Authorization": `Bearer ${token}` } : {}),
+        },
+        body: JSON.stringify({ itunes_collection_id: 12345 }),
+      });
+
+      const json = await res.json().catch(() => ({}));
+      const ok   = res.status === 200 || res.status === 404; // 404 = album not found, auth passed ✓
+
+      el.innerHTML = `
+        <div class="card">
+          ${statusRow("HTTP status", res.status, ok ? "ok" : "fail")}
+          ${statusRow("Auth passed", res.status !== 401 ? "yes ✓" : "NO — 401 returned", res.status !== 401 ? "ok" : "fail")}
+          ${statusRow("Token sent",  token ? "yes" : "NO — no session token available", token ? "ok" : "fail")}
+          ${statusRow("Response",    JSON.stringify(json))}
+        </div>
+        <div class="card warn" style="display:${res.status===401?'block':'none'}">
+          Got 401 — auth is failing server-side. Run the Server test above to see which /auth/v1/user attempt works.
+        </div>
+      `;
+    } catch (e) {
+      el.innerHTML = `<div class="card fail">Network error: ${esc(e.message)}</div>`;
+    }
+  }
+
+  // ── Refresh comparison ───────────────────────────────────────────────────
+  async function runRefreshTest() {
+    const el = document.getElementById("refresh-result");
+    el.innerHTML = '<span class="spinner"></span> Running…';
+
+    const t0 = Date.now();
+    const { data: gs, error: gsErr } = await sb.auth.getSession();
+    const t1 = Date.now();
+    const { data: rs, error: rsErr } = await sb.auth.refreshSession();
+    const t2 = Date.now();
+
+    const gsTok = gs?.session?.access_token;
+    const rsTok = rs?.session?.access_token;
+    const same  = gsTok && rsTok && gsTok === rsTok;
+
+    el.innerHTML = `
+      <div class="card">
+        <b>getSession()</b> — took ${t1-t0}ms
+        <div style="margin-top:8px">
+          ${statusRow("Has session",    gs?.session ? "yes" : "no", gs?.session ? "ok" : "fail")}
+          ${statusRow("Token present",  gsTok ? "yes" : "no",       gsTok ? "ok" : "fail")}
+          ${statusRow("Error",          gsErr ? gsErr.message : "none")}
+        </div>
+      </div>
+      <div class="card">
+        <b>refreshSession()</b> — took ${t2-t1}ms
+        <div style="margin-top:8px">
+          ${statusRow("Has session",    rs?.session ? "yes" : "no", rs?.session ? "ok" : "fail")}
+          ${statusRow("Token present",  rsTok ? "yes" : "no",       rsTok ? "ok" : "fail")}
+          ${statusRow("Error",          rsErr ? rsErr.message : "none")}
+          ${statusRow("Token changed",  same ? "no — same token returned" : (gsTok && rsTok ? "yes — new token ✓" : "n/a"), same ? "warn" : "ok")}
+        </div>
+      </div>
+      ${gsTok ? `<div class="card">getSession token prefix: <span class="mono">${esc(gsTok.slice(0,40))}…</span></div>` : ""}
+      ${rsTok ? `<div class="card">refreshSession token prefix: <span class="mono">${esc(rsTok.slice(0,40))}…</span></div>` : ""}
+    `;
+  }
+
+  // ── Run on load ──────────────────────────────────────────────────────────
+  checkSession();
+  sb.auth.onAuthStateChange(() => checkSession());
+</script>
+</body>
+</html>
