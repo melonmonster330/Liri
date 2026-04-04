@@ -1823,8 +1823,18 @@ function Liri() {
         .select("itunes_track_id, lrc_raw, lyrics_plain, words_json")
         .in("itunes_track_id", trackIds);
       for (const row of lyricsRows || []) {
+        let words = row.words_json || [];
+        // Derive word timings from lrc_raw when words_json wasn't pre-populated
+        if (!words.length && row.lrc_raw) {
+          for (const line of parseLRC(row.lrc_raw)) {
+            for (const raw of (line.text || "").split(/\s+/)) {
+              const word = raw.toLowerCase().replace(/[^a-z0-9']/g, "");
+              if (word) words.push({ word, start_ms: Math.round(line.time * 1000) });
+            }
+          }
+        }
         wordsData[row.itunes_track_id] = {
-          words: row.words_json || [],
+          words,
           lrc_raw: row.lrc_raw,
           lyrics_plain: row.lyrics_plain,
         };
