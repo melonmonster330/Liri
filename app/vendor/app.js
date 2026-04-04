@@ -909,117 +909,33 @@ function Liri() {
   // ── Turntable album: sync to ref + localStorage, fetch tracks ──
   const fetchTurntableTracks = async collectionId => {
     setTurntableTracksLoading(true);
-    setTurntableTracksProgress({ percent: 0, stage: "Loading vinyl data…" });
-    // Clear immediately so we never search stale lyrics from a previous album
+    setTurntableTracksProgress({ percent: 0, stage: "Loading tracks…" });
     turntableTracksRef.current = [];
     turntableLyricsCacheRef.current = {};
     try {
       const alb = turntableAlbumRef.current;
+      const artistName = alb?.artist_name || "";
+      const albumName = alb?.album_name || "";
 
-      // ── Supabase-first: use our vinyl_tracks DB if available (no iTunes call needed) ──
-      const db = await fetchVinylRelease(String(collectionId));
-      if (db?.vinyl_tracks?.length > 0) {
-        setVinylDbRelease(db);
-        albumTpsRef.current = 0;
-        const artistName = db.artist_name || alb?.artist_name || "";
-        const albumName = db.album_name || alb?.album_name || "";
-        const mapped = db.vinyl_tracks.map(t => ({
-          trackName: t.title,
-          artistName,
-          collectionName: albumName,
-          trackId: t.itunes_track_id || null,
-          trackTimeMillis: t.duration_ms || null,
-          trackNumber: t.track_number_on_side || 1,
-          discNumber: t.disc_number || 1
-        }));
-        turntableTracksRef.current = mapped;
-
-        // Pre-load LRC cache for the whole album at once.
-        // Index by both itunes_track_id (numeric) and track_name (string) so
-        // matchTranscriptToTracks can hit the cache regardless of whether tracks
-        // came from iTunes (have IDs) or Supabase vinyl_tracks (IDs may be null).
-        setTurntableTracksProgress({ percent: 50, stage: "Loading lyrics…" });
-        sb.from("liri_lyric_cache").select("itunes_track_id, track_name, synced_lyrics").eq("itunes_collection_id", collectionId).then(async ({
-          data
-        }) => {
-          const cache = {};
-          for (const row of data || []) {
-            if (row.itunes_track_id) cache[row.itunes_track_id] = row.synced_lyrics;
-            if (row.track_name) cache[row.track_name] = row.synced_lyrics;
-          }
-          turntableLyricsCacheRef.current = cache;
-
-          // Fallback: cache empty = album added before lyrics caching was fixed, or
-          // LRCLib was down at add time. Fetch now, persist, so next load is instant.
-          if (Object.keys(cache).length === 0 && mapped.length > 0) {
-            console.log("[lyrics fallback] empty cache — fetching from LRCLib for", albumName);
-            setTurntableTracksProgress({ percent: 60, stage: `Fetching lyrics for ${mapped.length} tracks…` });
-            for (let i = 0; i < mapped.length; i++) {
-              const t = mapped[i];
-              if (!t.trackName) continue;
-              try {
-                let candidates = await fetch(`https://lrclib.net/api/search?artist_name=${encodeURIComponent(artistName)}&track_name=${encodeURIComponent(t.trackName)}`).then(r => r.json()).catch(() => []);
-                if (!Array.isArray(candidates)) candidates = [];
-                if (!candidates.some(c => c.syncedLyrics)) {
-                  const fb = await fetch(`https://lrclib.net/api/search?q=${encodeURIComponent(`${artistName} ${t.trackName}`.trim())}`).then(r => r.json()).catch(() => []);
-                  if (Array.isArray(fb)) candidates = [...candidates, ...fb];
-                }
-                const best = candidates.filter(c => c.syncedLyrics).find(c => !/\*{2,}/.test(c.syncedLyrics)) || candidates.find(c => c.syncedLyrics);
-                if (best?.syncedLyrics) {
-                  if (t.trackId) turntableLyricsCacheRef.current[t.trackId] = best.syncedLyrics;
-                  turntableLyricsCacheRef.current[t.trackName] = best.syncedLyrics;
-                  if (t.trackId) sb.from("liri_lyric_cache").upsert({
-                    itunes_track_id: Number(t.trackId),
-                    itunes_collection_id: Number(collectionId),
-                    track_name: t.trackName,
-                    artist_name: artistName,
-                    album_name: albumName,
-                    synced_lyrics: best.syncedLyrics
-                  }, {
-                    onConflict: "itunes_track_id"
-                  }).catch(() => {});
-                }
-              } catch (e) {
-                console.warn("[lyrics fallback] failed for", t.trackName, e);
-              }
-              const progress = Math.min(90, 60 + Math.round((i / mapped.length) * 30));
-              setTurntableTracksProgress({ percent: progress, stage: `${i + 1}/${mapped.length} lyrics` });
-              await new Promise(res => setTimeout(res, 200));
-            }
-            console.log("[lyrics fallback] done for", albumName);
-          }
-          setTurntableTracksLoading(false);
-          setTurntableTracksProgress({ percent: 100, stage: "" });
-        }).catch(() => {
-          setTurntableTracksLoading(false);
-          setTurntableTracksProgress({ percent: 100, stage: "" });
-        });
-        return;
-      }
-
-      // Fallback: album not in vinyl_releases — load from album_tracks (populated by add-to-library)
-      console.warn("[turntable] not in vinyl DB, falling back to album_tracks:", collectionId);
-      setTurntableTracksProgress({ percent: 40, stage: "Loading tracks…" });
-      const alb2 = turntableAlbumRef.current;
-      const artistName2 = alb2?.artist_name || "";
-      const albumName2 = alb2?.album_name || "";
       const { data: trackRows } = await sb
         .from("album_tracks")
         .select("itunes_track_id, track_name, artist_name, track_number, disc_number, duration_ms")
         .eq("itunes_collection_id", collectionId)
         .order("disc_number", { ascending: true })
         .order("track_number", { ascending: true });
+
       if (trackRows?.length > 0) {
         turntableTracksRef.current = trackRows.map(t => ({
           trackName: t.track_name,
-          artistName: t.artist_name || artistName2,
-          collectionName: albumName2,
+          artistName: t.artist_name || artistName,
+          collectionName: albumName,
           trackId: t.itunes_track_id || null,
           trackTimeMillis: t.duration_ms || null,
           trackNumber: t.track_number || 1,
           discNumber: t.disc_number || 1,
         }));
-        setTurntableTracksProgress({ percent: 70, stage: "Loading lyrics…" });
+
+        setTurntableTracksProgress({ percent: 60, stage: "Loading lyrics…" });
         const { data: lrcRows } = await sb
           .from("track_lyrics")
           .select("itunes_track_id, lrc_raw")
@@ -1030,7 +946,7 @@ function Liri() {
         }
         turntableLyricsCacheRef.current = cache;
       } else {
-        console.warn("[turntable] album_tracks also empty for:", collectionId);
+        console.warn("[turntable] no tracks found for:", collectionId);
       }
     } catch (e) {
       turntableTracksRef.current = [];
