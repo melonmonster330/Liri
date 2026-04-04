@@ -9,7 +9,7 @@ if (typeof supabase === 'undefined') {
   throw new Error('Supabase not loaded');
 }
 const sb = supabase.createClient("https://xjdjpaxgymgbvcwmvorc.supabase.co", "sb_publishable_C-NBnfg0ltAoUi46XQTUjA_ozjZW_Nd");
-const APP_VERSION = "1.118";
+const APP_VERSION = "1.119";
 const PROXY_URL      = window.Capacitor ? "https://getliri.com/api/recognize"      : "/api/recognize";
 const TRANSCRIBE_PROXY = window.Capacitor ? "https://getliri.com/api/transcribe"    : "/api/transcribe";
 const IDENTIFY_PROXY = window.Capacitor ? "https://getliri.com/api/identify-lyrics" : "/api/identify-lyrics";
@@ -1843,8 +1843,9 @@ function Liri() {
       console.warn("[listen] Failed to load lyrics from DB:", e.message);
     }
 
-    if (!Object.keys(wordsData).length) {
-      setError("No lyrics found for this album. Make sure it's been added to your library.");
+    const tracksWithWordData = Object.values(wordsData).filter(d => d.words?.length > 0);
+    if (!tracksWithWordData.length) {
+      setError("No lyric timing data for this album — remove it from your library and re-add it to refresh.");
       setMode("error");
       return;
     }
