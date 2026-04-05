@@ -9,7 +9,7 @@ if (typeof supabase === 'undefined') {
   throw new Error('Supabase not loaded');
 }
 const sb = supabase.createClient("https://xjdjpaxgymgbvcwmvorc.supabase.co", "sb_publishable_C-NBnfg0ltAoUi46XQTUjA_ozjZW_Nd");
-const APP_VERSION = "1.129";
+const APP_VERSION = "1.130";
 const TRANSCRIBE_PROXY = window.Capacitor ? "https://getliri.com/api/transcribe"    : "/api/transcribe";
 const IDENTIFY_PROXY = window.Capacitor ? "https://getliri.com/api/identify-lyrics" : "/api/identify-lyrics";
 const ITUNES_PROXY   = window.Capacitor ? "https://getliri.com/api/itunes-lookup"   : "/api/itunes-lookup";
@@ -938,11 +938,15 @@ function Liri() {
         setTurntableTracksProgress({ percent: 60, stage: "Loading lyrics…" });
         const { data: lrcRows } = await sb
           .from("track_lyrics")
-          .select("itunes_track_id, lrc_raw")
+          .select("itunes_track_id, lrc_raw, words_json, lyrics_plain")
           .in("itunes_track_id", trackRows.map(t => t.itunes_track_id).filter(Boolean));
         const cache = {};
         for (const row of lrcRows || []) {
-          if (row.itunes_track_id) cache[row.itunes_track_id] = row.lrc_raw;
+          if (row.itunes_track_id) cache[String(row.itunes_track_id)] = {
+            lrc_raw: row.lrc_raw || null,
+            words_json: row.words_json || null,
+            lyrics_plain: row.lyrics_plain || null,
+          };
         }
         turntableLyricsCacheRef.current = cache;
       } else {
@@ -1427,16 +1431,19 @@ function Liri() {
     const wordsData = {};
     for (const track of tracks) {
       if (!track.trackId) continue;
-      const lrc_raw = lrcCache[track.trackId];
-      if (!lrc_raw) continue;
-      const words = [];
-      for (const line of parseLRC(lrc_raw)) {
-        for (const raw of (line.text || "").split(/\s+/)) {
-          const word = raw.toLowerCase().replace(/[^a-z0-9']/g, "");
-          if (word) words.push({ word, start_ms: Math.round(line.time * 1000) });
+      const entry = lrcCache[String(track.trackId)];
+      if (!entry) continue;
+      let words = entry.words_json || [];
+      // Derive word timings from lrc_raw if words_json not pre-populated
+      if (!words.length && entry.lrc_raw) {
+        for (const line of parseLRC(entry.lrc_raw)) {
+          for (const raw of (line.text || "").split(/\s+/)) {
+            const word = raw.toLowerCase().replace(/[^a-z0-9']/g, "");
+            if (word) words.push({ word, start_ms: Math.round(line.time * 1000) });
+          }
         }
       }
-      wordsData[track.trackId] = { words, lrc_raw, lyrics_plain: null };
+      wordsData[track.trackId] = { words, lrc_raw: entry.lrc_raw, lyrics_plain: entry.lyrics_plain };
     }
 
     const tracksWithWordData = Object.values(wordsData).filter(d => d.words?.length > 0);
