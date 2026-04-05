@@ -9,7 +9,7 @@ if (typeof supabase === 'undefined') {
   throw new Error('Supabase not loaded');
 }
 const sb = supabase.createClient("https://xjdjpaxgymgbvcwmvorc.supabase.co", "sb_publishable_C-NBnfg0ltAoUi46XQTUjA_ozjZW_Nd");
-const APP_VERSION = "1.133";
+const APP_VERSION = "1.134";
 const TRANSCRIBE_PROXY = window.Capacitor ? "https://getliri.com/api/transcribe"    : "/api/transcribe";
 const IDENTIFY_PROXY = window.Capacitor ? "https://getliri.com/api/identify-lyrics" : "/api/identify-lyrics";
 const ITUNES_PROXY   = window.Capacitor ? "https://getliri.com/api/itunes-lookup"   : "/api/itunes-lookup";
@@ -1606,6 +1606,7 @@ function Liri() {
     }, 80);
 
     rec.onstart = () => {
+      console.log("[rec] onstart — mic is open");
       clearInterval(pulseId);
       // Stamp the exact wall-clock time the mic actually opened (not when we called
       // rec.start()). There is a small but variable delay between rec.start() and the
@@ -1691,6 +1692,7 @@ function Liri() {
     };
 
     rec.onerror = (event) => {
+      console.log("[rec] onerror:", event.error);
       if (listenSessionRef.current !== session) return;
       // "aborted" fires when we call rec.stop() ourselves after a successful match.
       // Ignore it — it's not a user-facing error.
@@ -1717,11 +1719,13 @@ function Liri() {
     };
 
     rec.onend = () => {
+      console.log("[rec] onend — restarting:", !recognitionWonRef.current);
       if (recognitionWonRef.current || listenSessionRef.current !== session) return;
       try { rec.start(); } catch {}
     };
 
     try {
+      console.log("[rec] calling rec.start()");
       rec.start();
     } catch (err) {
       clearInterval(pulseId);
