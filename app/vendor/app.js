@@ -352,6 +352,23 @@ function Liri() {
   const turntableAlbumRef = useRef(turntableAlbum);
   const turntableTracksRef = useRef([]); // iTunes tracks for selected album (pre-fetched)
   const turntableMatchedIdxRef = useRef(-1); // 0-based index of last vinyl-matched track
+  // turntableLyricsCacheRef: raw DB rows fetched once per album in fetchTurntableTracks.
+  //   Shape: { [String(itunes_track_id)]: { lrc_raw, words_json, lyrics_plain } }
+  //   Populated at album-select time so that startListeningSpeech has zero network
+  //   latency when the mic opens. Lives for the lifetime of the selected album — reset
+  //   to {} at the top of fetchTurntableTracks so stale data from the previous album
+  //   never bleeds through.
+  //
+  // wordsDataRef: derived/processed form built at the START of each listening session
+  //   inside startListeningSpeech. Shape: { [trackId]: { words, lrc_raw, lyrics_plain } }
+  //   where `words` is a flat array of { word, start_ms } objects ready for matching.
+  //   The derivation step handles the fallback chain (words_json → lrc_raw → lyrics_plain)
+  //   so matchTranscriptToTracks only ever sees one consistent format.
+  //   Also kept alive after the listen so jumpToTrack / resync can reuse it without
+  //   another DB call.
+  //
+  // Summary: turntableLyricsCacheRef = "what came from the DB".
+  //          wordsDataRef            = "what the matcher actually uses".
   const turntableLyricsCacheRef = useRef({}); // lrc_raw cache by trackId — loaded at album select, used in startListeningSpeech
   const wordsDataRef = useRef({}); // trackId → { words, lrc_raw, lyrics_plain } from track_lyrics table
   const autoRetryCountRef = useRef(0);
@@ -910,6 +927,11 @@ function Liri() {
   const fetchTurntableTracks = async collectionId => {
     setTurntableTracksLoading(true);
     setTurntableTracksProgress({ percent: 0, stage: "Loading tracks…" });
+
+    // Clear refs IMMEDIATELY before any await so that if the user switches albums
+    // mid-flight the old album's data never bleeds into the new session.
+    // Without this a stale turntableTracksRef could cause matchTranscriptToTracks
+    // to score against the wrong album's word list.
     turntableTracksRef.current = [];
     turntableLyricsCacheRef.current = {};
     try {
@@ -917,6 +939,12 @@ function Liri() {
       const artistName = alb?.artist_name || "";
       const albumName = alb?.album_name || "";
 
+      // Load from album_tracks (not vinyl_releases).
+      // vinyl_releases is a MusicBrainz-sourced table used for cover art / barcode
+      // lookups — it does NOT contain per-track metadata (duration, track numbers, etc.).
+      // album_tracks is populated from the iTunes Search API when a user adds an album
+      // to their library and is the authoritative source for track order and IDs.
+      // Using the wrong table would give us track shells with no duration or lyrics IDs.
       const { data: trackRows } = await sb
         .from("album_tracks")
         .select("itunes_track_id, track_name, artist_name, track_number, disc_number, duration_ms")
@@ -942,12 +970,31 @@ function Liri() {
           .in("itunes_track_id", trackRows.map(t => t.itunes_track_id).filter(Boolean));
         const cache = {};
         for (const row of lrcRows || []) {
+          // Key as String() to guard against numeric vs string type mismatch.
+          // itunes_track_id comes back as a JS number from Supabase, but track.trackId
+          // can be stored as a string in some code paths (e.g. after JSON.parse from
+          // localStorage). Converting both sides to String() at the boundary means
+          // cache lookups with either type always succeed.
+          // GOTCHA: removing this coercion caused a bug where every cache lookup
+          // returned undefined and speech matching silently fell back to "no lyrics",
+          // causing the listener to spin forever. See feedback_track_data_source.md.
           if (row.itunes_track_id) cache[String(row.itunes_track_id)] = {
+            // All three columns are stored: each is a fallback for the other.
+            // words_json: pre-tokenised [{word, start_ms}] array — fastest path for
+            //   matchTranscriptToTracks, produced by the lyrics-import pipeline.
+            // lrc_raw: timestamped LRC format — used to derive word timings on the fly
+            //   if words_json is absent, and also for the karaoke display (line-by-line
+            //   highlighting). Without lrc_raw we lose sync accuracy.
+            // lyrics_plain: raw text, no timestamps — last resort for matching when
+            //   neither words_json nor lrc_raw is available. Matching still works but
+            //   position offset accuracy is reduced because we can only estimate start_ms.
             lrc_raw: row.lrc_raw || null,
             words_json: row.words_json || null,
             lyrics_plain: row.lyrics_plain || null,
           };
         }
+        // Store in ref (not state) so startListeningSpeech can read it synchronously
+        // without a re-render cycle. React state would be stale inside the closure.
         turntableLyricsCacheRef.current = cache;
       } else {
         console.warn("[turntable] no tracks found for:", collectionId);
@@ -1293,8 +1340,12 @@ function Liri() {
     if (logRef) logRef.push(`match: ${heardWords.length} words from transcript`);
     if (!heardWords.length) return null;
 
-    // Deduplicate by base track name — strips suffixes like "(live)", "[bonus]"
-    // so albums with studio + session versions don't always block uniqueness.
+    // baseName strips suffixes like "(live)", "[bonus track]", "(remastered)" etc.
+    // Albums that include both a studio take and a live/session version of the same
+    // song would otherwise have two tracks with identical word sets. Without this
+    // deduplication both tracks would match the same phrase, producing hits.length > 1
+    // and breaking the uniqueness requirement. seenNames ensures only the FIRST
+    // occurrence (by track order from the DB) is used as the canonical version.
     const baseName = n => (n || "").toLowerCase().replace(/\s*[\(\[].*/, "").trim();
     const seenNames = new Set();
 
@@ -1317,10 +1368,27 @@ function Liri() {
     if (logRef) logRef.push(`match: ${tracksWithWords.length}/${tracks.length} tracks have lyrics`);
     if (!tracksWithWords.length) return null;
 
-    // Try consecutive word runs from MIN_RUN upward.
-    // Keep going until we find a run that appears in EXACTLY ONE track EXACTLY ONCE.
-    // This guarantees a confident, unambiguous match — no fuzzy logic needed.
+    // MIN_RUN = 4: require at least 4 consecutive matching words before committing.
+    // Why 4 and not lower?
+    //   1-word match: too many false positives — common words like "love" appear in
+    //     almost every track on the album.
+    //   2-3 word match: still ambiguous on pop albums with similar lyric vocabulary.
+    //   4+ word match: in practice almost always unique within an album AND across
+    //     repeated choruses within a single track (uniqueness-within-track is also
+    //     required — count > 1 → rejected).
+    // Why not higher? Longer runs mean the user has to hold the mic for longer before
+    // anything happens, degrading perceived responsiveness. 4 words ≈ 1–2 seconds of
+    // speech, which feels instant.
     const MIN_RUN = 4;
+
+    // Scan all possible windows of length MIN_RUN upward through the transcript.
+    // Stops at the SHORTEST run that satisfies BOTH:
+    //   (a) appears in exactly ONE track in the album (uniqueness across tracks)
+    //   (b) appears exactly ONCE inside that track (not a repeated chorus fragment)
+    // Requiring exactly-one-track (not "best scoring track") is intentional — if we
+    // accepted a best-guess the lyrics display would start at the wrong song entirely
+    // with no error shown to the user. Forcing strict uniqueness means we keep
+    // listening until we are certain, which is always the right trade-off here.
     for (let len = MIN_RUN; len <= heardWords.length; len++) {
       for (let start = 0; start <= heardWords.length - len; start++) {
         const phrase = heardWords.slice(start, start + len);
@@ -1342,7 +1410,11 @@ function Liri() {
 
         const match = hits[0];
 
-        // Find the position (in seconds) of the matched phrase in this track
+        // Find the position (in seconds) of the matched phrase in this track.
+        // matchWordIdx is the index into match.wordTimings of the first word of the
+        // matched phrase. start_ms / 1000 gives the lyric display start position.
+        // This is also returned as startPos, which flows into the sync offset formula
+        // in startSync / startListeningSpeech.
         let matchWordIdx = -1;
         const arr = match.wordArr;
         for (let i = 0; i <= arr.length - len; i++) {
@@ -1361,6 +1433,12 @@ function Liri() {
 
         if (logRef) logRef.push(`match: unique run (${len}w) → "${match.trackName}" at ${startPos.toFixed(1)}s`);
 
+        // phraseWordStart: the index (in heardWords[]) of the first word of the
+        // matched phrase. Returned so the caller can calculate how far into the
+        // live transcript the match landed — used in _phraseOffset to estimate how
+        // many seconds of audio had already played before the matching words were
+        // spoken. Without this, sync always assumes the match happened at the very
+        // end of the recording window, causing a consistent early-offset bug.
         return { track: match, lyrics, startPos, score: len, phraseWordStart: start, totalWords: heardWords.length };
       }
     }
@@ -1428,14 +1506,31 @@ function Liri() {
     }
 
     // ── Build wordsData from already-loaded lrc cache (no extra DB call) ──────
+    // turntableLyricsCacheRef was populated in fetchTurntableTracks (called at album
+    // select time). We deliberately do NOT re-fetch here to keep mic startup instant.
+    // The cache lookup uses String(track.trackId) for the same type-safety reason as
+    // in fetchTurntableTracks — itunes_track_id can be a JS number when it arrives from
+    // Supabase but a string after a JSON.parse round-trip via localStorage.
     const lrcCache = turntableLyricsCacheRef.current;
     console.log("[listen] lrcCache keys:", Object.keys(lrcCache));
     const wordsData = {};
     for (const track of tracks) {
       if (!track.trackId) continue;
+      // String() coercion here mirrors the String() in fetchTurntableTracks so the
+      // cache lookup always succeeds regardless of type.
       const entry = lrcCache[String(track.trackId)];
       console.log(`[listen] track ${track.trackName} id=${track.trackId} entry=`, entry ? `lrc=${!!entry.lrc_raw} words=${entry.words_json?.length||0} plain=${!!entry.lyrics_plain}` : "MISSING");
       if (!entry) continue;
+      // Fallback chain for word timing data:
+      //   1. words_json — [{word, start_ms}] pre-tokenised by the lyrics import pipeline.
+      //      Most accurate; gives exact per-word timestamps for sync offset calculation.
+      //   2. lrc_raw — if words_json is absent we derive word timings on the fly by
+      //      splitting each LRC line on whitespace and assigning all words in the line
+      //      the line's timestamp. Accuracy is per-line not per-word, but still much
+      //      better than plain text.
+      //   3. lyrics_plain — last resort. No timestamps at all; only used if both of the
+      //      above are missing. matchTranscriptToTracks will still identify the track but
+      //      startPos will be 0 and sync will start from the top of the song.
       let words = entry.words_json || [];
       // Derive word timings from lrc_raw if words_json not pre-populated
       if (!words.length && entry.lrc_raw) {
@@ -1450,6 +1545,12 @@ function Liri() {
       wordsData[track.trackId] = { words, lrc_raw: entry.lrc_raw, lyrics_plain: entry.lyrics_plain };
     }
 
+    // tracksWithWordData guard: if ZERO tracks have any word data (words_json, lrc_raw,
+    // AND lyrics_plain all absent for every track) the recognition session would open
+    // successfully but onresult would call matchTranscriptToTracks, which would return
+    // null on every result because tracksWithWords is empty. The listener would stay in
+    // "listening" mode indefinitely — the "listening forever" bug. Catching this early
+    // gives a clear error message and prevents the zombie session.
     const tracksWithWordData = Object.values(wordsData).filter(d => d.words?.length > 0);
     console.log("[listen] tracksWithWordData:", tracksWithWordData.length, "/", tracks.length);
     if (!tracksWithWordData.length) {
@@ -1457,8 +1558,14 @@ function Liri() {
       setMode("error");
       return;
     }
+    // Persist to ref so jumpToTrack and the resync flow can reuse it after the listen
+    // completes without hitting the DB again.
     wordsDataRef.current = wordsData;
 
+    // isNative distinguishes Capacitor (iOS app) from web browser. Error messages need
+    // to differ because on iOS the user fixes mic permission in iOS Settings, whereas on
+    // the web they fix it in the browser's site permissions UI. Showing the wrong
+    // instructions confuses users and generates support requests.
     const isNative = !!window.Capacitor?.isNativePlatform?.();
     const SpeechRec = window.SpeechRecognition || window.webkitSpeechRecognition;
     if (!SpeechRec) {
@@ -1469,10 +1576,24 @@ function Liri() {
       return;
     }
 
+    // MIN_SCORE = 3: the match score returned by matchTranscriptToTracks is the RUN
+    // LENGTH (number of consecutive matched words). Requiring score >= 3 means we
+    // reject any match that happened to fire on a run shorter than MIN_RUN (shouldn't
+    // happen, but defends against matchTranscriptToTracks being called with a MIN_RUN
+    // lower than this value in a future refactor). It acts as a second gate.
     const MIN_SCORE = 3;
     const rec = new SpeechRec();
     speechRecRef.current = rec;
+    // continuous = true: keeps the mic open indefinitely after each result event rather
+    // than auto-stopping after a pause. Without this the browser stops recognition after
+    // ~5 s of silence and onend fires — then rec.start() in onend restarts it, causing
+    // a gap where words can be lost mid-match.
     rec.continuous = true;
+    // interimResults = true: fire onresult with partial (non-final) transcriptions so
+    // the match can trigger the moment enough words are heard, not only after the user
+    // stops speaking. Without this, recognition only delivers results when the browser
+    // detects an utterance boundary, adding 1–3 s of extra latency before the first
+    // match attempt.
     rec.interimResults = true;
     rec.lang = "en-US";
     rec.maxAlternatives = 1;
@@ -1486,6 +1607,12 @@ function Liri() {
 
     rec.onstart = () => {
       clearInterval(pulseId);
+      // Stamp the exact wall-clock time the mic actually opened (not when we called
+      // rec.start()). There is a small but variable delay between rec.start() and the
+      // browser granting mic access + emitting onstart. Using this timestamp instead of
+      // the pre-start timestamp in syncCalcRef makes the elapsed-time calculation in
+      // onresult accurate to the actual recording window, which is critical for the
+      // phraseOffset formula below.
       recordingStartRef.current = Date.now();
     };
 
@@ -1518,9 +1645,30 @@ function Liri() {
       detectedAtRef.current = Date.now();
       const _recStart = recordingStartRef.current || Date.now();
       const _elapsed = (Date.now() - _recStart) / 1000;
+      // _phraseOffset: how many seconds into the recording window did the matched phrase
+      // BEGIN? We need this to know how much of the recording had already elapsed before
+      // the matched words were spoken.
+      //
+      // Formula: (phraseWordStart / totalWords) * elapsed
+      //   phraseWordStart / totalWords = fraction of the transcript that came BEFORE the
+      //   matched phrase. Multiply by the total elapsed recording time to get an estimate
+      //   of the wall-clock offset for that phrase start within the recording window.
+      //
+      // The Math.min(..., elapsed/2) cap prevents an overestimate when the phrase is near
+      // the very end of a long transcript — in practice speech is not perfectly uniform,
+      // so we cap at half the window to avoid a negative computed playback position.
+      //
+      // This value is stored in syncCalcRef and consumed by startSync, which adds it to
+      // the elapsed time at React render time (after the state update) for the final
+      // position formula: startPos - phraseOffset + totalElapsedSinceRecStart
       const _phraseOffset = vmResult.totalWords > 0
         ? Math.min(vmResult.phraseWordStart / vmResult.totalWords * _elapsed, _elapsed / 2)
         : 0;
+      // Store in syncCalcRef rather than computing initialPosRef here.
+      // startSync defers the final position calc to run AFTER React has rendered the
+      // "confirmed" state — by that point (Date.now() - recStart) includes Whisper
+      // round-trip + state update latency, giving a more accurate total elapsed time.
+      // See startSync for the full formula.
       syncCalcRef.current = { startPos, phraseOffset: _phraseOffset, recStart: _recStart };
       initialPosRef.current = startPos;
       autoAdvanceFiredRef.current = false;
@@ -1542,10 +1690,18 @@ function Liri() {
 
     rec.onerror = (event) => {
       if (listenSessionRef.current !== session) return;
+      // "aborted" fires when we call rec.stop() ourselves after a successful match.
+      // Ignore it — it's not a user-facing error.
       if (event.error === "aborted") return;
+      // "no-speech" fires when the browser auto-stops after a long pause. Rather than
+      // showing an error, restart recognition so the user can keep singing / humming.
       if (event.error === "no-speech") { if (!recognitionWonRef.current) { try { rec.start(); } catch {} } return; }
       clearInterval(pulseId);
       if (!recognitionWonRef.current) {
+        // isNative (Capacitor / iOS) vs web: each platform requires a different fix for
+        // the user. On iOS the permission lives in the OS Settings app; on the web it's
+        // in the browser's site permissions panel. Showing the platform-correct
+        // instruction reduces confusion and avoids unnecessary support tickets.
         const msg = event.error === "not-allowed"
           ? (isNative
             ? "Microphone blocked. Go to Settings → Liri → Microphone to allow access."
@@ -1615,11 +1771,28 @@ function Liri() {
   const startSync = useCallback(() => {
     // Safe to re-arm auto-advance now — new sync is actually starting
     autoAdvanceFiredRef.current = false;
-    // If an identification just happened, recompute initialPos RIGHT NOW so
-    // (Date.now() - recStart) captures the full elapsed time including Whisper API
-    // round-trip, LRCLib fetch, React render — all of it. This eliminates the
-    // systematic ~1s late offset caused by measuring elapsed time inside the
-    // Whisper callback before React has had a chance to render.
+
+    // syncCalcRef deferred timing calculation.
+    // Why defer? When a match fires in onresult the React state update ("confirmed")
+    // triggers a useEffect that calls startSync. By the time startSync actually runs,
+    // (Date.now() - recStart) includes:
+    //   • the time spent in the onresult handler
+    //   • React's reconciliation + paint cycle
+    //   • any Whisper API round-trip (for ACR-path matches)
+    // …which can add up to ~0.5–1.5 s beyond what the elapsed calculation inside
+    // onresult captured. By storing {startPos, phraseOffset, recStart} in syncCalcRef
+    // and doing the final arithmetic HERE (rather than in onresult), the full latency
+    // budget is automatically accounted for, producing a position that is consistently
+    // in sync with what the speakers are actually playing.
+    //
+    // Formula: initialPos = startPos - phraseOffset + (Date.now() - recStart) / 1000
+    //   startPos      — position in the track (seconds) where the matched phrase lives
+    //   phraseOffset  — estimate of how far into the recording window the phrase started
+    //                   (so we subtract it to roll back to the beginning of the window)
+    //   elapsed       — total wall time since the mic opened, measured right now
+    //
+    // Net result: we land at the position in the track that corresponds to "right now",
+    // not "when the match callback ran".
     if (syncCalcRef.current) {
       const {
         startPos,
