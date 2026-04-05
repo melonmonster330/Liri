@@ -10,7 +10,6 @@ if (typeof supabase === 'undefined') {
 }
 const sb = supabase.createClient("https://xjdjpaxgymgbvcwmvorc.supabase.co", "sb_publishable_C-NBnfg0ltAoUi46XQTUjA_ozjZW_Nd");
 const APP_VERSION = "1.126";
-const PROXY_URL      = window.Capacitor ? "https://getliri.com/api/recognize"      : "/api/recognize";
 const TRANSCRIBE_PROXY = window.Capacitor ? "https://getliri.com/api/transcribe"    : "/api/transcribe";
 const IDENTIFY_PROXY = window.Capacitor ? "https://getliri.com/api/identify-lyrics" : "/api/identify-lyrics";
 const ITUNES_PROXY   = window.Capacitor ? "https://getliri.com/api/itunes-lookup"   : "/api/itunes-lookup";
@@ -285,7 +284,7 @@ function Liri() {
   // ── Core state ──
   const [mode, setMode] = useState("idle");
   const [detectedSong, setDetectedSong] = useState(null);
-  const [identifiedBy, setIdentifiedBy] = useState(null); // "acr" | "whisper"
+  const [identifiedBy, setIdentifiedBy] = useState(null); // "speech"
   const [songDuration, setSongDuration] = useState(null); // seconds
   const [lyrics, setLyrics] = useState([]);
   const [currentIndex, setCurrentIndex] = useState(0);
@@ -353,7 +352,7 @@ function Liri() {
   const turntableAlbumRef = useRef(turntableAlbum);
   const turntableTracksRef = useRef([]); // iTunes tracks for selected album (pre-fetched)
   const turntableMatchedIdxRef = useRef(-1); // 0-based index of last vinyl-matched track
-  const turntableLyricsCacheRef = useRef({}); // legacy — kept for dead-code paths only
+  const turntableLyricsCacheRef = useRef({}); // lrc_raw cache by trackId — loaded at album select, used in startListeningSpeech
   const wordsDataRef = useRef({}); // trackId → { words, lrc_raw, lyrics_plain } from track_lyrics table
   const autoRetryCountRef = useRef(0);
 
@@ -1173,34 +1172,6 @@ function Liri() {
     streamRef.current?.getTracks().forEach(t => t.stop());
   }, []);
 
-  // ── Pure HTTP: send audio blob to ACRCloud, return raw response or null ──
-  // Reliable base64 conversion using FileReader — works on all iOS/Android WebViews.
-  // The btoa(String.fromCharCode(...)) approach can throw on large buffers on mobile.
-  const blobToBase64 = blob => new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onload = () => resolve(reader.result.split(",")[1]);
-    reader.onerror = () => reject(new Error("FileReader failed"));
-    reader.readAsDataURL(blob);
-  });
-  const sendAudioToACR = async blob => {
-    try {
-      const audio = await blobToBase64(blob);
-      const body = JSON.stringify({ audio, mimeType: blob.type || "audio/webm" });
-      const headers = { "Content-Type": "application/json" };
-      if (sessionTokenRef.current) headers["Authorization"] = `Bearer ${sessionTokenRef.current}`;
-      // Race the fetch against a 12s timeout — on iOS the fetch can hang indefinitely
-      const fetchPromise = fetch(PROXY_URL, { method: "POST", headers, body });
-      const timeoutPromise = new Promise(resolve => setTimeout(() => resolve("timeout"), 12000));
-      const res = await Promise.race([fetchPromise, timeoutPromise]);
-      if (!res || res === "timeout") return null;
-      if (res.status === 429) return { _limitReached: true };
-      if (!res.ok) return null;
-      return await res.json();
-    } catch {
-      return null;
-    }
-  };
-
   // ── Process a confirmed ACRCloud match — update all app state ──
   // recordingDuration: seconds of audio in the matched blob (passed from startListening).
   // When provided, we use it as the dynamic offset instead of the fixed constant,
@@ -1389,358 +1360,6 @@ function Liri() {
     return null;
   };
 
-  // ── Whisper transcription → LRCLib lyrics match (fallback when ACRCloud fails) ──
-  // Sends audio to /api/transcribe (Whisper), searches LRCLib by the
-  // transcribed words, finds which line matches to get the playback position.
-  const tryLyricsTranscription = async (blob, isAutoAdvance) => {
-    try {
-      // 1. Transcribe with Whisper
-      const audio = await blobToBase64(blob);
-      const whisperSentAt = Date.now();
-      const trHeaders = { "Content-Type": "application/json" };
-      if (sessionTokenRef.current) trHeaders["Authorization"] = `Bearer ${sessionTokenRef.current}`;
-      const trFetch = fetch(TRANSCRIBE_PROXY, {
-        method: "POST",
-        headers: trHeaders,
-        body: JSON.stringify({ audio, mimeType: blob.type || "audio/webm" })
-      });
-      const trTimeout = new Promise(resolve => setTimeout(() => resolve("timeout"), 20000));
-      const tr = await Promise.race([trFetch, trTimeout]);
-      if (!tr || tr === "timeout") {
-        attemptLogRef.current.push(`whisper: timed out after 20s`);
-        return false;
-      }
-      if (!tr.ok) {
-        const errBody = await tr.json().catch(() => ({}));
-        attemptLogRef.current.push(`whisper: HTTP ${tr.status} — ${errBody.error || "failed"}`);
-        return false;
-      }
-      const {
-        text: transcribed
-      } = await tr.json();
-      if (!transcribed || transcribed.trim().length < 4) {
-        attemptLogRef.current.push(`whisper: got empty/short transcript — "${transcribed || ""}"`);
-        return false;
-      }
-      attemptLogRef.current.push(`whisper: transcribed "${transcribed.slice(0, 40)}…"`);
-
-      // ── Strategy V: Vinyl-aware match against known tracklist ──
-      // Only fires when the user has pre-selected their album ("what's on the turntable?").
-      // Skips GPT — directly matches transcript against every track's LRC lyrics.
-      // Best path for obscure tracks, re-recordings, anything ACR misses.
-      // Tracks are fetched once at album selection — never re-fetched here.
-      //
-      // IMPORTANT: if turntable album is set, we ALWAYS return here (true or false).
-      // We never fall through to Strategy A/B/C — that would return a random GPT guess.
-      if (turntableAlbumRef.current) {
-        const turntableTracks = turntableTracksRef.current;
-        if (turntableTracks.length === 0) {
-          attemptLogRef.current.push(`turntable: tracks still loading — skipping attempt`);
-          return false;
-        }
-        attemptLogRef.current.push(`turntable: ${turntableTracks.length} tracks, ${Object.keys(turntableLyricsCacheRef.current).length} cached`);
-        const vmResult = matchTranscriptToTracks(transcribed, turntableTracks, attemptLogRef.current, turntableLyricsCacheRef.current);
-        if (vmResult) {
-          if (recognitionWonRef.current) return false;
-          recognitionWonRef.current = true;
-          const {
-            track,
-            lrcMatch,
-            lyrics,
-            startPos,
-            score
-          } = vmResult;
-          attemptLogRef.current.push(`whisper: vinyl match "${track.trackName}" (score ${score})`);
-          // Store matched track index so getSideInfo can show side/track before albumTracks loads
-          const matchedIdx = turntableTracksRef.current.findIndex(t => t.trackName?.toLowerCase() === track.trackName?.toLowerCase());
-          turntableMatchedIdxRef.current = matchedIdx >= 0 ? matchedIdx : track.trackNumber ? track.trackNumber - 1 : 0;
-          const ta = turntableAlbumRef.current;
-          const song = {
-            title: track.trackName,
-            artist: track.artistName || ta?.artist_name || "",
-            album: ta?.album_name || lrcMatch.albumName || "",
-            artwork: ta?.artwork_url || null
-          };
-          setIdentifiedBy("whisper");
-          detectedAtRef.current = Date.now();
-          // ── Deferred timing ────────────────────────────────────────────
-          // Store components and let startSync recompute initialPos at the
-          // last moment — (Date.now() - recStart) in startSync captures the
-          // full elapsed time including Whisper round-trip + React render,
-          // eliminating the systematic late offset from measuring too early.
-          //
-          // phraseOffset ≈ when in the clip the matched phrase was spoken.
-          // Capped at clipDuration/2 to avoid overshooting when vocals end
-          // before the clip does (silence at end inflates the word-ratio estimate).
-          const _recStart = recordingStartRef.current || whisperSentAt;
-          const clipDuration = Math.max(0, (whisperSentAt - _recStart) / 1000);
-          const phraseOffset = vmResult.totalWords > 0 ? Math.min(vmResult.phraseWordStart / vmResult.totalWords * clipDuration, clipDuration / 2) : clipDuration / 2;
-          syncCalcRef.current = {
-            startPos,
-            phraseOffset,
-            recStart: _recStart
-          };
-          initialPosRef.current = Math.max(0, startPos - phraseOffset + (Date.now() - _recStart) / 1000); // rough estimate
-          autoAdvanceFiredRef.current = false;
-          autoRetryCountRef.current = 0;
-          setDetectedSong(song);
-          setSongDuration(lrcMatch.duration || (track.trackTimeMillis ? track.trackTimeMillis / 1000 : null));
-          setLyrics(lyrics);
-          lyricsRef.current = lyrics;
-          setMode("confirmed");
-          saveToHistory(user, song);
-          fetchHistory(user);
-          logListeningEvent({
-            userId: user?.id,
-            title: track.trackName,
-            artist: track.artistName || ta?.artist_name || "",
-            album: ta?.album_name || lrcMatch.albumName || "",
-            artwork: ta?.artwork_url || null,
-            itunesTrackId: track.trackId,
-            collectionId: ta?.itunes_collection_id || track.collectionId,
-            vinylReleaseId: null,
-            vinylModeOn: vinylMode,
-            source: "turntable",
-            offsetSecs: startPos,
-            durationSecs: lrcMatch.duration || (track.trackTimeMillis ? track.trackTimeMillis / 1000 : null)
-          });
-          // Cache the LRC to Supabase so future matches for this track skip LRCLib
-          if (track.trackId && lrcMatch?.syncedLyrics) {
-            const ta2 = turntableAlbumRef.current;
-            sb.from("liri_lyric_cache").upsert({
-              itunes_track_id: track.trackId,
-              itunes_collection_id: ta2?.itunes_collection_id || track.collectionId,
-              track_name: track.trackName,
-              artist_name: track.artistName,
-              album_name: ta2?.album_name,
-              track_number: track.trackNumber,
-              disc_number: track.discNumber,
-              synced_lyrics: lrcMatch.syncedLyrics
-            }, {
-              onConflict: "itunes_track_id"
-            }).then(() => {
-              turntableLyricsCacheRef.current[track.trackId] = lrcMatch.syncedLyrics;
-              attemptLogRef.current.push(`cache: saved LRC for "${track.trackName}"`);
-            }).catch(() => {});
-          }
-          // ⚠️ NO ITUNES CALLS IN TURNTABLE MODE — ARCHITECTURE RULE ⚠️
-          // Everything was fetched once at album-add time. Use the refs:
-          //   turntableTracksRef.current        → full track list
-          //   turntableAlbumRef.current          → album meta (id, artwork, name)
-          //   vinylDbReleaseRef.current          → vinyl DB release (sides, tps)
-          // Never call fetchAlbumTracks() here — it hits iTunes twice per song.
-          {
-            const at = turntableTracksRef.current;
-            const cid = ta?.itunes_collection_id ? String(ta.itunes_collection_id) : null;
-            setAlbumTracks(at);
-            setAlbumCollectionId(cid);
-            const tIdx = at.findIndex(t => t.trackName?.toLowerCase() === track.trackName.toLowerCase());
-            setCurrentTrackIndex(tIdx >= 0 ? tIdx : 0);
-            // vinylDbRelease already set by fetchTurntableTracks on album selection
-          }
-          return true;
-        }
-        attemptLogRef.current.push(`whisper: vinyl-aware match failed — stopping (turntable set, not guessing)`);
-        return false;
-      }
-
-      // 2. Find the song on LRCLib
-      // Strategy A (vinyl mode): we know the artist + expected track — search directly
-      // Strategy B (fallback): search by transcribed lyrics text
-      let match = null;
-      const knownTracks = albumTracksRef.current;
-      const knownIdx = currentTrackIndexRef.current;
-      const knownArtist = detectedSong?.artist || knownTracks[knownIdx]?.artistName || "";
-      const knownTitle = knownTracks[knownIdx]?.trackName || "";
-      if (knownArtist && knownTitle) {
-        // Search LRCLib directly by artist + track name — much more reliable than lyrics search
-        const candidates = await Promise.all(
-        // also try adjacent tracks in case auto-advance index is off by one
-        [knownIdx - 1, knownIdx, knownIdx + 1].filter(i => i >= 0 && i < knownTracks.length).map(i => {
-          const t = knownTracks[i];
-          const q = `${t.artistName || knownArtist} ${t.trackName}`;
-          return fetch(`https://lrclib.net/api/search?q=${encodeURIComponent(q)}`).then(r => r.json()).catch(() => []);
-        }));
-        const flat = candidates.flat().filter(c => c.syncedLyrics);
-        // Pick whichever result has lyrics that best match the Whisper transcript
-        const words = transcribed.toLowerCase().replace(/[^\w\s]/g, "").split(/\s+/).filter(w => w.length > 3);
-        let bestScore = 0;
-        for (const c of flat) {
-          const lyricText = c.syncedLyrics.toLowerCase().replace(/\[[\d:\.]+\]/g, "");
-          const hits = words.filter(w => lyricText.includes(w)).length;
-          if (hits > bestScore) {
-            bestScore = hits;
-            match = c;
-          }
-        }
-        if (!match) match = flat[0] || null;
-        if (match) attemptLogRef.current.push(`whisper: matched via track context "${match.trackName}"`);
-      }
-      if (!match) {
-        // Strategy B: ask GPT to identify the song from the transcript, then look it up on LRCLib.
-        // Cross-validate: the matched lyrics must actually contain enough of the transcribed words —
-        // otherwise GPT guessed wrong and we fall through to Strategy C.
-        try {
-          const identifyHeaders = { "Content-Type": "application/json" };
-          if (sessionTokenRef.current) identifyHeaders["Authorization"] = `Bearer ${sessionTokenRef.current}`;
-          const gptRes = await fetch(IDENTIFY_PROXY, {
-            method: "POST",
-            headers: identifyHeaders,
-            body: JSON.stringify({
-              text: transcribed
-            })
-          });
-          if (gptRes.ok) {
-            const {
-              title: gptTitle,
-              artist: gptArtist
-            } = await gptRes.json();
-            if (gptTitle) {
-              attemptLogRef.current.push(`whisper: GPT identified "${gptTitle}" by ${gptArtist || "?"}`);
-              const q = `${gptArtist || ""} ${gptTitle}`.trim();
-              const lrcRes = await fetch(`https://lrclib.net/api/search?q=${encodeURIComponent(q)}`).then(r => r.json()).catch(() => []);
-              const candidates = Array.isArray(lrcRes) ? lrcRes : [];
-              const withSyncedGpt = candidates.filter(c => c.syncedLyrics);
-              const isCensoredGpt = c => /\*{2,}/.test(c.syncedLyrics || "");
-              const gptMatch = withSyncedGpt.find(c => !isCensoredGpt(c)) || withSyncedGpt[0] || null;
-              // Cross-validate: check the transcribed words actually appear in the lyrics
-              if (gptMatch?.syncedLyrics) {
-                const vWords = transcribed.toLowerCase().replace(/[^\w\s]/g, "").split(/\s+/).filter(w => w.length > 3);
-                const lyricText = gptMatch.syncedLyrics.toLowerCase().replace(/\[[\d:\.]+\]/g, "");
-                const vHits = vWords.filter(w => lyricText.includes(w)).length;
-                if (vHits >= 3) {
-                  match = gptMatch;
-                  attemptLogRef.current.push(`whisper: GPT match cross-validated (score ${vHits})`);
-                } else {
-                  attemptLogRef.current.push(`whisper: GPT match rejected — lyrics don't match transcript (score ${vHits})`);
-                }
-              }
-            }
-          }
-        } catch {}
-      }
-      if (!match) {
-        // Strategy C: search LRCLib directly using the raw transcribed words.
-        // Last resort — works when GPT can't identify the song but the transcript
-        // has enough lyric fragments for LRCLib's search to surface the right track.
-        try {
-          const q = transcribed.slice(0, 120).trim();
-          const lrcRes = await fetch(`https://lrclib.net/api/search?q=${encodeURIComponent(q)}`).then(r => r.json()).catch(() => []);
-          const candidates = (Array.isArray(lrcRes) ? lrcRes : []).filter(c => c.syncedLyrics);
-          if (candidates.length) {
-            const words = transcribed.toLowerCase().replace(/[^\w\s]/g, "").split(/\s+/).filter(w => w.length > 3);
-            let bestScore = 0;
-            for (const c of candidates) {
-              const lyricText = c.syncedLyrics.toLowerCase().replace(/\[[\d:\.]+\]/g, "");
-              const hits = words.filter(w => lyricText.includes(w)).length;
-              if (hits > bestScore) {
-                bestScore = hits;
-                match = c;
-              }
-            }
-            // Require at least 3 word hits — prevents weak matches on coincidental shared words
-            if (bestScore < 3) match = null;
-            if (match) attemptLogRef.current.push(`whisper: strategy C matched "${match.trackName}" (score ${bestScore})`);
-          }
-        } catch {}
-      }
-      if (!match) return false;
-
-      // 3. Parse lyrics
-      const lyrics = match.syncedLyrics ? parseLRC(match.syncedLyrics) : (match.plainLyrics || "").split("\n").filter(l => l.trim()).map((text, i) => ({
-        time: i * 4,
-        text
-      }));
-      if (!lyrics.length) return false;
-
-      // 4. Find playback position: match transcribed words against lyric lines
-      const words = transcribed.toLowerCase().replace(/[^\w\s]/g, "").split(/\s+/).filter(Boolean);
-      let startPos = 0;
-      let bestScore = 0;
-      for (const line of lyrics) {
-        const lineWords = line.text.toLowerCase().replace(/[^\w\s]/g, "").split(/\s+/);
-        const hits = words.filter(w => w.length > 3 && lineWords.includes(w)).length;
-        if (hits > bestScore) {
-          bestScore = hits;
-          startPos = Math.max(0, line.time - 0.5);
-        }
-      }
-
-      // 5. Fetch artwork from iTunes
-      const title = match.trackName || "";
-      const artist = match.artistName || "";
-      let artwork = null;
-      try {
-        const it = await fetch(`${ITUNES_PROXY}?term=${encodeURIComponent(artist + " " + title)}&entity=song&limit=1`).then(r => r.json());
-        artwork = it.results?.[0]?.artworkUrl100?.replace("100x100bb", "600x600bb") || null;
-      } catch {}
-
-      // 6. Wire it up exactly like a normal recognition match
-      // Guard: if ACRCloud already won the race, don't overwrite its result
-      if (recognitionWonRef.current) return false;
-      recognitionWonRef.current = true;
-      const song = {
-        title,
-        artist,
-        album: match.albumName || "",
-        artwork
-      };
-      setIdentifiedBy("whisper");
-      detectedAtRef.current = Date.now();
-      syncCalcRef.current = {
-        startPos,
-        phraseOffset: 0,
-        recStart: detectedAtRef.current
-      };
-      initialPosRef.current = startPos; // rough estimate, startSync will refine
-      autoAdvanceFiredRef.current = false;
-      autoRetryCountRef.current = 0;
-      setDetectedSong(song);
-      setSongDuration(match.duration || null);
-      setLyrics(lyrics);
-      lyricsRef.current = lyrics;
-      setMode("confirmed");
-      saveToHistory(user, song);
-      fetchHistory(user);
-
-      // Non-blocking: fetch album tracklist for vinyl auto-advance + log event
-      fetchAlbumTracks(title, artist).then(({
-        tracks,
-        collectionId
-      }) => {
-        setAlbumTracks(tracks);
-        setAlbumCollectionId(collectionId);
-        const tIdx = tracks.findIndex(t => t.trackName?.toLowerCase() === title.toLowerCase());
-        setCurrentTrackIndex(tIdx >= 0 ? tIdx : 0);
-        const itunesTrack = tIdx >= 0 ? tracks[tIdx] : null;
-        logListeningEvent({
-          userId: user?.id,
-          title,
-          artist,
-          album: match.albumName || song.album,
-          artwork,
-          itunesTrackId: itunesTrack?.trackId,
-          collectionId,
-          vinylReleaseId: null,
-          vinylModeOn: vinylMode,
-          source: "whisper",
-          offsetSecs: startPos,
-          durationSecs: match.duration
-        });
-        if (!collectionId) return;
-        fetchVinylRelease(collectionId).then(db => {
-          if (db?.vinyl_tracks?.length > 0) {
-            setVinylDbRelease(db);
-            albumTpsRef.current = 0;
-          }
-        });
-      }).catch(() => {});
-      return true;
-    } catch {
-      return false;
-    }
-  };
-
   // ── Handle final recognition failure ──
   const handleNoMatch = (isAutoAdvance, stage = "acr") => {
     if (isAutoAdvance) {
@@ -1770,18 +1389,8 @@ function Liri() {
     }
   };
 
-  // ── Record audio and detect — rolling 5s attempts ──
-  // Sends a recognition request every 5 seconds using ALL accumulated audio.
-  // On match: stops immediately. On miss: keeps recording and tries a longer clip.
-  // Fast songs get identified in 5s. Quiet/tricky ones keep accumulating up to 30s.
-  const ATTEMPT_INTERVAL = 5000; // ms between attempts
-  const MAX_ATTEMPTS = 6; // 5s, 10s, 15s, 20s, 25s, 30s max
+  const MAX_ATTEMPTS = 6; // used in listening UI progress display
 
-  // ── Native iOS recording loop ─────────────────────────────────────────────
-  // Uses NativeAudioPlugin (AVAudioRecorder) instead of WKWebView MediaRecorder.
-  // Each attempt records a fixed-duration M4A segment natively and sends it
-  // to ACRCloud / Whisper via the same proxy endpoints as the web version.
-  // ─────────────────────────────────────────────────────────────────────────
   // ── Turntable mode: real-time speech recognition → lyric word match ──────────
   // When an album is selected in the library, Liri already has all lyrics cached.
   // Instead of recording + sending to ACRCloud/Whisper, we use the Web Speech API
@@ -1932,140 +1541,6 @@ function Liri() {
       setMode("error");
     }
   };
-
-  const startListeningNative = async (isAutoAdvance = false) => {
-    // startListeningNative is no longer called — startListening always routes to startListeningSpeech
-    return startListeningSpeech(isAutoAdvance);
-    clearInterval(progressTimerRef.current);
-    const session = ++listenSessionRef.current;
-    attemptLogRef.current = [];
-    recognitionWonRef.current = false;
-    turntableMatchedIdxRef.current = -1;
-    setError(null);
-    setMode("listening");
-    setListenProgress(0);
-    setListenAttempt(0);
-    setAudioLevel(0);
-    clearInterval(syncIntervalRef.current);
-
-    const NativeAudio = _nativeAudioPlugin || window.Capacitor?.Plugins?.NativeAudio;
-    if (!NativeAudio) {
-      setError("Native audio plugin not available.");
-      setMode("error");
-      return;
-    }
-
-    const isTurntable = !!turntableAlbumRef.current;
-    const segMs = isTurntable ? 6000 : ATTEMPT_INTERVAL;
-    const maxAttempts = isTurntable ? 15 : MAX_ATTEMPTS;
-    let bgWhisperStarted = false;
-
-    for (let attempt = 1; attempt <= maxAttempts; attempt++) {
-      if (listenSessionRef.current !== session) return;
-      if (recognitionWonRef.current) return;
-
-      setListenAttempt(attempt);
-      const segStart = Date.now();
-
-      // Animate the progress ring + wave bars while AVAudioRecorder is capturing
-      progressTimerRef.current = setInterval(() => {
-        const elapsed = Date.now() - segStart;
-        const segPct = Math.min(elapsed / segMs, 1);
-        setListenProgress(Math.min(((attempt - 1) + segPct) / maxAttempts, 1));
-        // Smooth sine-based level so wave bars animate without real chunk data
-        setAudioLevel(0.35 + Math.sin(elapsed / 380 + attempt) * 0.15 + Math.random() * 0.08);
-      }, 100);
-
-      let result;
-      try {
-        result = await NativeAudio.record({ duration: segMs });
-      } catch (err) {
-        clearInterval(progressTimerRef.current);
-        setAudioLevel(0);
-        if (listenSessionRef.current !== session) return;
-        if (err?.message === "cancelled") return;
-        attemptLogRef.current.push(`#${attempt}: native error — ${err?.message || "unknown"}`);
-        setError("Microphone access denied.");
-        setMode("error");
-        return;
-      }
-
-      clearInterval(progressTimerRef.current);
-      setAudioLevel(0);
-      recordingStartRef.current = Date.now() - segMs;
-
-      if (listenSessionRef.current !== session) return;
-      if (recognitionWonRef.current) return;
-
-      const { audio, mimeType = "audio/mp4", size = 0 } = result || {};
-      const sizeKB = Math.round(size / 1024);
-
-      if (!audio || size < 500) {
-        attemptLogRef.current.push(`#${attempt} (${sizeKB}KB): no audio captured`);
-        if (attempt >= maxAttempts) { handleNoMatch(isAutoAdvance, "whisper_failed"); return; }
-        continue;
-      }
-
-      // base64 → Blob so existing sendAudioToACR / tryLyricsTranscription work unchanged
-      const raw = atob(audio);
-      const buf = new Uint8Array(raw.length);
-      for (let i = 0; i < raw.length; i++) buf[i] = raw.charCodeAt(i);
-      const blob = new Blob([buf], { type: mimeType });
-
-      // ── Turntable mode: Whisper only ──
-      if (isTurntable) {
-        const found = await tryLyricsTranscription(blob, isAutoAdvance);
-        if (found) return;
-        if (listenSessionRef.current !== session) return;
-        if (attempt >= maxAttempts) { handleNoMatch(isAutoAdvance, "turntable_no_match"); return; }
-        continue;
-      }
-
-      // ── Standard mode: ACRCloud fingerprint + background Whisper ──
-      if (attempt === 4 && !bgWhisperStarted) {
-        bgWhisperStarted = true;
-        tryLyricsTranscription(blob, isAutoAdvance).then(() => { bgWhisperStarted = false; });
-      }
-
-      if (recognitionWonRef.current) return;
-
-      const data = await sendAudioToACR(blob);
-      if (data?._limitReached) { cleanupSession(); setMode("limit"); return; }
-      attemptLogRef.current.push(
-        data
-          ? `#${attempt} (${sizeKB}KB): ACR ${data.status?.code} — ${data.status?.msg || "?"}`
-          : `#${attempt} (${sizeKB}KB): network error`
-      );
-
-      if (listenSessionRef.current !== session) return;
-      if (recognitionWonRef.current) return;
-
-      if (data?.status?.code === 3003 || data?.status?.code === 3015) {
-        setError("Recognition limit reached. Visit acrcloud.com.");
-        setMode("error");
-        return;
-      }
-
-      if (data?.status?.code === 0 && data?.metadata?.music?.length > 0) {
-        recognitionWonRef.current = true;
-        setMode("detecting");
-        await handleMatch(data, isAutoAdvance);
-        return;
-      }
-
-      if (attempt >= maxAttempts) {
-        setListenAttempt(maxAttempts + 1);
-        const deadline = Date.now() + 40000;
-        while (!recognitionWonRef.current && Date.now() < deadline) {
-          await new Promise(r => setTimeout(r, 500));
-          if (listenSessionRef.current !== session) return;
-        }
-        if (!recognitionWonRef.current) handleNoMatch(isAutoAdvance, "whisper_failed");
-        return;
-      }
-    }
-  };
-
   const startListening = async (isAutoAdvance = false) => {
     if (!turntableAlbumRef.current) {
       setError("Select an album first.");
@@ -2531,7 +2006,12 @@ function Liri() {
       const blob = new Blob(chunks, {
         type: recorder.mimeType || "audio/webm"
       });
-      const audio = await blobToBase64(blob);
+      const audio = await new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => resolve(reader.result.split(",")[1]);
+        reader.onerror = () => reject(new Error("FileReader failed"));
+        reader.readAsDataURL(blob);
+      });
       const whisperSentAt = Date.now();
       const trHeaders2 = { "Content-Type": "application/json" };
       if (sessionTokenRef.current) trHeaders2["Authorization"] = `Bearer ${sessionTokenRef.current}`;
@@ -2566,7 +2046,7 @@ function Liri() {
         const currentIdx = Math.max(0, currentTrackIndexRef.current);
         const track = turntableTracksRef.current[currentIdx];
         if (track) {
-          const result = matchTranscriptToTracks(transcribed, [track], [], turntableLyricsCacheRef.current);
+          const result = matchTranscriptToTracks(transcribed, [track], wordsDataRef.current, attemptLogRef.current);
           if (result) {
             startPos = result.startPos;
             phraseWordStart = result.phraseWordStart ?? 0;
