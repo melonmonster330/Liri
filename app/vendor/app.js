@@ -9,7 +9,7 @@ if (typeof supabase === 'undefined') {
   throw new Error('Supabase not loaded');
 }
 const sb = supabase.createClient("https://xjdjpaxgymgbvcwmvorc.supabase.co", "sb_publishable_C-NBnfg0ltAoUi46XQTUjA_ozjZW_Nd");
-const APP_VERSION = "1.130";
+const APP_VERSION = "1.131";
 const TRANSCRIBE_PROXY = window.Capacitor ? "https://getliri.com/api/transcribe"    : "/api/transcribe";
 const IDENTIFY_PROXY = window.Capacitor ? "https://getliri.com/api/identify-lyrics" : "/api/identify-lyrics";
 const ITUNES_PROXY   = window.Capacitor ? "https://getliri.com/api/itunes-lookup"   : "/api/itunes-lookup";
@@ -1420,6 +1420,7 @@ function Liri() {
     clearInterval(syncIntervalRef.current);
 
     const tracks = turntableTracksRef.current;
+    console.log("[listen] tracks:", tracks.length, tracks.map(t => `${t.trackName}(id=${t.trackId})`).join(", "));
     if (!tracks.length) {
       setError("Album tracks still loading — try again in a moment.");
       setMode("error");
@@ -1428,10 +1429,12 @@ function Liri() {
 
     // ── Build wordsData from already-loaded lrc cache (no extra DB call) ──────
     const lrcCache = turntableLyricsCacheRef.current;
+    console.log("[listen] lrcCache keys:", Object.keys(lrcCache));
     const wordsData = {};
     for (const track of tracks) {
       if (!track.trackId) continue;
       const entry = lrcCache[String(track.trackId)];
+      console.log(`[listen] track ${track.trackName} id=${track.trackId} entry=`, entry ? `lrc=${!!entry.lrc_raw} words=${entry.words_json?.length||0} plain=${!!entry.lyrics_plain}` : "MISSING");
       if (!entry) continue;
       let words = entry.words_json || [];
       // Derive word timings from lrc_raw if words_json not pre-populated
@@ -1443,10 +1446,12 @@ function Liri() {
           }
         }
       }
+      console.log(`[listen] track ${track.trackName} → ${words.length} words`);
       wordsData[track.trackId] = { words, lrc_raw: entry.lrc_raw, lyrics_plain: entry.lyrics_plain };
     }
 
     const tracksWithWordData = Object.values(wordsData).filter(d => d.words?.length > 0);
+    console.log("[listen] tracksWithWordData:", tracksWithWordData.length, "/", tracks.length);
     if (!tracksWithWordData.length) {
       setError("No lyric data for this album — remove it from your library and re-add it to refresh.");
       setMode("error");
