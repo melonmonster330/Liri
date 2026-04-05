@@ -9,7 +9,7 @@ if (typeof supabase === 'undefined') {
   throw new Error('Supabase not loaded');
 }
 const sb = supabase.createClient("https://xjdjpaxgymgbvcwmvorc.supabase.co", "sb_publishable_C-NBnfg0ltAoUi46XQTUjA_ozjZW_Nd");
-const APP_VERSION = "1.128";
+const APP_VERSION = "1.129";
 const TRANSCRIBE_PROXY = window.Capacitor ? "https://getliri.com/api/transcribe"    : "/api/transcribe";
 const IDENTIFY_PROXY = window.Capacitor ? "https://getliri.com/api/identify-lyrics" : "/api/identify-lyrics";
 const ITUNES_PROXY   = window.Capacitor ? "https://getliri.com/api/itunes-lookup"   : "/api/itunes-lookup";
@@ -1447,9 +1447,12 @@ function Liri() {
     }
     wordsDataRef.current = wordsData;
 
+    const isNative = !!window.Capacitor?.isNativePlatform?.();
     const SpeechRec = window.SpeechRecognition || window.webkitSpeechRecognition;
     if (!SpeechRec) {
-      setError("Speech recognition unavailable on this device.");
+      setError(isNative
+        ? "Microphone access is required. Go to Settings → Liri → Microphone and make sure it's enabled."
+        : "Speech recognition isn't supported on this browser — try Safari or Chrome.");
       setMode("error");
       return;
     }
@@ -1530,7 +1533,17 @@ function Liri() {
       if (event.error === "aborted") return;
       if (event.error === "no-speech") { if (!recognitionWonRef.current) { try { rec.start(); } catch {} } return; }
       clearInterval(pulseId);
-      if (!recognitionWonRef.current) { setError(`Mic error: ${event.error}. Check permissions.`); setMode("error"); }
+      if (!recognitionWonRef.current) {
+        const msg = event.error === "not-allowed"
+          ? (isNative
+            ? "Microphone blocked. Go to Settings → Liri → Microphone to allow access."
+            : "Microphone blocked — check your browser's site permissions and try again.")
+          : (isNative
+            ? "Couldn't access the microphone. Try closing and reopening the app."
+            : `Mic error: ${event.error}. Try refreshing the page.`);
+        setError(msg);
+        setMode("error");
+      }
     };
 
     rec.onend = () => {
@@ -1542,7 +1555,9 @@ function Liri() {
       rec.start();
     } catch (err) {
       clearInterval(pulseId);
-      setError("Could not start microphone. Check permissions.");
+      setError(isNative
+        ? "Microphone blocked. Go to Settings → Liri → Microphone to allow access."
+        : "Microphone blocked — check your browser's site permissions and try again.");
       setMode("error");
     }
   };
