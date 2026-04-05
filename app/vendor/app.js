@@ -9,7 +9,7 @@ if (typeof supabase === 'undefined') {
   throw new Error('Supabase not loaded');
 }
 const sb = supabase.createClient("https://xjdjpaxgymgbvcwmvorc.supabase.co", "sb_publishable_C-NBnfg0ltAoUi46XQTUjA_ozjZW_Nd");
-const APP_VERSION = "1.127";
+const APP_VERSION = "1.128";
 const TRANSCRIBE_PROXY = window.Capacitor ? "https://getliri.com/api/transcribe"    : "/api/transcribe";
 const IDENTIFY_PROXY = window.Capacitor ? "https://getliri.com/api/identify-lyrics" : "/api/identify-lyrics";
 const ITUNES_PROXY   = window.Capacitor ? "https://getliri.com/api/itunes-lookup"   : "/api/itunes-lookup";
@@ -974,10 +974,15 @@ function Liri() {
     try {
       const {
         data
-      } = await sb.from("user_library").select("*").eq("user_id", uid).order("added_at", {
+      } = await sb.from("user_library").select("*, catalogue(album_name, artist_name, artwork_url, itunes_collection_id)").eq("user_id", uid).order("added_at", {
         ascending: false
       });
-      const library = data || [];
+      const library = (data || []).map(row => ({
+        ...row,
+        album_name: row.catalogue?.album_name || row.album_name || "",
+        artist_name: row.catalogue?.artist_name || row.artist_name || "",
+        artwork_url: row.catalogue?.artwork_url || row.artwork_url || null,
+      }));
       setUserLibrary(library);
 
       // If the saved album is no longer in the library (e.g. after data wipe), clear it
