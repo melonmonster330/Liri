@@ -9,7 +9,7 @@ if (typeof supabase === 'undefined') {
   throw new Error('Supabase not loaded');
 }
 const sb = supabase.createClient("https://xjdjpaxgymgbvcwmvorc.supabase.co", "sb_publishable_C-NBnfg0ltAoUi46XQTUjA_ozjZW_Nd");
-const APP_VERSION = "1.132";
+const APP_VERSION = "1.133";
 const TRANSCRIBE_PROXY = window.Capacitor ? "https://getliri.com/api/transcribe"    : "/api/transcribe";
 const IDENTIFY_PROXY = window.Capacitor ? "https://getliri.com/api/identify-lyrics" : "/api/identify-lyrics";
 const ITUNES_PROXY   = window.Capacitor ? "https://getliri.com/api/itunes-lookup"   : "/api/itunes-lookup";
@@ -1630,7 +1630,9 @@ function Liri() {
       setListenProgress(Math.min(wordCount / 12, 0.95));
       setAudioLevel(0.4 + Math.sin(Date.now() / 200) * 0.2 + Math.random() * 0.15);
       if (wordCount < MIN_SCORE) return;
+      console.log("[match] transcript:", combined);
       const vmResult = matchTranscriptToTracks(combined, tracks, wordsData, attemptLogRef.current);
+      console.log("[match] result:", vmResult ? `"${vmResult.track.trackName}" score=${vmResult.score}` : "null", "log:", attemptLogRef.current.slice(-3).join(" | "));
       if (!vmResult || vmResult.score < MIN_SCORE) return;
       if (recognitionWonRef.current) return;
       recognitionWonRef.current = true;
