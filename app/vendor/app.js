@@ -9,7 +9,7 @@ if (typeof supabase === 'undefined') {
   throw new Error('Supabase not loaded');
 }
 const sb = supabase.createClient("https://xjdjpaxgymgbvcwmvorc.supabase.co", "sb_publishable_C-NBnfg0ltAoUi46XQTUjA_ozjZW_Nd");
-const APP_VERSION = "1.159";
+const APP_VERSION = "1.160";
 const TRANSCRIBE_PROXY = window.Capacitor ? "https://getliri.com/api/transcribe"    : "/api/transcribe";
 const IDENTIFY_PROXY = window.Capacitor ? "https://getliri.com/api/identify-lyrics" : "/api/identify-lyrics";
 const ITUNES_PROXY   = window.Capacitor ? "https://getliri.com/api/itunes-lookup"   : "/api/itunes-lookup";
@@ -1619,19 +1619,21 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
     let currentRecorder = null;
 
     // Tap AnalyserNode from mic stream so WaveAnimation reacts to actual beat
-    // Wrapped in try/catch — iOS may not support AudioContext in this context
-    try {
-      if (audioCtxRef.current) { audioCtxRef.current.close().catch(() => {}); }
-      const actx = new (window.AudioContext || window.webkitAudioContext)();
-      if (actx.state === "suspended") actx.resume().catch(() => {});
-      const src = actx.createMediaStreamSource(stream);
-      const analyser = actx.createAnalyser();
-      analyser.fftSize = 1024; // ~43Hz/bin — captures kick drum + bass clearly
-      analyser.smoothingTimeConstant = 0.75;
-      src.connect(analyser);
-      analyserNodeRef.current = analyser;
-      audioCtxRef.current = actx;
-    } catch (e) {}
+    // Skip on native (Capacitor) — WKWebView AudioContext causes system errors
+    if (!window.Capacitor) {
+      try {
+        if (audioCtxRef.current) { audioCtxRef.current.close().catch(() => {}); }
+        const actx = new (window.AudioContext || window.webkitAudioContext)();
+        if (actx.state === "suspended") actx.resume().catch(() => {});
+        const src = actx.createMediaStreamSource(stream);
+        const analyser = actx.createAnalyser();
+        analyser.fftSize = 1024;
+        analyser.smoothingTimeConstant = 0.75;
+        src.connect(analyser);
+        analyserNodeRef.current = analyser;
+        audioCtxRef.current = actx;
+      } catch (e) {}
+    }
 
     const pulseId = setInterval(() => setAudioLevel(0.15 + Math.sin(Date.now() / 400) * 0.1), 80);
     recordingStartRef.current = Date.now();
@@ -1708,15 +1710,19 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
         const chunkEndTime = Date.now(); // capture before async API call
         try {
           const ta = turntableAlbumRef.current;
-          const whisperHeaders = { "Content-Type": mimeType };
-          if (ta?.artist_name || ta?.album_name) {
-            // Prompt helps Whisper recognise sung/melodic vocals as lyrics
-            whisperHeaders["X-Prompt"] = [ta.artist_name, ta.album_name].filter(Boolean).join(" - ");
-          }
+          const prompt = [ta?.artist_name, ta?.album_name].filter(Boolean).join(" - ") || undefined;
+          // Send as base64 JSON — CapacitorHttp (iOS) cannot serialize raw Blob bodies,
+          // but web fetch handles both paths identically via the updated api/whisper.js
+          const base64 = await new Promise((resolve, reject) => {
+            const reader = new FileReader();
+            reader.onload = () => resolve(reader.result.split(",")[1]);
+            reader.onerror = reject;
+            reader.readAsDataURL(e.data);
+          });
           const res = await fetch(WHISPER_PROXY, {
             method: "POST",
-            headers: whisperHeaders,
-            body: e.data,
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ audio: base64, mimeType, prompt }),
           });
           if (!res.ok) return;
           const { text } = await res.json();
@@ -2198,7 +2204,17 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
         if (e.data.size < 1000 || matched) return;
         const chunkEndTime = Date.now();
         try {
-          const res = await fetch(WHISPER_PROXY, { method: "POST", headers: { "Content-Type": mimeType }, body: e.data });
+          const base64 = await new Promise((resolve, reject) => {
+            const reader = new FileReader();
+            reader.onload = () => resolve(reader.result.split(",")[1]);
+            reader.onerror = reject;
+            reader.readAsDataURL(e.data);
+          });
+          const res = await fetch(WHISPER_PROXY, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ audio: base64, mimeType }),
+          });
           if (!res.ok || matched) return;
           const { text } = await res.json();
           if (!text || matched) return;
