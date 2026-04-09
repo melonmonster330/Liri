@@ -9,7 +9,7 @@ if (typeof supabase === 'undefined') {
   throw new Error('Supabase not loaded');
 }
 const sb = supabase.createClient("https://xjdjpaxgymgbvcwmvorc.supabase.co", "sb_publishable_C-NBnfg0ltAoUi46XQTUjA_ozjZW_Nd");
-const APP_VERSION = "1.151";
+const APP_VERSION = "1.152";
 const TRANSCRIBE_PROXY = window.Capacitor ? "https://getliri.com/api/transcribe"    : "/api/transcribe";
 const IDENTIFY_PROXY = window.Capacitor ? "https://getliri.com/api/identify-lyrics" : "/api/identify-lyrics";
 const ITUNES_PROXY   = window.Capacitor ? "https://getliri.com/api/itunes-lookup"   : "/api/itunes-lookup";
@@ -1361,6 +1361,29 @@ function Liri() {
   const matchTranscriptToTracks = (transcript, tracks, wordsData, logRef) => {
     // Normalise a single word: lowercase, strip non-alphanumeric except apostrophe
     const normWord = w => w.toLowerCase().replace(/[^a-z0-9']/g, "");
+
+    // Fuzzy word equality: allow small edit-distance for Whisper transcription noise
+    // Short words (≤3 chars) must match exactly — too risky to fuzz "I", "me", "the"
+    // Medium words (4-6 chars): allow 1 edit; long words (7+): allow 2 edits
+    const editDist = (a, b) => {
+      if (Math.abs(a.length - b.length) > 2) return 99;
+      const dp = Array.from({length: a.length + 1}, (_, i) => i);
+      for (let j = 1; j <= b.length; j++) {
+        let prev = dp[0]; dp[0] = j;
+        for (let i = 1; i <= a.length; i++) {
+          const temp = dp[i];
+          dp[i] = a[i-1] === b[j-1] ? prev : 1 + Math.min(prev, dp[i], dp[i-1]);
+          prev = temp;
+        }
+      }
+      return dp[a.length];
+    };
+    const fuzzyEq = (a, b) => {
+      if (a === b) return true;
+      if (!a || !b) return false;
+      if (a.length <= 3 || b.length <= 3) return false; // short words: exact only
+      return editDist(a, b) <= (a.length <= 6 ? 1 : 2);
+    };
     const heardWords = transcript.toLowerCase().split(/\s+/).map(normWord).filter(w => w.length > 1);
     if (logRef) logRef.push(`match: ${heardWords.length} words from transcript`);
     if (!heardWords.length) return null;
@@ -1424,7 +1447,7 @@ function Liri() {
           for (let i = 0; i <= arr.length - len; i++) {
             let ok = true;
             for (let j = 0; j < len; j++) {
-              if (arr[i + j] !== phrase[j]) { ok = false; break; }
+              if (!fuzzyEq(arr[i + j], phrase[j])) { ok = false; break; }
             }
             if (ok) { count++; if (count > 1) return false; } // more than once → not unique
           }
@@ -1445,7 +1468,7 @@ function Liri() {
         for (let i = 0; i <= arr.length - len; i++) {
           let ok = true;
           for (let j = 0; j < len; j++) {
-            if (arr[i + j] !== phrase[j]) { ok = false; break; }
+            if (!fuzzyEq(arr[i + j], phrase[j])) { ok = false; break; }
           }
           if (ok) { matchWordIdx = i; break; }
         }
@@ -1581,7 +1604,7 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
     // Returned words are appended to fullTranscript and matched after each chunk.
     const mimeType = MediaRecorder.isTypeSupported("audio/webm") ? "audio/webm" : "audio/mp4";
 
-    const onChunkText = (text) => {
+    const onChunkText = (text, chunkEndTime = Date.now()) => {
       if (!text || !isActive || listenSessionRef.current !== session || recognitionWonRef.current) return;
       fullTranscript += (fullTranscript ? " " : "") + text.trim();
       const combined = fullTranscript;
@@ -1601,11 +1624,12 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
       const song = { title: track.trackName, artist: track.artistName || ta?.artist_name || "", album: ta?.album_name || "", artwork: ta?.artwork_url || null };
       setIdentifiedBy("speech");
       detectedAtRef.current = Date.now();
-      const _recStart = recordingStartRef.current || Date.now();
-      const _elapsed = (Date.now() - _recStart) / 1000;
-      const _phraseOffset = vmResult.totalWords > 0 ? Math.min(vmResult.phraseWordStart / vmResult.totalWords * _elapsed, _elapsed / 2) : 0;
-      syncCalcRef.current = { startPos, phraseOffset: _phraseOffset, recStart: _recStart };
-      initialPosRef.current = startPos;
+      // Compensate for Whisper API round-trip latency: the matched words were sung
+      // at chunkEndTime, so the song is now further ahead by that many seconds.
+      const apiLatency = (Date.now() - chunkEndTime) / 1000;
+      const adjustedPos = startPos + apiLatency;
+      syncCalcRef.current = { startPos: adjustedPos, phraseOffset: 0, recStart: chunkEndTime };
+      initialPosRef.current = adjustedPos;
       autoAdvanceFiredRef.current = false;
       autoRetryCountRef.current = 0;
       setDetectedSong(song);
@@ -1629,6 +1653,7 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
       currentRecorder = recorder;
       recorder.ondataavailable = async (e) => {
         if (e.data.size < 1000) return; // skip empty/partial blobs
+        const chunkEndTime = Date.now(); // capture before async API call
         try {
           const res = await fetch("/api/whisper", {
             method: "POST",
@@ -1637,7 +1662,7 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
           });
           if (!res.ok) return;
           const { text } = await res.json();
-          onChunkText(text);
+          onChunkText(text, chunkEndTime);
         } catch (err) { console.error("[whisper] chunk error:", err); }
       };
       recorder.start();
