@@ -1,6 +1,6 @@
 {
   "appId": "com.getliri.app",
-  "appName": "Liri",
+  "appName": "Liri – Vinyl Lyrics",
   "webDir": "app",
   "server": {
     "androidScheme": "https"
