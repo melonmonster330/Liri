@@ -9,7 +9,7 @@ if (typeof supabase === 'undefined') {
   throw new Error('Supabase not loaded');
 }
 const sb = supabase.createClient("https://xjdjpaxgymgbvcwmvorc.supabase.co", "sb_publishable_C-NBnfg0ltAoUi46XQTUjA_ozjZW_Nd");
-const APP_VERSION = "1.0";
+const APP_VERSION = "1.1";
 const TRANSCRIBE_PROXY = window.Capacitor ? "https://getliri.com/api/transcribe"    : "/api/transcribe";
 const IDENTIFY_PROXY = window.Capacitor ? "https://getliri.com/api/identify-lyrics" : "/api/identify-lyrics";
 const ITUNES_PROXY   = window.Capacitor ? "https://getliri.com/api/itunes-lookup"   : "/api/itunes-lookup";
@@ -352,8 +352,8 @@ function Liri() {
   const [history, setHistory] = useState([]);
   const [historyLoading, setHistoryLoading] = useState(false);
 
-  // ── Vinyl auto mode ──
-  const [vinylMode, setVinylMode] = useState(() => localStorage.getItem("liri_vinyl_mode") === "true");
+  // ── Vinyl auto mode (always on) ──
+  const vinylMode = true;
   const autoAdvanceFiredRef = useRef(false);
 
   // ── Turntable: album the user has selected before listening ──
@@ -494,11 +494,6 @@ function Liri() {
     albumCollectionIdRef.current = albumCollectionId;
   }, [albumCollectionId]);
 
-  // ── Vinyl mode persistence ──
-  const toggleVinylMode = val => {
-    setVinylMode(val);
-    localStorage.setItem("liri_vinyl_mode", String(val));
-  };
 
   // ── Per-album side data (localStorage, keyed by iTunes collectionId) ──
   const getAlbumSideData = cid => {
@@ -1188,9 +1183,9 @@ function Liri() {
     });
   }, [Math.floor(playbackTime), mode, lyrics.length]);
 
-  // ── Vinyl auto-advance: trigger when song nears its end ──
+  // ── Auto-advance: trigger when song nears its end ──
   useEffect(() => {
-    if (!vinylMode || mode !== "syncing") return;
+    if (mode !== "syncing") return;
     // Use ACRCloud duration if available, otherwise fall back to the last
     // lyric line's timestamp + 30s so we still fire even when duration_ms
     // is missing from the ACRCloud response.
@@ -1202,46 +1197,7 @@ function Liri() {
       // 1 second gap between songs before advancing
       setTimeout(() => setShouldAdvanceTrack(true), 1000);
     }
-  }, [playbackTime, songDuration, lyrics, vinylMode, mode]);
-
-  // ── Side-end detection for turntable mode without vinyl auto-mode ──
-  // vinyl auto-mode already handles this; this covers the case where the user
-  // has an album selected but hasn't turned on auto-advance.
-  useEffect(() => {
-    if (vinylMode || mode !== "syncing" || !turntableAlbum) return;
-    const tTracks = turntableTracksRef.current;
-    const tIdx = turntableMatchedIdxRef.current;
-    if (tTracks.length === 0 || tIdx < 0) return;
-    const lastLyricTime = lyrics.length > 0 ? lyrics[lyrics.length - 1].time : null;
-    const effectiveDuration = songDuration ?? (lastLyricTime ? lastLyricTime + 30 : null);
-    if (!effectiveDuration) return;
-    if (playbackTime >= effectiveDuration && !autoAdvanceFiredRef.current) {
-      autoAdvanceFiredRef.current = true;
-      const dbRelease = vinylDbReleaseRef.current;
-      const effectiveTps = albumTpsRef.current > 0 ? albumTpsRef.current : 0;
-      const sideEnds = dbRelease?.vinyl_tracks?.length > 0 ? getDbSideEndIndices(tTracks, dbRelease.vinyl_tracks) : getSideEndIndices(tTracks, effectiveTps);
-      const isLastTrack = tIdx === tTracks.length - 1;
-      const isSideEnd = sideEnds.includes(tIdx);
-      if (isLastTrack || isSideEnd) {
-        setTimeout(() => {
-          clearInterval(syncIntervalRef.current);
-          if (isSideEnd && !isLastTrack) {
-            playFlipChime();
-            showFlipPushNotification(detectedSong);
-            setSideEndReason("flip");
-          } else {
-            showAlbumEndPushNotification(detectedSong);
-            setSideEndReason("album-end");
-          }
-          if (detectedSong) setLastSong(detectedSong);
-          setMode("side-end");
-        }, 1000);
-      } else {
-        // Mid-side track: advance directly to next track
-        setTimeout(() => advanceToNextTrack(tTracks, tIdx), 1000);
-      }
-    }
-  }, [playbackTime, songDuration, lyrics, mode, vinylMode, turntableAlbum]);
+  }, [playbackTime, songDuration, lyrics, mode]);
 
   // ── Handle track advance (runs with fresh state) ──
   useEffect(() => {
@@ -3490,7 +3446,8 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
       inset: 0,
       zIndex: 200,
       background: "rgba(0,0,0,0.6)",
-      backdropFilter: "blur(4px)"
+      backdropFilter: "blur(4px)",
+      cursor: "pointer"
     }
   }, /*#__PURE__*/React.createElement("div", {
     onClick: e => e.stopPropagation(),
@@ -3548,6 +3505,7 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
   }, "\u2715")), /*#__PURE__*/React.createElement("div", {
     style: {
       overflowY: "auto",
+      WebkitOverflowScrolling: "touch",
       padding: "0 24px",
       flex: 1,
       paddingBottom: "max(24px, env(safe-area-inset-bottom))"
@@ -3722,7 +3680,8 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
       inset: 0,
       zIndex: 200,
       background: isWide ? "rgba(0,0,0,0.25)" : "rgba(0,0,0,0.5)",
-      backdropFilter: isWide ? "none" : "blur(4px)"
+      backdropFilter: isWide ? "none" : "blur(4px)",
+      cursor: "pointer"
     }
   }, /*#__PURE__*/React.createElement("div", {
     onClick: e => e.stopPropagation(),
@@ -3746,6 +3705,7 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
       borderRadius: "24px 24px 0 0",
       maxHeight: "88vh",
       overflowY: "auto",
+      WebkitOverflowScrolling: "touch",
       boxShadow: "0 -8px 48px rgba(0,0,0,0.6)",
       animation: "slide-up 0.3s ease"
     }
@@ -3896,174 +3856,6 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
   ) : null,
 
   /*#__PURE__*/React.createElement("div", {
-    style: {
-      background: "rgba(255,255,255,0.03)",
-      border: "1px solid rgba(255,255,255,0.07)",
-      borderRadius: "16px",
-      padding: "16px 18px",
-      marginBottom: "16px"
-    }
-  }, /*#__PURE__*/React.createElement("div", {
-    style: {
-      display: "flex",
-      alignItems: "center",
-      justifyContent: "space-between",
-      marginBottom: "8px"
-    }
-  }, /*#__PURE__*/React.createElement("div", {
-    style: {
-      fontSize: "14px",
-      fontWeight: "600",
-      color: "#f0e6d3"
-    }
-  }, "Vinyl Auto Mode"), /*#__PURE__*/React.createElement("div", {
-    onClick: () => toggleVinylMode(!vinylMode),
-    style: {
-      width: "44px",
-      height: "26px",
-      borderRadius: "13px",
-      background: vinylMode ? "linear-gradient(135deg, #d4a846, #c9807a)" : "rgba(255,255,255,0.1)",
-      cursor: "pointer",
-      position: "relative",
-      transition: "background 0.2s",
-      flexShrink: 0
-    }
-  }, /*#__PURE__*/React.createElement("div", {
-    style: {
-      position: "absolute",
-      top: "3px",
-      left: vinylMode ? "21px" : "3px",
-      width: "20px",
-      height: "20px",
-      borderRadius: "50%",
-      background: "white",
-      transition: "left 0.2s",
-      boxShadow: "0 1px 4px rgba(0,0,0,0.3)"
-    }
-  }))), /*#__PURE__*/React.createElement("div", {
-    style: {
-      fontSize: "12px",
-      color: "rgba(255,255,255,0.3)",
-      lineHeight: "1.6"
-    }
-  }, "Auto-advances through the album tracklist without re-listening. Prompts you to flip at side boundaries. Set tracks per side below for multi-sided albums.")), vinylMode && /*#__PURE__*/React.createElement("div", {
-    style: {
-      background: "rgba(255,255,255,0.03)",
-      border: "1px solid rgba(255,255,255,0.07)",
-      borderRadius: "16px",
-      padding: "16px 18px",
-      marginBottom: "16px"
-    }
-  }, /*#__PURE__*/React.createElement("div", {
-    style: {
-      fontSize: "14px",
-      fontWeight: "600",
-      color: "#f0e6d3",
-      marginBottom: "12px"
-    }
-  }, "Flip reminders"), /*#__PURE__*/React.createElement("div", {
-    style: {
-      display: "flex",
-      alignItems: "center",
-      justifyContent: "space-between",
-      marginBottom: "14px"
-    }
-  }, /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("div", {
-    style: {
-      fontSize: "13px",
-      color: "#f0e6d3"
-    }
-  }, "Sound chime"), /*#__PURE__*/React.createElement("div", {
-    style: {
-      fontSize: "11px",
-      color: "rgba(255,255,255,0.3)",
-      marginTop: "2px"
-    }
-  }, "Plays a tone when it's time to flip")), /*#__PURE__*/React.createElement("div", {
-    onClick: () => {
-      const v = !flipSound;
-      setFlipSound(v);
-      localStorage.setItem("liri_flip_sound", String(v));
-    },
-    style: {
-      width: "40px",
-      height: "24px",
-      borderRadius: "12px",
-      background: flipSound ? "linear-gradient(135deg,#d4a846,#c9807a)" : "rgba(255,255,255,0.1)",
-      cursor: "pointer",
-      position: "relative",
-      transition: "background 0.2s",
-      flexShrink: 0
-    }
-  }, /*#__PURE__*/React.createElement("div", {
-    style: {
-      position: "absolute",
-      top: "3px",
-      left: flipSound ? "19px" : "3px",
-      width: "18px",
-      height: "18px",
-      borderRadius: "50%",
-      background: "white",
-      transition: "left 0.2s",
-      boxShadow: "0 1px 4px rgba(0,0,0,0.3)"
-    }
-  }))), /*#__PURE__*/React.createElement("div", {
-    style: {
-      display: "flex",
-      alignItems: "center",
-      justifyContent: "space-between"
-    }
-  }, /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("div", {
-    style: {
-      fontSize: "13px",
-      color: "#f0e6d3"
-    }
-  }, "Push notification"), /*#__PURE__*/React.createElement("div", {
-    style: {
-      fontSize: "11px",
-      color: "rgba(255,255,255,0.3)",
-      marginTop: "2px",
-      lineHeight: "1.5"
-    }
-  }, "Alerts you even when the screen is off")), /*#__PURE__*/React.createElement("div", {
-    onClick: () => {
-      if (!flipNotify) {
-        enableFlipNotify();
-      } else {
-        setFlipNotify(false);
-        localStorage.setItem("liri_flip_notify", "false");
-      }
-    },
-    style: {
-      width: "40px",
-      height: "24px",
-      borderRadius: "12px",
-      background: flipNotify ? "linear-gradient(135deg,#d4a846,#c9807a)" : "rgba(255,255,255,0.1)",
-      cursor: "pointer",
-      position: "relative",
-      transition: "background 0.2s",
-      flexShrink: 0
-    }
-  }, /*#__PURE__*/React.createElement("div", {
-    style: {
-      position: "absolute",
-      top: "3px",
-      left: flipNotify ? "19px" : "3px",
-      width: "18px",
-      height: "18px",
-      borderRadius: "50%",
-      background: "white",
-      transition: "left 0.2s",
-      boxShadow: "0 1px 4px rgba(0,0,0,0.3)"
-    }
-  }))), notifyDenied && /*#__PURE__*/React.createElement("div", {
-    style: {
-      fontSize: "11px",
-      color: "#e8a0a8",
-      marginTop: "8px",
-      lineHeight: "1.5"
-    }
-  }, "Notifications were blocked. Enable them in your browser settings.")), /*#__PURE__*/React.createElement("div", {
     style: {
       background: "rgba(255,255,255,0.03)",
       border: "1px solid rgba(255,255,255,0.07)",
@@ -5300,14 +5092,7 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
       background: "linear-gradient(90deg, #d4a846, #c9807a)",
       transition: "width 0.3s ease"
     }
-  })), vinylMode && /*#__PURE__*/React.createElement("div", {
-    style: {
-      marginTop: "16px",
-      fontSize: "12px",
-      color: "rgba(212,168,70,0.5)",
-      letterSpacing: "1px"
-    }
-  }, "\u2726 Vinyl Auto Mode on")), mode === "listening" && /*#__PURE__*/React.createElement("div", {
+  })), mode === "listening" && /*#__PURE__*/React.createElement("div", {
     style: {
       animation: "fade-up 0.3s ease both"
     }
