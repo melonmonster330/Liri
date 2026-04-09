@@ -9,7 +9,7 @@ if (typeof supabase === 'undefined') {
   throw new Error('Supabase not loaded');
 }
 const sb = supabase.createClient("https://xjdjpaxgymgbvcwmvorc.supabase.co", "sb_publishable_C-NBnfg0ltAoUi46XQTUjA_ozjZW_Nd");
-const APP_VERSION = "1.155";
+const APP_VERSION = "1.156";
 const TRANSCRIBE_PROXY = window.Capacitor ? "https://getliri.com/api/transcribe"    : "/api/transcribe";
 const IDENTIFY_PROXY = window.Capacitor ? "https://getliri.com/api/identify-lyrics" : "/api/identify-lyrics";
 const ITUNES_PROXY   = window.Capacitor ? "https://getliri.com/api/itunes-lookup"   : "/api/itunes-lookup";
@@ -1497,6 +1497,22 @@ function Liri() {
 
     if (logRef) logRef.push(`match: no unique run yet — keep listening`);
     return null;
+  };
+
+  // ── Analytics: log a button tap (resync / wrong_song) to button_events ──
+  const logButtonEvent = async (buttonName) => {
+    try {
+      await sb.from("button_events").insert({
+        user_id: user?.id || null,
+        session_id: sessionId,
+        button_name: buttonName,
+        track_title: detectedSong?.title || null,
+        artist_name: detectedSong?.artist || null,
+        album_name: detectedSong?.album || null,
+        itunes_collection_id: albumCollectionIdRef?.current ? Number(albumCollectionIdRef.current) : null,
+        platform: window.Capacitor ? "ios" : "web",
+      });
+    } catch (e) { /* silently ignore — table may not exist yet */ }
   };
 
   // ── Handle final recognition failure ──
@@ -4814,7 +4830,7 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
       fontFamily: "inherit"
     }
   }, isPaused ? "▶ Resume" : "❚❚ Pause"), /*#__PURE__*/React.createElement("button", {
-    onClick: resync,
+    onClick: () => { logButtonEvent("resync"); resync(); },
     disabled: isResyncing,
     style: {
       background: "rgba(255,255,255,0.07)",
@@ -4830,6 +4846,7 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
     }
   }, "\u21BB Resync"), /*#__PURE__*/React.createElement("button", {
     onClick: () => {
+      logButtonEvent("wrong_song");
       reset();
       setTimeout(() => startListening(false), 150);
     },
