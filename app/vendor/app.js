@@ -426,7 +426,7 @@ function Liri() {
   // ── Onboarding ──
   const [showOnboarding, setShowOnboarding] = useState(() => !localStorage.getItem("liri_onboarding_done"));
   const [onboardingStep, setOnboardingStep] = useState(0);
-  const ONBOARDING_STEPS = 6;
+  const ONBOARDING_STEPS = 5;
   const dismissOnboarding = () => {
     localStorage.setItem("liri_onboarding_done", "true");
     setShowOnboarding(false);
@@ -493,6 +493,7 @@ function Liri() {
   useEffect(() => {
     albumCollectionIdRef.current = albumCollectionId;
   }, [albumCollectionId]);
+
 
 
   // ── Per-album side data (localStorage, keyed by iTunes collectionId) ──
@@ -1183,7 +1184,7 @@ function Liri() {
     });
   }, [Math.floor(playbackTime), mode, lyrics.length]);
 
-  // ── Auto-advance: trigger when song nears its end ──
+  // ── Vinyl auto-advance: trigger when song nears its end ──
   useEffect(() => {
     if (mode !== "syncing") return;
     // Use ACRCloud duration if available, otherwise fall back to the last
@@ -1198,6 +1199,7 @@ function Liri() {
       setTimeout(() => setShouldAdvanceTrack(true), 1000);
     }
   }, [playbackTime, songDuration, lyrics, mode]);
+
 
   // ── Handle track advance (runs with fresh state) ──
   useEffect(() => {
@@ -3207,91 +3209,6 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
   }, "Next \u2192"))), onboardingStep === 4 && /*#__PURE__*/React.createElement("div", {
     style: {
       textAlign: "center",
-      animation: "fade-up 0.4s ease both"
-    }
-  }, /*#__PURE__*/React.createElement("div", {
-    style: {
-      fontSize: "72px",
-      marginBottom: "24px",
-      filter: "drop-shadow(0 0 24px rgba(200,120,120,0.4))"
-    }
-  }, "\uD83D\uDCFA"), /*#__PURE__*/React.createElement("div", {
-    style: {
-      fontSize: "26px",
-      fontWeight: "700",
-      color: "#f0e6d3",
-      marginBottom: "16px"
-    }
-  }, "See it on the big screen"), /*#__PURE__*/React.createElement("p", {
-    style: {
-      fontSize: "15px",
-      color: "rgba(255,255,255,0.5)",
-      lineHeight: "1.9",
-      maxWidth: "280px",
-      margin: "0 auto 32px"
-    }
-  }, "While lyrics are syncing, tap ", /*#__PURE__*/React.createElement("strong", {
-    style: {
-      color: "#d4a846"
-    }
-  }, "\uD83D\uDCFA"), " to cast to any TV browser. Scan the QR code or type the URL \u2014 no app needed."), /*#__PURE__*/React.createElement("div", {
-    style: {
-      background: "rgba(255,255,255,0.04)",
-      border: "1px solid rgba(255,255,255,0.08)",
-      borderRadius: "16px",
-      padding: "16px",
-      maxWidth: "240px",
-      margin: "0 auto 40px"
-    }
-  }, /*#__PURE__*/React.createElement("div", {
-    style: {
-      fontSize: "11px",
-      color: "rgba(255,255,255,0.2)",
-      letterSpacing: "2px",
-      marginBottom: "8px"
-    }
-  }, "ROOM CODE"), /*#__PURE__*/React.createElement("div", {
-    style: {
-      fontSize: "36px",
-      fontWeight: "800",
-      letterSpacing: "10px",
-      color: "#d4a846"
-    }
-  }, "ABCDEF")), /*#__PURE__*/React.createElement("div", {
-    style: {
-      display: "flex",
-      gap: "16px",
-      justifyContent: "center",
-      alignItems: "center"
-    }
-  }, /*#__PURE__*/React.createElement("button", {
-    onClick: () => setOnboardingStep(3),
-    style: {
-      background: "none",
-      border: "1px solid rgba(255,255,255,0.1)",
-      color: "rgba(255,255,255,0.3)",
-      borderRadius: "50px",
-      padding: "12px 24px",
-      fontSize: "13px",
-      cursor: "pointer",
-      fontFamily: "inherit"
-    }
-  }, "\u2190 Back"), /*#__PURE__*/React.createElement("button", {
-    onClick: () => setOnboardingStep(5),
-    style: {
-      background: "linear-gradient(135deg, #d4a846, #c9807a)",
-      color: "#080810",
-      border: "none",
-      borderRadius: "50px",
-      padding: "14px 36px",
-      fontSize: "14px",
-      fontWeight: "700",
-      cursor: "pointer",
-      fontFamily: "inherit"
-    }
-  }, "Next \u2192"))), onboardingStep === 5 && /*#__PURE__*/React.createElement("div", {
-    style: {
-      textAlign: "center",
       animation: "fade-up 0.4s ease both",
       maxWidth: "320px",
       margin: "0 auto"
@@ -3407,7 +3324,7 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
       marginTop: "14px"
     }
   }, /*#__PURE__*/React.createElement("button", {
-    onClick: () => setOnboardingStep(4),
+    onClick: () => setOnboardingStep(3),
     style: {
       background: "none",
       border: "none",
@@ -3505,10 +3422,10 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
   }, "\u2715")), /*#__PURE__*/React.createElement("div", {
     style: {
       overflowY: "auto",
-      WebkitOverflowScrolling: "touch",
       padding: "0 24px",
       flex: 1,
-      paddingBottom: "max(24px, env(safe-area-inset-bottom))"
+      paddingBottom: "max(24px, env(safe-area-inset-bottom))",
+      WebkitOverflowScrolling: "touch"
     }
   }, turntableAlbum && /*#__PURE__*/React.createElement("button", {
     onClick: () => {
@@ -3705,9 +3622,9 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
       borderRadius: "24px 24px 0 0",
       maxHeight: "88vh",
       overflowY: "auto",
-      WebkitOverflowScrolling: "touch",
       boxShadow: "0 -8px 48px rgba(0,0,0,0.6)",
-      animation: "slide-up 0.3s ease"
+      animation: "slide-up 0.3s ease",
+      WebkitOverflowScrolling: "touch"
     }
   }, isWide ? /*#__PURE__*/React.createElement("div", {
     style: {
@@ -3972,9 +3889,7 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
       marginTop: "8px",
       lineHeight: "1.5"
     }
-  }, "Notifications were blocked. Enable them in your browser settings.")),
-
-  /*#__PURE__*/React.createElement("div", {
+  }, "Notifications were blocked. Enable them in your browser settings.")), /*#__PURE__*/React.createElement("div", {
     style: {
       background: "rgba(255,255,255,0.03)",
       border: "1px solid rgba(255,255,255,0.07)",
@@ -5211,7 +5126,7 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
       background: "linear-gradient(90deg, #d4a846, #c9807a)",
       transition: "width 0.3s ease"
     }
-  })), mode === "listening" && /*#__PURE__*/React.createElement("div", {
+  }))), mode === "listening" && /*#__PURE__*/React.createElement("div", {
     style: {
       animation: "fade-up 0.3s ease both"
     }
