@@ -9,7 +9,7 @@ if (typeof supabase === 'undefined') {
   throw new Error('Supabase not loaded');
 }
 const sb = supabase.createClient("https://xjdjpaxgymgbvcwmvorc.supabase.co", "sb_publishable_C-NBnfg0ltAoUi46XQTUjA_ozjZW_Nd");
-const APP_VERSION = "1.160";
+const APP_VERSION = "1.161";
 const TRANSCRIBE_PROXY = window.Capacitor ? "https://getliri.com/api/transcribe"    : "/api/transcribe";
 const IDENTIFY_PROXY = window.Capacitor ? "https://getliri.com/api/identify-lyrics" : "/api/identify-lyrics";
 const ITUNES_PROXY   = window.Capacitor ? "https://getliri.com/api/itunes-lookup"   : "/api/itunes-lookup";
@@ -1653,7 +1653,9 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
     // Each chunk is sent to /api/whisper as it completes; API calls overlap
     // so chunk N+1 is being recorded while chunk N's response is in-flight.
     // Returned words are appended to fullTranscript and matched after each chunk.
-    const mimeType = MediaRecorder.isTypeSupported("audio/webm") ? "audio/webm" : "audio/mp4";
+    // On iOS (Capacitor) don't force a mimeType — let WKWebView pick its default
+    // Forcing audio/mp4 triggers AudioSampleBufferConverter codec errors
+    const mimeType = window.Capacitor ? "" : MediaRecorder.isTypeSupported("audio/webm") ? "audio/webm" : "audio/mp4";
 
     const onChunkText = (text, chunkEndTime = Date.now()) => {
       if (!text || !isActive || listenSessionRef.current !== session || recognitionWonRef.current) return;
@@ -1703,10 +1705,11 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
 
     const recordChunk = () => {
       if (!isActive || listenSessionRef.current !== session) return;
-      const recorder = new MediaRecorder(stream, { mimeType });
+      const recorder = mimeType ? new MediaRecorder(stream, { mimeType }) : new MediaRecorder(stream);
       currentRecorder = recorder;
       recorder.ondataavailable = async (e) => {
-        if (e.data.size < 1000) return; // skip empty/partial blobs
+        console.log("[mic] chunk size:", e.data.size, "type:", e.data.type);
+        if (e.data.size < 500) return; // skip empty blobs (raised from 1000 for iOS)
         const chunkEndTime = Date.now(); // capture before async API call
         try {
           const ta = turntableAlbumRef.current;
@@ -1722,7 +1725,7 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
           const res = await fetch(WHISPER_PROXY, {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ audio: base64, mimeType, prompt }),
+            body: JSON.stringify({ audio: base64, mimeType: e.data.type || mimeType || "audio/mp4", prompt }),
           });
           if (!res.ok) return;
           const { text } = await res.json();
@@ -2180,7 +2183,7 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
       return;
     }
 
-    const mimeType = MediaRecorder.isTypeSupported("audio/webm") ? "audio/webm" : "audio/mp4";
+    const mimeType = window.Capacitor ? "" : MediaRecorder.isTypeSupported("audio/webm") ? "audio/webm" : "audio/mp4";
     let matched = false;
     let currentRecorder = null;
 
@@ -2198,10 +2201,10 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
 
     const recordChunk = () => {
       if (matched) return;
-      const recorder = new MediaRecorder(stream, { mimeType });
+      const recorder = mimeType ? new MediaRecorder(stream, { mimeType }) : new MediaRecorder(stream);
       currentRecorder = recorder;
       recorder.ondataavailable = async (e) => {
-        if (e.data.size < 1000 || matched) return;
+        if (e.data.size < 500 || matched) return;
         const chunkEndTime = Date.now();
         try {
           const base64 = await new Promise((resolve, reject) => {
@@ -2213,7 +2216,7 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
           const res = await fetch(WHISPER_PROXY, {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ audio: base64, mimeType }),
+            body: JSON.stringify({ audio: base64, mimeType: e.data.type || mimeType || "audio/mp4" }),
           });
           if (!res.ok || matched) return;
           const { text } = await res.json();
