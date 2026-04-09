@@ -9,7 +9,7 @@ if (typeof supabase === 'undefined') {
   throw new Error('Supabase not loaded');
 }
 const sb = supabase.createClient("https://xjdjpaxgymgbvcwmvorc.supabase.co", "sb_publishable_C-NBnfg0ltAoUi46XQTUjA_ozjZW_Nd");
-const APP_VERSION = "1.150";
+const APP_VERSION = "1.151";
 const TRANSCRIBE_PROXY = window.Capacitor ? "https://getliri.com/api/transcribe"    : "/api/transcribe";
 const IDENTIFY_PROXY = window.Capacitor ? "https://getliri.com/api/identify-lyrics" : "/api/identify-lyrics";
 const ITUNES_PROXY   = window.Capacitor ? "https://getliri.com/api/itunes-lookup"   : "/api/itunes-lookup";
@@ -1550,17 +1550,6 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
 
     const isNative = !!window.Capacitor?.isNativePlatform?.();
 
-    // ── Get a short-lived Deepgram token from our backend ──
-    let dgToken;
-    try {
-      const tokenRes = await fetch("/api/deepgram-token", { method: "POST" });
-      if (!tokenRes.ok) throw new Error("token fetch failed");
-      ({ token: dgToken } = await tokenRes.json());
-    } catch (e) {
-      setError("Could not connect to transcription service. Try again in a moment.");
-      setMode("error"); return;
-    }
-
     // ── Open mic ──
     let stream;
     try {
@@ -1573,6 +1562,7 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
     const MIN_SCORE = 3;
     let fullTranscript = "";
     let isActive = true;
+    let currentRecorder = null;
 
     const pulseId = setInterval(() => setAudioLevel(0.15 + Math.sin(Date.now() / 400) * 0.1), 80);
     recordingStartRef.current = Date.now();
@@ -1580,86 +1570,84 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
     const stop = () => {
       isActive = false;
       clearInterval(pulseId);
-      try { recorder.stop(); } catch {}
+      try { currentRecorder?.stop(); } catch {}
       stream.getTracks().forEach(t => t.stop());
-      try { socket.close(); } catch {}
     };
     speechRecRef.current = { stop };
 
-    // ── Open Deepgram WebSocket — streaming, interim results, music-friendly ──
-    // Auth via subprotocol — browser WebSocket can't send headers
-    const dgUrl = "wss://api.deepgram.com/v1/listen?model=nova-2-video&language=en-US&interim_results=true";
-    const socket = new WebSocket(dgUrl, ["token", dgToken]);
-
-    // Use MediaRecorder — simplest reliable audio source for Deepgram
-    // webm (Chrome) or mp4 (Safari) — Deepgram auto-detects both
+    // ── Whisper via overlapping 1.75s chunks ──
+    // Each chunk is sent to /api/whisper as it completes; API calls overlap
+    // so chunk N+1 is being recorded while chunk N's response is in-flight.
+    // Returned words are appended to fullTranscript and matched after each chunk.
     const mimeType = MediaRecorder.isTypeSupported("audio/webm") ? "audio/webm" : "audio/mp4";
-    const recorder = new MediaRecorder(stream, { mimeType });
-    recorder.addEventListener("dataavailable", (e) => {
-      if (e.data.size > 0 && socket.readyState === WebSocket.OPEN) socket.send(e.data);
-    });
 
-    socket.onopen = () => {
-      console.log("[dg] connected, mimeType:", mimeType);
-      recorder.start(250); // send a chunk every 250ms
+    const onChunkText = (text) => {
+      if (!text || !isActive || listenSessionRef.current !== session || recognitionWonRef.current) return;
+      fullTranscript += (fullTranscript ? " " : "") + text.trim();
+      const combined = fullTranscript;
+      setLiveTranscript(combined);
+      const wordCount = combined.split(/\s+/).filter(Boolean).length;
+      setListenProgress(Math.min(wordCount / 12, 0.95));
+      setAudioLevel(0.4 + Math.random() * 0.3);
+      if (wordCount < MIN_SCORE) return;
+      const vmResult = matchTranscriptToTracks(combined, tracks, wordsData, attemptLogRef.current);
+      if (!vmResult || vmResult.score < MIN_SCORE || recognitionWonRef.current) return;
+      recognitionWonRef.current = true;
+      stop();
+      const { track, lyrics, startPos } = vmResult;
+      const ta = turntableAlbumRef.current;
+      const matchedIdx = tracks.findIndex(t => t.trackName?.toLowerCase() === track.trackName?.toLowerCase());
+      turntableMatchedIdxRef.current = matchedIdx >= 0 ? matchedIdx : (track.trackNumber ? track.trackNumber - 1 : 0);
+      const song = { title: track.trackName, artist: track.artistName || ta?.artist_name || "", album: ta?.album_name || "", artwork: ta?.artwork_url || null };
+      setIdentifiedBy("speech");
+      detectedAtRef.current = Date.now();
+      const _recStart = recordingStartRef.current || Date.now();
+      const _elapsed = (Date.now() - _recStart) / 1000;
+      const _phraseOffset = vmResult.totalWords > 0 ? Math.min(vmResult.phraseWordStart / vmResult.totalWords * _elapsed, _elapsed / 2) : 0;
+      syncCalcRef.current = { startPos, phraseOffset: _phraseOffset, recStart: _recStart };
+      initialPosRef.current = startPos;
+      autoAdvanceFiredRef.current = false;
+      autoRetryCountRef.current = 0;
+      setDetectedSong(song);
+      setSongDuration(track.trackTimeMillis ? track.trackTimeMillis / 1000 : null);
+      setLyrics(lyrics);
+      lyricsRef.current = lyrics;
+      setMode("confirmed");
+      saveToHistory(user, song);
+      fetchHistory(user);
+      logListeningEvent({ userId: user?.id, title: track.trackName, artist: track.artistName || ta?.artist_name || "", album: ta?.album_name || "", artwork: ta?.artwork_url || null, itunesTrackId: track.trackId, collectionId: ta?.itunes_collection_id || track.collectionId, vinylReleaseId: null, vinylModeOn: true, source: "speech", offsetSecs: startPos, durationSecs: track.trackTimeMillis ? track.trackTimeMillis / 1000 : null });
+      const at = turntableTracksRef.current;
+      setAlbumTracks(at);
+      setAlbumCollectionId(ta?.itunes_collection_id ? String(ta.itunes_collection_id) : null);
+      const tIdx = at.findIndex(t => t.trackName?.toLowerCase() === track.trackName.toLowerCase());
+      setCurrentTrackIndex(tIdx >= 0 ? tIdx : 0);
     };
 
-    socket.onmessage = (e) => {
-      if (!isActive || listenSessionRef.current !== session || recognitionWonRef.current) return;
-      try {
-        const data = JSON.parse(e.data);
-        const transcript = data?.channel?.alternatives?.[0]?.transcript || "";
-        if (!transcript) return;
-        if (data.is_final) fullTranscript += transcript + " ";
-        const combined = (fullTranscript + (data.is_final ? "" : transcript)).trim();
-        setLiveTranscript(combined);
-        const wordCount = combined.split(/\s+/).filter(Boolean).length;
-        setListenProgress(Math.min(wordCount / 12, 0.95));
-        setAudioLevel(0.4 + Math.random() * 0.3);
-        if (wordCount < MIN_SCORE) return;
-        const vmResult = matchTranscriptToTracks(combined, tracks, wordsData, attemptLogRef.current);
-        if (!vmResult || vmResult.score < MIN_SCORE || recognitionWonRef.current) return;
-        recognitionWonRef.current = true;
-        stop();
-        const { track, lyrics, startPos } = vmResult;
-        const ta = turntableAlbumRef.current;
-        const matchedIdx = tracks.findIndex(t => t.trackName?.toLowerCase() === track.trackName?.toLowerCase());
-        turntableMatchedIdxRef.current = matchedIdx >= 0 ? matchedIdx : (track.trackNumber ? track.trackNumber - 1 : 0);
-        const song = { title: track.trackName, artist: track.artistName || ta?.artist_name || "", album: ta?.album_name || "", artwork: ta?.artwork_url || null };
-        setIdentifiedBy("speech");
-        detectedAtRef.current = Date.now();
-        const _recStart = recordingStartRef.current || Date.now();
-        const _elapsed = (Date.now() - _recStart) / 1000;
-        const _phraseOffset = vmResult.totalWords > 0 ? Math.min(vmResult.phraseWordStart / vmResult.totalWords * _elapsed, _elapsed / 2) : 0;
-        syncCalcRef.current = { startPos, phraseOffset: _phraseOffset, recStart: _recStart };
-        initialPosRef.current = startPos;
-        autoAdvanceFiredRef.current = false;
-        autoRetryCountRef.current = 0;
-        setDetectedSong(song);
-        setSongDuration(track.trackTimeMillis ? track.trackTimeMillis / 1000 : null);
-        setLyrics(lyrics);
-        lyricsRef.current = lyrics;
-        setMode("confirmed");
-        saveToHistory(user, song);
-        fetchHistory(user);
-        logListeningEvent({ userId: user?.id, title: track.trackName, artist: track.artistName || ta?.artist_name || "", album: ta?.album_name || "", artwork: ta?.artwork_url || null, itunesTrackId: track.trackId, collectionId: ta?.itunes_collection_id || track.collectionId, vinylReleaseId: null, vinylModeOn: true, source: "speech", offsetSecs: startPos, durationSecs: track.trackTimeMillis ? track.trackTimeMillis / 1000 : null });
-        const at = turntableTracksRef.current;
-        setAlbumTracks(at);
-        setAlbumCollectionId(ta?.itunes_collection_id ? String(ta.itunes_collection_id) : null);
-        const tIdx = at.findIndex(t => t.trackName?.toLowerCase() === track.trackName.toLowerCase());
-        setCurrentTrackIndex(tIdx >= 0 ? tIdx : 0);
-      } catch (err) { console.error("[dg] message error:", err); }
+    const recordChunk = () => {
+      if (!isActive || listenSessionRef.current !== session) return;
+      const recorder = new MediaRecorder(stream, { mimeType });
+      currentRecorder = recorder;
+      recorder.ondataavailable = async (e) => {
+        if (e.data.size < 1000) return; // skip empty/partial blobs
+        try {
+          const res = await fetch("/api/whisper", {
+            method: "POST",
+            headers: { "Content-Type": mimeType },
+            body: e.data,
+          });
+          if (!res.ok) return;
+          const { text } = await res.json();
+          onChunkText(text);
+        } catch (err) { console.error("[whisper] chunk error:", err); }
+      };
+      recorder.start();
+      setTimeout(() => {
+        if (recorder.state === "recording") recorder.stop();
+        recordChunk(); // start next chunk immediately — API calls overlap
+      }, 1750);
     };
 
-    socket.onerror = (e) => { console.error("[dg] socket error:", e); };
-    socket.onclose = (e) => {
-      console.log("[dg] closed", e.code);
-      if (isActive && !recognitionWonRef.current && listenSessionRef.current === session) {
-        setError(`Transcription dropped (code ${e.code}). Try again.`);
-        setMode("error");
-        stop();
-      }
-    };
+    recordChunk();
   };
     const startListening = async (isAutoAdvance = false) => {
     if (!turntableAlbumRef.current) {

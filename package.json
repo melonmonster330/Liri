@@ -9,7 +9,8 @@
     "ios": "npx cap open ios"
   },
   "dependencies": {
-    "@capacitor/core": "^8.2.0"
+    "@capacitor/core": "^8.2.0",
+    "openai": "^6.34.0"
   },
   "devDependencies": {
     "@babel/cli": "^7.28.6",
