@@ -20,10 +20,13 @@ module.exports = async (req, res) => {
     const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
     const file = new File([buffer], `audio.${ext}`, { type: mimeType });
 
+    const prompt = req.headers["x-prompt"] || undefined;
+
     const { text } = await openai.audio.transcriptions.create({
       model: "whisper-1",
       file,
       language: "en",
+      ...(prompt ? { prompt } : {}),
     });
 
     res.json({ text: text || "" });
