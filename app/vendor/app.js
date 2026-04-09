@@ -1624,6 +1624,13 @@ function Liri() {
     rec.maxAlternatives = 1;
 
     let finalTranscript = "";
+    // stuckTimer / stuckCount: detect the "mic open but silent" bug that occurs on cold
+    // starts after cache clear. The browser grants mic access (onstart fires) but the
+    // speech-to-text service connection hasn't been established, so onresult never comes.
+    // After 15 s with no result we force a restart; after 3 consecutive failures we give
+    // up and show an actionable error.
+    let stuckTimer = null;
+    let stuckCount = 0;
 
     // Pulse animation immediately so it doesn't feel frozen while mic warms up
     const pulseId = setInterval(() => {
@@ -1640,9 +1647,28 @@ function Liri() {
       // onresult accurate to the actual recording window, which is critical for the
       // phraseOffset formula below.
       recordingStartRef.current = Date.now();
+      // Arm the stuck detector. Cleared immediately if onresult fires. If neither
+      // onresult nor onend arrives in 15 s the recognition is silently dead — force
+      // a stop so onend can restart it.
+      clearTimeout(stuckTimer);
+      stuckTimer = setTimeout(() => {
+        stuckCount++;
+        console.log("[rec] stuck — no audio after 15 s, attempt", stuckCount);
+        if (stuckCount >= 3) {
+          clearInterval(pulseId);
+          setError(isNative
+            ? "Couldn't access the microphone. Try closing and reopening the app."
+            : "Mic opened but isn't capturing audio — try refreshing the page.");
+          setMode("error");
+          return;
+        }
+        try { rec.stop(); } catch {}
+      }, 15000);
     };
 
     rec.onresult = (event) => {
+      clearTimeout(stuckTimer);
+      stuckCount = 0;
       if (listenSessionRef.current !== session || recognitionWonRef.current) { rec.stop(); return; }
       let interim = "";
       for (let i = event.resultIndex; i < event.results.length; i++) {
@@ -1718,13 +1744,15 @@ function Liri() {
 
     rec.onerror = (event) => {
       console.log("[rec] onerror:", event.error);
+      clearTimeout(stuckTimer);
       if (listenSessionRef.current !== session) return;
       // "aborted" fires when we call rec.stop() ourselves after a successful match.
       // Ignore it — it's not a user-facing error.
       if (event.error === "aborted") return;
-      // "no-speech" fires when the browser auto-stops after a long pause. Rather than
-      // showing an error, restart recognition so the user can keep singing / humming.
-      if (event.error === "no-speech") { if (!recognitionWonRef.current) { try { rec.start(); } catch {} } return; }
+      // "no-speech" fires when the browser auto-stops after a long pause. onend fires
+      // immediately after this and will restart recognition — do NOT also call rec.start()
+      // here or we get a double-start race that can leave the mic silently dead.
+      if (event.error === "no-speech") return;
       clearInterval(pulseId);
       if (!recognitionWonRef.current) {
         // isNative (Capacitor / iOS) vs web: each platform requires a different fix for
@@ -1744,6 +1772,7 @@ function Liri() {
     };
 
     rec.onend = () => {
+      clearTimeout(stuckTimer);
       console.log("[rec] onend — restarting:", !recognitionWonRef.current);
       if (recognitionWonRef.current || listenSessionRef.current !== session) return;
       try { rec.start(); } catch {}
