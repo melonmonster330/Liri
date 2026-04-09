@@ -326,7 +326,9 @@ function Liri() {
   const isUnlimited = u => true; // recognition is now free — no API costs at listen time
 
   // ── Subscription tier — fetched from /api/subscription-status on login ──
-  const [userTier, setUserTier] = useState("free"); // "free" | "premium"
+  const [userTier, setUserTier]       = useState("free"); // "free" | "premium"
+  const [albumCount, setAlbumCount]   = useState(0);
+  const [upgradeWorking, setUpgradeWorking] = useState(false);
 
   // ── Auth token ref — kept current for API Authorization headers ──
   const sessionTokenRef = useRef(null);
@@ -775,7 +777,7 @@ function Liri() {
         fetchUsage(u);
         fetchHistory(u);
         fetch("/api/subscription-status", { headers: { "Authorization": `Bearer ${session.access_token}` } })
-          .then(r => r.ok ? r.json() : null).then(d => { if (d?.tier) setUserTier(d.tier); }).catch(() => {});
+          .then(r => r.ok ? r.json() : null).then(d => { if (d?.tier) { setUserTier(d.tier); setAlbumCount(d.albumCount || 0); } }).catch(() => {});
       }
     });
     const {
@@ -795,6 +797,22 @@ function Liri() {
     });
     return () => subscription.unsubscribe();
   }, []);
+  // ── Upgrade to Stripe Premium ──────────────────────────────────────────────
+  const upgradeToStripe = async () => {
+    setUpgradeWorking(true);
+    try {
+      const { data: { session: s } } = await sb.auth.getSession();
+      const token = s?.access_token || sessionTokenRef.current;
+      const res  = await fetch("/api/stripe-checkout", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "Authorization": `Bearer ${token}` },
+      });
+      const json = await res.json().catch(() => ({}));
+      if (json.url) { window.location.href = json.url; }
+      else { alert(json.error || "Could not start checkout. Please try again."); setUpgradeWorking(false); }
+    } catch { alert("Network error — please try again."); setUpgradeWorking(false); }
+  };
+
   const handleAuth = async () => {
     setAuthError(null);
     // ── Client-side validation ──
@@ -3940,7 +3958,28 @@ function Liri() {
         marginTop: "2px"
       }
     }, userTier === "premium" ? "✦ Liri Premium" : "Free plan"))));
-  })(), /*#__PURE__*/React.createElement("div", {
+  })(),
+
+  /* ── Plan card ── */
+  userTier !== "premium" ? /*#__PURE__*/React.createElement("div", {
+    style: { background: "rgba(212,168,70,0.06)", border: "1px solid rgba(212,168,70,0.15)", borderRadius: "16px", padding: "14px 16px", marginBottom: "16px" }
+  },
+    /*#__PURE__*/React.createElement("div", { style: { display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: "10px" } },
+      /*#__PURE__*/React.createElement("div", null,
+        /*#__PURE__*/React.createElement("div", { style: { fontSize: "13px", fontWeight: "600", color: "#f0e6d3" } }, "Free plan"),
+        /*#__PURE__*/React.createElement("div", { style: { fontSize: "11px", color: "rgba(255,255,255,0.3)", marginTop: "2px" } }, `${albumCount}/10 records used`)
+      ),
+      /*#__PURE__*/React.createElement("button", {
+        onClick: () => { window.location.href = "/library?upgrade=true"; },
+        style: { background: "linear-gradient(135deg,#d4a846,#c9807a)", color: "#080810", border: "none", borderRadius: "50px", padding: "7px 14px", fontSize: "12px", fontWeight: "700", cursor: "pointer", fontFamily: "inherit", whiteSpace: "nowrap" }
+      }, "Upgrade →")
+    ),
+    /*#__PURE__*/React.createElement("div", { style: { width: "100%", height: "3px", borderRadius: "2px", background: "rgba(255,255,255,0.08)", overflow: "hidden" } },
+      /*#__PURE__*/React.createElement("div", { style: { height: "100%", borderRadius: "2px", background: albumCount >= 8 ? "#c9807a" : "#d4a846", width: `${Math.min(100, (albumCount / 10) * 100)}%`, transition: "width 0.4s ease" } })
+    )
+  ) : null,
+
+  /*#__PURE__*/React.createElement("div", {
     style: {
       background: "rgba(255,255,255,0.03)",
       border: "1px solid rgba(255,255,255,0.07)",

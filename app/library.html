@@ -624,9 +624,14 @@
 
       // ── Auth ──
       useEffect(() => {
-        // Handle post-checkout redirect
-        if (new URLSearchParams(window.location.search).get("checkout_success") === "true") {
+        // Handle URL params on load
+        const params = new URLSearchParams(window.location.search);
+        if (params.get("checkout_success") === "true") {
           setCheckoutSuccess(true);
+          window.history.replaceState({}, "", window.location.pathname);
+        }
+        if (params.get("upgrade") === "true") {
+          setShowUpgrade(true);
           window.history.replaceState({}, "", window.location.pathname);
         }
 
