@@ -9,7 +9,7 @@ if (typeof supabase === 'undefined') {
   throw new Error('Supabase not loaded');
 }
 const sb = supabase.createClient("https://xjdjpaxgymgbvcwmvorc.supabase.co", "sb_publishable_C-NBnfg0ltAoUi46XQTUjA_ozjZW_Nd");
-const APP_VERSION = "1.145";
+const APP_VERSION = "1.146";
 const TRANSCRIBE_PROXY = window.Capacitor ? "https://getliri.com/api/transcribe"    : "/api/transcribe";
 const IDENTIFY_PROXY = window.Capacitor ? "https://getliri.com/api/identify-lyrics" : "/api/identify-lyrics";
 const ITUNES_PROXY   = window.Capacitor ? "https://getliri.com/api/itunes-lookup"   : "/api/itunes-lookup";
@@ -1580,31 +1580,28 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
     const stop = () => {
       isActive = false;
       clearInterval(pulseId);
+      try { recorder.stop(); } catch {}
       stream.getTracks().forEach(t => t.stop());
       try { socket.close(); } catch {}
     };
     speechRecRef.current = { stop };
 
     // ── Open Deepgram WebSocket — streaming, interim results, music-friendly ──
-    const dgUrl = `wss://api.deepgram.com/v1/listen?model=nova-2&language=en-US&interim_results=true&token=${dgToken}`;
-    const socket = new WebSocket(dgUrl);
+    // Auth via subprotocol — browser WebSocket can't send headers
+    const dgUrl = "wss://api.deepgram.com/v1/listen?model=nova-2&language=en-US&interim_results=true";
+    const socket = new WebSocket(dgUrl, ["token", dgToken]);
+
+    // Use MediaRecorder — simplest reliable audio source for Deepgram
+    // webm (Chrome) or mp4 (Safari) — Deepgram auto-detects both
+    const mimeType = MediaRecorder.isTypeSupported("audio/webm") ? "audio/webm" : "audio/mp4";
+    const recorder = new MediaRecorder(stream, { mimeType });
+    recorder.addEventListener("dataavailable", (e) => {
+      if (e.data.size > 0 && socket.readyState === WebSocket.OPEN) socket.send(e.data);
+    });
 
     socket.onopen = () => {
-      console.log("[dg] connected");
-      // ── Stream mic audio to Deepgram as raw PCM ──
-      const audioContext = new (window.AudioContext || window.webkitAudioContext)();
-      const source = audioContext.createMediaStreamSource(stream);
-      const processor = audioContext.createScriptProcessor(4096, 1, 1);
-      source.connect(processor);
-      processor.connect(audioContext.destination);
-      processor.onaudioprocess = (e) => {
-        if (!isActive || socket.readyState !== WebSocket.OPEN) return;
-        const f32 = e.inputBuffer.getChannelData(0);
-        // Convert float32 → int16 PCM for Deepgram
-        const i16 = new Int16Array(f32.length);
-        for (let i = 0; i < f32.length; i++) i16[i] = Math.max(-32768, Math.min(32767, f32[i] * 32768));
-        socket.send(i16.buffer);
-      };
+      console.log("[dg] connected, mimeType:", mimeType);
+      recorder.start(250); // send a chunk every 250ms
     };
 
     socket.onmessage = (e) => {
