@@ -9,7 +9,7 @@ if (typeof supabase === 'undefined') {
   throw new Error('Supabase not loaded');
 }
 const sb = supabase.createClient("https://xjdjpaxgymgbvcwmvorc.supabase.co", "sb_publishable_C-NBnfg0ltAoUi46XQTUjA_ozjZW_Nd");
-const APP_VERSION = "1.140";
+const APP_VERSION = "1.141";
 const TRANSCRIBE_PROXY = window.Capacitor ? "https://getliri.com/api/transcribe"    : "/api/transcribe";
 const IDENTIFY_PROXY = window.Capacitor ? "https://getliri.com/api/identify-lyrics" : "/api/identify-lyrics";
 const ITUNES_PROXY   = window.Capacitor ? "https://getliri.com/api/itunes-lookup"   : "/api/itunes-lookup";
@@ -1508,27 +1508,7 @@ function Liri() {
   // Instead of recording + sending to ACRCloud/Whisper, we use the Web Speech API
   // to transcribe words in real time and match them against the known lyrics.
   // No server calls, no delays — match fires the moment enough words are recognised.
-  // ── Coqui STT initialization (one-time, global) ──
-  let coquiModel = null;
-  const initCoqui = async () => {
-    if (coquiModel) return coquiModel;
-    try {
-      console.log("[coqui] loading model...");
-      const { CoquiSTT } = window;
-      if (!CoquiSTT) {
-        throw new Error("Coqui STT library not loaded");
-      }
-      // Load pre-trained English model from jsDelivr CDN
-      coquiModel = await CoquiSTT.loadModel("https://cdn.jsdelivr.net/npm/coqui-stt-client@1.0.0/model.tflite", "https://cdn.jsdelivr.net/npm/coqui-stt-client@1.0.0/alphabet.txt");
-      console.log("[coqui] model loaded");
-      return coquiModel;
-    } catch (e) {
-      console.error("[coqui] init failed:", e);
-      throw e;
-    }
-  };
-
-  const startListeningSpeech = async (isAutoAdvance = false) => {
+const startListeningSpeech = async (isAutoAdvance = false) => {
     clearInterval(progressTimerRef.current);
     const session = ++listenSessionRef.current;
     attemptLogRef.current = [];
@@ -1543,13 +1523,8 @@ function Liri() {
     clearInterval(syncIntervalRef.current);
 
     const tracks = turntableTracksRef.current;
-    if (!tracks.length) {
-      setError("Album tracks still loading — try again in a moment.");
-      setMode("error");
-      return;
-    }
+    if (!tracks.length) { setError("Album tracks still loading — try again in a moment."); setMode("error"); return; }
 
-    // Build wordsData from cached lyrics
     const lrcCache = turntableLyricsCacheRef.current;
     const wordsData = {};
     for (const track of tracks) {
@@ -1567,111 +1542,129 @@ function Liri() {
       }
       wordsData[track.trackId] = { words, lrc_raw: entry.lrc_raw, lyrics_plain: entry.lyrics_plain };
     }
-
-    const tracksWithWordData = Object.values(wordsData).filter(d => d.words?.length > 0);
-    if (!tracksWithWordData.length) {
+    if (!Object.values(wordsData).some(d => d.words?.length > 0)) {
       setError("No lyric data for this album — remove it from your library and re-add it to refresh.");
-      setMode("error");
-      return;
+      setMode("error"); return;
     }
     wordsDataRef.current = wordsData;
 
-    // ── Initialize Coqui STT ──
-    let model;
+    const isNative = !!window.Capacitor?.isNativePlatform?.();
+
+    // ── Get a short-lived Deepgram token from our backend ──
+    let dgToken;
     try {
-      model = await initCoqui();
+      const tokenRes = await fetch("/api/deepgram-token", { method: "POST" });
+      if (!tokenRes.ok) throw new Error("token fetch failed");
+      ({ token: dgToken } = await tokenRes.json());
     } catch (e) {
-      setError("Coqui STT model failed to load. Try refreshing the page.");
-      setMode("error");
-      return;
+      setError("Could not connect to transcription service. Try again in a moment.");
+      setMode("error"); return;
     }
 
-    const isNative = !!window.Capacitor?.isNativePlatform?.();
+    // ── Open mic ──
     let stream;
     try {
       stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-    } catch (e) {
+    } catch {
       setError(isNative ? "Microphone blocked. Go to Settings → Liri → Microphone to allow access." : "Microphone blocked — check your browser's site permissions and try again.");
-      setMode("error");
-      return;
+      setMode("error"); return;
     }
 
     const MIN_SCORE = 3;
     let fullTranscript = "";
     let isActive = true;
 
-    const pulseId = setInterval(() => {
-      setAudioLevel(0.15 + Math.sin(Date.now() / 400) * 0.1);
-    }, 80);
-
+    const pulseId = setInterval(() => setAudioLevel(0.15 + Math.sin(Date.now() / 400) * 0.1), 80);
     recordingStartRef.current = Date.now();
-    speechRecRef.current = { stop: () => { isActive = false; stream.getTracks().forEach(t => t.stop()); } };
 
-    // ── Stream audio to Coqui in real-time ──
-    const audioContext = new (window.AudioContext || window.webkitAudioContext)();
-    const source = audioContext.createMediaStreamSource(stream);
-    const processor = audioContext.createScriptProcessor(4096, 1, 1);
-    source.connect(processor);
-    processor.connect(audioContext.destination);
+    const stop = () => {
+      isActive = false;
+      clearInterval(pulseId);
+      stream.getTracks().forEach(t => t.stop());
+      try { socket.close(); } catch {}
+    };
+    speechRecRef.current = { stop };
 
-    processor.onaudioprocess = (event) => {
+    // ── Open Deepgram WebSocket — streaming, interim results, music-friendly ──
+    const dgUrl = `wss://api.deepgram.com/v1/listen?model=nova-2&language=en-US&interim_results=true&smart_format=true&token=${dgToken}`;
+    const socket = new WebSocket(dgUrl);
+
+    socket.onopen = () => {
+      console.log("[dg] connected");
+      // ── Stream mic audio to Deepgram as raw PCM ──
+      const audioContext = new (window.AudioContext || window.webkitAudioContext)({ sampleRate: 16000 });
+      const source = audioContext.createMediaStreamSource(stream);
+      const processor = audioContext.createScriptProcessor(4096, 1, 1);
+      source.connect(processor);
+      processor.connect(audioContext.destination);
+      processor.onaudioprocess = (e) => {
+        if (!isActive || socket.readyState !== WebSocket.OPEN) return;
+        const f32 = e.inputBuffer.getChannelData(0);
+        // Convert float32 → int16 PCM for Deepgram
+        const i16 = new Int16Array(f32.length);
+        for (let i = 0; i < f32.length; i++) i16[i] = Math.max(-32768, Math.min(32767, f32[i] * 32768));
+        socket.send(i16.buffer);
+      };
+    };
+
+    socket.onmessage = (e) => {
       if (!isActive || listenSessionRef.current !== session || recognitionWonRef.current) return;
       try {
-        const audio = event.inputBuffer.getChannelData(0);
-        // Feed audio to Coqui model and get result
-        const result = model.feedAudioContent(audio);
-        if (result) {
-          fullTranscript += result.transcript + " ";
-          const combined = fullTranscript.trim();
-          setLiveTranscript(combined);
-          const wordCount = combined.split(/\s+/).filter(Boolean).length;
-          setListenProgress(Math.min(wordCount / 12, 0.95));
-          setAudioLevel(0.4 + Math.random() * 0.3);
+        const data = JSON.parse(e.data);
+        const transcript = data?.channel?.alternatives?.[0]?.transcript || "";
+        if (!transcript) return;
+        if (data.is_final) fullTranscript += transcript + " ";
+        const combined = (fullTranscript + (data.is_final ? "" : transcript)).trim();
+        setLiveTranscript(combined);
+        const wordCount = combined.split(/\s+/).filter(Boolean).length;
+        setListenProgress(Math.min(wordCount / 12, 0.95));
+        setAudioLevel(0.4 + Math.random() * 0.3);
+        if (wordCount < MIN_SCORE) return;
+        const vmResult = matchTranscriptToTracks(combined, tracks, wordsData, attemptLogRef.current);
+        if (!vmResult || vmResult.score < MIN_SCORE || recognitionWonRef.current) return;
+        recognitionWonRef.current = true;
+        stop();
+        const { track, lyrics, startPos } = vmResult;
+        const ta = turntableAlbumRef.current;
+        const matchedIdx = tracks.findIndex(t => t.trackName?.toLowerCase() === track.trackName?.toLowerCase());
+        turntableMatchedIdxRef.current = matchedIdx >= 0 ? matchedIdx : (track.trackNumber ? track.trackNumber - 1 : 0);
+        const song = { title: track.trackName, artist: track.artistName || ta?.artist_name || "", album: ta?.album_name || "", artwork: ta?.artwork_url || null };
+        setIdentifiedBy("speech");
+        detectedAtRef.current = Date.now();
+        const _recStart = recordingStartRef.current || Date.now();
+        const _elapsed = (Date.now() - _recStart) / 1000;
+        const _phraseOffset = vmResult.totalWords > 0 ? Math.min(vmResult.phraseWordStart / vmResult.totalWords * _elapsed, _elapsed / 2) : 0;
+        syncCalcRef.current = { startPos, phraseOffset: _phraseOffset, recStart: _recStart };
+        initialPosRef.current = startPos;
+        autoAdvanceFiredRef.current = false;
+        autoRetryCountRef.current = 0;
+        setDetectedSong(song);
+        setSongDuration(track.trackTimeMillis ? track.trackTimeMillis / 1000 : null);
+        setLyrics(lyrics);
+        lyricsRef.current = lyrics;
+        setMode("confirmed");
+        saveToHistory(user, song);
+        fetchHistory(user);
+        logListeningEvent({ userId: user?.id, title: track.trackName, artist: track.artistName || ta?.artist_name || "", album: ta?.album_name || "", artwork: ta?.artwork_url || null, itunesTrackId: track.trackId, collectionId: ta?.itunes_collection_id || track.collectionId, vinylReleaseId: null, vinylModeOn: true, source: "speech", offsetSecs: startPos, durationSecs: track.trackTimeMillis ? track.trackTimeMillis / 1000 : null });
+        const at = turntableTracksRef.current;
+        setAlbumTracks(at);
+        setAlbumCollectionId(ta?.itunes_collection_id ? String(ta.itunes_collection_id) : null);
+        const tIdx = at.findIndex(t => t.trackName?.toLowerCase() === track.trackName.toLowerCase());
+        setCurrentTrackIndex(tIdx >= 0 ? tIdx : 0);
+      } catch (err) { console.error("[dg] message error:", err); }
+    };
 
-          if (wordCount >= MIN_SCORE) {
-            const vmResult = matchTranscriptToTracks(combined, tracks, wordsData, attemptLogRef.current);
-            if (vmResult && vmResult.score >= MIN_SCORE && !recognitionWonRef.current) {
-              recognitionWonRef.current = true;
-              isActive = false;
-              clearInterval(pulseId);
-              stream.getTracks().forEach(t => t.stop());
-              audioContext.close().catch(() => {});
-              const { track, lyrics, startPos } = vmResult;
-              const ta = turntableAlbumRef.current;
-              const matchedIdx = tracks.findIndex(t => t.trackName?.toLowerCase() === track.trackName?.toLowerCase());
-              turntableMatchedIdxRef.current = matchedIdx >= 0 ? matchedIdx : (track.trackNumber ? track.trackNumber - 1 : 0);
-              const song = { title: track.trackName, artist: track.artistName || ta?.artist_name || "", album: ta?.album_name || "", artwork: ta?.artwork_url || null };
-              setIdentifiedBy("speech");
-              detectedAtRef.current = Date.now();
-              const _recStart = recordingStartRef.current || Date.now();
-              const _elapsed = (Date.now() - _recStart) / 1000;
-              const _phraseOffset = vmResult.totalWords > 0 ? Math.min(vmResult.phraseWordStart / vmResult.totalWords * _elapsed, _elapsed / 2) : 0;
-              syncCalcRef.current = { startPos, phraseOffset: _phraseOffset, recStart: _recStart };
-              initialPosRef.current = startPos;
-              autoAdvanceFiredRef.current = false;
-              autoRetryCountRef.current = 0;
-              setDetectedSong(song);
-              setSongDuration(track.trackTimeMillis ? track.trackTimeMillis / 1000 : null);
-              setLyrics(lyrics);
-              lyricsRef.current = lyrics;
-              setMode("confirmed");
-              saveToHistory(user, song);
-              fetchHistory(user);
-              logListeningEvent({ userId: user?.id, title: track.trackName, artist: track.artistName || ta?.artist_name || "", album: ta?.album_name || "", artwork: ta?.artwork_url || null, itunesTrackId: track.trackId, collectionId: ta?.itunes_collection_id || track.collectionId, vinylReleaseId: null, vinylModeOn: true, source: "speech", offsetSecs: startPos, durationSecs: track.trackTimeMillis ? track.trackTimeMillis / 1000 : null });
-              const at = turntableTracksRef.current;
-              setAlbumTracks(at);
-              setAlbumCollectionId(ta?.itunes_collection_id ? String(ta.itunes_collection_id) : null);
-              const tIdx = at.findIndex(t => t.trackName?.toLowerCase() === track.trackName.toLowerCase());
-              setCurrentTrackIndex(tIdx >= 0 ? tIdx : 0);
-            }
-          }
-        }
-      } catch (e) {
-        console.error("[coqui] audio processing error:", e);
+    socket.onerror = (e) => { console.error("[dg] socket error:", e); };
+    socket.onclose = (e) => {
+      console.log("[dg] closed", e.code);
+      if (isActive && !recognitionWonRef.current && listenSessionRef.current === session) {
+        setError("Transcription connection dropped. Try again.");
+        setMode("error");
+        stop();
       }
     };
   };
-  const startListening = async (isAutoAdvance = false) => {
+    const startListening = async (isAutoAdvance = false) => {
     if (!turntableAlbumRef.current) {
       setError("Select an album first.");
       setMode("error");
