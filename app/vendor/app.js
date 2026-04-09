@@ -9,7 +9,7 @@ if (typeof supabase === 'undefined') {
   throw new Error('Supabase not loaded');
 }
 const sb = supabase.createClient("https://xjdjpaxgymgbvcwmvorc.supabase.co", "sb_publishable_C-NBnfg0ltAoUi46XQTUjA_ozjZW_Nd");
-const APP_VERSION = "1.146";
+const APP_VERSION = "1.147";
 const TRANSCRIBE_PROXY = window.Capacitor ? "https://getliri.com/api/transcribe"    : "/api/transcribe";
 const IDENTIFY_PROXY = window.Capacitor ? "https://getliri.com/api/identify-lyrics" : "/api/identify-lyrics";
 const ITUNES_PROXY   = window.Capacitor ? "https://getliri.com/api/itunes-lookup"   : "/api/itunes-lookup";
@@ -1596,6 +1596,7 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
     const mimeType = MediaRecorder.isTypeSupported("audio/webm") ? "audio/webm" : "audio/mp4";
     const recorder = new MediaRecorder(stream, { mimeType });
     recorder.addEventListener("dataavailable", (e) => {
+      console.log("[dg] chunk:", e.data.size, "bytes, ws:", socket.readyState);
       if (e.data.size > 0 && socket.readyState === WebSocket.OPEN) socket.send(e.data);
     });
 
@@ -1605,6 +1606,7 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
     };
 
     socket.onmessage = (e) => {
+      console.log("[dg] msg:", e.data.slice(0, 120));
       if (!isActive || listenSessionRef.current !== session || recognitionWonRef.current) return;
       try {
         const data = JSON.parse(e.data);
