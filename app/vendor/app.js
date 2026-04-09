@@ -9,7 +9,7 @@ if (typeof supabase === 'undefined') {
   throw new Error('Supabase not loaded');
 }
 const sb = supabase.createClient("https://xjdjpaxgymgbvcwmvorc.supabase.co", "sb_publishable_C-NBnfg0ltAoUi46XQTUjA_ozjZW_Nd");
-const APP_VERSION = "1.157";
+const APP_VERSION = "1.158";
 const TRANSCRIBE_PROXY = window.Capacitor ? "https://getliri.com/api/transcribe"    : "/api/transcribe";
 const IDENTIFY_PROXY = window.Capacitor ? "https://getliri.com/api/identify-lyrics" : "/api/identify-lyrics";
 const ITUNES_PROXY   = window.Capacitor ? "https://getliri.com/api/itunes-lookup"   : "/api/itunes-lookup";
@@ -183,13 +183,13 @@ function WaveAnimation({
         // with the beat. High-freq bins flicker too fast and cause jitter.
         // Average 2 adjacent bins per bar to further reduce noise.
         const firstBin = 1,
-          lastBin = Math.min(bins - 2, 22);
+          lastBin = Math.min(bins - 2, 12); // focus on kick+bass freqs only (~43–516Hz at fftSize=1024)
         BAR_MULTS.forEach((mult, i) => {
           const binIdx = Math.round(firstBin + i / (n - 1) * (lastBin - firstBin));
           const raw = (freqBuf[binIdx] + freqBuf[binIdx + 1]) / 2 / 255;
           const prev = smoothRef.current[i];
-          smoothRef.current[i] = raw > prev ? prev + (raw - prev) * 0.2 // gentle attack — no jitter
-          : prev * 0.94; // slow, smooth release
+          smoothRef.current[i] = raw > prev ? prev + (raw - prev) * 0.4 // faster attack — reacts to beat
+          : prev * 0.88; // faster decay — shows beat dropoff cleanly
           const h = Math.max(4, Math.pow(smoothRef.current[i], 0.38) * 60 * mult) * size;
           if (barRefs.current[i]) barRefs.current[i].style.height = h + "px";
         });
@@ -1607,6 +1607,21 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
     let isActive = true;
     let currentRecorder = null;
 
+    // Tap AnalyserNode from mic stream so WaveAnimation reacts to actual beat
+    // Wrapped in try/catch — iOS may not support AudioContext in this context
+    try {
+      if (audioCtxRef.current) { audioCtxRef.current.close().catch(() => {}); }
+      const actx = new (window.AudioContext || window.webkitAudioContext)();
+      if (actx.state === "suspended") actx.resume().catch(() => {});
+      const src = actx.createMediaStreamSource(stream);
+      const analyser = actx.createAnalyser();
+      analyser.fftSize = 1024; // ~43Hz/bin — captures kick drum + bass clearly
+      analyser.smoothingTimeConstant = 0.75;
+      src.connect(analyser);
+      analyserNodeRef.current = analyser;
+      audioCtxRef.current = actx;
+    } catch (e) {}
+
     const pulseId = setInterval(() => setAudioLevel(0.15 + Math.sin(Date.now() / 400) * 0.1), 80);
     recordingStartRef.current = Date.now();
 
@@ -1615,6 +1630,9 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
       clearInterval(pulseId);
       try { currentRecorder?.stop(); } catch {}
       stream.getTracks().forEach(t => t.stop());
+      try { audioCtxRef.current?.close(); } catch {}
+      analyserNodeRef.current = null;
+      audioCtxRef.current = null;
     };
     speechRecRef.current = { stop };
 
@@ -1627,7 +1645,10 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
     const onChunkText = (text, chunkEndTime = Date.now()) => {
       if (!text || !isActive || listenSessionRef.current !== session || recognitionWonRef.current) return;
       fullTranscript += (fullTranscript ? " " : "") + text.trim();
-      const combined = fullTranscript;
+      // Sliding window: only match against last 25 words so hallucinated
+      // words from long instrumental intros fall off when lyrics start
+      const allWords = fullTranscript.split(/\s+/).filter(Boolean);
+      const combined = allWords.slice(-25).join(" ");
       setLiveTranscript(combined);
       const wordCount = combined.split(/\s+/).filter(Boolean).length;
       setListenProgress(Math.min(wordCount / 12, 0.95));
