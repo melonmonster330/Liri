@@ -3863,6 +3863,125 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
       padding: "16px 18px",
       marginBottom: "16px"
     }
+  }, /*#__PURE__*/React.createElement("div", {
+    style: {
+      fontSize: "14px",
+      fontWeight: "600",
+      color: "#f0e6d3",
+      marginBottom: "12px"
+    }
+  }, "Flip reminders"), /*#__PURE__*/React.createElement("div", {
+    style: {
+      display: "flex",
+      alignItems: "center",
+      justifyContent: "space-between",
+      marginBottom: "14px"
+    }
+  }, /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("div", {
+    style: {
+      fontSize: "13px",
+      color: "#f0e6d3"
+    }
+  }, "Sound chime"), /*#__PURE__*/React.createElement("div", {
+    style: {
+      fontSize: "11px",
+      color: "rgba(255,255,255,0.3)",
+      marginTop: "2px"
+    }
+  }, "Plays a tone when it's time to flip")), /*#__PURE__*/React.createElement("div", {
+    onClick: () => {
+      const v = !flipSound;
+      setFlipSound(v);
+      localStorage.setItem("liri_flip_sound", String(v));
+    },
+    style: {
+      width: "40px",
+      height: "24px",
+      borderRadius: "12px",
+      background: flipSound ? "linear-gradient(135deg,#d4a846,#c9807a)" : "rgba(255,255,255,0.1)",
+      cursor: "pointer",
+      position: "relative",
+      transition: "background 0.2s",
+      flexShrink: 0
+    }
+  }, /*#__PURE__*/React.createElement("div", {
+    style: {
+      position: "absolute",
+      top: "3px",
+      left: flipSound ? "19px" : "3px",
+      width: "18px",
+      height: "18px",
+      borderRadius: "50%",
+      background: "white",
+      transition: "left 0.2s",
+      boxShadow: "0 1px 4px rgba(0,0,0,0.3)"
+    }
+  }))), /*#__PURE__*/React.createElement("div", {
+    style: {
+      display: "flex",
+      alignItems: "center",
+      justifyContent: "space-between"
+    }
+  }, /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("div", {
+    style: {
+      fontSize: "13px",
+      color: "#f0e6d3"
+    }
+  }, "Push notification"), /*#__PURE__*/React.createElement("div", {
+    style: {
+      fontSize: "11px",
+      color: "rgba(255,255,255,0.3)",
+      marginTop: "2px",
+      lineHeight: "1.5"
+    }
+  }, "Alerts you even when the screen is off")), /*#__PURE__*/React.createElement("div", {
+    onClick: () => {
+      if (!flipNotify) {
+        enableFlipNotify();
+      } else {
+        setFlipNotify(false);
+        localStorage.setItem("liri_flip_notify", "false");
+      }
+    },
+    style: {
+      width: "40px",
+      height: "24px",
+      borderRadius: "12px",
+      background: flipNotify ? "linear-gradient(135deg,#d4a846,#c9807a)" : "rgba(255,255,255,0.1)",
+      cursor: "pointer",
+      position: "relative",
+      transition: "background 0.2s",
+      flexShrink: 0
+    }
+  }, /*#__PURE__*/React.createElement("div", {
+    style: {
+      position: "absolute",
+      top: "3px",
+      left: flipNotify ? "19px" : "3px",
+      width: "18px",
+      height: "18px",
+      borderRadius: "50%",
+      background: "white",
+      transition: "left 0.2s",
+      boxShadow: "0 1px 4px rgba(0,0,0,0.3)"
+    }
+  }))), notifyDenied && /*#__PURE__*/React.createElement("div", {
+    style: {
+      fontSize: "11px",
+      color: "#e8a0a8",
+      marginTop: "8px",
+      lineHeight: "1.5"
+    }
+  }, "Notifications were blocked. Enable them in your browser settings.")),
+
+  /*#__PURE__*/React.createElement("div", {
+    style: {
+      background: "rgba(255,255,255,0.03)",
+      border: "1px solid rgba(255,255,255,0.07)",
+      borderRadius: "16px",
+      padding: "16px 18px",
+      marginBottom: "16px"
+    }
   }, /*#__PURE__*/React.createElement("a", {
     href: "/library",
     style: {
