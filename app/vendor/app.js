@@ -9,7 +9,7 @@ if (typeof supabase === 'undefined') {
   throw new Error('Supabase not loaded');
 }
 const sb = supabase.createClient("https://xjdjpaxgymgbvcwmvorc.supabase.co", "sb_publishable_C-NBnfg0ltAoUi46XQTUjA_ozjZW_Nd");
-const APP_VERSION = "1.156";
+const APP_VERSION = "1.157";
 const TRANSCRIBE_PROXY = window.Capacitor ? "https://getliri.com/api/transcribe"    : "/api/transcribe";
 const IDENTIFY_PROXY = window.Capacitor ? "https://getliri.com/api/identify-lyrics" : "/api/identify-lyrics";
 const ITUNES_PROXY   = window.Capacitor ? "https://getliri.com/api/itunes-lookup"   : "/api/itunes-lookup";
@@ -2165,10 +2165,10 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
           const { text } = await res.json();
           if (!text || matched) return;
           // Match against current track only — we know the song, just need position
-          const currentIdx = Math.max(0, currentTrackIndexRef.current);
-          const track = turntableTracksRef.current[currentIdx];
-          const searchTracks = track ? [track] : turntableTracksRef.current;
-          const result = matchTranscriptToTracks(text, searchTracks, wordsDataRef.current, null);
+          const currentIdx = currentTrackIndexRef.current;
+          const track = currentIdx >= 0 ? turntableTracksRef.current[currentIdx] : null;
+          if (!track) return; // no current track — never search the whole album on resync
+          const result = matchTranscriptToTracks(text, [track], wordsDataRef.current, null);
           if (!result) return;
           clearTimeout(giveUpTimer);
           stopResync();
