@@ -9,7 +9,7 @@ if (typeof supabase === 'undefined') {
   throw new Error('Supabase not loaded');
 }
 const sb = supabase.createClient("https://xjdjpaxgymgbvcwmvorc.supabase.co", "sb_publishable_C-NBnfg0ltAoUi46XQTUjA_ozjZW_Nd");
-const APP_VERSION = "1.153";
+const APP_VERSION = "1.154";
 const TRANSCRIBE_PROXY = window.Capacitor ? "https://getliri.com/api/transcribe"    : "/api/transcribe";
 const IDENTIFY_PROXY = window.Capacitor ? "https://getliri.com/api/identify-lyrics" : "/api/identify-lyrics";
 const ITUNES_PROXY   = window.Capacitor ? "https://getliri.com/api/itunes-lookup"   : "/api/itunes-lookup";
@@ -1185,10 +1185,10 @@ function Liri() {
     const lastLyricTime = lyrics.length > 0 ? lyrics[lyrics.length - 1].time : null;
     const effectiveDuration = songDuration ?? (lastLyricTime ? lastLyricTime + 30 : null);
     if (!effectiveDuration) return;
-    if (playbackTime >= effectiveDuration - 2 && !autoAdvanceFiredRef.current) {
+    if (playbackTime >= effectiveDuration && !autoAdvanceFiredRef.current) {
       autoAdvanceFiredRef.current = true;
-      // Small pause for the groove gap, then advance
-      setTimeout(() => setShouldAdvanceTrack(true), 3000);
+      // 1 second gap between songs before advancing
+      setTimeout(() => setShouldAdvanceTrack(true), 1000);
     }
   }, [playbackTime, songDuration, lyrics, vinylMode, mode]);
 
@@ -1203,7 +1203,7 @@ function Liri() {
     const lastLyricTime = lyrics.length > 0 ? lyrics[lyrics.length - 1].time : null;
     const effectiveDuration = songDuration ?? (lastLyricTime ? lastLyricTime + 30 : null);
     if (!effectiveDuration) return;
-    if (playbackTime >= effectiveDuration - 2 && !autoAdvanceFiredRef.current) {
+    if (playbackTime >= effectiveDuration && !autoAdvanceFiredRef.current) {
       autoAdvanceFiredRef.current = true;
       const dbRelease = vinylDbReleaseRef.current;
       const effectiveTps = albumTpsRef.current > 0 ? albumTpsRef.current : 0;
@@ -1223,10 +1223,10 @@ function Liri() {
           }
           if (detectedSong) setLastSong(detectedSong);
           setMode("side-end");
-        }, 3000);
+        }, 1000);
       } else {
         // Mid-side track: advance directly to next track
-        setTimeout(() => advanceToNextTrack(tTracks, tIdx), 3000);
+        setTimeout(() => advanceToNextTrack(tTracks, tIdx), 1000);
       }
     }
   }, [playbackTime, songDuration, lyrics, mode, vinylMode, turntableAlbum]);
