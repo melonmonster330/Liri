@@ -9,7 +9,7 @@ if (typeof supabase === 'undefined') {
   throw new Error('Supabase not loaded');
 }
 const sb = supabase.createClient("https://xjdjpaxgymgbvcwmvorc.supabase.co", "sb_publishable_C-NBnfg0ltAoUi46XQTUjA_ozjZW_Nd");
-const APP_VERSION = "1.149";
+const APP_VERSION = "1.150";
 const TRANSCRIBE_PROXY = window.Capacitor ? "https://getliri.com/api/transcribe"    : "/api/transcribe";
 const IDENTIFY_PROXY = window.Capacitor ? "https://getliri.com/api/identify-lyrics" : "/api/identify-lyrics";
 const ITUNES_PROXY   = window.Capacitor ? "https://getliri.com/api/itunes-lookup"   : "/api/itunes-lookup";
@@ -1588,7 +1588,7 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
 
     // ── Open Deepgram WebSocket — streaming, interim results, music-friendly ──
     // Auth via subprotocol — browser WebSocket can't send headers
-    const dgUrl = "wss://api.deepgram.com/v1/listen?model=nova-2&language=en-US&interim_results=true";
+    const dgUrl = "wss://api.deepgram.com/v1/listen?model=nova-2-video&language=en-US&interim_results=true";
     const socket = new WebSocket(dgUrl, ["token", dgToken]);
 
     // Use MediaRecorder — simplest reliable audio source for Deepgram
