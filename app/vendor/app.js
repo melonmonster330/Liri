@@ -9,7 +9,7 @@ if (typeof supabase === 'undefined') {
   throw new Error('Supabase not loaded');
 }
 const sb = supabase.createClient("https://xjdjpaxgymgbvcwmvorc.supabase.co", "sb_publishable_C-NBnfg0ltAoUi46XQTUjA_ozjZW_Nd");
-const APP_VERSION = "1.147";
+const APP_VERSION = "1.148";
 const TRANSCRIBE_PROXY = window.Capacitor ? "https://getliri.com/api/transcribe"    : "/api/transcribe";
 const IDENTIFY_PROXY = window.Capacitor ? "https://getliri.com/api/identify-lyrics" : "/api/identify-lyrics";
 const ITUNES_PROXY   = window.Capacitor ? "https://getliri.com/api/itunes-lookup"   : "/api/itunes-lookup";
@@ -1611,6 +1611,7 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
       try {
         const data = JSON.parse(e.data);
         const transcript = data?.channel?.alternatives?.[0]?.transcript || "";
+        console.log("[dg] transcript:", JSON.stringify(transcript), "final:", data.is_final);
         if (!transcript) return;
         if (data.is_final) fullTranscript += transcript + " ";
         const combined = (fullTranscript + (data.is_final ? "" : transcript)).trim();
