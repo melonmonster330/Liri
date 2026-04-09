@@ -1622,6 +1622,10 @@ function Liri() {
     rec.interimResults = true;
     rec.lang = "en-US";
     rec.maxAlternatives = 1;
+    // Chrome 139+: prefer on-device recognition model when available. Eliminates the
+    // Google-server round-trip (~300–800 ms) and makes interim results arrive in near
+    // real time. Silently ignored on older Chrome and all other browsers.
+    if ("ondevice" in rec) rec.ondevice = true;
 
     let finalTranscript = "";
     // stuckTimer / stuckCount: detect the "mic open but silent" bug that occurs on cold
@@ -1631,6 +1635,50 @@ function Liri() {
     // up and show an actionable error.
     let stuckTimer = null;
     let stuckCount = 0;
+
+    // Real-time mic level visualization via AudioContext + AnalyserNode.
+    // The speech API only fires onresult every ~300–800 ms, so driving setAudioLevel
+    // only from onresult makes the animation feel "batchy". By tapping the mic stream
+    // directly we get true 60 fps level updates regardless of when speech results arrive.
+    let vizAnimId = null;
+    const startViz = async () => {
+      try {
+        // Close any previous AudioContext left over from resync
+        if (audioCtxRef.current) { try { audioCtxRef.current.close(); } catch {} }
+        const vizStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+        streamRef.current = vizStream; // reset() / cleanup will stop these tracks
+        const actx = new (window.AudioContext || window.webkitAudioContext)();
+        // iOS suspends AudioContext by default — resume immediately after creation
+        if (actx.state === "suspended") actx.resume().catch(() => {});
+        audioCtxRef.current = actx;
+        const analyser = actx.createAnalyser();
+        analyser.fftSize = 256;
+        analyser.smoothingTimeConstant = 0.8; // light smoothing so peaks feel snappy
+        actx.createMediaStreamSource(vizStream).connect(analyser);
+        analyserNodeRef.current = analyser;
+        const buf = new Uint8Array(analyser.frequencyBinCount);
+        const frame = () => {
+          if (!streamRef.current) return; // mic was stopped, bail out
+          analyser.getByteTimeDomainData(buf);
+          // Compute RMS amplitude from the waveform buffer (range 0..1)
+          let sum = 0;
+          for (let i = 0; i < buf.length; i++) { const v = (buf[i] / 128) - 1; sum += v * v; }
+          const rms = Math.sqrt(sum / buf.length);
+          // Scale so quiet speech (~0.02 RMS) shows as ~0.2, loud as ~1.0
+          setAudioLevel(Math.min(rms * 5 + 0.08, 1));
+          vizAnimId = requestAnimationFrame(frame);
+        };
+        vizAnimId = requestAnimationFrame(frame);
+      } catch { /* getUserMedia denied or unavailable — fall back to synthetic animation */ }
+    };
+    const stopViz = () => {
+      if (vizAnimId) { cancelAnimationFrame(vizAnimId); vizAnimId = null; }
+      streamRef.current?.getTracks().forEach(t => t.stop());
+      streamRef.current = null;
+      audioCtxRef.current?.close().catch(() => {});
+      audioCtxRef.current = null;
+      analyserNodeRef.current = null;
+    };
 
     // Pulse animation immediately so it doesn't feel frozen while mic warms up
     const pulseId = setInterval(() => {
@@ -1647,6 +1695,8 @@ function Liri() {
       // onresult accurate to the actual recording window, which is critical for the
       // phraseOffset formula below.
       recordingStartRef.current = Date.now();
+      // Kick off real-time audio level visualization now that the mic is confirmed open.
+      startViz();
       // Arm the stuck detector. Cleared immediately if onresult fires. If neither
       // onresult nor onend arrives in 15 s the recognition is silently dead — force
       // a stop so onend can restart it.
@@ -1656,6 +1706,7 @@ function Liri() {
         console.log("[rec] stuck — no audio after 15 s, attempt", stuckCount);
         if (stuckCount >= 3) {
           clearInterval(pulseId);
+          stopViz();
           setError(isNative
             ? "Couldn't access the microphone. Try closing and reopening the app."
             : "Mic opened but isn't capturing audio — try refreshing the page.");
@@ -1680,7 +1731,7 @@ function Liri() {
       setLiveTranscript(combined);
       const wordCount = combined.split(/\s+/).filter(Boolean).length;
       setListenProgress(Math.min(wordCount / 12, 0.95));
-      setAudioLevel(0.4 + Math.sin(Date.now() / 200) * 0.2 + Math.random() * 0.15);
+      // audioLevel is now driven by the real-time AudioContext rAF loop — no synthetic update needed here
       if (wordCount < MIN_SCORE) return;
       console.log("[match] transcript:", combined);
       const vmResult = matchTranscriptToTracks(combined, tracks, wordsData, attemptLogRef.current);
@@ -1690,6 +1741,7 @@ function Liri() {
       recognitionWonRef.current = true;
       try { rec.stop(); } catch {}
       clearInterval(pulseId);
+      stopViz();
       const { track, lyrics, startPos } = vmResult;
       const ta = turntableAlbumRef.current;
       const matchedIdx = tracks.findIndex(t => t.trackName?.toLowerCase() === track.trackName?.toLowerCase());
@@ -1754,6 +1806,7 @@ function Liri() {
       // here or we get a double-start race that can leave the mic silently dead.
       if (event.error === "no-speech") return;
       clearInterval(pulseId);
+      stopViz();
       if (!recognitionWonRef.current) {
         // isNative (Capacitor / iOS) vs web: each platform requires a different fix for
         // the user. On iOS the permission lives in the OS Settings app; on the web it's
@@ -1773,6 +1826,9 @@ function Liri() {
 
     rec.onend = () => {
       clearTimeout(stuckTimer);
+      // Stop the current viz stream before potentially restarting — the new onstart
+      // will call startViz() again, opening a fresh stream for the new session.
+      stopViz();
       console.log("[rec] onend — restarting:", !recognitionWonRef.current);
       if (recognitionWonRef.current || listenSessionRef.current !== session) return;
       try { rec.start(); } catch {}
