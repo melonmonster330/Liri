@@ -1636,48 +1636,40 @@ function Liri() {
     let stuckTimer = null;
     let stuckCount = 0;
 
-    // Real-time mic level visualization via AudioContext + AnalyserNode.
-    // The speech API only fires onresult every ~300–800 ms, so driving setAudioLevel
-    // only from onresult makes the animation feel "batchy". By tapping the mic stream
-    // directly we get true 60 fps level updates regardless of when speech results arrive.
+    // Smooth 60 fps animation that runs via rAF so it never looks frozen between
+    // speech results. Uses a synthetic idle "breathing" curve that spikes when
+    // onresult fires, then decays back — no second getUserMedia needed (opening a
+    // competing mic stream breaks speech recognition on iOS/WKWebView).
     let vizAnimId = null;
-    const startViz = async () => {
-      try {
-        // Close any previous AudioContext left over from resync
-        if (audioCtxRef.current) { try { audioCtxRef.current.close(); } catch {} }
-        const vizStream = await navigator.mediaDevices.getUserMedia({ audio: true });
-        streamRef.current = vizStream; // reset() / cleanup will stop these tracks
-        const actx = new (window.AudioContext || window.webkitAudioContext)();
-        // iOS suspends AudioContext by default — resume immediately after creation
-        if (actx.state === "suspended") actx.resume().catch(() => {});
-        audioCtxRef.current = actx;
-        const analyser = actx.createAnalyser();
-        analyser.fftSize = 256;
-        analyser.smoothingTimeConstant = 0.8; // light smoothing so peaks feel snappy
-        actx.createMediaStreamSource(vizStream).connect(analyser);
-        analyserNodeRef.current = analyser;
-        const buf = new Uint8Array(analyser.frequencyBinCount);
-        const frame = () => {
-          if (!streamRef.current) return; // mic was stopped, bail out
-          analyser.getByteTimeDomainData(buf);
-          // Compute RMS amplitude from the waveform buffer (range 0..1)
-          let sum = 0;
-          for (let i = 0; i < buf.length; i++) { const v = (buf[i] / 128) - 1; sum += v * v; }
-          const rms = Math.sqrt(sum / buf.length);
-          // Scale so quiet speech (~0.02 RMS) shows as ~0.2, loud as ~1.0
-          setAudioLevel(Math.min(rms * 5 + 0.08, 1));
-          vizAnimId = requestAnimationFrame(frame);
-        };
+    let vizLevel = 0.15;      // current displayed level, mutated by the frame loop
+    let vizPeak = 0.15;       // target level, spiked by onresult and decayed each frame
+    let vizActive = false;
+    const startViz = () => {
+      if (vizActive) return;
+      vizActive = true;
+      vizLevel = 0.15;
+      vizPeak = 0.15;
+      const frame = () => {
+        if (!vizActive) return;
+        const t = Date.now() / 1000;
+        // Idle breathing: gentle sine so the bar is never completely still
+        const idle = 0.12 + Math.sin(t * 1.8) * 0.05 + Math.sin(t * 3.1) * 0.02;
+        // Decay peak toward idle
+        vizPeak = Math.max(vizPeak * 0.88, idle);
+        // Smooth level toward peak (lag makes it look more natural)
+        vizLevel += (vizPeak - vizLevel) * 0.25;
+        setAudioLevel(vizLevel);
         vizAnimId = requestAnimationFrame(frame);
-      } catch { /* getUserMedia denied or unavailable — fall back to synthetic animation */ }
+      };
+      vizAnimId = requestAnimationFrame(frame);
+    };
+    const spikeViz = (amount) => {
+      // Called from onresult — spikes the level so the bar reacts to speech
+      vizPeak = Math.min(vizPeak + amount, 1);
     };
     const stopViz = () => {
+      vizActive = false;
       if (vizAnimId) { cancelAnimationFrame(vizAnimId); vizAnimId = null; }
-      streamRef.current?.getTracks().forEach(t => t.stop());
-      streamRef.current = null;
-      audioCtxRef.current?.close().catch(() => {});
-      audioCtxRef.current = null;
-      analyserNodeRef.current = null;
     };
 
     // Pulse animation immediately so it doesn't feel frozen while mic warms up
@@ -1696,10 +1688,8 @@ function Liri() {
       // phraseOffset formula below.
       recordingStartRef.current = Date.now();
       // Kick off real-time audio level visualization now that the mic is confirmed open.
-      // Guard: if we're restarting after a no-speech pause, the viz stream is still live —
-      // don't re-open getUserMedia (hardware may not have released yet and the call
-      // would fail silently, leaving the animation frozen on second+ restart).
-      if (!streamRef.current) startViz();
+      // startViz() is idempotent (guards with vizActive) so safe to call on every onstart.
+      startViz();
       // Arm the stuck detector. Cleared immediately if onresult fires. If neither
       // onresult nor onend arrives in 15 s the recognition is silently dead — force
       // a stop so onend can restart it.
@@ -1734,7 +1724,8 @@ function Liri() {
       setLiveTranscript(combined);
       const wordCount = combined.split(/\s+/).filter(Boolean).length;
       setListenProgress(Math.min(wordCount / 12, 0.95));
-      // audioLevel is now driven by the real-time AudioContext rAF loop — no synthetic update needed here
+      // Spike the viz level so the bar visibly reacts when words arrive
+      spikeViz(0.25 + Math.random() * 0.2);
       if (wordCount < MIN_SCORE) return;
       console.log("[match] transcript:", combined);
       const vmResult = matchTranscriptToTracks(combined, tracks, wordsData, attemptLogRef.current);
@@ -1835,9 +1826,8 @@ function Liri() {
         stopViz();
         return;
       }
-      // Restarting after a pause (no-speech, etc.) — keep the viz stream alive so
-      // we don't have to re-open getUserMedia on every restart cycle. onstart will
-      // skip startViz() if streamRef.current is still set.
+      // Restarting after a pause — keep viz running, onstart will call startViz()
+      // which is idempotent and won't open a second mic stream.
       try { rec.start(); } catch {}
     };
 
