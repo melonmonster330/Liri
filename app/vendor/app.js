@@ -9,10 +9,11 @@ if (typeof supabase === 'undefined') {
   throw new Error('Supabase not loaded');
 }
 const sb = supabase.createClient("https://xjdjpaxgymgbvcwmvorc.supabase.co", "sb_publishable_C-NBnfg0ltAoUi46XQTUjA_ozjZW_Nd");
-const APP_VERSION = "1.154";
+const APP_VERSION = "1.155";
 const TRANSCRIBE_PROXY = window.Capacitor ? "https://getliri.com/api/transcribe"    : "/api/transcribe";
 const IDENTIFY_PROXY = window.Capacitor ? "https://getliri.com/api/identify-lyrics" : "/api/identify-lyrics";
 const ITUNES_PROXY   = window.Capacitor ? "https://getliri.com/api/itunes-lookup"   : "/api/itunes-lookup";
+const WHISPER_PROXY  = window.Capacitor ? "https://getliri.com/api/whisper"         : "/api/whisper";
 // Register native audio plugin so Capacitor.Plugins.NativeAudio is available in JS.
 // This must happen before the React tree mounts (top-level, synchronous).
 const _nativeAudioPlugin = (() => {
@@ -1658,7 +1659,7 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
         if (e.data.size < 1000) return; // skip empty/partial blobs
         const chunkEndTime = Date.now(); // capture before async API call
         try {
-          const res = await fetch("/api/whisper", {
+          const res = await fetch(WHISPER_PROXY, {
             method: "POST",
             headers: { "Content-Type": mimeType },
             body: e.data,
@@ -2105,146 +2106,75 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
   };
 
   // ── Resync: re-listen briefly to fix timing without changing the song ──
-  // Uses Whisper transcription + word-overlap match against already-loaded lyrics.
-  // Never calls ACR — that can identify a different song entirely.
+  // Same 1.75s overlapping chunks as initial listen, matched only against the
+  // current track. Fires position update on first match, times out at 10s.
   const resync = async () => {
     if (isResyncing) return;
     setIsResyncing(true);
+
+    let stream;
     try {
-      const stream = await navigator.mediaDevices.getUserMedia({
-        audio: {
-          echoCancellation: false,
-          noiseSuppression: false
-        }
-      });
-      // Tap an analyser so the wave animation has real frequency data during resync
-      try {
-        if (audioCtxRef.current) {
-          audioCtxRef.current.close().catch(() => {});
-        }
-        const actx = new (window.AudioContext || window.webkitAudioContext)();
-        // iOS starts AudioContext suspended — resume immediately
-        if (actx.state === "suspended") actx.resume().catch(() => {});
-        const src = actx.createMediaStreamSource(stream);
-        const node = actx.createAnalyser();
-        node.fftSize = 256;
-        node.smoothingTimeConstant = 0.85;
-        src.connect(node);
-        analyserNodeRef.current = node;
-        audioCtxRef.current = actx;
-      } catch (e) {}
-      const preferredMime = MediaRecorder.isTypeSupported("audio/webm") ? "audio/webm" : MediaRecorder.isTypeSupported("audio/ogg") ? "audio/ogg" : MediaRecorder.isTypeSupported("audio/mp4") ? "audio/mp4" : "";
-      const recorder = preferredMime ? new MediaRecorder(stream, {
-        mimeType: preferredMime
-      }) : new MediaRecorder(stream);
-      const chunks = [];
-      recorder.ondataavailable = e => {
-        if (e.data.size > 0) chunks.push(e.data);
-      };
-      const resyncStart = Date.now();
-      recorder.start(1000); // 1s timeslice
-      await new Promise(resolve => setTimeout(resolve, 6000));
-      if (recorder.state === "recording") recorder.stop();
-      await new Promise(resolve => {
-        recorder.onstop = () => {
-          stream.getTracks().forEach(t => t.stop());
-          resolve();
-        };
-      });
-      const blob = new Blob(chunks, {
-        type: recorder.mimeType || "audio/webm"
-      });
-      const audio = await new Promise((resolve, reject) => {
-        const reader = new FileReader();
-        reader.onload = () => resolve(reader.result.split(",")[1]);
-        reader.onerror = () => reject(new Error("FileReader failed"));
-        reader.readAsDataURL(blob);
-      });
-      const whisperSentAt = Date.now();
-      const trHeaders2 = { "Content-Type": "application/json" };
-      if (sessionTokenRef.current) trHeaders2["Authorization"] = `Bearer ${sessionTokenRef.current}`;
-      const tr = await fetch(TRANSCRIBE_PROXY, {
-        method: "POST",
-        headers: trHeaders2,
-        body: JSON.stringify({
-          audio,
-          mimeType: blob.type || "audio/webm"
-        })
-      });
-      if (!tr.ok) {
-        setIsResyncing(false);
-        return;
-      }
-      const {
-        text: transcribed
-      } = await tr.json();
-      if (!transcribed || transcribed.trim().length < 4) {
-        setIsResyncing(false);
-        return;
-      }
-      const clipDuration = Math.max(0, (whisperSentAt - resyncStart) / 1000);
-      const totalElapsed = (Date.now() - resyncStart) / 1000;
-      let startPos = null,
-        phraseWordStart = 0,
-        totalWords = 1;
-
-      // In turntable mode: use the full matchTranscriptToTracks against the current track only.
-      // This gives an accurate phraseWordStart so the timing formula is as precise as initial ID.
-      if (turntableAlbumRef.current) {
-        const currentIdx = Math.max(0, currentTrackIndexRef.current);
-        const track = turntableTracksRef.current[currentIdx];
-        if (track) {
-          const result = matchTranscriptToTracks(transcribed, [track], wordsDataRef.current, attemptLogRef.current);
-          if (result) {
-            startPos = result.startPos;
-            phraseWordStart = result.phraseWordStart ?? 0;
-            totalWords = result.totalWords || 1;
-          }
-        }
-      }
-
-      // Fallback: word-overlap scan against already-parsed lyricsRef.current.
-      // phraseWordStart defaults to 0 so phraseOffset = 0 → use clipDuration/2 instead
-      // to avoid overshooting (the phrase is probably near the middle of the clip).
-      if (startPos === null) {
-        const norm = s => s.toLowerCase().replace(/[^\w\s]/g, "").replace(/\s+/g, " ").trim();
-        const words = norm(transcribed).split(" ").filter(Boolean);
-        totalWords = words.length || 1;
-        const lyr = lyricsRef.current;
-        if (lyr?.length >= 3 && words.length >= 3) {
-          let bestScore = 0;
-          for (let li = 0; li < lyr.length; li++) {
-            const win = lyr.slice(li, li + 4).flatMap(l => norm(l.text).split(" ").filter(Boolean));
-            let wi = 0,
-              score = 0;
-            for (const w of win) {
-              if (wi < words.length && words[wi] === w) {
-                score++;
-                wi++;
-              }
-            }
-            if (score > bestScore) {
-              bestScore = score;
-              startPos = lyr[li].time;
-            }
-          }
-          if (bestScore < 3) startPos = null;
-          // Use mid-clip as phrase offset estimate since we don't know where in the clip it was
-          phraseWordStart = Math.floor(totalWords / 2);
-        }
-      }
-      if (startPos !== null) {
-        const phraseOffset = phraseWordStart / totalWords * clipDuration;
-        syncCalcRef.current = null; // resync owns the position — don't let startSync overwrite it
-        initialPosRef.current = Math.max(0, startPos - phraseOffset + totalElapsed);
-        syncStartRef.current = Date.now();
-      }
+      stream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: false, noiseSuppression: false } });
     } catch (e) {
-      console.error("resync error:", e);
+      setIsResyncing(false);
+      return;
     }
-    setIsResyncing(false);
+
+    const mimeType = MediaRecorder.isTypeSupported("audio/webm") ? "audio/webm" : "audio/mp4";
+    let matched = false;
+    let currentRecorder = null;
+
+    const stopResync = () => {
+      matched = true;
+      try { currentRecorder?.stop(); } catch {}
+      stream.getTracks().forEach(t => t.stop());
+    };
+
+    // Give up after 10s if no match found
+    const giveUpTimer = setTimeout(() => {
+      if (!matched) stopResync();
+      setIsResyncing(false);
+    }, 10000);
+
+    const recordChunk = () => {
+      if (matched) return;
+      const recorder = new MediaRecorder(stream, { mimeType });
+      currentRecorder = recorder;
+      recorder.ondataavailable = async (e) => {
+        if (e.data.size < 1000 || matched) return;
+        const chunkEndTime = Date.now();
+        try {
+          const res = await fetch(WHISPER_PROXY, { method: "POST", headers: { "Content-Type": mimeType }, body: e.data });
+          if (!res.ok || matched) return;
+          const { text } = await res.json();
+          if (!text || matched) return;
+          // Match against current track only — we know the song, just need position
+          const currentIdx = Math.max(0, currentTrackIndexRef.current);
+          const track = turntableTracksRef.current[currentIdx];
+          const searchTracks = track ? [track] : turntableTracksRef.current;
+          const result = matchTranscriptToTracks(text, searchTracks, wordsDataRef.current, null);
+          if (!result) return;
+          clearTimeout(giveUpTimer);
+          stopResync();
+          // Same latency compensation as initial listen
+          const apiLatency = (Date.now() - chunkEndTime) / 1000;
+          initialPosRef.current = Math.max(0, result.startPos + apiLatency);
+          syncStartRef.current = Date.now();
+          syncCalcRef.current = null; // resync owns the position
+          setIsResyncing(false);
+        } catch (err) { console.error("[resync] chunk error:", err); }
+      };
+      recorder.start();
+      setTimeout(() => {
+        if (recorder.state === "recording") recorder.stop();
+        if (!matched) recordChunk();
+      }, 1750);
+    };
+
+    recordChunk();
   };
-  const reset = () => {
+
+    const reset = () => {
     clearInterval(syncIntervalRef.current);
     clearInterval(progressTimerRef.current);
     streamRef.current?.getTracks().forEach(t => t.stop());
@@ -3881,10 +3811,12 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
         /*#__PURE__*/React.createElement("div", { style: { fontSize: "13px", fontWeight: "600", color: "#f0e6d3" } }, "Free plan"),
         /*#__PURE__*/React.createElement("div", { style: { fontSize: "11px", color: "rgba(255,255,255,0.3)", marginTop: "2px" } }, `${albumCount}/10 records used`)
       ),
-      /*#__PURE__*/React.createElement("button", {
-        onClick: () => { window.location.href = "/library?upgrade=true"; },
-        style: { background: "linear-gradient(135deg,#d4a846,#c9807a)", color: "#080810", border: "none", borderRadius: "50px", padding: "7px 14px", fontSize: "12px", fontWeight: "700", cursor: "pointer", fontFamily: "inherit", whiteSpace: "nowrap" }
-      }, "Upgrade →")
+      window.Capacitor
+        ? /*#__PURE__*/React.createElement("div", { style: { fontSize: "11px", color: "rgba(255,255,255,0.4)", textAlign: "right" } }, "Subscribe at getliri.com")
+        : /*#__PURE__*/React.createElement("button", {
+            onClick: () => { window.location.href = "/library?upgrade=true"; },
+            style: { background: "linear-gradient(135deg,#d4a846,#c9807a)", color: "#080810", border: "none", borderRadius: "50px", padding: "7px 14px", fontSize: "12px", fontWeight: "700", cursor: "pointer", fontFamily: "inherit", whiteSpace: "nowrap" }
+          }, "Upgrade →")
     ),
     /*#__PURE__*/React.createElement("div", { style: { width: "100%", height: "3px", borderRadius: "2px", background: "rgba(255,255,255,0.08)", overflow: "hidden" } },
       /*#__PURE__*/React.createElement("div", { style: { height: "100%", borderRadius: "2px", background: albumCount >= 8 ? "#c9807a" : "#d4a846", width: `${Math.min(100, (albumCount / 10) * 100)}%`, transition: "width 0.4s ease" } })
@@ -5672,29 +5604,31 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
       lineHeight: "1.8",
       fontSize: "15px"
     }
-  }, "You've reached your 10 free records.", /*#__PURE__*/React.createElement("br", null), "Upgrade for an unlimited collection."), /*#__PURE__*/React.createElement("button", {
-    onClick: async () => {
-      const { data: { session } } = await sb.auth.getSession();
-      const token = session?.access_token || sessionTokenRef.current;
-      if (!token) return;
-      const res = await fetch("/api/stripe-checkout", { method: "POST", headers: { "Content-Type": "application/json", "Authorization": `Bearer ${token}` } });
-      const json = await res.json().catch(() => ({}));
-      if (json.url) window.location.href = json.url;
-    },
-    style: {
-      background: "linear-gradient(135deg,#d4a846,#c9807a)",
-      color: "#080810",
-      border: "none",
-      borderRadius: "50px",
-      padding: "14px 32px",
-      fontSize: "14px",
-      fontWeight: "700",
-      cursor: "pointer",
-      fontFamily: "inherit",
-      marginBottom: "12px",
-      width: "100%"
-    }
-  }, "Upgrade to Premium →"), /*#__PURE__*/React.createElement("button", {
+  }, "You've reached your 10 free records.", /*#__PURE__*/React.createElement("br", null), "Upgrade for an unlimited collection."), window.Capacitor
+    ? /*#__PURE__*/React.createElement("div", { style: { fontSize: "14px", color: "rgba(255,255,255,0.5)", marginBottom: "12px", padding: "14px 32px", textAlign: "center" } }, "Subscribe at getliri.com")
+    : /*#__PURE__*/React.createElement("button", {
+        onClick: async () => {
+          const { data: { session } } = await sb.auth.getSession();
+          const token = session?.access_token || sessionTokenRef.current;
+          if (!token) return;
+          const res = await fetch("/api/stripe-checkout", { method: "POST", headers: { "Content-Type": "application/json", "Authorization": `Bearer ${token}` } });
+          const json = await res.json().catch(() => ({}));
+          if (json.url) window.location.href = json.url;
+        },
+        style: {
+          background: "linear-gradient(135deg,#d4a846,#c9807a)",
+          color: "#080810",
+          border: "none",
+          borderRadius: "50px",
+          padding: "14px 32px",
+          fontSize: "14px",
+          fontWeight: "700",
+          cursor: "pointer",
+          fontFamily: "inherit",
+          marginBottom: "12px",
+          width: "100%"
+        }
+      }, "Upgrade to Premium →"), /*#__PURE__*/React.createElement("button", {
     onClick: () => setMode("idle"),
     style: {
       background: "none",
