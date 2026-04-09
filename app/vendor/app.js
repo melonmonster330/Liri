@@ -1696,7 +1696,10 @@ function Liri() {
       // phraseOffset formula below.
       recordingStartRef.current = Date.now();
       // Kick off real-time audio level visualization now that the mic is confirmed open.
-      startViz();
+      // Guard: if we're restarting after a no-speech pause, the viz stream is still live —
+      // don't re-open getUserMedia (hardware may not have released yet and the call
+      // would fail silently, leaving the animation frozen on second+ restart).
+      if (!streamRef.current) startViz();
       // Arm the stuck detector. Cleared immediately if onresult fires. If neither
       // onresult nor onend arrives in 15 s the recognition is silently dead — force
       // a stop so onend can restart it.
@@ -1826,11 +1829,15 @@ function Liri() {
 
     rec.onend = () => {
       clearTimeout(stuckTimer);
-      // Stop the current viz stream before potentially restarting — the new onstart
-      // will call startViz() again, opening a fresh stream for the new session.
-      stopViz();
       console.log("[rec] onend — restarting:", !recognitionWonRef.current);
-      if (recognitionWonRef.current || listenSessionRef.current !== session) return;
+      if (recognitionWonRef.current || listenSessionRef.current !== session) {
+        // Truly done (match won or session changed) — tear down viz
+        stopViz();
+        return;
+      }
+      // Restarting after a pause (no-speech, etc.) — keep the viz stream alive so
+      // we don't have to re-open getUserMedia on every restart cycle. onstart will
+      // skip startViz() if streamRef.current is still set.
       try { rec.start(); } catch {}
     };
 
