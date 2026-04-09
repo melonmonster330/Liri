@@ -9,7 +9,7 @@ if (typeof supabase === 'undefined') {
   throw new Error('Supabase not loaded');
 }
 const sb = supabase.createClient("https://xjdjpaxgymgbvcwmvorc.supabase.co", "sb_publishable_C-NBnfg0ltAoUi46XQTUjA_ozjZW_Nd");
-const APP_VERSION = "1.158";
+const APP_VERSION = "1.159";
 const TRANSCRIBE_PROXY = window.Capacitor ? "https://getliri.com/api/transcribe"    : "/api/transcribe";
 const IDENTIFY_PROXY = window.Capacitor ? "https://getliri.com/api/identify-lyrics" : "/api/identify-lyrics";
 const ITUNES_PROXY   = window.Capacitor ? "https://getliri.com/api/itunes-lookup"   : "/api/itunes-lookup";
@@ -167,30 +167,41 @@ function WaveAnimation({
       return;
     }
     let freqBuf = null;
+    let smoothedEnergy = 0; // single smoothed energy value driving wave amplitude
     const n = BAR_MULTS.length;
     const tick = () => {
       const an = analyserRef?.current;
       const now = Date.now();
       if (an) {
-        // ── Frequency bins (AnalyserNode) ──────────────────────────────────
+        // ── Energy-driven traveling wave (AnalyserNode) ─────────────────────
+        // Rather than mapping each bar to its own frequency bin (which causes
+        // block-jitter on beats), we compute ONE smoothed energy value from
+        // all bass/kick bins and use it as the amplitude of a sine wave that
+        // ripples across the bars. Result: a smooth wave whose height pulses
+        // with the beat.
         if (!freqBuf || freqBuf.length !== an.frequencyBinCount) {
           freqBuf = new Uint8Array(an.frequencyBinCount);
         }
         an.getByteFrequencyData(freqBuf);
-        const bins = freqBuf.length;
-        // Focus on bass + low-mids only (bins 1–22, roughly 170Hz–3.8kHz).
-        // These are the sustained, energy-rich frequencies that bounce smoothly
-        // with the beat. High-freq bins flicker too fast and cause jitter.
-        // Average 2 adjacent bins per bar to further reduce noise.
-        const firstBin = 1,
-          lastBin = Math.min(bins - 2, 12); // focus on kick+bass freqs only (~43–516Hz at fftSize=1024)
+        // Sum bass+kick bins (~43–600Hz at fftSize=1024) into one energy value
+        const firstBin = 1, lastBin = Math.min(freqBuf.length - 2, 14);
+        let sum = 0;
+        for (let b = firstBin; b <= lastBin; b++) sum += freqBuf[b];
+        const rawEnergy = sum / ((lastBin - firstBin + 1) * 255);
+        // Smooth energy: fast attack on beat hits, slow release so wave stays alive
+        smoothedEnergy += rawEnergy > smoothedEnergy
+          ? (rawEnergy - smoothedEnergy) * 0.3   // quick beat hit
+          : (rawEnergy - smoothedEnergy) * 0.05; // slow, graceful decay
+        // Traveling sine — each bar has a phase offset so motion ripples left→right
+        const t = now * 0.0022;
         BAR_MULTS.forEach((mult, i) => {
-          const binIdx = Math.round(firstBin + i / (n - 1) * (lastBin - firstBin));
-          const raw = (freqBuf[binIdx] + freqBuf[binIdx + 1]) / 2 / 255;
+          const phase = (i / (n - 1)) * Math.PI * 2.4;
+          const wave = (Math.sin(t + phase) + 1) / 2; // 0–1
+          const base = Math.max(0.07, smoothedEnergy);
+          const target = base * 0.45 + wave * base * 0.9 * mult;
           const prev = smoothRef.current[i];
-          smoothRef.current[i] = raw > prev ? prev + (raw - prev) * 0.4 // faster attack — reacts to beat
-          : prev * 0.88; // faster decay — shows beat dropoff cleanly
-          const h = Math.max(4, Math.pow(smoothRef.current[i], 0.38) * 60 * mult) * size;
+          smoothRef.current[i] = prev + (target - prev) * 0.09; // gentle per-bar smoothing
+          const h = Math.max(3, smoothRef.current[i] * 68) * size;
           if (barRefs.current[i]) barRefs.current[i].style.height = h + "px";
         });
       } else if (histRef.current.length > 0) {
@@ -1431,7 +1442,7 @@ function Liri() {
     // Why not higher? Longer runs mean the user has to hold the mic for longer before
     // anything happens, degrading perceived responsiveness. 4 words ≈ 1–2 seconds of
     // speech, which feels instant.
-    const MIN_RUN = 4;
+    const MIN_RUN = 3; // 3 consecutive fuzzy-matching words is enough within a single album
 
     // Scan all possible windows of length MIN_RUN upward through the transcript.
     // Stops at the SHORTEST run that satisfies BOTH:
@@ -1602,7 +1613,7 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
       setMode("error"); return;
     }
 
-    const MIN_SCORE = 3;
+    const MIN_SCORE = 2;
     let fullTranscript = "";
     let isActive = true;
     let currentRecorder = null;
@@ -1696,9 +1707,15 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
         if (e.data.size < 1000) return; // skip empty/partial blobs
         const chunkEndTime = Date.now(); // capture before async API call
         try {
+          const ta = turntableAlbumRef.current;
+          const whisperHeaders = { "Content-Type": mimeType };
+          if (ta?.artist_name || ta?.album_name) {
+            // Prompt helps Whisper recognise sung/melodic vocals as lyrics
+            whisperHeaders["X-Prompt"] = [ta.artist_name, ta.album_name].filter(Boolean).join(" - ");
+          }
           const res = await fetch(WHISPER_PROXY, {
             method: "POST",
-            headers: { "Content-Type": mimeType },
+            headers: whisperHeaders,
             body: e.data,
           });
           if (!res.ok) return;
