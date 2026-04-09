@@ -3150,7 +3150,7 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
       color: "#f0e6d3",
       marginBottom: "16px"
     }
-  }, "Vinyl Auto Mode"), /*#__PURE__*/React.createElement("p", {
+  }, "Auto Mode"), /*#__PURE__*/React.createElement("p", {
     style: {
       fontSize: "15px",
       color: "rgba(255,255,255,0.5)",
@@ -3158,11 +3158,7 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
       maxWidth: "280px",
       margin: "0 auto 32px"
     }
-  }, "Turn on ", /*#__PURE__*/React.createElement("strong", {
-    style: {
-      color: "#d4a846"
-    }
-  }, "Auto Mode"), " in Settings and Liri will automatically listen for the next track as each song ends \u2014 no tapping needed."), /*#__PURE__*/React.createElement("div", {
+  }, "Liri automatically listens for the next track as each song ends \u2014 no tapping needed."), /*#__PURE__*/React.createElement("div", {
     style: {
       background: "rgba(212,168,70,0.07)",
       border: "1px solid rgba(212,168,70,0.15)",
