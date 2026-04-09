@@ -9,7 +9,7 @@ if (typeof supabase === 'undefined') {
   throw new Error('Supabase not loaded');
 }
 const sb = supabase.createClient("https://xjdjpaxgymgbvcwmvorc.supabase.co", "sb_publishable_C-NBnfg0ltAoUi46XQTUjA_ozjZW_Nd");
-const APP_VERSION = "1.135";
+const APP_VERSION = "1.134";
 const TRANSCRIBE_PROXY = window.Capacitor ? "https://getliri.com/api/transcribe"    : "/api/transcribe";
 const IDENTIFY_PROXY = window.Capacitor ? "https://getliri.com/api/identify-lyrics" : "/api/identify-lyrics";
 const ITUNES_PROXY   = window.Capacitor ? "https://getliri.com/api/itunes-lookup"   : "/api/itunes-lookup";
@@ -292,7 +292,6 @@ function Liri() {
   const [error, setError] = useState(null);
   const [listenProgress, setListenProgress] = useState(0);
   const [liveTranscript, setLiveTranscript] = useState("");
-  const [micReady, setMicReady] = useState(false); // true only after rec.onstart fires — used to show "keep playing" during startup lag
   const [listenAttempt, setListenAttempt] = useState(0); // which rolling attempt we're on
   const [listenSecs, setListenSecs] = useState(0); // real-time seconds counter (UI only)
 
@@ -327,7 +326,9 @@ function Liri() {
   const isUnlimited = u => true; // recognition is now free — no API costs at listen time
 
   // ── Subscription tier — fetched from /api/subscription-status on login ──
-  const [userTier, setUserTier] = useState("free"); // "free" | "premium"
+  const [userTier, setUserTier]       = useState("free"); // "free" | "premium"
+  const [albumCount, setAlbumCount]   = useState(0);
+  const [upgradeWorking, setUpgradeWorking] = useState(false);
 
   // ── Auth token ref — kept current for API Authorization headers ──
   const sessionTokenRef = useRef(null);
@@ -776,7 +777,7 @@ function Liri() {
         fetchUsage(u);
         fetchHistory(u);
         fetch("/api/subscription-status", { headers: { "Authorization": `Bearer ${session.access_token}` } })
-          .then(r => r.ok ? r.json() : null).then(d => { if (d?.tier) setUserTier(d.tier); }).catch(() => {});
+          .then(r => r.ok ? r.json() : null).then(d => { if (d?.tier) { setUserTier(d.tier); setAlbumCount(d.albumCount || 0); } }).catch(() => {});
       }
     });
     const {
@@ -796,6 +797,22 @@ function Liri() {
     });
     return () => subscription.unsubscribe();
   }, []);
+  // ── Upgrade to Stripe Premium ──────────────────────────────────────────────
+  const upgradeToStripe = async () => {
+    setUpgradeWorking(true);
+    try {
+      const { data: { session: s } } = await sb.auth.getSession();
+      const token = s?.access_token || sessionTokenRef.current;
+      const res  = await fetch("/api/stripe-checkout", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "Authorization": `Bearer ${token}` },
+      });
+      const json = await res.json().catch(() => ({}));
+      if (json.url) { window.location.href = json.url; }
+      else { alert(json.error || "Could not start checkout. Please try again."); setUpgradeWorking(false); }
+    } catch { alert("Network error — please try again."); setUpgradeWorking(false); }
+  };
+
   const handleAuth = async () => {
     setAuthError(null);
     // ── Client-side validation ──
@@ -1451,36 +1468,6 @@ function Liri() {
       }
     }
 
-    // ── Fallback: scoring match ───────────────────────────────────────────────
-    // If no unique run found (common with music transcription — imperfect words,
-    // choruses appearing in multiple tracks), fall back to "most word hits" scoring.
-    // Only fires once we have >= 8 heard words to reduce false positives.
-    // Each track scores 1 point per heard word that appears anywhere in its lyrics.
-    // The track with the highest score wins IF it has >= 4 points AND is clearly
-    // ahead of the second-best (margin >= 2) to avoid ambiguous matches.
-    if (heardWords.length >= 8) {
-      const scores = tracksWithWords.map(t => {
-        const wordSet = new Set(t.wordArr);
-        const score = heardWords.filter(w => wordSet.has(w)).length;
-        return { track: t, score };
-      }).sort((a, b) => b.score - a.score);
-
-      const best = scores[0];
-      const second = scores[1];
-      if (best && best.score >= 4 && (!second || best.score - second.score >= 2)) {
-        const match = best.track;
-        // Use the first matching word's timestamp as startPos
-        const firstMatchWord = heardWords.find(w => match.wordArr.includes(w));
-        const wordIdx = firstMatchWord ? match.wordArr.indexOf(firstMatchWord) : 0;
-        const startPos = match.wordTimings[wordIdx]?.start_ms / 1000 || 0;
-        const lyrics = match.lrc_raw
-          ? parseLRC(match.lrc_raw)
-          : (match.lyrics_plain || "").split("\n").filter(l => l.trim()).map((text, i) => ({ time: i * 4, text }));
-        if (logRef) logRef.push(`match: scoring fallback → "${match.trackName}" (${best.score} hits, margin ${best.score - (second?.score || 0)})`);
-        return { track: match, lyrics, startPos, score: best.score, phraseWordStart: 0, totalWords: heardWords.length };
-      }
-    }
-
     if (logRef) logRef.push(`match: no unique run yet — keep listening`);
     return null;
   };
@@ -1529,7 +1516,6 @@ function Liri() {
     turntableMatchedIdxRef.current = -1;
     setError(null);
     setMode("listening");
-    setMicReady(false); // mic not open yet — show "keep playing" message until onstart fires
     setListenProgress(0);
     setLiveTranscript("");
     setListenAttempt(1);
@@ -1654,9 +1640,6 @@ function Liri() {
       // onresult accurate to the actual recording window, which is critical for the
       // phraseOffset formula below.
       recordingStartRef.current = Date.now();
-      // Update UI: mic is now truly open — replace the "keep playing" startup message
-      // with the normal listening state. This fires 10-20s after rec.start() on iOS.
-      setMicReady(true);
     };
 
     rec.onresult = (event) => {
@@ -3975,7 +3958,28 @@ function Liri() {
         marginTop: "2px"
       }
     }, userTier === "premium" ? "✦ Liri Premium" : "Free plan"))));
-  })(), /*#__PURE__*/React.createElement("div", {
+  })(),
+
+  /* ── Plan card ── */
+  userTier !== "premium" ? /*#__PURE__*/React.createElement("div", {
+    style: { background: "rgba(212,168,70,0.06)", border: "1px solid rgba(212,168,70,0.15)", borderRadius: "16px", padding: "14px 16px", marginBottom: "16px" }
+  },
+    /*#__PURE__*/React.createElement("div", { style: { display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: "10px" } },
+      /*#__PURE__*/React.createElement("div", null,
+        /*#__PURE__*/React.createElement("div", { style: { fontSize: "13px", fontWeight: "600", color: "#f0e6d3" } }, "Free plan"),
+        /*#__PURE__*/React.createElement("div", { style: { fontSize: "11px", color: "rgba(255,255,255,0.3)", marginTop: "2px" } }, `${albumCount}/10 records used`)
+      ),
+      /*#__PURE__*/React.createElement("button", {
+        onClick: () => { window.location.href = "/library?upgrade=true"; },
+        style: { background: "linear-gradient(135deg,#d4a846,#c9807a)", color: "#080810", border: "none", borderRadius: "50px", padding: "7px 14px", fontSize: "12px", fontWeight: "700", cursor: "pointer", fontFamily: "inherit", whiteSpace: "nowrap" }
+      }, "Upgrade →")
+    ),
+    /*#__PURE__*/React.createElement("div", { style: { width: "100%", height: "3px", borderRadius: "2px", background: "rgba(255,255,255,0.08)", overflow: "hidden" } },
+      /*#__PURE__*/React.createElement("div", { style: { height: "100%", borderRadius: "2px", background: albumCount >= 8 ? "#c9807a" : "#d4a846", width: `${Math.min(100, (albumCount / 10) * 100)}%`, transition: "width 0.4s ease" } })
+    )
+  ) : null,
+
+  /*#__PURE__*/React.createElement("div", {
     style: {
       background: "rgba(255,255,255,0.03)",
       border: "1px solid rgba(255,255,255,0.07)",
@@ -5435,12 +5439,12 @@ function Liri() {
       marginBottom: "10px",
       marginTop: !turntableAlbum && listenAttempt > MAX_ATTEMPTS ? "20px" : "0"
     }
-  }, !micReady ? "Keep playing!" : turntableAlbum ? "Finding your place…" : listenAttempt > MAX_ATTEMPTS ? "Matching by lyrics…" : "Listening…"), /*#__PURE__*/React.createElement("div", {
+  }, turntableAlbum ? "Finding your place…" : listenAttempt > MAX_ATTEMPTS ? "Matching by lyrics…" : "Listening…"), /*#__PURE__*/React.createElement("div", {
     style: {
       fontSize: "14px",
       color: "rgba(255,255,255,0.3)"
     }
-  }, !micReady ? "Mic starting up — don't stop the music" : turntableAlbum ? "Hold near your speakers" : listenAttempt > MAX_ATTEMPTS ? "Identifying by lyrics" : listenSecs === 0 ? "Hold near your speakers" : `${listenSecs}s — hold steady`), liveTranscript ? /*#__PURE__*/React.createElement("div", {
+  }, turntableAlbum ? "Hold near your speakers" : listenAttempt > MAX_ATTEMPTS ? "Identifying by lyrics" : listenSecs === 0 ? "Hold near your speakers" : `${listenSecs}s — hold steady`), liveTranscript ? /*#__PURE__*/React.createElement("div", {
     style: {
       marginTop: "16px",
       padding: "10px 16px",
