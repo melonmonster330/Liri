@@ -9,7 +9,7 @@ if (typeof supabase === 'undefined') {
   throw new Error('Supabase not loaded');
 }
 const sb = supabase.createClient("https://xjdjpaxgymgbvcwmvorc.supabase.co", "sb_publishable_C-NBnfg0ltAoUi46XQTUjA_ozjZW_Nd");
-const APP_VERSION = "1.144";
+const APP_VERSION = "1.145";
 const TRANSCRIBE_PROXY = window.Capacitor ? "https://getliri.com/api/transcribe"    : "/api/transcribe";
 const IDENTIFY_PROXY = window.Capacitor ? "https://getliri.com/api/identify-lyrics" : "/api/identify-lyrics";
 const ITUNES_PROXY   = window.Capacitor ? "https://getliri.com/api/itunes-lookup"   : "/api/itunes-lookup";
@@ -1586,13 +1586,13 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
     speechRecRef.current = { stop };
 
     // ── Open Deepgram WebSocket — streaming, interim results, music-friendly ──
-    const dgUrl = `wss://api.deepgram.com/v1/listen?model=nova-2&language=en-US&encoding=linear16&sample_rate=16000&interim_results=true&token=${dgToken}`;
+    const dgUrl = `wss://api.deepgram.com/v1/listen?model=nova-2&language=en-US&interim_results=true&token=${dgToken}`;
     const socket = new WebSocket(dgUrl);
 
     socket.onopen = () => {
       console.log("[dg] connected");
       // ── Stream mic audio to Deepgram as raw PCM ──
-      const audioContext = new (window.AudioContext || window.webkitAudioContext)({ sampleRate: 16000 });
+      const audioContext = new (window.AudioContext || window.webkitAudioContext)();
       const source = audioContext.createMediaStreamSource(stream);
       const processor = audioContext.createScriptProcessor(4096, 1, 1);
       source.connect(processor);
@@ -1658,7 +1658,7 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
     socket.onclose = (e) => {
       console.log("[dg] closed", e.code);
       if (isActive && !recognitionWonRef.current && listenSessionRef.current === session) {
-        setError("Transcription connection dropped. Try again.");
+        setError(`Transcription dropped (code ${e.code}). Try again.`);
         setMode("error");
         stop();
       }
