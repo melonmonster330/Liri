@@ -237,4 +237,21 @@ async function incrementUsage(userId) {
   });
 }
 
-module.exports = { verifyAuth, getUsageCount, incrementUsage };
+// ── Subscription tier check ───────────────────────────────────────────────────
+// Returns "premium" if the user has an active/trialing premium subscription,
+// "free" otherwise. Unlimited-email users are always treated as premium.
+async function getSubscriptionTier(userId, isUnlimited = false) {
+  if (isUnlimited) return "premium";
+  const { data } = await supabaseRequest(
+    "GET",
+    `subscriptions?user_id=eq.${encodeURIComponent(userId)}&select=tier,status&limit=1`
+  );
+  if (Array.isArray(data) && data[0]) {
+    const { tier, status } = data[0];
+    // Premium is active as long as it's not explicitly canceled
+    if (tier === "premium" && status !== "canceled") return "premium";
+  }
+  return "free";
+}
+
+module.exports = { verifyAuth, getUsageCount, incrementUsage, getSubscriptionTier };

@@ -14,7 +14,9 @@
 //   DISCOGS_KEY, DISCOGS_SECRET              (add in Vercel dashboard)
 
 const https = require("https");
-const { verifyAuth } = require("./_lib/auth");
+const { verifyAuth, getSubscriptionTier } = require("./_lib/auth");
+
+const FREE_ALBUM_LIMIT = 10;
 
 // ── Generic HTTPS GET ─────────────────────────────────────────────────────────
 
@@ -219,6 +221,25 @@ module.exports = async (req, res) => {
   const { itunes_collection_id } = req.body || {};
   if (!itunes_collection_id) return res.status(400).json({ error: "itunes_collection_id required" });
   const collectionId = parseInt(itunes_collection_id, 10);
+
+  // ── Free tier limit: 10 albums max ─────────────────────────────────────────
+  if (!auth.isUnlimited) {
+    const tier = await getSubscriptionTier(auth.userId, false);
+    if (tier === "free") {
+      const { data: libraryRows } = await sbRequest(
+        "GET",
+        `user_library?user_id=eq.${encodeURIComponent(auth.userId)}&select=itunes_collection_id`
+      );
+      const albumCount = Array.isArray(libraryRows) ? libraryRows.length : 0;
+      if (albumCount >= FREE_ALBUM_LIMIT) {
+        return res.status(403).json({
+          error: "free_limit_reached",
+          limit: FREE_ALBUM_LIMIT,
+          count: albumCount,
+        });
+      }
+    }
+  }
 
   try {
     // ── Step 1: Skip heavy fetching if another user already added this album ──

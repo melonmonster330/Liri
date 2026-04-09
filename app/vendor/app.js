@@ -325,6 +325,9 @@ function Liri() {
   // ── Usage ──
   const isUnlimited = u => true; // recognition is now free — no API costs at listen time
 
+  // ── Subscription tier — fetched from /api/subscription-status on login ──
+  const [userTier, setUserTier] = useState("free"); // "free" | "premium"
+
   // ── Auth token ref — kept current for API Authorization headers ──
   const sessionTokenRef = useRef(null);
 
@@ -771,6 +774,8 @@ function Liri() {
       if (u) {
         fetchUsage(u);
         fetchHistory(u);
+        fetch("/api/subscription-status", { headers: { "Authorization": `Bearer ${session.access_token}` } })
+          .then(r => r.ok ? r.json() : null).then(d => { if (d?.tier) setUserTier(d.tier); }).catch(() => {});
       }
     });
     const {
@@ -784,6 +789,8 @@ function Liri() {
       if (u) {
         fetchUsage(u);
         fetchHistory(u);
+        fetch("/api/subscription-status", { headers: { "Authorization": `Bearer ${s.access_token}` } })
+          .then(r => r.ok ? r.json() : null).then(d => { if (d?.tier) setUserTier(d.tier); }).catch(() => {});
       }
     });
     return () => subscription.unsubscribe();
@@ -3932,7 +3939,7 @@ function Liri() {
         color: "rgba(255,255,255,0.3)",
         marginTop: "2px"
       }
-    }, isUnlimited(user) ? "✦ Unlimited access" : "Free plan"))));
+    }, userTier === "premium" ? "✦ Liri Premium" : "Free plan"))));
   })(), /*#__PURE__*/React.createElement("div", {
     style: {
       background: "rgba(255,255,255,0.03)",
@@ -5729,17 +5736,29 @@ function Liri() {
       lineHeight: "1.8",
       fontSize: "15px"
     }
-  }, "You've reached your 10 free records.", /*#__PURE__*/React.createElement("br", null), "Upgrade to add more."), /*#__PURE__*/React.createElement("div", {
+  }, "You've reached your 10 free records.", /*#__PURE__*/React.createElement("br", null), "Upgrade for an unlimited collection."), /*#__PURE__*/React.createElement("button", {
+    onClick: async () => {
+      const { data: { session } } = await sb.auth.getSession();
+      const token = session?.access_token || sessionTokenRef.current;
+      if (!token) return;
+      const res = await fetch("/api/stripe-checkout", { method: "POST", headers: { "Content-Type": "application/json", "Authorization": `Bearer ${token}` } });
+      const json = await res.json().catch(() => ({}));
+      if (json.url) window.location.href = json.url;
+    },
     style: {
-      fontSize: "12px",
-      color: "rgba(255,255,255,0.2)",
-      marginBottom: "24px"
+      background: "linear-gradient(135deg,#d4a846,#c9807a)",
+      color: "#080810",
+      border: "none",
+      borderRadius: "50px",
+      padding: "14px 32px",
+      fontSize: "14px",
+      fontWeight: "700",
+      cursor: "pointer",
+      fontFamily: "inherit",
+      marginBottom: "12px",
+      width: "100%"
     }
-  }, "Want early access?", /*#__PURE__*/React.createElement("br", null), /*#__PURE__*/React.createElement("span", {
-    style: {
-      color: "#d4a846"
-    }
-  }, "hello@getliri.com")), /*#__PURE__*/React.createElement("button", {
+  }, "Upgrade to Premium →"), /*#__PURE__*/React.createElement("button", {
     onClick: () => setMode("idle"),
     style: {
       background: "none",
@@ -5751,6 +5770,6 @@ function Liri() {
       cursor: "pointer",
       fontFamily: "inherit"
     }
-  }, "Back")))));
+  }, "Maybe later")))));
 }
 ReactDOM.createRoot(document.getElementById("root")).render(/*#__PURE__*/React.createElement(Liri, null));

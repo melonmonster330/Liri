@@ -616,8 +616,20 @@
       const searchTimer                   = useRef(null);
       const sessionTokenRef               = useRef(null);
 
+      // ── Subscription ──
+      const [subscription, setSubscription] = useState(null); // { tier, status, albumCount, albumLimit }
+      const [showUpgrade, setShowUpgrade]   = useState(false);
+      const [upgradeWorking, setUpgradeWorking] = useState(false);
+      const [checkoutSuccess, setCheckoutSuccess] = useState(false);
+
       // ── Auth ──
       useEffect(() => {
+        // Handle post-checkout redirect
+        if (new URLSearchParams(window.location.search).get("checkout_success") === "true") {
+          setCheckoutSuccess(true);
+          window.history.replaceState({}, "", window.location.pathname);
+        }
+
         sb.auth.getSession().then(({ data: { session } }) => {
           setUser(session?.user ?? null);
           sessionTokenRef.current = session?.access_token || null;
@@ -661,6 +673,19 @@
           }
         } catch {}
       }, []);
+
+      // ── Fetch subscription status ──
+      useEffect(() => {
+        if (!user) return;
+        const token = sessionTokenRef.current;
+        if (!token) return;
+        fetch("/api/subscription-status", {
+          headers: { "Authorization": `Bearer ${token}` },
+        })
+          .then(r => r.json())
+          .catch(() => null)
+          .then(data => { if (data && !data.error) setSubscription(data); });
+      }, [user]);
 
       useEffect(() => {
         if (user) { fetchLibrary(user.id); fetchPlayCounts(); }
@@ -717,6 +742,9 @@
           if (!res.ok) {
             if (res.status === 401) {
               setAddError("Session expired — please sign out and back in, then try again.");
+            } else if (res.status === 403 && json.error === "free_limit_reached") {
+              setShowSearch(false);
+              setShowUpgrade(true);
             } else {
               setAddError(json.error || "Failed to add album. Please try again.");
             }
@@ -748,6 +776,52 @@
         } catch {}
         setLibrary(prev => prev.filter(a => a.itunes_collection_id !== collectionId));
         setRemoving(null);
+      };
+
+      // ── Upgrade to premium via Stripe Checkout ──
+      const upgradeToStripe = async () => {
+        setUpgradeWorking(true);
+        try {
+          const { data: { session: freshSession } } = await sb.auth.refreshSession();
+          const token = freshSession?.access_token || sessionTokenRef.current;
+          const res  = await fetch("/api/stripe-checkout", {
+            method: "POST",
+            headers: { "Content-Type": "application/json", "Authorization": `Bearer ${token}` },
+          });
+          const json = await res.json().catch(() => ({}));
+          if (json.url) {
+            window.location.href = json.url;
+          } else {
+            alert(json.error || "Could not start checkout. Please try again.");
+            setUpgradeWorking(false);
+          }
+        } catch {
+          alert("Network error — please try again.");
+          setUpgradeWorking(false);
+        }
+      };
+
+      // ── Open Stripe billing portal ──
+      const openBillingPortal = async () => {
+        setUpgradeWorking(true);
+        try {
+          const { data: { session: freshSession } } = await sb.auth.refreshSession();
+          const token = freshSession?.access_token || sessionTokenRef.current;
+          const res  = await fetch("/api/stripe-portal", {
+            method: "POST",
+            headers: { "Content-Type": "application/json", "Authorization": `Bearer ${token}` },
+          });
+          const json = await res.json().catch(() => ({}));
+          if (json.url) {
+            window.location.href = json.url;
+          } else {
+            alert(json.error || "Could not open billing portal. Please try again.");
+            setUpgradeWorking(false);
+          }
+        } catch {
+          alert("Network error — please try again.");
+          setUpgradeWorking(false);
+        }
       };
 
       // ── Set as turntable album and go to main app ──
@@ -787,6 +861,17 @@
       return (
         <div style={{ minHeight: "100vh", paddingBottom: 80 }}>
 
+          {/* ── Checkout success banner ── */}
+          {checkoutSuccess && (
+            <div style={{ position: "fixed", top: "max(16px, env(safe-area-inset-top))", left: 16, right: 16, zIndex: 50, background: "rgba(100,200,120,0.15)", border: "1px solid rgba(100,200,120,0.35)", borderRadius: 14, padding: "14px 18px", display: "flex", alignItems: "center", justifyContent: "space-between", backdropFilter: "blur(12px)" }}>
+              <div>
+                <div style={{ fontSize: 14, fontWeight: 700, color: "rgba(100,220,130,0.9)" }}>Welcome to Liri Premium!</div>
+                <div style={{ fontSize: 12, color: "rgba(255,255,255,0.4)", marginTop: 2 }}>Unlimited records, all features unlocked.</div>
+              </div>
+              <button onClick={() => setCheckoutSuccess(false)} style={{ background: "none", border: "none", color: "rgba(255,255,255,0.3)", fontSize: 18, cursor: "pointer", padding: "4px 8px", fontFamily: "inherit" }}>✕</button>
+            </div>
+          )}
+
           {/* ── Header ── */}
           <div style={{ padding: "max(52px, calc(env(safe-area-inset-top) + 24px)) 24px 0" }}>
             <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 28 }}>
@@ -804,11 +889,39 @@
             </div>
 
             <div style={{ fontSize: 28, fontWeight: 700, letterSpacing: "-0.5px", marginBottom: 6 }}>My Records</div>
-            <div style={{ fontSize: 14, color: "rgba(255,255,255,0.3)", marginBottom: 32 }}>
+            <div style={{ fontSize: 14, color: "rgba(255,255,255,0.3)", marginBottom: subscription?.tier === "free" ? 12 : 32 }}>
               {library.length === 0 && !libLoading
                 ? "Add your first record to get started"
                 : `${library.length} album${library.length !== 1 ? "s" : ""} in your collection`}
             </div>
+
+            {/* ── Plan indicator (free users only) ── */}
+            {subscription && subscription.tier === "free" && (
+              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", background: "rgba(255,255,255,0.03)", border: "1px solid rgba(255,255,255,0.07)", borderRadius: 12, padding: "10px 14px", marginBottom: 24 }}>
+                <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                  {/* Progress bar */}
+                  <div style={{ width: 80, height: 4, borderRadius: 2, background: "rgba(255,255,255,0.08)", overflow: "hidden" }}>
+                    <div style={{ height: "100%", borderRadius: 2, background: library.length >= 8 ? "#c9807a" : "#d4a846", width: `${Math.min(100, (library.length / 10) * 100)}%`, transition: "width 0.4s ease" }} />
+                  </div>
+                  <span style={{ fontSize: 12, color: "rgba(255,255,255,0.35)" }}>{library.length}/10 free records</span>
+                </div>
+                <button onClick={() => setShowUpgrade(true)}
+                  style={{ background: "linear-gradient(135deg,#d4a846,#c9807a)", color: "#080810", border: "none", borderRadius: 50, padding: "6px 14px", fontSize: 11, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>
+                  Upgrade
+                </button>
+              </div>
+            )}
+
+            {/* ── Premium badge + manage button ── */}
+            {subscription?.tier === "premium" && (
+              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 24 }}>
+                <div style={{ fontSize: 12, color: "rgba(212,168,70,0.7)", fontWeight: 600 }}>✦ Liri Premium</div>
+                <button onClick={openBillingPortal} disabled={upgradeWorking}
+                  style={{ background: "none", border: "1px solid rgba(255,255,255,0.1)", color: "rgba(255,255,255,0.3)", borderRadius: 50, padding: "6px 14px", fontSize: 11, cursor: upgradeWorking ? "wait" : "pointer", fontFamily: "inherit" }}>
+                  {upgradeWorking ? "…" : "Manage plan"}
+                </button>
+              </div>
+            )}
           </div>
 
           {/* ── Library list ── */}
@@ -869,6 +982,46 @@
               album={selectedAlbum}
               onClose={() => setSelectedAlbum(null)}
             />
+          )}
+
+          {/* ── Upgrade modal ── */}
+          {showUpgrade && (
+            <>
+              <div onClick={() => setShowUpgrade(false)}
+                style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.7)", zIndex: 20 }} />
+              <div style={{ position: "fixed", left: 0, right: 0, bottom: 0, zIndex: 21, background: "#0e0e1a", borderRadius: "24px 24px 0 0", padding: "32px 28px max(32px, env(safe-area-inset-bottom))", animation: "sheet-up 0.28s cubic-bezier(0.4,0,0.2,1)", textAlign: "center" }}>
+                <div style={{ width: 36, height: 4, borderRadius: 2, background: "rgba(255,255,255,0.12)", margin: "-12px auto 28px" }} />
+                {/* Icon */}
+                <div style={{ fontSize: 48, marginBottom: 16 }}>🎵</div>
+                <div style={{ fontSize: 22, fontWeight: 700, color: "#f0e6d3", marginBottom: 10, letterSpacing: "-0.3px" }}>
+                  You've filled your crate
+                </div>
+                <div style={{ fontSize: 14, color: "rgba(255,255,255,0.4)", lineHeight: 1.7, marginBottom: 32, maxWidth: 280, margin: "0 auto 32px" }}>
+                  Free accounts hold up to <strong style={{ color: "rgba(255,255,255,0.6)" }}>10 records</strong>. Upgrade to Premium for an unlimited collection.
+                </div>
+                {/* Feature list */}
+                <div style={{ background: "rgba(255,255,255,0.03)", border: "1px solid rgba(255,255,255,0.07)", borderRadius: 16, padding: "16px 20px", marginBottom: 24, textAlign: "left" }}>
+                  {[
+                    ["✦", "Unlimited vinyl library"],
+                    ["✦", "Full lyrics on every track"],
+                    ["✦", "Listening stats & Wrapped"],
+                  ].map(([icon, text]) => (
+                    <div key={text} style={{ display: "flex", alignItems: "center", gap: 10, padding: "6px 0", fontSize: 13, color: "rgba(255,255,255,0.6)" }}>
+                      <span style={{ color: "#d4a846", fontSize: 10 }}>{icon}</span>
+                      {text}
+                    </div>
+                  ))}
+                </div>
+                <button onClick={upgradeToStripe} disabled={upgradeWorking}
+                  style={{ width: "100%", background: "linear-gradient(135deg,#d4a846,#c9807a)", color: "#080810", border: "none", borderRadius: 50, padding: "16px", fontSize: 15, fontWeight: 700, cursor: upgradeWorking ? "wait" : "pointer", fontFamily: "inherit", marginBottom: 12, opacity: upgradeWorking ? 0.7 : 1 }}>
+                  {upgradeWorking ? "Opening checkout…" : "Upgrade to Premium →"}
+                </button>
+                <button onClick={() => setShowUpgrade(false)}
+                  style={{ background: "none", border: "none", color: "rgba(255,255,255,0.2)", fontSize: 13, cursor: "pointer", fontFamily: "inherit", padding: "8px" }}>
+                  Maybe later
+                </button>
+              </div>
+            </>
           )}
 
           {/* ── Add-album search sheet ── */}
