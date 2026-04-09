@@ -9,7 +9,7 @@ if (typeof supabase === 'undefined') {
   throw new Error('Supabase not loaded');
 }
 const sb = supabase.createClient("https://xjdjpaxgymgbvcwmvorc.supabase.co", "sb_publishable_C-NBnfg0ltAoUi46XQTUjA_ozjZW_Nd");
-const APP_VERSION = "1.161";
+const APP_VERSION = "1.162";
 const TRANSCRIBE_PROXY = window.Capacitor ? "https://getliri.com/api/transcribe"    : "/api/transcribe";
 const IDENTIFY_PROXY = window.Capacitor ? "https://getliri.com/api/identify-lyrics" : "/api/identify-lyrics";
 const ITUNES_PROXY   = window.Capacitor ? "https://getliri.com/api/itunes-lookup"   : "/api/itunes-lookup";
@@ -1712,8 +1712,6 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
         if (e.data.size < 500) return; // skip empty blobs (raised from 1000 for iOS)
         const chunkEndTime = Date.now(); // capture before async API call
         try {
-          const ta = turntableAlbumRef.current;
-          const prompt = [ta?.artist_name, ta?.album_name].filter(Boolean).join(" - ") || undefined;
           // Send as base64 JSON — CapacitorHttp (iOS) cannot serialize raw Blob bodies,
           // but web fetch handles both paths identically via the updated api/whisper.js
           const base64 = await new Promise((resolve, reject) => {
@@ -1725,7 +1723,7 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
           const res = await fetch(WHISPER_PROXY, {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ audio: base64, mimeType: e.data.type || mimeType || "audio/mp4", prompt }),
+            body: JSON.stringify({ audio: base64, mimeType: e.data.type || mimeType || "audio/mp4" }),
           });
           if (!res.ok) return;
           const { text } = await res.json();
