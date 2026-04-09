@@ -9,7 +9,7 @@ if (typeof supabase === 'undefined') {
   throw new Error('Supabase not loaded');
 }
 const sb = supabase.createClient("https://xjdjpaxgymgbvcwmvorc.supabase.co", "sb_publishable_C-NBnfg0ltAoUi46XQTUjA_ozjZW_Nd");
-const APP_VERSION = "1.139";
+const APP_VERSION = "1.140";
 const TRANSCRIBE_PROXY = window.Capacitor ? "https://getliri.com/api/transcribe"    : "/api/transcribe";
 const IDENTIFY_PROXY = window.Capacitor ? "https://getliri.com/api/identify-lyrics" : "/api/identify-lyrics";
 const ITUNES_PROXY   = window.Capacitor ? "https://getliri.com/api/itunes-lookup"   : "/api/itunes-lookup";
@@ -1508,6 +1508,26 @@ function Liri() {
   // Instead of recording + sending to ACRCloud/Whisper, we use the Web Speech API
   // to transcribe words in real time and match them against the known lyrics.
   // No server calls, no delays — match fires the moment enough words are recognised.
+  // ── Coqui STT initialization (one-time, global) ──
+  let coquiModel = null;
+  const initCoqui = async () => {
+    if (coquiModel) return coquiModel;
+    try {
+      console.log("[coqui] loading model...");
+      const { CoquiSTT } = window;
+      if (!CoquiSTT) {
+        throw new Error("Coqui STT library not loaded");
+      }
+      // Load pre-trained English model from jsDelivr CDN
+      coquiModel = await CoquiSTT.loadModel("https://cdn.jsdelivr.net/npm/coqui-stt-client@1.0.0/model.tflite", "https://cdn.jsdelivr.net/npm/coqui-stt-client@1.0.0/alphabet.txt");
+      console.log("[coqui] model loaded");
+      return coquiModel;
+    } catch (e) {
+      console.error("[coqui] init failed:", e);
+      throw e;
+    }
+  };
+
   const startListeningSpeech = async (isAutoAdvance = false) => {
     clearInterval(progressTimerRef.current);
     const session = ++listenSessionRef.current;
@@ -1523,41 +1543,20 @@ function Liri() {
     clearInterval(syncIntervalRef.current);
 
     const tracks = turntableTracksRef.current;
-    console.log("[listen] tracks:", tracks.length, tracks.map(t => `${t.trackName}(id=${t.trackId})`).join(", "));
     if (!tracks.length) {
       setError("Album tracks still loading — try again in a moment.");
       setMode("error");
       return;
     }
 
-    // ── Build wordsData from already-loaded lrc cache (no extra DB call) ──────
-    // turntableLyricsCacheRef was populated in fetchTurntableTracks (called at album
-    // select time). We deliberately do NOT re-fetch here to keep mic startup instant.
-    // The cache lookup uses String(track.trackId) for the same type-safety reason as
-    // in fetchTurntableTracks — itunes_track_id can be a JS number when it arrives from
-    // Supabase but a string after a JSON.parse round-trip via localStorage.
+    // Build wordsData from cached lyrics
     const lrcCache = turntableLyricsCacheRef.current;
-    console.log("[listen] lrcCache keys:", Object.keys(lrcCache));
     const wordsData = {};
     for (const track of tracks) {
       if (!track.trackId) continue;
-      // String() coercion here mirrors the String() in fetchTurntableTracks so the
-      // cache lookup always succeeds regardless of type.
       const entry = lrcCache[String(track.trackId)];
-      console.log(`[listen] track ${track.trackName} id=${track.trackId} entry=`, entry ? `lrc=${!!entry.lrc_raw} words=${entry.words_json?.length||0} plain=${!!entry.lyrics_plain}` : "MISSING");
       if (!entry) continue;
-      // Fallback chain for word timing data:
-      //   1. words_json — [{word, start_ms}] pre-tokenised by the lyrics import pipeline.
-      //      Most accurate; gives exact per-word timestamps for sync offset calculation.
-      //   2. lrc_raw — if words_json is absent we derive word timings on the fly by
-      //      splitting each LRC line on whitespace and assigning all words in the line
-      //      the line's timestamp. Accuracy is per-line not per-word, but still much
-      //      better than plain text.
-      //   3. lyrics_plain — last resort. No timestamps at all; only used if both of the
-      //      above are missing. matchTranscriptToTracks will still identify the track but
-      //      startPos will be 0 and sync will start from the top of the song.
       let words = entry.words_json || [];
-      // Derive word timings from lrc_raw if words_json not pre-populated
       if (!words.length && entry.lrc_raw) {
         for (const line of parseLRC(entry.lrc_raw)) {
           for (const raw of (line.text || "").split(/\s+/)) {
@@ -1566,164 +1565,115 @@ function Liri() {
           }
         }
       }
-      console.log(`[listen] track ${track.trackName} → ${words.length} words`);
       wordsData[track.trackId] = { words, lrc_raw: entry.lrc_raw, lyrics_plain: entry.lyrics_plain };
     }
 
-    // tracksWithWordData guard: if ZERO tracks have any word data (words_json, lrc_raw,
-    // AND lyrics_plain all absent for every track) the recognition session would open
-    // successfully but onresult would call matchTranscriptToTracks, which would return
-    // null on every result because tracksWithWords is empty. The listener would stay in
-    // "listening" mode indefinitely — the "listening forever" bug. Catching this early
-    // gives a clear error message and prevents the zombie session.
     const tracksWithWordData = Object.values(wordsData).filter(d => d.words?.length > 0);
-    console.log("[listen] tracksWithWordData:", tracksWithWordData.length, "/", tracks.length);
     if (!tracksWithWordData.length) {
       setError("No lyric data for this album — remove it from your library and re-add it to refresh.");
       setMode("error");
       return;
     }
-    // Persist to ref so jumpToTrack and the resync flow can reuse it after the listen
-    // completes without hitting the DB again.
     wordsDataRef.current = wordsData;
 
+    // ── Initialize Coqui STT ──
+    let model;
+    try {
+      model = await initCoqui();
+    } catch (e) {
+      setError("Coqui STT model failed to load. Try refreshing the page.");
+      setMode("error");
+      return;
+    }
+
     const isNative = !!window.Capacitor?.isNativePlatform?.();
-    const SpeechRec = window.SpeechRecognition || window.webkitSpeechRecognition;
-    if (!SpeechRec) {
-      setError(isNative
-        ? "Microphone access is required. Go to Settings → Liri → Microphone and make sure it's enabled."
-        : "Speech recognition isn't supported on this browser — try Safari or Chrome.");
+    let stream;
+    try {
+      stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    } catch (e) {
+      setError(isNative ? "Microphone blocked. Go to Settings → Liri → Microphone to allow access." : "Microphone blocked — check your browser's site permissions and try again.");
       setMode("error");
       return;
     }
 
     const MIN_SCORE = 3;
-    let finalTranscript = "";
+    let fullTranscript = "";
+    let isActive = true;
 
     const pulseId = setInterval(() => {
       setAudioLevel(0.15 + Math.sin(Date.now() / 400) * 0.1);
     }, 80);
 
-    const rec = new SpeechRec();
-    speechRecRef.current = rec;
-    rec.continuous = true;
-    rec.interimResults = true;
-    rec.lang = "en-US";
-    rec.maxAlternatives = 1;
+    recordingStartRef.current = Date.now();
+    speechRecRef.current = { stop: () => { isActive = false; stream.getTracks().forEach(t => t.stop()); } };
 
-    rec.onstart = () => {
-      console.log("[rec] onstart");
-      recordingStartRef.current = Date.now();
-    };
+    // ── Stream audio to Coqui in real-time ──
+    const audioContext = new (window.AudioContext || window.webkitAudioContext)();
+    const source = audioContext.createMediaStreamSource(stream);
+    const processor = audioContext.createScriptProcessor(4096, 1, 1);
+    source.connect(processor);
+    processor.connect(audioContext.destination);
 
-    rec.onresult = (event) => {
-      if (listenSessionRef.current !== session || recognitionWonRef.current) { rec.stop(); return; }
-      let interim = "";
-      for (let i = event.resultIndex; i < event.results.length; i++) {
-        if (event.results[i].isFinal) finalTranscript += event.results[i][0].transcript + " ";
-        else interim = event.results[i][0].transcript;
+    processor.onaudioprocess = (event) => {
+      if (!isActive || listenSessionRef.current !== session || recognitionWonRef.current) return;
+      try {
+        const audio = event.inputBuffer.getChannelData(0);
+        // Feed audio to Coqui model and get result
+        const result = model.feedAudioContent(audio);
+        if (result) {
+          fullTranscript += result.transcript + " ";
+          const combined = fullTranscript.trim();
+          setLiveTranscript(combined);
+          const wordCount = combined.split(/\s+/).filter(Boolean).length;
+          setListenProgress(Math.min(wordCount / 12, 0.95));
+          setAudioLevel(0.4 + Math.random() * 0.3);
+
+          if (wordCount >= MIN_SCORE) {
+            const vmResult = matchTranscriptToTracks(combined, tracks, wordsData, attemptLogRef.current);
+            if (vmResult && vmResult.score >= MIN_SCORE && !recognitionWonRef.current) {
+              recognitionWonRef.current = true;
+              isActive = false;
+              clearInterval(pulseId);
+              stream.getTracks().forEach(t => t.stop());
+              audioContext.close().catch(() => {});
+              const { track, lyrics, startPos } = vmResult;
+              const ta = turntableAlbumRef.current;
+              const matchedIdx = tracks.findIndex(t => t.trackName?.toLowerCase() === track.trackName?.toLowerCase());
+              turntableMatchedIdxRef.current = matchedIdx >= 0 ? matchedIdx : (track.trackNumber ? track.trackNumber - 1 : 0);
+              const song = { title: track.trackName, artist: track.artistName || ta?.artist_name || "", album: ta?.album_name || "", artwork: ta?.artwork_url || null };
+              setIdentifiedBy("speech");
+              detectedAtRef.current = Date.now();
+              const _recStart = recordingStartRef.current || Date.now();
+              const _elapsed = (Date.now() - _recStart) / 1000;
+              const _phraseOffset = vmResult.totalWords > 0 ? Math.min(vmResult.phraseWordStart / vmResult.totalWords * _elapsed, _elapsed / 2) : 0;
+              syncCalcRef.current = { startPos, phraseOffset: _phraseOffset, recStart: _recStart };
+              initialPosRef.current = startPos;
+              autoAdvanceFiredRef.current = false;
+              autoRetryCountRef.current = 0;
+              setDetectedSong(song);
+              setSongDuration(track.trackTimeMillis ? track.trackTimeMillis / 1000 : null);
+              setLyrics(lyrics);
+              lyricsRef.current = lyrics;
+              setMode("confirmed");
+              saveToHistory(user, song);
+              fetchHistory(user);
+              logListeningEvent({ userId: user?.id, title: track.trackName, artist: track.artistName || ta?.artist_name || "", album: ta?.album_name || "", artwork: ta?.artwork_url || null, itunesTrackId: track.trackId, collectionId: ta?.itunes_collection_id || track.collectionId, vinylReleaseId: null, vinylModeOn: true, source: "speech", offsetSecs: startPos, durationSecs: track.trackTimeMillis ? track.trackTimeMillis / 1000 : null });
+              const at = turntableTracksRef.current;
+              setAlbumTracks(at);
+              setAlbumCollectionId(ta?.itunes_collection_id ? String(ta.itunes_collection_id) : null);
+              const tIdx = at.findIndex(t => t.trackName?.toLowerCase() === track.trackName.toLowerCase());
+              setCurrentTrackIndex(tIdx >= 0 ? tIdx : 0);
+            }
+          }
+        }
+      } catch (e) {
+        console.error("[coqui] audio processing error:", e);
       }
-      const combined = (finalTranscript + interim).trim();
-      if (!combined) return;
-      setLiveTranscript(combined);
-      const wordCount = combined.split(/\s+/).filter(Boolean).length;
-      setListenProgress(Math.min(wordCount / 12, 0.95));
-      setAudioLevel(0.4 + Math.random() * 0.3);
-      if (wordCount < MIN_SCORE) return;
-      console.log("[match] transcript:", combined);
-      const vmResult = matchTranscriptToTracks(combined, tracks, wordsData, attemptLogRef.current);
-      console.log("[match] result:", vmResult ? `"${vmResult.track.trackName}" score=${vmResult.score}` : "null");
-      if (!vmResult || vmResult.score < MIN_SCORE) return;
-      if (recognitionWonRef.current) return;
-      recognitionWonRef.current = true;
-      clearInterval(pulseId);
-      try { rec.stop(); } catch {}
-      const { track, lyrics, startPos } = vmResult;
-      const ta = turntableAlbumRef.current;
-      const matchedIdx = tracks.findIndex(t => t.trackName?.toLowerCase() === track.trackName?.toLowerCase());
-      turntableMatchedIdxRef.current = matchedIdx >= 0 ? matchedIdx : (track.trackNumber ? track.trackNumber - 1 : 0);
-      const song = { title: track.trackName, artist: track.artistName || ta?.artist_name || "", album: ta?.album_name || "", artwork: ta?.artwork_url || null };
-      setIdentifiedBy("speech");
-      detectedAtRef.current = Date.now();
-      const _recStart = recordingStartRef.current || Date.now();
-      const _elapsed = (Date.now() - _recStart) / 1000;
-      // _phraseOffset: how many seconds into the recording window did the matched phrase
-      // BEGIN? We need this to know how much of the recording had already elapsed before
-      // the matched words were spoken.
-      //
-      // Formula: (phraseWordStart / totalWords) * elapsed
-      //   phraseWordStart / totalWords = fraction of the transcript that came BEFORE the
-      //   matched phrase. Multiply by the total elapsed recording time to get an estimate
-      //   of the wall-clock offset for that phrase start within the recording window.
-      //
-      // The Math.min(..., elapsed/2) cap prevents an overestimate when the phrase is near
-      // the very end of a long transcript — in practice speech is not perfectly uniform,
-      // so we cap at half the window to avoid a negative computed playback position.
-      //
-      // This value is stored in syncCalcRef and consumed by startSync, which adds it to
-      // the elapsed time at React render time (after the state update) for the final
-      // position formula: startPos - phraseOffset + totalElapsedSinceRecStart
-      const _phraseOffset = vmResult.totalWords > 0
-        ? Math.min(vmResult.phraseWordStart / vmResult.totalWords * _elapsed, _elapsed / 2)
-        : 0;
-      // Store in syncCalcRef rather than computing initialPosRef here.
-      // startSync defers the final position calc to run AFTER React has rendered the
-      // "confirmed" state — by that point (Date.now() - recStart) includes Whisper
-      // round-trip + state update latency, giving a more accurate total elapsed time.
-      // See startSync for the full formula.
-      syncCalcRef.current = { startPos, phraseOffset: _phraseOffset, recStart: _recStart };
-      initialPosRef.current = startPos;
-      autoAdvanceFiredRef.current = false;
-      autoRetryCountRef.current = 0;
-      setDetectedSong(song);
-      setSongDuration(track.trackTimeMillis ? track.trackTimeMillis / 1000 : null);
-      setLyrics(lyrics);
-      lyricsRef.current = lyrics;
-      setMode("confirmed");
-      saveToHistory(user, song);
-      fetchHistory(user);
-      logListeningEvent({ userId: user?.id, title: track.trackName, artist: track.artistName || ta?.artist_name || "", album: ta?.album_name || "", artwork: ta?.artwork_url || null, itunesTrackId: track.trackId, collectionId: ta?.itunes_collection_id || track.collectionId, vinylReleaseId: null, vinylModeOn: true, source: "speech", offsetSecs: startPos, durationSecs: track.trackTimeMillis ? track.trackTimeMillis / 1000 : null });
-      const at = turntableTracksRef.current;
-      setAlbumTracks(at);
-      setAlbumCollectionId(ta?.itunes_collection_id ? String(ta.itunes_collection_id) : null);
-      const tIdx = at.findIndex(t => t.trackName?.toLowerCase() === track.trackName.toLowerCase());
-      setCurrentTrackIndex(tIdx >= 0 ? tIdx : 0);
     };
-
-    rec.onerror = (event) => {
-      console.log("[rec] onerror:", event.error);
-      if (listenSessionRef.current !== session || recognitionWonRef.current) return;
-      if (event.error === "aborted" || event.error === "no-speech") return;
-      clearInterval(pulseId);
-      const msg = event.error === "not-allowed"
-        ? (isNative ? "Microphone blocked. Go to Settings → Liri → Microphone to allow access." : "Microphone blocked — check your browser's site permissions and try again.")
-        : (isNative ? "Couldn't access the microphone. Try closing and reopening the app." : `Mic error: ${event.error}. Try refreshing the page.`);
-      setError(msg);
-      setMode("error");
-    };
-
-    rec.onend = () => {
-      console.log("[rec] onend");
-      if (recognitionWonRef.current || listenSessionRef.current !== session) return;
-      try { rec.start(); } catch {}
-    };
-
-    try {
-      rec.start();
-    } catch {
-      clearInterval(pulseId);
-      setError(isNative ? "Microphone blocked. Go to Settings → Liri → Microphone to allow access." : "Microphone blocked — check your browser's site permissions and try again.");
-      setMode("error");
-    }
   };
   const startListening = async (isAutoAdvance = false) => {
     if (!turntableAlbumRef.current) {
       setError("Select an album first.");
-      setMode("error");
-      return;
-    }
-    if (!(window.SpeechRecognition || window.webkitSpeechRecognition)) {
-      setError("Speech recognition is not available on this browser. Try Chrome or Safari.");
       setMode("error");
       return;
     }
