@@ -99,8 +99,6 @@ async function createCheckoutSession(customerId, userId, successUrl, cancelUrl) 
     success_url:             successUrl,
     cancel_url:              cancelUrl,
     "metadata[liri_user_id]": userId,
-    // Pre-fill email in checkout if Stripe doesn't have it on the customer
-    customer_update_allowed_updates: "email",
   });
 }
 
