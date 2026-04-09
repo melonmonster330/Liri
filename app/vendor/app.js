@@ -9,7 +9,7 @@ if (typeof supabase === 'undefined') {
   throw new Error('Supabase not loaded');
 }
 const sb = supabase.createClient("https://xjdjpaxgymgbvcwmvorc.supabase.co", "sb_publishable_C-NBnfg0ltAoUi46XQTUjA_ozjZW_Nd");
-const APP_VERSION = "1.136";
+const APP_VERSION = "1.137";
 const TRANSCRIBE_PROXY = window.Capacitor ? "https://getliri.com/api/transcribe"    : "/api/transcribe";
 const IDENTIFY_PROXY = window.Capacitor ? "https://getliri.com/api/identify-lyrics" : "/api/identify-lyrics";
 const ITUNES_PROXY   = window.Capacitor ? "https://getliri.com/api/itunes-lookup"   : "/api/itunes-lookup";
@@ -1622,8 +1622,55 @@ function Liri() {
     rec.interimResults = true;
     rec.lang = "en-US";
     rec.maxAlternatives = 1;
+    // Chrome 139+: prefer on-device recognition model when available. Eliminates the
+    // Google-server round-trip (~300–800 ms) and makes interim results arrive in near
+    // real time. Silently ignored on older Chrome and all other browsers.
+    if ("ondevice" in rec) rec.ondevice = true;
 
     let finalTranscript = "";
+    // stuckTimer / stuckCount: detect the "mic open but silent" bug that occurs on cold
+    // starts after cache clear. The browser grants mic access (onstart fires) but the
+    // speech-to-text service connection hasn't been established, so onresult never comes.
+    // After 15 s with no result we force a restart; after 3 consecutive failures we give
+    // up and show an actionable error.
+    let stuckTimer = null;
+    let stuckCount = 0;
+
+    // Smooth 60 fps animation that runs via rAF so it never looks frozen between
+    // speech results. Uses a synthetic idle "breathing" curve that spikes when
+    // onresult fires, then decays back — no second getUserMedia needed (opening a
+    // competing mic stream breaks speech recognition on iOS/WKWebView).
+    let vizAnimId = null;
+    let vizLevel = 0.15;      // current displayed level, mutated by the frame loop
+    let vizPeak = 0.15;       // target level, spiked by onresult and decayed each frame
+    let vizActive = false;
+    const startViz = () => {
+      if (vizActive) return;
+      vizActive = true;
+      vizLevel = 0.15;
+      vizPeak = 0.15;
+      const frame = () => {
+        if (!vizActive) return;
+        const t = Date.now() / 1000;
+        // Idle breathing: gentle sine so the bar is never completely still
+        const idle = 0.12 + Math.sin(t * 1.8) * 0.05 + Math.sin(t * 3.1) * 0.02;
+        // Decay peak toward idle
+        vizPeak = Math.max(vizPeak * 0.88, idle);
+        // Smooth level toward peak (lag makes it look more natural)
+        vizLevel += (vizPeak - vizLevel) * 0.25;
+        setAudioLevel(vizLevel);
+        vizAnimId = requestAnimationFrame(frame);
+      };
+      vizAnimId = requestAnimationFrame(frame);
+    };
+    const spikeViz = (amount) => {
+      // Called from onresult — spikes the level so the bar reacts to speech
+      vizPeak = Math.min(vizPeak + amount, 1);
+    };
+    const stopViz = () => {
+      vizActive = false;
+      if (vizAnimId) { cancelAnimationFrame(vizAnimId); vizAnimId = null; }
+    };
 
     // Pulse animation immediately so it doesn't feel frozen while mic warms up
     const pulseId = setInterval(() => {
@@ -1640,9 +1687,32 @@ function Liri() {
       // onresult accurate to the actual recording window, which is critical for the
       // phraseOffset formula below.
       recordingStartRef.current = Date.now();
+      // Kick off real-time audio level visualization now that the mic is confirmed open.
+      // startViz() is idempotent (guards with vizActive) so safe to call on every onstart.
+      startViz();
+      // Arm the stuck detector. Cleared immediately if onresult fires. If neither
+      // onresult nor onend arrives in 15 s the recognition is silently dead — force
+      // a stop so onend can restart it.
+      clearTimeout(stuckTimer);
+      stuckTimer = setTimeout(() => {
+        stuckCount++;
+        console.log("[rec] stuck — no audio after 15 s, attempt", stuckCount);
+        if (stuckCount >= 3) {
+          clearInterval(pulseId);
+          stopViz();
+          setError(isNative
+            ? "Couldn't access the microphone. Try closing and reopening the app."
+            : "Mic opened but isn't capturing audio — try refreshing the page.");
+          setMode("error");
+          return;
+        }
+        try { rec.stop(); } catch {}
+      }, 15000);
     };
 
     rec.onresult = (event) => {
+      clearTimeout(stuckTimer);
+      stuckCount = 0;
       if (listenSessionRef.current !== session || recognitionWonRef.current) { rec.stop(); return; }
       let interim = "";
       for (let i = event.resultIndex; i < event.results.length; i++) {
@@ -1654,7 +1724,8 @@ function Liri() {
       setLiveTranscript(combined);
       const wordCount = combined.split(/\s+/).filter(Boolean).length;
       setListenProgress(Math.min(wordCount / 12, 0.95));
-      setAudioLevel(0.4 + Math.sin(Date.now() / 200) * 0.2 + Math.random() * 0.15);
+      // Spike the viz level so the bar visibly reacts when words arrive
+      spikeViz(0.25 + Math.random() * 0.2);
       if (wordCount < MIN_SCORE) return;
       console.log("[match] transcript:", combined);
       const vmResult = matchTranscriptToTracks(combined, tracks, wordsData, attemptLogRef.current);
@@ -1664,6 +1735,7 @@ function Liri() {
       recognitionWonRef.current = true;
       try { rec.stop(); } catch {}
       clearInterval(pulseId);
+      stopViz();
       const { track, lyrics, startPos } = vmResult;
       const ta = turntableAlbumRef.current;
       const matchedIdx = tracks.findIndex(t => t.trackName?.toLowerCase() === track.trackName?.toLowerCase());
@@ -1718,14 +1790,17 @@ function Liri() {
 
     rec.onerror = (event) => {
       console.log("[rec] onerror:", event.error);
+      clearTimeout(stuckTimer);
       if (listenSessionRef.current !== session) return;
       // "aborted" fires when we call rec.stop() ourselves after a successful match.
       // Ignore it — it's not a user-facing error.
       if (event.error === "aborted") return;
-      // "no-speech" fires when the browser auto-stops after a long pause. Rather than
-      // showing an error, restart recognition so the user can keep singing / humming.
-      if (event.error === "no-speech") { if (!recognitionWonRef.current) { try { rec.start(); } catch {} } return; }
+      // "no-speech" fires when the browser auto-stops after a long pause. onend fires
+      // immediately after this and will restart recognition — do NOT also call rec.start()
+      // here or we get a double-start race that can leave the mic silently dead.
+      if (event.error === "no-speech") return;
       clearInterval(pulseId);
+      stopViz();
       if (!recognitionWonRef.current) {
         // isNative (Capacitor / iOS) vs web: each platform requires a different fix for
         // the user. On iOS the permission lives in the OS Settings app; on the web it's
@@ -1744,8 +1819,15 @@ function Liri() {
     };
 
     rec.onend = () => {
+      clearTimeout(stuckTimer);
       console.log("[rec] onend — restarting:", !recognitionWonRef.current);
-      if (recognitionWonRef.current || listenSessionRef.current !== session) return;
+      if (recognitionWonRef.current || listenSessionRef.current !== session) {
+        // Truly done (match won or session changed) — tear down viz
+        stopViz();
+        return;
+      }
+      // Restarting after a pause — keep viz running, onstart will call startViz()
+      // which is idempotent and won't open a second mic stream.
       try { rec.start(); } catch {}
     };
 
