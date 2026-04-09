@@ -9,7 +9,7 @@ if (typeof supabase === 'undefined') {
   throw new Error('Supabase not loaded');
 }
 const sb = supabase.createClient("https://xjdjpaxgymgbvcwmvorc.supabase.co", "sb_publishable_C-NBnfg0ltAoUi46XQTUjA_ozjZW_Nd");
-const APP_VERSION = "1.152";
+const APP_VERSION = "1.153";
 const TRANSCRIBE_PROXY = window.Capacitor ? "https://getliri.com/api/transcribe"    : "/api/transcribe";
 const IDENTIFY_PROXY = window.Capacitor ? "https://getliri.com/api/identify-lyrics" : "/api/identify-lyrics";
 const ITUNES_PROXY   = window.Capacitor ? "https://getliri.com/api/itunes-lookup"   : "/api/itunes-lookup";
@@ -236,11 +236,17 @@ function WaveAnimation({
   })));
 }
 function ProgressRing({
-  progress,
   size = 96
 }) {
   const r = size / 2 - 5,
     circ = 2 * Math.PI * r;
+  // Self-animating 30s loop — no external progress prop needed
+  const [t, setT] = React.useState(0);
+  React.useEffect(() => {
+    const start = Date.now();
+    const id = setInterval(() => setT(((Date.now() - start) % 30000) / 30000), 50);
+    return () => clearInterval(id);
+  }, []);
   return /*#__PURE__*/React.createElement("svg", {
     width: size,
     height: size,
@@ -262,10 +268,7 @@ function ProgressRing({
     strokeWidth: "3",
     strokeLinecap: "round",
     stroke: "url(#pg2)",
-    strokeDasharray: `${circ * progress} ${circ}`,
-    style: {
-      transition: "stroke-dasharray 0.1s linear"
-    }
+    strokeDasharray: `${circ * t} ${circ}`
   }), /*#__PURE__*/React.createElement("defs", null, /*#__PURE__*/React.createElement("linearGradient", {
     id: "pg2",
     x1: "0%",
@@ -4594,7 +4597,6 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
       inset: 0
     }
   }, /*#__PURE__*/React.createElement(ProgressRing, {
-    progress: listenProgress,
     size: 100
   })), /*#__PURE__*/React.createElement("div", {
     style: {
@@ -5317,7 +5319,6 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
       inset: 0
     }
   }, /*#__PURE__*/React.createElement(ProgressRing, {
-    progress: listenProgress,
     size: 120
   })), /*#__PURE__*/React.createElement("div", {
     style: {
@@ -5353,20 +5354,7 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
       fontSize: "14px",
       color: "rgba(255,255,255,0.3)"
     }
-  }, turntableAlbum ? "Hold near your speakers" : listenAttempt > MAX_ATTEMPTS ? "Identifying by lyrics" : listenSecs === 0 ? "Hold near your speakers" : `${listenSecs}s — hold steady`), liveTranscript ? /*#__PURE__*/React.createElement("div", {
-    style: {
-      marginTop: "16px",
-      padding: "10px 16px",
-      background: "rgba(255,255,255,0.06)",
-      borderRadius: "12px",
-      fontSize: "13px",
-      color: "rgba(255,255,255,0.5)",
-      maxWidth: "260px",
-      textAlign: "center",
-      fontStyle: "italic",
-      lineHeight: 1.4
-    }
-  }, `"${liveTranscript.split(/\s+/).slice(-12).join(" ")}"`) : null, /*#__PURE__*/React.createElement("div", {
+  }, turntableAlbum ? "Hold near your speakers" : listenAttempt > MAX_ATTEMPTS ? "Identifying by lyrics" : listenSecs === 0 ? "Hold near your speakers" : `${listenSecs}s — hold steady`), /*#__PURE__*/React.createElement("div", {
     style: {
       display: "flex",
       gap: "12px",
