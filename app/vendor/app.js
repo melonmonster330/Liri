@@ -1616,6 +1616,7 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
     const mimeType = window.Capacitor ? "" : MediaRecorder.isTypeSupported("audio/webm") ? "audio/webm" : "audio/mp4";
 
     const onChunkText = (text, chunkEndTime = Date.now()) => {
+      console.log("[whisper] chunk text:", JSON.stringify(text));
       if (!text || !isActive || listenSessionRef.current !== session || recognitionWonRef.current) return;
       fullTranscript += (fullTranscript ? " " : "") + text.trim();
       // Sliding window: only match against last 25 words so hallucinated
@@ -1626,8 +1627,10 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
       const wordCount = combined.split(/\s+/).filter(Boolean).length;
       setListenProgress(Math.min(wordCount / 12, 0.95));
       setAudioLevel(0.4 + Math.random() * 0.3);
+      console.log("[match] wordCount:", wordCount, "combined:", combined.substring(0, 80));
       if (wordCount < MIN_SCORE) return;
       const vmResult = matchTranscriptToTracks(combined, tracks, wordsData, attemptLogRef.current);
+      console.log("[match] result:", vmResult ? `score=${vmResult.score} track=${vmResult.track?.trackName}` : "null");
       if (!vmResult || vmResult.score < MIN_SCORE || recognitionWonRef.current) return;
       recognitionWonRef.current = true;
       stop();
