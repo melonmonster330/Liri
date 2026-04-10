@@ -3919,33 +3919,6 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
       color: "rgba(212,168,70,0.5)",
       fontSize: "18px"
     }
-  }, "\u203A")), /*#__PURE__*/React.createElement("div", {
-    onClick: () => { window.location.href = "/library?add=true"; },
-    style: {
-      display: "flex",
-      alignItems: "center",
-      justifyContent: "space-between",
-      marginTop: "12px",
-      paddingTop: "12px",
-      borderTop: "1px solid rgba(255,255,255,0.05)",
-      cursor: "pointer"
-    }
-  }, /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("div", {
-    style: {
-      fontSize: "13px",
-      color: "#d4a846"
-    }
-  }, "Add a Record"), /*#__PURE__*/React.createElement("div", {
-    style: {
-      fontSize: "11px",
-      color: "rgba(255,255,255,0.3)",
-      marginTop: "2px"
-    }
-  }, "Search your iTunes library")), /*#__PURE__*/React.createElement("div", {
-    style: {
-      color: "rgba(212,168,70,0.5)",
-      fontSize: "18px"
-    }
   }, "\u203A"))), /*#__PURE__*/React.createElement("div", {
     style: {
       borderTop: "1px solid rgba(255,255,255,0.07)",
