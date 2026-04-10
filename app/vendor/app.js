@@ -4429,66 +4429,53 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
     const lineDur = curLine && nextLine ? nextLine.time - curLine.time : 3;
     const transSec = Math.min(0.4, Math.max(0.1, lineDur * 0.35)).toFixed(2);
     const transition = `all ${transSec}s cubic-bezier(0.4,0,0.2,1)`;
-    return lyrics.map((line, i) => {
-      const dist = i - currentIndex;
+    // Append credit lines after the last lyric so they scroll + highlight naturally
+    const lastLyricTime = lyrics.length > 0 ? lyrics[lyrics.length - 1].time : 0;
+    const creditLines = [
+      ...(detectedSong?.title  ? [{ text: detectedSong.title,  time: lastLyricTime + 5,  isCredit: true }] : []),
+      ...(detectedSong?.artist ? [{ text: detectedSong.artist, time: lastLyricTime + 8,  isCredit: true }] : []),
+      ...(detectedSong?.album  ? [{ text: detectedSong.album,  time: lastLyricTime + 11, isCredit: true }] : []),
+      { text: "Lyrics via LRCLib · Whisper by OpenAI", time: lastLyricTime + 16, isCredit: true },
+      { text: `© ${new Date().getFullYear()} Liri · Music rights belong to their respective artists, labels & publishers.`, time: lastLyricTime + 20, isCredit: true },
+    ];
+    // Effective current index across real lyrics + credits
+    const allLines = [...lyrics, ...creditLines];
+    const pastLastLyric = currentIndex >= lyrics.length - 1 && lyrics.length > 0;
+    const effectiveIndex = pastLastLyric
+      ? lyrics.length - 1 + creditLines.reduce((best, cl, ci) => playbackTime >= cl.time ? ci + 1 : best, 0)
+      : currentIndex;
+    return allLines.map((line, i) => {
+      const dist = i - effectiveIndex;
       const cur = dist === 0;
       const near = Math.abs(dist) <= 3;
+      const isCredit = !!line.isCredit;
       return /*#__PURE__*/React.createElement("div", {
         key: i,
-        ref: cur ? currentLineRef : null,
-        onClick: () => cur ? refollow() : seekToLine(i),
+        ref: cur ? currentLineRef : i === lyrics.length ? creditsRef : null,
+        onClick: () => cur ? refollow() : (!isCredit && seekToLine(i)),
         style: {
           textAlign: "center",
           padding: near ? "6px 0" : "3px 0",
-          fontSize: cur ? "32px" : Math.abs(dist) <= 1 ? "20px" : near ? "16px" : "13px",
-          fontWeight: cur ? "700" : "400",
-          color: cur ? "#ffffff" : dist > 0 ? `rgba(255,255,255,${Math.max(0.07, 0.28 - Math.abs(dist) * 0.04)})` : `rgba(255,255,255,${Math.max(0.05, 0.18 - Math.abs(dist) * 0.02)})`,
+          fontSize: isCredit
+            ? (cur ? "15px" : Math.abs(dist) <= 1 ? "13px" : "11px")
+            : (cur ? "32px" : Math.abs(dist) <= 1 ? "20px" : near ? "16px" : "13px"),
+          fontWeight: cur && !isCredit ? "700" : "400",
+          color: cur
+            ? (isCredit ? "rgba(255,255,255,0.55)" : "#ffffff")
+            : dist > 0
+              ? `rgba(255,255,255,${Math.max(0.07, 0.28 - Math.abs(dist) * 0.04)})`
+              : `rgba(255,255,255,${Math.max(0.05, 0.18 - Math.abs(dist) * 0.02)})`,
           lineHeight: "1.4",
           transition: near ? transition : "none",
-          textShadow: cur ? "0 0 60px rgba(212,168,70,0.4), 0 2px 20px rgba(0,0,0,0.8)" : "none",
-          cursor: "pointer"
+          textShadow: cur && !isCredit ? "0 0 60px rgba(212,168,70,0.4), 0 2px 20px rgba(0,0,0,0.8)" : "none",
+          cursor: isCredit ? "default" : "pointer",
+          letterSpacing: isCredit ? "0.2px" : "normal",
+          maxWidth: isCredit ? "260px" : "none",
+          margin: isCredit ? "0 auto" : "0",
         }
       }, line.text);
     });
-  })(), /*#__PURE__*/React.createElement("div", {
-    ref: creditsRef,
-    style: {
-      marginTop: "52px",
-      paddingBottom: "30vh",
-      textAlign: "center"
-    }
-  }, /*#__PURE__*/React.createElement("div", {
-    style: {
-      width: "32px",
-      height: "1px",
-      background: "rgba(255,255,255,0.1)",
-      margin: "0 auto 20px"
-    }
-  }), /*#__PURE__*/React.createElement("div", {
-    style: {
-      fontSize: "11px",
-      color: "rgba(255,255,255,0.22)",
-      lineHeight: "2",
-      letterSpacing: "0.3px"
-    }
-  }, detectedSong?.title && /*#__PURE__*/React.createElement("div", {
-    style: {
-      color: "rgba(255,255,255,0.35)",
-      fontWeight: "600",
-      marginBottom: "2px"
-    }
-  }, detectedSong.title), detectedSong?.artist && /*#__PURE__*/React.createElement("div", null, detectedSong.artist), detectedSong?.album && /*#__PURE__*/React.createElement("div", {
-    style: {
-      color: "rgba(255,255,255,0.15)"
-    }
-  }, detectedSong.album), /*#__PURE__*/React.createElement("div", {
-    style: {
-      marginTop: "14px",
-      fontSize: "10px",
-      color: "rgba(255,255,255,0.12)",
-      lineHeight: "1.8"
-    }
-  }, "Lyrics via LRCLib \xB7 Recognition by ACRCloud", /*#__PURE__*/React.createElement("br", null), "\xA9 ", new Date().getFullYear(), " Liri \xB7 Music rights belong to their", /*#__PURE__*/React.createElement("br", null), "respective artists, labels & publishers.")))) : /*#__PURE__*/React.createElement("div", {
+  })(), /*#__PURE__*/React.createElement("div", { style: { paddingBottom: "30vh" } })) : /*#__PURE__*/React.createElement("div", {
     style: {
       textAlign: "center",
       color: "rgba(255,255,255,0.2)",
