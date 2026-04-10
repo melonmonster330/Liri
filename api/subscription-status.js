@@ -61,14 +61,20 @@ module.exports = async (req, res) => {
   if (!auth) return res.status(401).json({ error: "Unauthorized" });
 
   try {
-    // Fetch subscription row and library count in parallel
+    // Fetch subscription row and ever-added count in parallel
+    // albumCount uses user_library_ever (never decrements on delete) so deleting
+    // a record doesn't free up a free slot.
     const [subResult, libResult] = await Promise.all([
       supabaseGet(`subscriptions?user_id=eq.${encodeURIComponent(auth.userId)}&select=tier,status,current_period_end&limit=1`),
-      supabaseGet(`user_library?user_id=eq.${encodeURIComponent(auth.userId)}&select=itunes_collection_id`),
+      supabaseGet(`user_library_ever?user_id=eq.${encodeURIComponent(auth.userId)}&select=itunes_collection_id`),
     ]);
 
     const sub        = Array.isArray(subResult.data) ? subResult.data[0] : null;
     const albumCount = Array.isArray(libResult.data) ? libResult.data.length : 0;
+    // Also expose ever-added IDs so client can detect re-addable albums
+    const everAddedIds = Array.isArray(libResult.data)
+      ? libResult.data.map(r => String(r.itunes_collection_id))
+      : [];
 
     // Determine effective tier
     // Unlimited email list bypasses all limits
@@ -94,6 +100,7 @@ module.exports = async (req, res) => {
       status,
       albumCount,
       albumLimit,
+      everAddedIds,
       currentPeriodEnd: sub?.current_period_end || null,
     });
   } catch (e) {

@@ -222,21 +222,30 @@ module.exports = async (req, res) => {
   if (!itunes_collection_id) return res.status(400).json({ error: "itunes_collection_id required" });
   const collectionId = parseInt(itunes_collection_id, 10);
 
-  // ── Free tier limit: 10 albums max ─────────────────────────────────────────
+  // ── Free tier limit: 10 albums max (counts ever-added, not current library) ──
   if (!auth.isUnlimited) {
     const tier = await getSubscriptionTier(auth.userId, false);
     if (tier === "free") {
-      const { data: libraryRows } = await sbRequest(
+      // Check if this album was ever added by this user — if so, re-add is free
+      const { data: everRows } = await sbRequest(
         "GET",
-        `user_library?user_id=eq.${encodeURIComponent(auth.userId)}&select=itunes_collection_id`
+        `user_library_ever?user_id=eq.${encodeURIComponent(auth.userId)}&itunes_collection_id=eq.${collectionId}&select=id&limit=1`
       );
-      const albumCount = Array.isArray(libraryRows) ? libraryRows.length : 0;
-      if (albumCount >= FREE_ALBUM_LIMIT) {
-        return res.status(403).json({
-          error: "free_limit_reached",
-          limit: FREE_ALBUM_LIMIT,
-          count: albumCount,
-        });
+      const wasEverAdded = Array.isArray(everRows) && everRows.length > 0;
+      if (!wasEverAdded) {
+        // New album — check against the ever-added count
+        const { data: allEverRows } = await sbRequest(
+          "GET",
+          `user_library_ever?user_id=eq.${encodeURIComponent(auth.userId)}&select=id`
+        );
+        const everCount = Array.isArray(allEverRows) ? allEverRows.length : 0;
+        if (everCount >= FREE_ALBUM_LIMIT) {
+          return res.status(403).json({
+            error: "free_limit_reached",
+            limit: FREE_ALBUM_LIMIT,
+            count: everCount,
+          });
+        }
       }
     }
   }
@@ -338,6 +347,13 @@ module.exports = async (req, res) => {
       user_id:              auth.userId,
       itunes_collection_id: collectionId,
       added_at:             new Date().toISOString(),
+    }, "user_id,itunes_collection_id");
+
+    // ── Step 7: Record in ever-added history (never deleted) ─────────────────
+    await upsert("user_library_ever", {
+      user_id:              auth.userId,
+      itunes_collection_id: collectionId,
+      first_added_at:       new Date().toISOString(),
     }, "user_id,itunes_collection_id");
 
     return res.status(200).json({
