@@ -3271,17 +3271,14 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
       gap: "8px"
     }
   }, [{
-    name: "ACRCloud",
-    role: "Audio recognition"
+    name: "OpenAI Whisper",
+    role: "Lyrics transcription"
   }, {
     name: "LRCLib",
     role: "Synced lyrics"
   }, {
-    name: "Apple iTunes",
+    name: "Apple Music",
     role: "Track & album data"
-  }, {
-    name: "Liri Community",
-    role: "Vinyl pressing database"
   }].map(c => /*#__PURE__*/React.createElement("div", {
     key: c.name,
     style: {
@@ -3601,6 +3598,8 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
     }
   }, /*#__PURE__*/React.createElement("div", {
     onClick: e => e.stopPropagation(),
+    onTouchStart: e => { if (!isWide) e.currentTarget._swipeStartY = e.touches[0].clientY; },
+    onTouchEnd: e => { if (!isWide && e.changedTouches[0].clientY - (e.currentTarget._swipeStartY || 0) > 80) setShowSettings(false); },
     style: isWide ? {
       position: "absolute",
       top: 0,
@@ -3747,7 +3746,7 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
         color: "rgba(255,255,255,0.3)",
         marginTop: "2px"
       }
-    }, userTier === "premium" ? "✦ Liri Premium" : "Free plan"))));
+    }, userTier === "premium" ? "✦ Liri Premium" : "Liri"))));
   })(),
 
   /* ── Plan card ── */
@@ -3896,13 +3895,13 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
       padding: "16px 18px",
       marginBottom: "16px"
     }
-  }, /*#__PURE__*/React.createElement("a", {
-    href: "/library",
+  }, /*#__PURE__*/React.createElement("div", {
+    onClick: () => { window.location.href = "/library"; },
     style: {
       display: "flex",
       alignItems: "center",
       justifyContent: "space-between",
-      textDecoration: "none"
+      cursor: "pointer"
     }
   }, /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("div", {
     style: {
@@ -3920,8 +3919,8 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
       color: "rgba(212,168,70,0.5)",
       fontSize: "18px"
     }
-  }, "\u203A")), /*#__PURE__*/React.createElement("a", {
-    href: "/vinyl",
+  }, "\u203A")), /*#__PURE__*/React.createElement("div", {
+    onClick: () => { window.location.href = "/library?add=true"; },
     style: {
       display: "flex",
       alignItems: "center",
@@ -3929,52 +3928,25 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
       marginTop: "12px",
       paddingTop: "12px",
       borderTop: "1px solid rgba(255,255,255,0.05)",
-      textDecoration: "none"
+      cursor: "pointer"
     }
   }, /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("div", {
     style: {
       fontSize: "13px",
       color: "#d4a846"
     }
-  }, "Browse the Vinyl Library"), /*#__PURE__*/React.createElement("div", {
+  }, "Add a Record"), /*#__PURE__*/React.createElement("div", {
     style: {
       fontSize: "11px",
       color: "rgba(255,255,255,0.3)",
       marginTop: "2px"
     }
-  }, "Community-verified pressings & flip data")), /*#__PURE__*/React.createElement("div", {
+  }, "Search your iTunes library")), /*#__PURE__*/React.createElement("div", {
     style: {
       color: "rgba(212,168,70,0.5)",
       fontSize: "18px"
     }
   }, "\u203A"))), /*#__PURE__*/React.createElement("div", {
-    style: {
-      background: "rgba(212,168,70,0.07)",
-      border: "1px solid rgba(212,168,70,0.15)",
-      borderRadius: "16px",
-      padding: "16px 18px",
-      marginBottom: "20px"
-    }
-  }, /*#__PURE__*/React.createElement("div", {
-    style: {
-      fontSize: "13px",
-      fontWeight: "600",
-      color: "#d4a846",
-      marginBottom: "4px"
-    }
-  }, "Liri Pro \u2014 Coming Soon"), /*#__PURE__*/React.createElement("div", {
-    style: {
-      fontSize: "12px",
-      color: "rgba(255,255,255,0.35)",
-      lineHeight: "1.6"
-    }
-  }, "Unlimited records, and more."), /*#__PURE__*/React.createElement("div", {
-    style: {
-      fontSize: "12px",
-      color: "#d4a846",
-      marginTop: "8px"
-    }
-  }, "hello@getliri.com")), /*#__PURE__*/React.createElement("div", {
     style: {
       borderTop: "1px solid rgba(255,255,255,0.07)",
       paddingTop: "20px",
@@ -3996,20 +3968,14 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
       marginBottom: "14px"
     }
   }, [{
-    name: "ACRCloud",
-    role: "Audio recognition"
+    name: "OpenAI Whisper",
+    role: "Lyrics transcription"
   }, {
     name: "LRCLib",
     role: "Synced lyrics"
   }, {
     name: "Apple Music",
     role: "Track &amp; artwork data"
-  }, {
-    name: "Liri Community",
-    role: "Vinyl pressing database"
-  }, {
-    name: "OpenAI",
-    role: "Lyrics transcription"
   }].map(c => /*#__PURE__*/React.createElement("div", {
     key: c.name
   }, /*#__PURE__*/React.createElement("div", {
