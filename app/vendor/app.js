@@ -28,6 +28,58 @@ const _nativeAudioPlugin = (() => {
 // All original artwork should match the dark palette: deep navy #080810, gold #d4a846, rose #c9807a
 // ─────────────────────────────────────────────────────────────────────────────────────────────
 
+// ── Whisper chunk recorder ────────────────────────────────────────────────────
+// Shared by initial listen, resync, and any future listening entry points.
+// Opens a recording loop on `stream`, sends each chunk to Whisper, calls
+// `onText(text, chunkEndTime)` for every non-empty result.
+// Returns { stop } — call stop() to tear down immediately.
+const startWhisperChunks = (stream, onText, chunkMs) => {
+  const mimeType = window.Capacitor ? "" : MediaRecorder.isTypeSupported("audio/webm") ? "audio/webm" : "audio/mp4";
+  let active = true;
+  let currentRecorder = null;
+
+  const stop = () => {
+    active = false;
+    try { currentRecorder?.stop(); } catch {}
+    stream.getTracks().forEach(t => t.stop());
+  };
+
+  const recordChunk = () => {
+    if (!active) return;
+    const recorder = mimeType ? new MediaRecorder(stream, { mimeType }) : new MediaRecorder(stream);
+    currentRecorder = recorder;
+    recorder.ondataavailable = async (e) => {
+      console.log("[mic] chunk size:", e.data.size, "type:", e.data.type);
+      if (e.data.size < 500 || !active) return;
+      const chunkEndTime = Date.now();
+      try {
+        const base64 = await new Promise((resolve, reject) => {
+          const reader = new FileReader();
+          reader.onload  = () => resolve(reader.result.split(",")[1]);
+          reader.onerror = reject;
+          reader.readAsDataURL(e.data);
+        });
+        const res = await fetch(WHISPER_PROXY, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ audio: base64, mimeType: e.data.type || mimeType || "audio/mp4" }),
+        });
+        if (!res.ok || !active) return;
+        const { text } = await res.json();
+        onText(text, chunkEndTime);
+      } catch (err) { console.error("[whisper] chunk error:", err); }
+    };
+    recorder.start();
+    setTimeout(() => {
+      if (recorder.state === "recording") recorder.stop();
+      recordChunk(); // overlap — next chunk starts while API call is in-flight
+    }, chunkMs);
+  };
+
+  recordChunk();
+  return { stop };
+};
+
 // How many seconds we add to ACRCloud's offset to correct for processing lag
 const PLAYBACK_OFFSET_CORRECTION = 4.0;
 // Extra offset added when auto-advancing to next track (no re-listen),
@@ -1387,6 +1439,8 @@ function Liri() {
     }).filter(Boolean);
 
     if (logRef) logRef.push(`match: ${tracksWithWords.length}/${tracks.length} tracks have lyrics`);
+    console.log("[match] tracksWithWords:", tracksWithWords.length, "/", tracks.length, "| heardWords:", heardWords.slice(0, 8).join(" "));
+    if (tracksWithWords.length > 0) console.log("[match] sample track words:", tracksWithWords[0]?.trackName, tracksWithWords[0]?.wordArr?.slice(0, 10));
     if (!tracksWithWords.length) return null;
 
     // MIN_RUN = 4: require at least 4 consecutive matching words before committing.
@@ -1664,42 +1718,12 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
       setCurrentTrackIndex(tIdx >= 0 ? tIdx : 0);
     };
 
-    const recordChunk = () => {
+    const chunkMs = window.Capacitor ? 3500 : 1750; // AAC needs more data than Opus
+    const whisper = startWhisperChunks(stream, (text, chunkEndTime) => {
       if (!isActive || listenSessionRef.current !== session) return;
-      const recorder = mimeType ? new MediaRecorder(stream, { mimeType }) : new MediaRecorder(stream);
-      currentRecorder = recorder;
-      recorder.ondataavailable = async (e) => {
-        console.log("[mic] chunk size:", e.data.size, "type:", e.data.type);
-        if (e.data.size < 500) return; // skip empty blobs (raised from 1000 for iOS)
-        const chunkEndTime = Date.now(); // capture before async API call
-        try {
-          // Send as base64 JSON — CapacitorHttp (iOS) cannot serialize raw Blob bodies,
-          // but web fetch handles both paths identically via the updated api/whisper.js
-          const base64 = await new Promise((resolve, reject) => {
-            const reader = new FileReader();
-            reader.onload = () => resolve(reader.result.split(",")[1]);
-            reader.onerror = reject;
-            reader.readAsDataURL(e.data);
-          });
-          const res = await fetch(WHISPER_PROXY, {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ audio: base64, mimeType: e.data.type || mimeType || "audio/mp4" }),
-          });
-          if (!res.ok) return;
-          const { text } = await res.json();
-          onChunkText(text, chunkEndTime);
-        } catch (err) { console.error("[whisper] chunk error:", err); }
-      };
-      recorder.start();
-      const chunkMs = window.Capacitor ? 3500 : 1750; // AAC needs more data than Opus
-      setTimeout(() => {
-        if (recorder.state === "recording") recorder.stop();
-        recordChunk(); // start next chunk immediately — API calls overlap
-      }, chunkMs);
-    };
-
-    recordChunk();
+      onChunkText(text, chunkEndTime);
+    }, chunkMs);
+    currentRecorder = { stop: whisper.stop };
   };
     const startListening = async (isAutoAdvance = false) => {
     if (!turntableAlbumRef.current) {
