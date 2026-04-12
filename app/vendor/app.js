@@ -712,6 +712,10 @@ function Liri() {
     }
   };
 
+  // Shared title normaliser: strip punctuation + lowercase so Discogs ↔ iTunes title
+  // mismatches (feat., trailing periods, dashes, etc.) don't break side matching.
+  const normTitle = s => (s || "").toLowerCase().replace(/[^a-z0-9]/g, "");
+
   // Convert our DB track list into side-end indices that advanceToNextTrack can use.
   // Returns an array of iTunes track indices that are the last track of each side.
   const getDbSideEndIndices = (itunesTracks, dbTracks) => {
@@ -725,8 +729,8 @@ function Liri() {
     // For every side except the last, find the last track of that side in the iTunes list
     sides.slice(0, -1).forEach(side => {
       const sorted = sideGroups[side].sort((a, b) => a.track_number_on_side - b.track_number_on_side);
-      const lastTitle = sorted[sorted.length - 1]?.title?.toLowerCase();
-      const idx = itunesTracks.findIndex(t => t.trackName?.toLowerCase() === lastTitle);
+      const lastTitle = normTitle(sorted[sorted.length - 1]?.title);
+      const idx = itunesTracks.findIndex(t => normTitle(t.trackName) === lastTitle);
       if (idx >= 0) result.push(idx);
     });
     result.push(itunesTracks.length - 1); // album end
@@ -2019,9 +2023,6 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
   // library.html uses the same norm() function and the same isSequential logic
   // to merge Discogs data — if you change the logic here, update library.html too.
   const getSideInfo = () => {
-    // Strip punctuation + lowercase for reliable title matching (Discogs titles ≠ iTunes titles)
-    const norm = s => (s || "").toLowerCase().replace(/[^a-z0-9]/g, "");
-
     // Resolve a vinyl DB entry for a given iTunes track name + 0-based index.
     // Handles sequential Discogs numbering (B5, F23 → match by index) vs per-side (B1, B2 → match by title).
     const resolveVinylTrack = (trackName, idx, vinylTracks) => {
@@ -2029,8 +2030,7 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
       const maxNum = Math.max(...vinylTracks.map(v => v.track_number_on_side || 0));
       const isSeq = maxNum > 0 && maxNum === vinylTracks.length;
       if (isSeq) return vinylTracks.find(v => v.track_number_on_side === idx + 1) || null;
-      const normTitle = norm(trackName);
-      return vinylTracks.find(v => norm(v.title) === normTitle) || vinylTracks.find(v => v.track_number_on_side === idx + 1) || null;
+      return vinylTracks.find(v => normTitle(v.title) === normTitle(trackName)) || vinylTracks.find(v => v.track_number_on_side === idx + 1) || null;
     };
 
     // Convert a vinyl DB row to { side, track } for display.
