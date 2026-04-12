@@ -1059,28 +1059,21 @@ function Liri() {
         const cache = {};
         for (const row of lrcRows || []) {
           // Key as String() to guard against numeric vs string type mismatch.
-          // itunes_track_id comes back as a JS number from Supabase, but track.trackId
-          // can be stored as a string in some code paths (e.g. after JSON.parse from
-          // localStorage). Converting both sides to String() at the boundary means
-          // cache lookups with either type always succeed.
-          // GOTCHA: removing this coercion caused a bug where every cache lookup
-          // returned undefined and speech matching silently fell back to "no lyrics",
-          // causing the listener to spin forever. See feedback_track_data_source.md.
-          if (row.itunes_track_id) cache[String(row.itunes_track_id)] = {
-            // All three columns are stored: each is a fallback for the other.
-            // words_json: pre-tokenised [{word, start_ms}] array — fastest path for
-            //   matchTranscriptToTracks, produced by the lyrics-import pipeline.
-            // lrc_raw: timestamped LRC format — used to derive word timings on the fly
-            //   if words_json is absent, and also for the karaoke display (line-by-line
-            //   highlighting). Without lrc_raw we lose sync accuracy.
-            // lyrics_plain: raw text, no timestamps — last resort for matching when
-            //   neither words_json nor lrc_raw is available. Matching still works but
-            //   position offset accuracy is reduced because we can only estimate start_ms.
-            lrc_raw: row.lrc_raw || null,
-            words_json: row.words_json || null,
-            lyrics_plain: row.lyrics_plain || null,
-          };
+          if (row.itunes_track_id) {
+            // words_json is JSONB — on some Capacitor/WebView versions it can arrive
+            // as a JSON string instead of a parsed array. Parse it defensively.
+            let wordsJson = row.words_json || null;
+            if (typeof wordsJson === "string") {
+              try { wordsJson = JSON.parse(wordsJson); } catch { wordsJson = null; }
+            }
+            cache[String(row.itunes_track_id)] = {
+              lrc_raw: row.lrc_raw || null,
+              words_json: Array.isArray(wordsJson) ? wordsJson : null,
+              lyrics_plain: row.lyrics_plain || null,
+            };
+          }
         }
+        console.log("[turntable] lrcRows:", (lrcRows || []).length, "cache entries:", Object.keys(cache).length, "tracks:", trackRows.length);
         // Store in ref (not state) so startListeningSpeech can read it synchronously
         // without a re-render cycle. React state would be stale inside the closure.
         turntableLyricsCacheRef.current = cache;
@@ -1597,7 +1590,9 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
       if (!track.trackId) continue;
       const entry = lrcCache[String(track.trackId)];
       if (!entry) continue;
-      let words = entry.words_json || [];
+      // words_json: already-normalised [{word, start_ms}] — fastest path
+      let words = Array.isArray(entry.words_json) ? entry.words_json : [];
+      // lrc_raw fallback: parse timestamps on the fly
       if (!words.length && entry.lrc_raw) {
         for (const line of parseLRC(entry.lrc_raw)) {
           for (const raw of (line.text || "").split(/\s+/)) {
@@ -1606,8 +1601,18 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
           }
         }
       }
+      // lyrics_plain fallback: no timestamps, rough 4s-per-line estimate
+      if (!words.length && entry.lyrics_plain) {
+        entry.lyrics_plain.split("\n").filter(l => l.trim()).forEach((line, li) => {
+          for (const raw of line.split(/\s+/)) {
+            const word = raw.toLowerCase().replace(/[^a-z0-9']/g, "");
+            if (word) words.push({ word, start_ms: li * 4000 });
+          }
+        });
+      }
       wordsData[track.trackId] = { words, lrc_raw: entry.lrc_raw, lyrics_plain: entry.lyrics_plain };
     }
+    console.log("[listen] cache:", Object.keys(lrcCache).length, "wordsData tracks:", Object.keys(wordsData).length, "with words:", Object.values(wordsData).filter(d => d.words?.length > 0).length);
     if (!Object.values(wordsData).some(d => d.words?.length > 0)) {
       setError("No lyric data for this album — remove it from your library and re-add it to refresh.");
       setMode("error"); return;
