@@ -1074,6 +1074,27 @@ function Liri() {
           }
         }
         console.log("[turntable] lrcRows:", (lrcRows || []).length, "cache entries:", Object.keys(cache).length, "tracks:", trackRows.length);
+
+        // ── Fill gaps: fetch from LRCLib for any track not in track_lyrics ──
+        // Happens when a track had no lyrics at add-time; LRCLib may have them now.
+        // Non-fatal — missing lyrics just mean that track won't match.
+        const missingTracks = trackRows.filter(t => t.itunes_track_id && !cache[String(t.itunes_track_id)]);
+        if (missingTracks.length > 0) {
+          await Promise.all(missingTracks.map(async t => {
+            try {
+              const p = new URLSearchParams({ track_name: t.track_name, artist_name: t.artist_name || artistName, album_name: albumName });
+              if (t.duration_ms) p.set("duration", String(Math.round(t.duration_ms / 1000)));
+              const r = await fetch(`https://lrclib.net/api/get?${p}`, { headers: { "Lrclib-Client": "Liri/1.1 (https://getliri.com)" } });
+              if (!r.ok) return;
+              const d = await r.json();
+              if (d?.syncedLyrics || d?.plainLyrics) {
+                cache[String(t.itunes_track_id)] = { lrc_raw: d.syncedLyrics || null, words_json: null, lyrics_plain: d.plainLyrics || null };
+                console.log("[turntable] fetched missing lyrics for:", t.track_name);
+              }
+            } catch {}
+          }));
+        }
+
         // Store in ref (not state) so startListeningSpeech can read it synchronously
         // without a re-render cycle. React state would be stale inside the closure.
         turntableLyricsCacheRef.current = cache;
