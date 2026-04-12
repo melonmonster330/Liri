@@ -1141,6 +1141,22 @@ function Liri() {
         // Store in ref (not state) so startListeningSpeech can read it synchronously
         // without a re-render cycle. React state would be stale inside the closure.
         turntableLyricsCacheRef.current = cache;
+
+        // ── Load vinyl side data (Discogs) for accurate side display ──
+        setTurntableTracksProgress({ percent: 90, stage: "Loading side data…" });
+        let dbRelease = await fetchVinylRelease(collectionId);
+        if (!dbRelease?.vinyl_tracks?.length) {
+          // Not in DB yet — fetch from Discogs and retry once
+          await autoPopulateVinylSides(collectionId, albumName, artistName);
+          dbRelease = await fetchVinylRelease(collectionId);
+        }
+        if (dbRelease?.vinyl_tracks?.length > 0) {
+          setVinylDbRelease(dbRelease);
+          vinylDbReleaseRef.current = dbRelease;
+        } else {
+          setVinylDbRelease(null);
+          vinylDbReleaseRef.current = null;
+        }
       } else {
         console.warn("[turntable] no tracks found for:", collectionId);
       }
@@ -1422,6 +1438,8 @@ function Liri() {
         albumTpsRef.current = 0;
         return;
       }
+      // No Discogs data yet — kick off a background fetch so it's ready next listen.
+      autoPopulateVinylSides(collectionId, song.album, artist).catch(() => {});
       const stored = getAlbumSideData(collectionId);
       if (stored?.tps) {
         albumTpsRef.current = stored.tps;
