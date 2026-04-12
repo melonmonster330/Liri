@@ -34,22 +34,62 @@ const _nativeAudioPlugin = (() => {
 // `onText(text, chunkEndTime)` for every non-empty result.
 // Returns { stop } — call stop() to tear down immediately.
 const startWhisperChunks = (stream, onText, chunkMs) => {
-  const mimeType = window.Capacitor ? "" : MediaRecorder.isTypeSupported("audio/webm") ? "audio/webm" : "audio/mp4";
   let active = true;
-  let currentRecorder = null;
 
+  // ── iOS path: single continuous recorder, accumulate all chunks ──────────────
+  // iOS MediaRecorder outputs fragmented MP4 (fMP4): only the FIRST chunk contains
+  // the codec init data (moov box). Subsequent chunks are raw moof+mdat — Whisper
+  // can't decode them standalone and hallucinates instead of transcribing.
+  // Fix: keep one recorder running, accumulate every chunk into a growing blob, and
+  // send the full blob (init + all media data) to Whisper each interval. The result
+  // is always a valid decodable MP4 regardless of which chunk number we're on.
+  if (window.Capacitor) {
+    const iosChunks = [];
+    const recorder = new MediaRecorder(stream);
+    recorder.ondataavailable = async (e) => {
+      if (!active || e.data.size < 500) return;
+      iosChunks.push(e.data);
+      const fullBlob = new Blob(iosChunks, { type: e.data.type || "audio/mp4" });
+      const chunkEndTime = Date.now();
+      try {
+        const base64 = await new Promise((resolve, reject) => {
+          const reader = new FileReader();
+          reader.onload  = () => resolve(reader.result.split(",")[1]);
+          reader.onerror = reject;
+          reader.readAsDataURL(fullBlob);
+        });
+        const res = await fetch(WHISPER_PROXY, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ audio: base64, mimeType: fullBlob.type || "audio/mp4" }),
+        });
+        if (!res.ok || !active) return;
+        const { text } = await res.json();
+        onText(text, chunkEndTime);
+      } catch (err) { console.error("[whisper] chunk error:", err); }
+    };
+    recorder.start(chunkMs); // timeslice — ondataavailable fires every chunkMs
+    const stop = () => {
+      active = false;
+      try { recorder.stop(); } catch {}
+      stream.getTracks().forEach(t => t.stop());
+    };
+    return { stop };
+  }
+
+  // ── Web path: overlapping short chunks (WebM is self-contained per chunk) ────
+  const mimeType = MediaRecorder.isTypeSupported("audio/webm") ? "audio/webm" : "audio/mp4";
+  let currentRecorder = null;
   const stop = () => {
     active = false;
     try { currentRecorder?.stop(); } catch {}
     stream.getTracks().forEach(t => t.stop());
   };
-
   const recordChunk = () => {
     if (!active) return;
-    const recorder = mimeType ? new MediaRecorder(stream, { mimeType }) : new MediaRecorder(stream);
+    const recorder = new MediaRecorder(stream, { mimeType });
     currentRecorder = recorder;
     recorder.ondataavailable = async (e) => {
-      console.log("[mic] chunk size:", e.data.size, "type:", e.data.type);
       if (e.data.size < 500 || !active) return;
       const chunkEndTime = Date.now();
       try {
@@ -62,7 +102,7 @@ const startWhisperChunks = (stream, onText, chunkMs) => {
         const res = await fetch(WHISPER_PROXY, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ audio: base64, mimeType: e.data.type || mimeType || "audio/mp4" }),
+          body: JSON.stringify({ audio: base64, mimeType: e.data.type || mimeType }),
         });
         if (!res.ok || !active) return;
         const { text } = await res.json();
@@ -72,10 +112,9 @@ const startWhisperChunks = (stream, onText, chunkMs) => {
     recorder.start();
     setTimeout(() => {
       if (recorder.state === "recording") recorder.stop();
-      recordChunk(); // overlap — next chunk starts while API call is in-flight
+      recordChunk();
     }, chunkMs);
   };
-
   recordChunk();
   return { stop };
 };
@@ -1687,18 +1726,17 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
     };
     speechRecRef.current = { stop };
 
-    // ── Whisper via overlapping 1.75s chunks ──
-    // Each chunk is sent to /api/whisper as it completes; API calls overlap
-    // so chunk N+1 is being recorded while chunk N's response is in-flight.
-    // Returned words are appended to fullTranscript and matched after each chunk.
-    // On iOS (Capacitor) don't force a mimeType — let WKWebView pick its default
-    // Forcing audio/mp4 triggers AudioSampleBufferConverter codec errors
-    const mimeType = window.Capacitor ? "" : MediaRecorder.isTypeSupported("audio/webm") ? "audio/webm" : "audio/mp4";
-
     const onChunkText = (text, chunkEndTime = Date.now()) => {
-      console.log("[whisper] chunk text:", JSON.stringify(text));
       if (!text || !isActive || listenSessionRef.current !== session || recognitionWonRef.current) return;
-      fullTranscript += (fullTranscript ? " " : "") + text.trim();
+      // iOS: startWhisperChunks sends growing accumulated audio, so Whisper returns
+      // a full re-transcription of everything heard from t=0 on each call.
+      // Replace fullTranscript rather than appending to avoid duplicate words.
+      // Web: each chunk is independent so we append to build the transcript.
+      if (window.Capacitor) {
+        fullTranscript = text.trim();
+      } else {
+        fullTranscript += (fullTranscript ? " " : "") + text.trim();
+      }
       // Sliding window: only match against last 25 words so hallucinated
       // words from long instrumental intros fall off when lyrics start
       const allWords = fullTranscript.split(/\s+/).filter(Boolean);
