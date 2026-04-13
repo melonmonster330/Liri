@@ -2211,9 +2211,11 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
     }
 
     // Auto-advance always starts the new track from second 0 — we know exactly
-    // where the needle is. The intro-aware offset (firstLyricTime - 2) was designed
-    // for mid-song sync and causes a late pop-in when applied here.
+    // where the needle is. Store a syncCalcRef so startSync accounts for the
+    // React render delay between here and when the interval actually begins
+    // (same deferred-timing pattern used by the speech recognition path).
     initialPosRef.current = Math.max(0, userNudgeRef.current);
+    syncCalcRef.current = { startPos: userNudgeRef.current, phraseOffset: 0, recStart: Date.now() };
     saveToHistory(user, nextSong);
     fetchHistory(user);
     // cast removed
