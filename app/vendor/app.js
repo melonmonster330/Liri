@@ -2210,11 +2210,10 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
       lyricsRef.current = [];
     }
 
-    // Intro-aware initial position: start 2s before the first lyric line so lyrics
-    // appear right as the vocals kick in, rather than a fixed 2s from track start.
-    // Falls back to AUTO_ADVANCE_OFFSET if no lyrics loaded (instrumental / LRC missing).
-    const firstLyricTime = lyricsRef.current?.[0]?.time ?? AUTO_ADVANCE_OFFSET;
-    initialPosRef.current = Math.max(0, firstLyricTime - 2) + userNudgeRef.current;
+    // Auto-advance always starts the new track from second 0 — we know exactly
+    // where the needle is. The intro-aware offset (firstLyricTime - 2) was designed
+    // for mid-song sync and causes a late pop-in when applied here.
+    initialPosRef.current = Math.max(0, userNudgeRef.current);
     saveToHistory(user, nextSong);
     fetchHistory(user);
     // cast removed
