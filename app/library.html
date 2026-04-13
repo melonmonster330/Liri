@@ -747,14 +747,15 @@
         setQuery("");
         setResults([]);
         try {
-          // Force a token refresh so we never send an expired access token
-          const { data: { session: freshSession }, error: refreshError } = await sb.auth.refreshSession();
-          const token = freshSession?.access_token || sessionTokenRef.current;
+          // Use the token already kept live by onAuthStateChange — calling
+          // refreshSession() right before the fetch can cause a race on iOS
+          // Capacitor where the new token hasn't propagated yet, resulting in 401.
+          const token = sessionTokenRef.current;
 
-          // Catch expired/missing session before hitting the server
           if (!token) {
             setAddError("Session expired — please sign out and back in, then try again.");
             setAdding(null);
+            setPendingAlbum(null);
             return;
           }
 
@@ -762,7 +763,7 @@
             method: "POST",
             headers: {
               "Content-Type": "application/json",
-              ...(token ? { "Authorization": `Bearer ${token}` } : {}),
+              "Authorization": `Bearer ${token}`,
             },
             body: JSON.stringify({ itunes_collection_id: album.collectionId }),
           });
@@ -821,8 +822,7 @@
       const upgradeToStripe = async () => {
         setUpgradeWorking(true);
         try {
-          const { data: { session: freshSession } } = await sb.auth.refreshSession();
-          const token = freshSession?.access_token || sessionTokenRef.current;
+          const token = sessionTokenRef.current;
           const res  = await fetch(`${API_BASE}/api/stripe-checkout`, {
             method: "POST",
             headers: { "Content-Type": "application/json", "Authorization": `Bearer ${token}` },
@@ -844,8 +844,7 @@
       const openBillingPortal = async () => {
         setUpgradeWorking(true);
         try {
-          const { data: { session: freshSession } } = await sb.auth.refreshSession();
-          const token = freshSession?.access_token || sessionTokenRef.current;
+          const token = sessionTokenRef.current;
           const res  = await fetch(`${API_BASE}/api/stripe-portal`, {
             method: "POST",
             headers: { "Content-Type": "application/json", "Authorization": `Bearer ${token}` },
