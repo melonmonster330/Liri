@@ -1543,21 +1543,17 @@ function Liri() {
       for (let start = 0; start <= heardWords.length - len; start++) {
         const phrase = heardWords.slice(start, start + len);
 
-        // A track qualifies if the phrase appears at least once in it.
-        // We only require uniqueness ACROSS tracks (hits.length === 1), not
-        // within a track — repetitive songs repeat the same phrase many times
-        // and the old within-track uniqueness check blocked them entirely.
-        // Position is always taken from the FIRST occurrence (see matchWordIdx below).
         const hits = tracksWithWords.filter(t => {
+          let count = 0;
           const arr = t.wordArr;
           for (let i = 0; i <= arr.length - len; i++) {
             let ok = true;
             for (let j = 0; j < len; j++) {
               if (!fuzzyEq(arr[i + j], phrase[j])) { ok = false; break; }
             }
-            if (ok) return true;
+            if (ok) { count++; if (count > 1) return false; } // repeats within track → not unique enough
           }
-          return false;
+          return count === 1;
         });
 
         if (hits.length !== 1) continue; // not unique across tracks
