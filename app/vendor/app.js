@@ -3689,7 +3689,7 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
       padding: "20px 0 4px"
     }
   }, /*#__PURE__*/React.createElement("a", {
-    href: "/library",
+    href: window.Capacitor ? "/library.html" : "/library",
     style: {
       fontSize: 12,
       color: "rgba(255,255,255,0.2)",
@@ -4005,7 +4005,7 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
       marginBottom: "16px"
     }
   }, /*#__PURE__*/React.createElement("div", {
-    onClick: () => { window.location.href = "/library"; },
+    onClick: () => { window.location.href = window.Capacitor ? "/library.html" : "/library"; },
     style: {
       display: "flex",
       alignItems: "center",

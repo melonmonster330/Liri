@@ -907,7 +907,6 @@
                 <span style={{ fontSize: 18, fontWeight: 700, color: "#f0e6d3" }}>Liri</span>
               </a>
               <div style={{ display:"flex", alignItems:"center", gap:10 }}>
-                <a href="/stats" style={{ fontSize:13, color:"rgba(255,255,255,0.4)", textDecoration:"none", padding:"10px 14px", border:"1px solid rgba(255,255,255,0.1)", borderRadius:50 }}>Stats</a>
                 <button onClick={() => { setShowSearch(true); setQuery(""); setResults([]); }}
                   style={{ background: "linear-gradient(135deg,#d4a846,#c9807a)", color: "#080810", border: "none", borderRadius: 50, padding: "10px 20px", fontSize: 13, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>
                   + Add record
@@ -1039,7 +1038,6 @@
                   {[
                     ["✦", "Unlimited vinyl library"],
                     ["✦", "Full lyrics on every track"],
-                    ["✦", "Listening stats & Wrapped"],
                   ].map(([icon, text]) => (
                     <div key={text} style={{ display: "flex", alignItems: "center", gap: 10, padding: "6px 0", fontSize: 13, color: "rgba(255,255,255,0.6)" }}>
                       <span style={{ color: "#d4a846", fontSize: 10 }}>{icon}</span>
