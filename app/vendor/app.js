@@ -1706,7 +1706,9 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
     // ── Open mic ──
     let stream;
     try {
-      stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      // Disable echo cancellation + noise suppression so iOS voice-call processing
+      // doesn't degrade music audio before it reaches Whisper (causes hallucinations).
+      stream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: false } });
     } catch {
       setError(isNative ? "Microphone blocked. Go to Settings → Liri → Microphone to allow access." : "Microphone blocked — check your browser's site permissions and try again.");
       setMode("error"); return;
