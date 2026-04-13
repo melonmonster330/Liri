@@ -1543,17 +1543,21 @@ function Liri() {
       for (let start = 0; start <= heardWords.length - len; start++) {
         const phrase = heardWords.slice(start, start + len);
 
+        // A track qualifies if the phrase appears at least once in it.
+        // We only require uniqueness ACROSS tracks (hits.length === 1), not
+        // within a track — repetitive songs repeat the same phrase many times
+        // and the old within-track uniqueness check blocked them entirely.
+        // Position is always taken from the FIRST occurrence (see matchWordIdx below).
         const hits = tracksWithWords.filter(t => {
-          let count = 0;
           const arr = t.wordArr;
           for (let i = 0; i <= arr.length - len; i++) {
             let ok = true;
             for (let j = 0; j < len; j++) {
               if (!fuzzyEq(arr[i + j], phrase[j])) { ok = false; break; }
             }
-            if (ok) { count++; if (count > 1) return false; } // more than once → not unique
+            if (ok) return true;
           }
-          return count === 1;
+          return false;
         });
 
         if (hits.length !== 1) continue; // not unique across tracks
@@ -1761,10 +1765,11 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
       } else {
         fullTranscript += (fullTranscript ? " " : "") + text.trim();
       }
-      // Sliding window: only match against last 25 words so hallucinated
-      // words from long instrumental intros fall off when lyrics start
+      // Sliding window: keep last 60 words so repetitive songs accumulate
+      // enough unique context to match. Hallucinated intro words still fall
+      // off naturally once real lyrics start coming in.
       const allWords = fullTranscript.split(/\s+/).filter(Boolean);
-      const combined = allWords.slice(-25).join(" ");
+      const combined = allWords.slice(-60).join(" ");
       setLiveTranscript(combined);
       const wordCount = combined.split(/\s+/).filter(Boolean).length;
       setListenProgress(Math.min(wordCount / 12, 0.95));
@@ -2235,6 +2240,51 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
       durationSecs: nextDuration
     });
     setMode("confirmed"); // triggers startSync via useEffect
+  };
+
+  // ── Manual track jump — user picks a track from the list during listening ──
+  // Stops the current recording session and jumps straight into confirmed mode
+  // at position 0 for the chosen track. Same state setup as advanceToNextTrack.
+  const jumpToTrackIdx = (idx) => {
+    const tracks = turntableTracksRef.current;
+    const track = tracks[idx];
+    if (!track) return;
+    // Kill the current listening session
+    listenSessionRef.current++;
+    clearInterval(progressTimerRef.current);
+    speechRecRef.current?.stop?.();
+    const ta = turntableAlbumRef.current;
+    const song = {
+      title: track.trackName,
+      artist: track.artistName || ta?.artist_name || "",
+      album: ta?.album_name || track.collectionName || "",
+      artwork: ta?.artwork_url || track.artworkUrl100?.replace("100x100bb", "600x600bb") || null,
+    };
+    setCurrentTrackIndex(idx);
+    turntableMatchedIdxRef.current = idx;
+    setAlbumTracks(tracks);
+    setAlbumCollectionId(ta?.itunes_collection_id ? String(ta.itunes_collection_id) : null);
+    detectedAtRef.current = Date.now();
+    setDetectedSong(song);
+    setSongDuration(track.trackTimeMillis ? track.trackTimeMillis / 1000 : null);
+    setIdentifiedBy("manual");
+    // Load lyrics from cache
+    const entry = wordsDataRef.current?.[track.trackId];
+    if (entry?.lrc_raw) {
+      const parsed = parseLRC(entry.lrc_raw);
+      setLyrics(parsed); lyricsRef.current = parsed;
+    } else if (entry?.lyrics_plain) {
+      const parsed = entry.lyrics_plain.split("\n").filter(l => l.trim()).map((text, i) => ({ time: i * 4, text }));
+      setLyrics(parsed); lyricsRef.current = parsed;
+    } else {
+      setLyrics([]); lyricsRef.current = [];
+    }
+    initialPosRef.current = Math.max(0, userNudgeRef.current);
+    syncCalcRef.current = { startPos: userNudgeRef.current, phraseOffset: 0, recStart: Date.now() };
+    autoAdvanceFiredRef.current = false;
+    autoRetryCountRef.current = 0;
+    saveToHistory(user, song);
+    setMode("confirmed");
   };
 
   // ── Resync: re-listen briefly to fix timing without changing the song ──
@@ -5212,7 +5262,41 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
       fontSize: "14px",
       color: "rgba(255,255,255,0.3)"
     }
-  }, turntableAlbum ? "Hold near your speakers" : listenAttempt > MAX_ATTEMPTS ? "Identifying by lyrics" : listenSecs === 0 ? "Hold near your speakers" : `${listenSecs}s — hold steady`), /*#__PURE__*/React.createElement("div", {
+  }, turntableAlbum ? "Hold near your speakers" : listenAttempt > MAX_ATTEMPTS ? "Identifying by lyrics" : listenSecs === 0 ? "Hold near your speakers" : `${listenSecs}s — hold steady`),
+
+  /* ── Manual track picker: appears after 5s when turntable album is set ── */
+  turntableAlbum && listenSecs >= 5 && turntableTracksRef.current.length > 0 && /*#__PURE__*/React.createElement("div", {
+    style: { marginTop: "24px", width: "100%", maxWidth: "320px", textAlign: "left" }
+  },
+    /*#__PURE__*/React.createElement("div", {
+      style: { fontSize: "11px", letterSpacing: "1.5px", textTransform: "uppercase", color: "rgba(255,255,255,0.25)", marginBottom: "10px", textAlign: "center" }
+    }, "Or jump to a track"),
+    /*#__PURE__*/React.createElement("div", {
+      style: { display: "flex", flexDirection: "column", gap: "4px", maxHeight: "180px", overflowY: "auto" }
+    }, turntableTracksRef.current.map((t, i) => /*#__PURE__*/React.createElement("button", {
+      key: i,
+      onClick: () => jumpToTrackIdx(i),
+      style: {
+        background: "rgba(255,255,255,0.04)",
+        border: "1px solid rgba(255,255,255,0.07)",
+        borderRadius: "10px",
+        padding: "9px 14px",
+        color: "#f0e6d3",
+        fontSize: "13px",
+        cursor: "pointer",
+        fontFamily: "inherit",
+        textAlign: "left",
+        display: "flex",
+        alignItems: "center",
+        gap: "10px"
+      }
+    },
+      /*#__PURE__*/React.createElement("span", { style: { color: "rgba(255,255,255,0.25)", fontSize: "11px", minWidth: "16px" } }, i + 1),
+      t.trackName
+    )))
+  ),
+
+  /*#__PURE__*/React.createElement("div", {
     style: {
       display: "flex",
       gap: "12px",
