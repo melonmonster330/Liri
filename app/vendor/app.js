@@ -2614,7 +2614,8 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
     }, /*#__PURE__*/React.createElement("div", {
       style: {
         fontSize: "22px",
-        marginBottom: "6px"
+        marginBottom: "6px",
+        fontFamily: "'Apple Color Emoji','Segoe UI Emoji','Noto Color Emoji',sans-serif"
       }
     }, f.icon), /*#__PURE__*/React.createElement("div", {
       style: {
