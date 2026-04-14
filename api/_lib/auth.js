@@ -141,6 +141,9 @@ async function verifyAuth(req) {
   const token      = authHeader.slice(7);
   const supabaseUrl = process.env.SUPABASE_URL || "";
   const serviceKey  = process.env.SUPABASE_SERVICE_ROLE_KEY || "";
+  // /auth/v1/user requires the anon/publishable key as apikey, not the service role key.
+  // Fall back to service role key for backwards compat with old Supabase projects.
+  const anonKey    = process.env.SUPABASE_ANON_KEY || serviceKey;
   const hostname    = supabaseUrl.replace(/^https?:\/\//, "");
   if (!hostname || !serviceKey) {
     console.error("verifyAuth: SUPABASE_URL or SUPABASE_SERVICE_ROLE_KEY not set");
@@ -153,7 +156,7 @@ async function verifyAuth(req) {
       path: "/auth/v1/user",
       method: "GET",
       headers: {
-        "apikey":        serviceKey,
+        "apikey":        anonKey,
         "Authorization": `Bearer ${token}`,
       },
     };
