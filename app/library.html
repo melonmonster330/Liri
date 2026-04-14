@@ -689,7 +689,8 @@
 
       // ── Fetch subscription status ──
       const fetchSubscription = useCallback(async () => {
-        const token = sessionTokenRef.current;
+        const { data: { session: s } } = await sb.auth.getSession();
+        const token = s?.access_token || sessionTokenRef.current;
         if (!token) return;
         const data = await fetch(`${API_BASE}/api/subscription-status`, {
           headers: { "Authorization": `Bearer ${token}` },
