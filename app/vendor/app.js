@@ -2520,16 +2520,21 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
       setAuthVerifyPending(false);
       setAuthSheet(mode);
     };
+    const featureSvgs = {
+      identify: /*#__PURE__*/React.createElement("svg", {width:"22",height:"22",viewBox:"0 0 24 24",fill:"none",stroke:"#d4a846",strokeWidth:"1.8",strokeLinecap:"round",strokeLinejoin:"round"}, /*#__PURE__*/React.createElement("path",{d:"M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"}), /*#__PURE__*/React.createElement("path",{d:"M19 10v2a7 7 0 0 1-14 0v-2"}), /*#__PURE__*/React.createElement("line",{x1:"12",y1:"19",x2:"12",y2:"23"}), /*#__PURE__*/React.createElement("line",{x1:"8",y1:"23",x2:"16",y2:"23"})),
+      sync: /*#__PURE__*/React.createElement("svg", {width:"22",height:"22",viewBox:"0 0 24 24",fill:"none",stroke:"#d4a846",strokeWidth:"1.8",strokeLinecap:"round",strokeLinejoin:"round"}, /*#__PURE__*/React.createElement("line",{x1:"3",y1:"6",x2:"21",y2:"6"}), /*#__PURE__*/React.createElement("line",{x1:"3",y1:"12",x2:"15",y2:"12"}), /*#__PURE__*/React.createElement("line",{x1:"3",y1:"18",x2:"18",y2:"18"})),
+      auto: /*#__PURE__*/React.createElement("svg", {width:"22",height:"22",viewBox:"0 0 24 24",fill:"none",stroke:"#d4a846",strokeWidth:"1.8",strokeLinecap:"round",strokeLinejoin:"round"}, /*#__PURE__*/React.createElement("circle",{cx:"12",cy:"12",r:"10"}), /*#__PURE__*/React.createElement("circle",{cx:"12",cy:"12",r:"3"}))
+    };
     const features = [{
-      icon: "🎵",
+      icon: featureSvgs.identify,
       label: "Identify",
       sub: "8-second song fingerprinting"
     }, {
-      icon: "✦",
+      icon: featureSvgs.sync,
       label: "Sync",
       sub: "Real-time scrolling lyrics"
     }, {
-      icon: "💿",
+      icon: featureSvgs.auto,
       label: "Auto Mode",
       sub: "Tracks side flips automatically"
     }];
@@ -2614,8 +2619,7 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
     }, /*#__PURE__*/React.createElement("div", {
       style: {
         fontSize: "22px",
-        marginBottom: "6px",
-        fontFamily: "'Apple Color Emoji','Segoe UI Emoji','Noto Color Emoji',sans-serif"
+        marginBottom: "6px"
       }
     }, f.icon), /*#__PURE__*/React.createElement("div", {
       style: {
