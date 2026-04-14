@@ -52,6 +52,7 @@ module.exports = async (req, res) => {
 
   const supabaseUrl     = process.env.SUPABASE_URL || "";
   const serviceKey      = process.env.SUPABASE_SERVICE_ROLE_KEY || "";
+  const anonKey         = process.env.SUPABASE_ANON_KEY || "";
   const jwtSecret       = process.env.SUPABASE_JWT_SECRET || "";
   const hostname        = supabaseUrl.replace(/^https?:\/\//, "");
 
@@ -61,6 +62,8 @@ module.exports = async (req, res) => {
       SUPABASE_URL:              supabaseUrl ? supabaseUrl : "(not set)",
       SUPABASE_SERVICE_ROLE_KEY: maskKey(serviceKey),
       SUPABASE_SERVICE_ROLE_KEY_format: detectKeyFormat(serviceKey),
+      SUPABASE_ANON_KEY:         anonKey ? maskKey(anonKey) : "(not set — REQUIRED for new Supabase projects)",
+      SUPABASE_ANON_KEY_format:  detectKeyFormat(anonKey),
       SUPABASE_JWT_SECRET:       jwtSecret ? "(set)" : "(not set)",
     },
     connectivity: {},
@@ -99,9 +102,9 @@ module.exports = async (req, res) => {
   if (authHeader.startsWith("Bearer ") && hostname && serviceKey) {
     const userToken = authHeader.slice(7);
 
-    // Attempt 1: apikey = service role key (current approach in auth.js)
+    // Attempt 1: apikey = anon key (correct approach for new Supabase projects)
     const attempt1 = await httpsGet(hostname, "/auth/v1/user", {
-      "apikey":        serviceKey,
+      "apikey":        anonKey || serviceKey,
       "Authorization": `Bearer ${userToken}`,
     });
 
