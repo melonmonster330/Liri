@@ -259,7 +259,7 @@
             ) : !data || data.totalSongs === 0 ? (
               // ── Empty state ──
               <div style={{ textAlign:"center", padding:"60px 0", animation:"fade-up 0.4s ease both" }}>
-                <div style={{ fontSize:48, marginBottom:16, opacity:0.3 }}>📊</div>
+                <div style={{ marginBottom:16, opacity:0.3 }}><svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/><line x1="2" y1="20" x2="22" y2="20"/></svg></div>
                 <div style={{ fontSize:18, fontWeight:600, marginBottom:8 }}>No listening data yet</div>
                 <div style={{ fontSize:14, color:"rgba(255,255,255,0.3)", marginBottom:32, lineHeight:1.6 }}>
                   Put a record on and tap "Find my place"<br/>to start building your stats
@@ -288,7 +288,7 @@
                     display:"flex", alignItems:"center", gap:16,
                     animation:"fade-up 0.5s ease 220ms both",
                   }}>
-                    <div style={{ fontSize:36 }}>🔥</div>
+                    <div><svg width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="#d4a846" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z"/></svg></div>
                     <div>
                       <div style={{ fontSize:28, fontWeight:800, letterSpacing:"-1px", color:"#d4a846" }}>{data.streak} day{data.streak !== 1 ? "s" : ""}</div>
                       <div style={{ fontSize:12, color:"rgba(255,255,255,0.35)", marginTop:2 }}>listening streak</div>
@@ -307,7 +307,7 @@
                     }}>
                       {data.topAlbum.artwork
                         ? <img src={data.topAlbum.artwork.replace("100x100", "300x300")} alt="" style={{ width:64, height:64, borderRadius:12, objectFit:"cover", flexShrink:0 }} />
-                        : <div style={{ width:64, height:64, borderRadius:12, background:"rgba(255,255,255,0.05)", display:"flex", alignItems:"center", justifyContent:"center", fontSize:28, flexShrink:0 }}>💿</div>
+                        : <div style={{ width:64, height:64, borderRadius:12, background:"rgba(255,255,255,0.05)", display:"flex", alignItems:"center", justifyContent:"center", flexShrink:0 }}><svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="rgba(255,255,255,0.3)" strokeWidth="1.5" strokeLinecap="round"><circle cx="12" cy="12" r="10"/><circle cx="12" cy="12" r="3"/></svg></div>
                       }
                       <div style={{ flex:1, minWidth:0 }}>
                         <div style={{ fontSize:16, fontWeight:700, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>{data.topAlbum.name || "Unknown album"}</div>
@@ -357,7 +357,7 @@
                         }}>
                           {s.artwork_url
                             ? <img src={s.artwork_url} alt="" style={{ width:42, height:42, borderRadius:8, objectFit:"cover", flexShrink:0 }} />
-                            : <div style={{ width:42, height:42, borderRadius:8, background:"rgba(255,255,255,0.04)", display:"flex", alignItems:"center", justifyContent:"center", fontSize:18, flexShrink:0 }}>🎵</div>
+                            : <div style={{ width:42, height:42, borderRadius:8, background:"rgba(255,255,255,0.04)", display:"flex", alignItems:"center", justifyContent:"center", flexShrink:0 }}><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="rgba(255,255,255,0.3)" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M9 18V5l12-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="16" r="3"/></svg></div>
                           }
                           <div style={{ flex:1, minWidth:0 }}>
                             <div style={{ fontSize:13, fontWeight:600, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>{s.title}</div>
@@ -381,7 +381,7 @@
                   textAlign:"center",
                   animation:"fade-up 0.5s ease 380ms both",
                 }}>
-                  <div style={{ fontSize:20, marginBottom:8 }}>🎁</div>
+                  <div style={{ marginBottom:8 }}><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="rgba(255,255,255,0.4)" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><polyline points="20 12 20 22 4 22 4 12"/><rect x="2" y="7" width="20" height="5"/><line x1="12" y1="22" x2="12" y2="7"/><path d="M12 7H7.5a2.5 2.5 0 010-5C11 2 12 7 12 7z"/><path d="M12 7h4.5a2.5 2.5 0 000-5C13 2 12 7 12 7z"/></svg></div>
                   <div style={{ fontSize:14, fontWeight:600, marginBottom:4, color:"rgba(255,255,255,0.6)" }}>Year in Review coming soon</div>
                   <div style={{ fontSize:12, color:"rgba(255,255,255,0.2)", lineHeight:1.6 }}>
                     Your full listening report — top records, listening patterns,<br/>and vinyl moments from the whole year.
