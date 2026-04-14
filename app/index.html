@@ -7,8 +7,8 @@
   • Captures ~8s of audio via the device microphone and sends it to /api/recognize
   • ACRCloud identifies the song and returns the title, artist, and exact playback offset
   • Fetches timestamped LRC lyrics from lrclib.net and syncs them in real time
-  • Vinyl Auto Mode: pulls the full album tracklist from iTunes, auto-advances
-    through tracks, and detects side-flip points using:
+  • Pulls the full album tracklist from iTunes, auto-advances through tracks,
+    and detects side-flip points using:
       1. Liri Vinyl Database (Supabase) — most accurate, community-verified
       2. User-confirmed localStorage data — improves with use per-album
       3. Duration heuristic — fallback for unknown albums

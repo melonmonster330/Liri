@@ -70,11 +70,7 @@ No build step. No terminal required.
 | **Sync** | Runs a timer from the detected timecode, advancing through lyrics in real time |
 | **Display** | Current lyric highlighted; adjacent lines fade in/out |
 
-In **Vinyl Auto Mode**, Liri also:
-- Fetches the full album tracklist from iTunes after the first song is identified
-- Automatically loads the next track's lyrics as each song ends (no re-listening)
-- Detects side boundaries and prompts you to flip — using our community vinyl database
-  for precision, or a duration heuristic as fallback
+Liri also fetches the full album tracklist after the first song is identified, automatically loading the next track's lyrics as each song ends — no re-listening required. Side boundaries are detected using the community vinyl database for precision, or a duration heuristic as fallback.
 
 ---
 
@@ -122,7 +118,6 @@ Query these views directly in the Supabase SQL Editor:
 | `v_top_tracks_30d` | Top 20 tracks by play count |
 | `v_top_artists_30d` | Top 20 artists |
 | `v_top_albums_30d` | Top 20 albums |
-| `v_vinyl_mode_rate` | Vinyl mode adoption % by week |
 | `v_flip_methods` | Flip detection method breakdown |
 | `v_geo_30d` | Listen counts by country |
 

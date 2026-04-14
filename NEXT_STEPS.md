@@ -72,9 +72,6 @@ Albums with stale or incomplete Discogs data can't auto-fix. Add a "Refresh" but
 **15. Silence detection for side-flip trigger**
 The side auto-advance relies on duration timers. Better signal: detect silence (needle lifting) via `AnalyserNode`. More reliable, feels smarter.
 
-**16. Turntable mode = vinyl mode (unify them)**
-Picking a record from the library should arm full vinyl auto-advance automatically. The distinction between "turntable mode" and "vinyl mode" should disappear — picking a record IS entering vinyl mode.
-
 ---
 
 ## Fix EVENTUALLY — real features, not blocking
