@@ -910,6 +910,14 @@
             </div>
           )}
 
+          {/* ── Add error banner (shown when search is closed but add failed) ── */}
+          {addError && !showSearch && (
+            <div style={{ position: "fixed", top: "max(16px, env(safe-area-inset-top))", left: 16, right: 16, zIndex: 50, background: "rgba(201,128,122,0.15)", border: "1px solid rgba(201,128,122,0.35)", borderRadius: 14, padding: "14px 18px", display: "flex", alignItems: "center", justifyContent: "space-between", backdropFilter: "blur(12px)" }}>
+              <div style={{ fontSize: 13, color: "#e8a0a8", flex: 1 }}>{addError}</div>
+              <button onClick={() => setAddError(null)} style={{ background: "none", border: "none", color: "rgba(255,255,255,0.3)", cursor: "pointer", padding: "4px 8px", display: "flex", alignItems: "center", flexShrink: 0 }}><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>
+            </div>
+          )}
+
           {/* ── Header ── */}
           <div style={{ padding: "max(52px, calc(env(safe-area-inset-top) + 24px)) 24px 0" }}>
             <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 28 }}>
