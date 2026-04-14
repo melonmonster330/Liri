@@ -10,10 +10,10 @@ if (typeof supabase === 'undefined') {
 }
 const sb = supabase.createClient("https://xjdjpaxgymgbvcwmvorc.supabase.co", "sb_publishable_C-NBnfg0ltAoUi46XQTUjA_ozjZW_Nd");
 const APP_VERSION = "1.0.0";
-const TRANSCRIBE_PROXY = window.Capacitor ? "https://getliri.com/api/transcribe"    : "/api/transcribe";
-const IDENTIFY_PROXY = window.Capacitor ? "https://getliri.com/api/identify-lyrics" : "/api/identify-lyrics";
-const ITUNES_PROXY   = window.Capacitor ? "https://getliri.com/api/itunes-lookup"   : "/api/itunes-lookup";
-const WHISPER_PROXY  = window.Capacitor ? "https://getliri.com/api/whisper"         : "/api/whisper";
+const TRANSCRIBE_PROXY = window.Capacitor ? "https://www.getliri.com/api/transcribe"    : "/api/transcribe";
+const IDENTIFY_PROXY = window.Capacitor ? "https://www.getliri.com/api/identify-lyrics" : "/api/identify-lyrics";
+const ITUNES_PROXY   = window.Capacitor ? "https://www.getliri.com/api/itunes-lookup"   : "/api/itunes-lookup";
+const WHISPER_PROXY  = window.Capacitor ? "https://www.getliri.com/api/whisper"         : "/api/whisper";
 // Register native audio plugin so Capacitor.Plugins.NativeAudio is available in JS.
 // This must happen before the React tree mounts (top-level, synchronous).
 const _nativeAudioPlugin = (() => {
