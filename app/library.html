@@ -747,10 +747,10 @@
         setQuery("");
         setResults([]);
         try {
-          // Use the token already kept live by onAuthStateChange — calling
-          // refreshSession() right before the fetch can cause a race on iOS
-          // Capacitor where the new token hasn't propagated yet, resulting in 401.
-          const token = sessionTokenRef.current;
+          // getSession() auto-refreshes if the token is expired — safer than
+          // relying on sessionTokenRef which may hold a stale JWT.
+          const { data: { session: freshSession } } = await sb.auth.getSession();
+          const token = freshSession?.access_token || sessionTokenRef.current;
 
           if (!token) {
             setAddError("Session expired — please sign out and back in, then try again.");
