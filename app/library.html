@@ -688,21 +688,20 @@
       }, []);
 
       // ── Fetch subscription status ──
-      useEffect(() => {
-        if (!user) return;
+      const fetchSubscription = useCallback(async () => {
         const token = sessionTokenRef.current;
         if (!token) return;
-        fetch(`${API_BASE}/api/subscription-status`, {
+        const data = await fetch(`${API_BASE}/api/subscription-status`, {
           headers: { "Authorization": `Bearer ${token}` },
-        })
-          .then(r => r.json())
-          .catch(() => null)
-          .then(data => {
-            if (data && !data.error) {
-              setSubscription(data);
-              if (data.everAddedIds) setEverAddedIds(new Set(data.everAddedIds));
-            }
-          });
+        }).then(r => r.json()).catch(() => null);
+        if (data && !data.error) {
+          setSubscription(data);
+          if (data.everAddedIds) setEverAddedIds(new Set(data.everAddedIds));
+        }
+      }, []);
+
+      useEffect(() => {
+        if (user) fetchSubscription();
       }, [user]);
 
       useEffect(() => {
@@ -779,6 +778,7 @@
             }
           } else {
             await fetchLibrary(user.id);
+            fetchSubscription();
           }
         } catch (e) {
           setAddError("Network error — please try again.");
