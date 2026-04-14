@@ -770,7 +770,7 @@
           const json = await res.json().catch(() => ({}));
           if (!res.ok) {
             if (res.status === 401) {
-              setAddError("Session expired — please sign out and back in, then try again.");
+              setAddError(`Session expired — please sign out and back in. (${json.debug || json.error || "401"})`);
             } else if (res.status === 403 && json.error === "free_limit_reached") {
               setShowSearch(false);
               setShowUpgrade(true);
