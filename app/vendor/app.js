@@ -159,7 +159,7 @@ styleEl.textContent = `
       @keyframes slide-up    { from { transform: translateY(100%); } to { transform: translateY(0); } }
       @keyframes slide-right { from { transform: translateX(100%); } to { transform: translateX(0); } }
       @keyframes pulse    { 0%, 100% { opacity: 1; } 50% { opacity: 0.35; } }
-      .safe-top { padding-top: max(56px, calc(env(safe-area-inset-top) + 16px)) !important; }
+      .safe-top { padding-top: max(64px, calc(env(safe-area-inset-top) + 20px)) !important; }
       .safe-bottom { padding-bottom: max(32px, calc(env(safe-area-inset-bottom) + 16px)) !important; }
     `;
 document.head.appendChild(styleEl);
