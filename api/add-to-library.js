@@ -216,7 +216,11 @@ module.exports = async (req, res) => {
 
   // ── Auth ────────────────────────────────────────────────────────────────────
   const auth = await verifyAuth(req);
-  if (!auth) return res.status(401).json({ error: "Unauthorized" });
+  if (!auth || auth._authError) {
+    const reason = auth?._authError || "No auth result";
+    console.error("[add-to-library] auth failed:", reason);
+    return res.status(401).json({ error: "Session expired — please sign out and back in.", debug: reason });
+  }
 
   const { itunes_collection_id } = req.body || {};
   if (!itunes_collection_id) return res.status(400).json({ error: "itunes_collection_id required" });

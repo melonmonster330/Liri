@@ -144,7 +144,7 @@ async function verifyAuth(req) {
   const hostname    = supabaseUrl.replace(/^https?:\/\//, "");
   if (!hostname || !serviceKey) {
     console.error("verifyAuth: SUPABASE_URL or SUPABASE_SERVICE_ROLE_KEY not set");
-    return null;
+    return { _authError: "Server misconfiguration: missing env vars" };
   }
 
   return new Promise((resolve) => {
@@ -164,14 +164,16 @@ async function verifyAuth(req) {
         if (res.statusCode !== 200) {
             const body = Buffer.concat(chunks).toString();
             console.error(`verifyAuth: Supabase /auth/v1/user returned ${res.statusCode}:`, body.slice(0, 300));
-            resolve(null); return;
+            let msg = `Supabase returned ${res.statusCode}`;
+            try { const b = JSON.parse(body); msg = b.message || b.msg || b.error_description || b.error || msg; } catch {}
+            resolve({ _authError: msg, _authStatus: res.statusCode }); return;
           }
         try {
           const user = JSON.parse(Buffer.concat(chunks).toString());
-          if (!user?.id) { resolve(null); return; }
+          if (!user?.id) { resolve({ _authError: "No user ID in Supabase response" }); return; }
           const email = (user.email || "").toLowerCase();
           resolve({ userId: user.id, email, isUnlimited: getUnlimitedEmails().has(email) });
-        } catch { resolve(null); }
+        } catch { resolve({ _authError: "Failed to parse Supabase user response" }); }
       });
     });
     r.on("error", () => resolve(null));
