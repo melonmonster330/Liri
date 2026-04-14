@@ -376,8 +376,8 @@
                 </div>
               </div>
               <button onClick={onClose}
-                style={{ background: "rgba(255,255,255,0.07)", border: "none", color: "rgba(255,255,255,0.5)", width: 30, height: 30, borderRadius: "50%", cursor: "pointer", fontSize: 14, fontFamily: "inherit", flexShrink: 0 }}>
-                ✕
+                style={{ background: "rgba(255,255,255,0.07)", border: "none", color: "rgba(255,255,255,0.5)", width: 30, height: 30, borderRadius: "50%", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
               </button>
             </div>
             {/* Lyrics */}
@@ -906,17 +906,20 @@
                 <div style={{ fontSize: 14, fontWeight: 700, color: "rgba(100,220,130,0.9)" }}>Welcome to Liri Premium!</div>
                 <div style={{ fontSize: 12, color: "rgba(255,255,255,0.4)", marginTop: 2 }}>Unlimited records, all features unlocked.</div>
               </div>
-              <button onClick={() => setCheckoutSuccess(false)} style={{ background: "none", border: "none", color: "rgba(255,255,255,0.3)", fontSize: 18, cursor: "pointer", padding: "4px 8px", fontFamily: "inherit" }}>✕</button>
+              <button onClick={() => setCheckoutSuccess(false)} style={{ background: "none", border: "none", color: "rgba(255,255,255,0.3)", cursor: "pointer", padding: "4px 8px", display: "flex", alignItems: "center" }}><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>
             </div>
           )}
 
           {/* ── Header ── */}
           <div style={{ padding: "max(52px, calc(env(safe-area-inset-top) + 24px)) 24px 0" }}>
             <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 28 }}>
-              <a href="/app" style={{ display: "flex", alignItems: "center", gap: 10, textDecoration: "none" }}>
-                <VinylDot size={28} />
-                <span style={{ fontSize: 18, fontWeight: 700, color: "#f0e6d3" }}>Liri</span>
-              </a>
+              <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                <button onClick={() => window.history.length > 1 ? window.history.back() : (window.location.href = window.Capacitor ? "/index.html" : "/app")}
+                  style={{ background: "none", border: "none", color: "rgba(255,255,255,0.5)", cursor: "pointer", padding: "4px", display: "flex", alignItems: "center", justifyContent: "center" }}>
+                  <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="15 18 9 12 15 6"/></svg>
+                </button>
+                <span style={{ fontSize: 18, fontWeight: 700, color: "#f0e6d3" }}>My Records</span>
+              </div>
               <div style={{ display:"flex", alignItems:"center", gap:10 }}>
                 <button onClick={() => { setShowSearch(true); setQuery(""); setResults([]); }}
                   style={{ background: "linear-gradient(135deg,#d4a846,#c9807a)", color: "#080810", border: "none", borderRadius: 50, padding: "10px 20px", fontSize: 13, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>
