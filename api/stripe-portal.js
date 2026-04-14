@@ -13,7 +13,7 @@
 const { verifyAuth }          = require("./_lib/auth");
 const { createPortalSession } = require("./_lib/stripe");
 
-const ALLOWED_ORIGINS = ["https://getliri.com", "capacitor://localhost"];
+const ALLOWED_ORIGINS = ["https://getliri.com", "https://www.getliri.com", "capacitor://localhost"];
 const RETURN_URL      = "https://getliri.com/library";
 
 // ── Supabase lookup: find the Stripe customer_id for a user ──────────────────

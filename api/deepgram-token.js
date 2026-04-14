@@ -1,7 +1,7 @@
 // api/deepgram-token.js — Return a Deepgram token for client-side streaming.
 // The key is used for one WebSocket session, never stored client-side.
 
-const ALLOWED_ORIGINS = ["https://getliri.com", "capacitor://localhost", "http://localhost:3000"];
+const ALLOWED_ORIGINS = ["https://getliri.com", "https://www.getliri.com", "capacitor://localhost", "http://localhost:3000"];
 
 module.exports = (req, res) => {
   const origin = req.headers.origin || "";

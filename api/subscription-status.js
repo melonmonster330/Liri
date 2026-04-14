@@ -14,7 +14,7 @@
 const { verifyAuth } = require("./_lib/auth");
 const https = require("https");
 
-const ALLOWED_ORIGINS = ["https://getliri.com", "capacitor://localhost"];
+const ALLOWED_ORIGINS = ["https://getliri.com", "https://www.getliri.com", "capacitor://localhost"];
 const FREE_ALBUM_LIMIT = 10;
 
 function supabaseGet(path) {

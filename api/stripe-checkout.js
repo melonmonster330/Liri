@@ -13,7 +13,7 @@
 const { verifyAuth }            = require("./_lib/auth");
 const { getOrCreateCustomer, createCheckoutSession } = require("./_lib/stripe");
 
-const ALLOWED_ORIGINS = ["https://getliri.com", "capacitor://localhost"];
+const ALLOWED_ORIGINS = ["https://getliri.com", "https://www.getliri.com", "capacitor://localhost"];
 
 const SUCCESS_URL = "https://getliri.com/library?checkout_success=true";
 const CANCEL_URL  = "https://getliri.com/library";

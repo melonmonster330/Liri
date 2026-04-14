@@ -24,7 +24,7 @@ function httpsGet(url) {
 }
 
 module.exports = async (req, res) => {
-  const ALLOWED_ORIGINS = ["https://getliri.com", "capacitor://localhost"];
+  const ALLOWED_ORIGINS = ["https://getliri.com", "https://www.getliri.com", "capacitor://localhost"];
   const origin = req.headers.origin || "";
   res.setHeader("Access-Control-Allow-Origin", ALLOWED_ORIGINS.includes(origin) ? origin : "https://getliri.com");
   res.setHeader("Access-Control-Allow-Methods", "GET, OPTIONS");

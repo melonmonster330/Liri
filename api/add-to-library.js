@@ -206,7 +206,7 @@ function mapSides(discogsTracklist, itunesTracks) {
 // ── Main handler ──────────────────────────────────────────────────────────────
 
 module.exports = async (req, res) => {
-  const ALLOWED = ["https://getliri.com", "capacitor://localhost"];
+  const ALLOWED = ["https://getliri.com", "https://www.getliri.com", "capacitor://localhost"];
   const origin  = req.headers.origin || "";
   res.setHeader("Access-Control-Allow-Origin", ALLOWED.includes(origin) ? origin : "https://getliri.com");
   res.setHeader("Access-Control-Allow-Methods", "POST, OPTIONS");

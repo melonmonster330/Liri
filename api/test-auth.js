@@ -43,7 +43,7 @@ function detectKeyFormat(key) {
 
 module.exports = async (req, res) => {
   // Only allow from trusted origins
-  const ALLOWED = ["https://getliri.com", "capacitor://localhost"];
+  const ALLOWED = ["https://getliri.com", "https://www.getliri.com", "capacitor://localhost"];
   const origin  = req.headers.origin || "";
   res.setHeader("Access-Control-Allow-Origin", ALLOWED.includes(origin) ? origin : "https://getliri.com");
   res.setHeader("Access-Control-Allow-Methods", "GET, OPTIONS");
