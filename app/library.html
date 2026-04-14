@@ -870,7 +870,7 @@
           artist_name: album.artist_name,
           artwork_url: album.artwork_url,
         }));
-        window.location.href = "/app";
+        window.location.href = window.Capacitor ? "/index.html" : "/app";
       };
 
       // ── Loading ──
@@ -970,7 +970,7 @@
               <div style={{ display: "flex", justifyContent: "center", padding: "60px 0" }}>
                 <Spinner />
               </div>
-            ) : library.length === 0 ? (
+            ) : library.length === 0 && !pendingAlbum ? (
               <div style={{ textAlign: "center", padding: "60px 0", color: "rgba(255,255,255,0.2)" }}>
                 <div style={{ fontSize: 48, marginBottom: 16, opacity: 0.4 }}><svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"><circle cx="12" cy="12" r="10"/><circle cx="12" cy="12" r="3"/></svg></div>
                 <div style={{ fontSize: 15, marginBottom: 8 }}>Your collection is empty</div>
