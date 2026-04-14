@@ -58,7 +58,7 @@ module.exports = async (req, res) => {
   if (req.method !== "GET")    return res.status(405).json({ error: "Method not allowed" });
 
   const auth = await verifyAuth(req);
-  if (!auth) return res.status(401).json({ error: "Unauthorized" });
+  if (!auth || auth._authError) return res.status(401).json({ error: "Unauthorized" });
 
   try {
     // Fetch subscription row and ever-added count in parallel
