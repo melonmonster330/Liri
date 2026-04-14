@@ -2720,7 +2720,7 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
         fontSize: "52px",
         marginBottom: "20px"
       }
-    }, /*#__PURE__*/React.createElement("svg", {width:"52",height:"52",viewBox:"0 0 24 24",fill:"none",stroke:"#d4a846",strokeWidth:"1.5",strokeLinecap:"round",strokeLinejoin:"round"}, /*#__PURE__*/React.createElement("path",{d:"M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z"}), /*#__PURE__*/React.createElement("polyline",{points:"22,6 12,13 2,6"}))), /*#__PURE__*/React.createElement("h2", {
+    }, /*#__PURE__*/React.createElement("svg", {width:"1em",height:"1em",viewBox:"0 0 24 24",fill:"none",stroke:"currentColor",strokeWidth:"1.5",strokeLinecap:"round",strokeLinejoin:"round"}, /*#__PURE__*/React.createElement("path",{d:"M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z"}), /*#__PURE__*/React.createElement("polyline",{points:"22,6 12,13 2,6"}))), /*#__PURE__*/React.createElement("h2", {
       style: {
         fontSize: "22px",
         fontWeight: "700",
@@ -3168,7 +3168,7 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
       marginBottom: "24px",
       filter: "drop-shadow(0 0 20px rgba(212,168,70,0.4))"
     }
-  }, /*#__PURE__*/React.createElement("svg", {width:"72",height:"72",viewBox:"0 0 24 24",fill:"none",stroke:"#d4a846",strokeWidth:"1.2",strokeLinecap:"round",strokeLinejoin:"round"}, /*#__PURE__*/React.createElement("circle",{cx:"12",cy:"12",r:"10"}), /*#__PURE__*/React.createElement("polyline",{points:"12 6 12 12 16 14"}))), /*#__PURE__*/React.createElement("div", {
+  }, /*#__PURE__*/React.createElement("svg", {width:"1em",height:"1em",viewBox:"0 0 24 24",fill:"none",stroke:"currentColor",strokeWidth:"1.8",strokeLinecap:"round",strokeLinejoin:"round"}, /*#__PURE__*/React.createElement("circle",{cx:"12",cy:"12",r:"10"}), /*#__PURE__*/React.createElement("polyline",{points:"12 6 12 12 16 14"}))), /*#__PURE__*/React.createElement("div", {
     style: {
       fontSize: "26px",
       fontWeight: "700",
@@ -3227,7 +3227,7 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
       justifyContent: "center",
       fontSize: "14px"
     }
-  }, /*#__PURE__*/React.createElement("svg", {width:"14",height:"14",viewBox:"0 0 24 24",fill:"none",stroke:"currentColor",strokeWidth:"2",strokeLinecap:"round",strokeLinejoin:"round"}, /*#__PURE__*/React.createElement("path",{d:"M9 18V5l12-2v13"}), /*#__PURE__*/React.createElement("circle",{cx:"6",cy:"18",r:"3"}), /*#__PURE__*/React.createElement("circle",{cx:"18",cy:"16",r:"3"}))), /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("div", {
+  }, /*#__PURE__*/React.createElement("svg", {width:"1em",height:"1em",viewBox:"0 0 24 24",fill:"none",stroke:"currentColor",strokeWidth:"2",strokeLinecap:"round",strokeLinejoin:"round"}, /*#__PURE__*/React.createElement("path",{d:"M9 18V5l12-2v13"}), /*#__PURE__*/React.createElement("circle",{cx:"6",cy:"18",r:"3"}), /*#__PURE__*/React.createElement("circle",{cx:"18",cy:"16",r:"3"}))), /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("div", {
     style: {
       fontSize: "13px",
       fontWeight: "600",
@@ -3575,7 +3575,7 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
       fontSize: 14,
       fontFamily: "inherit"
     }
-  }, /*#__PURE__*/React.createElement("svg", {width:"12",height:"12",viewBox:"0 0 24 24",fill:"none",stroke:"currentColor",strokeWidth:"2.5",strokeLinecap:"round"}, /*#__PURE__*/React.createElement("line",{x1:"18",y1:"6",x2:"6",y2:"18"}), /*#__PURE__*/React.createElement("line",{x1:"6",y1:"6",x2:"18",y2:"18"}))), /*#__PURE__*/React.createElement("div", {
+  }, /*#__PURE__*/React.createElement("svg", {width:"12",height:"12",viewBox:"0 0 24 24",fill:"none",stroke:"currentColor",strokeWidth:"2.5",strokeLinecap:"round"}, /*#__PURE__*/React.createElement("line",{x1:"18",y1:"6",x2:"6",y2:"18"}), /*#__PURE__*/React.createElement("line",{x1:"6",y1:"6",x2:"18",y2:"18"})))), /*#__PURE__*/React.createElement("div", {
     style: {
       overflowY: "auto",
       padding: "0 24px",
@@ -3617,7 +3617,7 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
       fontSize: 13,
       flexShrink: 0
     }
-  }, "\u2715"), /*#__PURE__*/React.createElement("span", null, "Clear selection")), libLoading ? /*#__PURE__*/React.createElement("div", {
+  }, /*#__PURE__*/React.createElement("svg", {width:"12",height:"12",viewBox:"0 0 24 24",fill:"none",stroke:"currentColor",strokeWidth:"2.5",strokeLinecap:"round"}, /*#__PURE__*/React.createElement("line",{x1:"18",y1:"6",x2:"6",y2:"18"}), /*#__PURE__*/React.createElement("line",{x1:"6",y1:"6",x2:"18",y2:"18"}))), /*#__PURE__*/React.createElement("span", null, "Clear selection")), libLoading ? /*#__PURE__*/React.createElement("div", {
     style: {
       display: "flex",
       justifyContent: "center",
@@ -3644,7 +3644,7 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
       marginBottom: 12,
       opacity: 0.3
     }
-  }, /*#__PURE__*/React.createElement("svg", {width:"40",height:"40",viewBox:"0 0 24 24",fill:"none",stroke:"currentColor",strokeWidth:"1.5",strokeLinecap:"round"}, /*#__PURE__*/React.createElement("circle",{cx:"12",cy:"12",r:"10"}), /*#__PURE__*/React.createElement("circle",{cx:"12",cy:"12",r:"3"}))), /*#__PURE__*/React.createElement("div", {
+  }, /*#__PURE__*/React.createElement("svg", {width:"1em",height:"1em",viewBox:"0 0 24 24",fill:"none",stroke:"currentColor",strokeWidth:"1.5",strokeLinecap:"round"}, /*#__PURE__*/React.createElement("circle",{cx:"12",cy:"12",r:"10"}), /*#__PURE__*/React.createElement("circle",{cx:"12",cy:"12",r:"3"}))), /*#__PURE__*/React.createElement("div", {
     style: {
       fontSize: 15,
       fontWeight: 600,
@@ -3704,9 +3704,10 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
         display: "flex",
         alignItems: "center",
         justifyContent: "center",
+        fontSize: 20,
         flexShrink: 0
       }
-    }, /*#__PURE__*/React.createElement("svg", {width:"20",height:"20",viewBox:"0 0 24 24",fill:"none",stroke:"rgba(255,255,255,0.3)",strokeWidth:"1.5",strokeLinecap:"round"}, /*#__PURE__*/React.createElement("circle",{cx:"12",cy:"12",r:"10"}), /*#__PURE__*/React.createElement("circle",{cx:"12",cy:"12",r:"3"}))), /*#__PURE__*/React.createElement("div", {
+    }, /*#__PURE__*/React.createElement("svg", {width:"1em",height:"1em",viewBox:"0 0 24 24",fill:"none",stroke:"currentColor",strokeWidth:"1.5",strokeLinecap:"round"}, /*#__PURE__*/React.createElement("circle",{cx:"12",cy:"12",r:"10"}), /*#__PURE__*/React.createElement("circle",{cx:"12",cy:"12",r:"3"}))), /*#__PURE__*/React.createElement("div", {
       style: {
         flex: 1,
         minWidth: 0
@@ -4143,7 +4144,7 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
       fontFamily: "inherit",
       marginBottom: "10px"
     }
-  }, /*#__PURE__*/React.createElement("svg", {width:"14",height:"14",viewBox:"0 0 24 24",fill:"none",stroke:"currentColor",strokeWidth:"2",strokeLinecap:"round",strokeLinejoin:"round",style:{marginRight:"6px",verticalAlign:"middle"}}, /*#__PURE__*/React.createElement("path",{d:"M12 22c5.523 0 10-4.477 10-10S17.523 2 12 2 2 6.477 2 12s4.477 10 10 10z"}), /*#__PURE__*/React.createElement("line",{x1:"12",y1:"8",x2:"12",y2:"12"}), /*#__PURE__*/React.createElement("line",{x1:"12",y1:"16",x2:"12.01",y2:"16"})), "Report a bug") : /*#__PURE__*/React.createElement("div", {
+  }, /*#__PURE__*/React.createElement("svg", {width:"14",height:"14",viewBox:"0 0 24 24",fill:"none",stroke:"currentColor",strokeWidth:"2",strokeLinecap:"round",strokeLinejoin:"round",style:{marginRight:"6px",verticalAlign:"middle"}}, /*#__PURE__*/React.createElement("circle",{cx:"12",cy:"12",r:"10"}), /*#__PURE__*/React.createElement("line",{x1:"12",y1:"8",x2:"12",y2:"12"}), /*#__PURE__*/React.createElement("line",{x1:"12",y1:"16",x2:"12.01",y2:"16"})), "Report a bug") : /*#__PURE__*/React.createElement("div", {
     style: {
       background: "rgba(255,255,255,0.04)",
       border: "1px solid rgba(255,255,255,0.1)",
@@ -4330,7 +4331,7 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
       justifyContent: "center",
       fontSize: "18px"
     }
-  }, "\u266A"), /*#__PURE__*/React.createElement("div", {
+  }, /*#__PURE__*/React.createElement("svg", {width:"1em",height:"1em",viewBox:"0 0 24 24",fill:"none",stroke:"currentColor",strokeWidth:"2",strokeLinecap:"round",strokeLinejoin:"round"}, /*#__PURE__*/React.createElement("path",{d:"M9 18V5l12-2v13"}), /*#__PURE__*/React.createElement("circle",{cx:"6",cy:"18",r:"3"}), /*#__PURE__*/React.createElement("circle",{cx:"18",cy:"16",r:"3"}))), /*#__PURE__*/React.createElement("div", {
     style: {
       flex: 1,
       minWidth: 0
@@ -4971,7 +4972,7 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
       lineHeight: 1
     },
     title: "History"
-  }, /*#__PURE__*/React.createElement("svg", {width:"18",height:"18",viewBox:"0 0 24 24",fill:"none",stroke:"currentColor",strokeWidth:"1.8",strokeLinecap:"round",strokeLinejoin:"round"}, /*#__PURE__*/React.createElement("circle",{cx:"12",cy:"12",r:"10"}), /*#__PURE__*/React.createElement("polyline",{points:"12 6 12 12 16 14"}))), /*#__PURE__*/React.createElement("button", {
+  }, /*#__PURE__*/React.createElement("svg", {width:"1em",height:"1em",viewBox:"0 0 24 24",fill:"none",stroke:"currentColor",strokeWidth:"1.8",strokeLinecap:"round",strokeLinejoin:"round"}, /*#__PURE__*/React.createElement("circle",{cx:"12",cy:"12",r:"10"}), /*#__PURE__*/React.createElement("polyline",{points:"12 6 12 12 16 14"}))), /*#__PURE__*/React.createElement("button", {
     onClick: () => setShowSettings(true),
     style: {
       background: "linear-gradient(135deg, #d4a846, #c9807a)",
@@ -5090,7 +5091,7 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
       fontSize: 22,
       flexShrink: 0
     }
-  }, "\uD83D\uDCBF"), /*#__PURE__*/React.createElement("div", {
+  }, /*#__PURE__*/React.createElement("svg", {width:"1em",height:"1em",viewBox:"0 0 24 24",fill:"none",stroke:"currentColor",strokeWidth:"1.5",strokeLinecap:"round"}, /*#__PURE__*/React.createElement("circle",{cx:"12",cy:"12",r:"10"}), /*#__PURE__*/React.createElement("circle",{cx:"12",cy:"12",r:"3"}))), /*#__PURE__*/React.createElement("div", {
     style: {
       flex: 1,
       minWidth: 0,
@@ -5163,7 +5164,7 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
       fontSize: 20,
       flexShrink: 0
     }
-  }, "\uD83D\uDCBF"), /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("div", {
+  }, /*#__PURE__*/React.createElement("svg", {width:"1em",height:"1em",viewBox:"0 0 24 24",fill:"none",stroke:"currentColor",strokeWidth:"1.5",strokeLinecap:"round"}, /*#__PURE__*/React.createElement("circle",{cx:"12",cy:"12",r:"10"}), /*#__PURE__*/React.createElement("circle",{cx:"12",cy:"12",r:"3"}))), /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("div", {
     style: {
       fontSize: "13px",
       fontWeight: 600,
