@@ -3916,10 +3916,12 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
         /*#__PURE__*/React.createElement("div", { style: { fontSize: "13px", fontWeight: "600", color: "#f0e6d3" } }, "Free plan"),
         /*#__PURE__*/React.createElement("div", { style: { fontSize: "11px", color: "rgba(255,255,255,0.3)", marginTop: "2px" } }, `${albumCount}/10 records used`)
       ),
-      /*#__PURE__*/React.createElement("button", {
-        onClick: () => { window.location.href = window.Capacitor ? "/library.html?upgrade=true" : "/library?upgrade=true"; },
-        style: { background: "linear-gradient(135deg,#d4a846,#c9807a)", color: "#080810", border: "none", borderRadius: "50px", padding: "7px 14px", fontSize: "12px", fontWeight: "700", cursor: "pointer", fontFamily: "inherit", whiteSpace: "nowrap" }
-      }, "Upgrade →")
+      window.Capacitor
+        ? /*#__PURE__*/React.createElement("div", { style: { fontSize: "11px", color: "rgba(255,255,255,0.4)", textAlign: "right", lineHeight: "1.4" } }, "Upgrade at", /*#__PURE__*/React.createElement("br", null), "getliri.com")
+        : /*#__PURE__*/React.createElement("button", {
+            onClick: () => { window.location.href = "/library?upgrade=true"; },
+            style: { background: "linear-gradient(135deg,#d4a846,#c9807a)", color: "#080810", border: "none", borderRadius: "50px", padding: "7px 14px", fontSize: "12px", fontWeight: "700", cursor: "pointer", fontFamily: "inherit", whiteSpace: "nowrap" }
+          }, "Upgrade →")
     ),
     /*#__PURE__*/React.createElement("div", { style: { width: "100%", height: "3px", borderRadius: "2px", background: "rgba(255,255,255,0.08)", overflow: "hidden" } },
       /*#__PURE__*/React.createElement("div", { style: { height: "100%", borderRadius: "2px", background: albumCount >= 8 ? "#c9807a" : "#d4a846", width: `${Math.min(100, (albumCount / 10) * 100)}%`, transition: "width 0.4s ease" } })
