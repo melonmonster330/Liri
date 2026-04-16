@@ -10,6 +10,7 @@ if (typeof supabase === 'undefined') {
 }
 const sb = supabase.createClient("https://xjdjpaxgymgbvcwmvorc.supabase.co", "sb_publishable_C-NBnfg0ltAoUi46XQTUjA_ozjZW_Nd");
 const APP_VERSION = "1.0.0";
+const IS_IOS = !!window.Capacitor; // set once at load time — used for App Store compliance checks
 const TRANSCRIBE_PROXY = window.Capacitor ? "https://www.getliri.com/api/transcribe"    : "/api/transcribe";
 const IDENTIFY_PROXY = window.Capacitor ? "https://www.getliri.com/api/identify-lyrics" : "/api/identify-lyrics";
 const ITUNES_PROXY   = window.Capacitor ? "https://www.getliri.com/api/itunes-lookup"   : "/api/itunes-lookup";
@@ -3916,8 +3917,9 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
         /*#__PURE__*/React.createElement("div", { style: { fontSize: "13px", fontWeight: "600", color: "#f0e6d3" } }, "Free plan"),
         /*#__PURE__*/React.createElement("div", { style: { fontSize: "11px", color: "rgba(255,255,255,0.3)", marginTop: "2px" } }, `${albumCount}/10 records used`)
       ),
-      window.Capacitor
-        ? /*#__PURE__*/React.createElement("div", { style: { fontSize: "11px", color: "rgba(255,255,255,0.4)", textAlign: "right", lineHeight: "1.4" } }, "Upgrade at", /*#__PURE__*/React.createElement("br", null), "getliri.com")
+      IS_IOS
+        /* iOS — no pricing or payment links per App Store 3.1.1 */
+        ? /*#__PURE__*/React.createElement("div", { style: { fontSize: "11px", color: "rgba(255,255,255,0.35)", textAlign: "right", lineHeight: "1.5" } }, "Manage at", /*#__PURE__*/React.createElement("br", null), "getliri.com")
         : /*#__PURE__*/React.createElement("button", {
             onClick: () => { window.location.href = "/library?upgrade=true"; },
             style: { background: "linear-gradient(135deg,#d4a846,#c9807a)", color: "#080810", border: "none", borderRadius: "50px", padding: "7px 14px", fontSize: "12px", fontWeight: "700", cursor: "pointer", fontFamily: "inherit", whiteSpace: "nowrap" }
@@ -5613,8 +5615,9 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
       lineHeight: "1.8",
       fontSize: "15px"
     }
-  }, "You've reached your 10 free records.", /*#__PURE__*/React.createElement("br", null), "Upgrade for an unlimited collection."), window.Capacitor
-    ? /*#__PURE__*/React.createElement("div", { style: { fontSize: "14px", color: "rgba(255,255,255,0.5)", marginBottom: "12px", padding: "14px 32px", textAlign: "center" } }, "Subscribe at getliri.com")
+  }, "You've reached your 10 free records.", /*#__PURE__*/React.createElement("br", null), "Manage your account to continue."), IS_IOS
+    /* iOS — no pricing or payment links per App Store 3.1.1 */
+    ? /*#__PURE__*/React.createElement("div", { style: { fontSize: "14px", color: "rgba(255,255,255,0.4)", marginBottom: "12px", padding: "14px 32px", textAlign: "center", lineHeight: "1.6" } }, "Manage your account at", /*#__PURE__*/React.createElement("br", null), /*#__PURE__*/React.createElement("span", { style: { color: "#d4a846", fontWeight: "700" } }, "getliri.com"))
     : /*#__PURE__*/React.createElement("button", {
         onClick: async () => {
           const { data: { session } } = await sb.auth.getSession();
