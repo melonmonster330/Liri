@@ -1054,77 +1054,68 @@
           )}
 
           {/* ── Upgrade modal ── */}
-          {showUpgrade && (
+          {/* API_BASE is "" on web, "https://www.getliri.com" on iOS — used as the platform flag */}
+          {showUpgrade && (API_BASE === "" ? (
+            /* ── WEB version: full Stripe upgrade UI ── */
             <>
               <div onClick={() => setShowUpgrade(false)}
                 style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.75)", zIndex: 20, backdropFilter: "blur(4px)", WebkitBackdropFilter: "blur(4px)" }} />
               <div style={{ position: "fixed", left: 0, right: 0, bottom: 0, zIndex: 21, background: "#0d0d1c", borderRadius: "28px 28px 0 0", padding: "0 0 max(32px, env(safe-area-inset-bottom))", animation: "sheet-up 0.28s cubic-bezier(0.4,0,0.2,1)", overflow: "hidden" }}>
-
-                {/* Gold gradient bar at top */}
-                <div style={{ height: 3, background: "linear-gradient(90deg,#d4a846,#c9807a,#d4a846)", borderRadius: "28px 28px 0 0" }} />
-
+                <div style={{ height: 3, background: "linear-gradient(90deg,#d4a846,#c9807a,#d4a846)" }} />
                 <div style={{ padding: "20px 28px 0", textAlign: "center" }}>
-                  {/* Drag handle */}
                   <div style={{ width: 36, height: 4, borderRadius: 2, background: "rgba(255,255,255,0.1)", margin: "0 auto 24px" }} />
-
-                  {/* Vinyl icon */}
                   <div style={{ width: 64, height: 64, borderRadius: "50%", background: "linear-gradient(135deg,rgba(212,168,70,0.15),rgba(201,128,122,0.15))", border: "1px solid rgba(212,168,70,0.25)", display: "flex", alignItems: "center", justifyContent: "center", margin: "0 auto 20px" }}>
-                    <svg width="30" height="30" viewBox="0 0 24 24" fill="none" stroke="#d4a846" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
-                      <circle cx="12" cy="12" r="10"/><circle cx="12" cy="12" r="3"/>
-                      <line x1="12" y1="2" x2="12" y2="5"/><line x1="12" y1="19" x2="12" y2="22"/>
-                    </svg>
+                    <svg width="30" height="30" viewBox="0 0 24 24" fill="none" stroke="#d4a846" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10"/><circle cx="12" cy="12" r="3"/><line x1="12" y1="2" x2="12" y2="5"/><line x1="12" y1="19" x2="12" y2="22"/></svg>
                   </div>
-
                   <div style={{ fontSize: 24, fontWeight: 800, color: "#f0e6d3", marginBottom: 8, letterSpacing: "-0.5px" }}>Liri Premium</div>
-                  <div style={{ fontSize: 14, color: "rgba(255,255,255,0.4)", lineHeight: 1.6, marginBottom: 28, maxWidth: 260, margin: "0 auto 28px" }}>
-                    {subscription?.albumCount >= 10
-                      ? "You've filled your free crate. Upgrade for unlimited records."
-                      : "Unlimited records, all features. Support indie music tech."}
+                  <div style={{ fontSize: 14, color: "rgba(255,255,255,0.4)", lineHeight: 1.6, margin: "0 auto 24px", maxWidth: 260 }}>
+                    {subscription?.albumCount >= 10 ? "You've filled your free crate. Upgrade for unlimited records." : "Unlimited records, all features. Support indie music tech."}
                   </div>
-
-                  {/* Price pill */}
-                  <div style={{ display: "inline-flex", alignItems: "baseline", gap: 4, background: "rgba(212,168,70,0.08)", border: "1px solid rgba(212,168,70,0.2)", borderRadius: 50, padding: "10px 24px", marginBottom: 28 }}>
+                  <div style={{ display: "inline-flex", alignItems: "baseline", gap: 4, background: "rgba(212,168,70,0.08)", border: "1px solid rgba(212,168,70,0.2)", borderRadius: 50, padding: "10px 24px", marginBottom: 24 }}>
                     <span style={{ fontSize: 32, fontWeight: 800, color: "#d4a846", letterSpacing: "-1px" }}>$4</span>
                     <span style={{ fontSize: 14, color: "rgba(212,168,70,0.6)", fontWeight: 500 }}>/month</span>
                   </div>
-
-                  {/* Feature list */}
                   <div style={{ background: "rgba(255,255,255,0.03)", border: "1px solid rgba(255,255,255,0.06)", borderRadius: 18, padding: "4px 0", marginBottom: 24, textAlign: "left" }}>
-                    {[
-                      [<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#d4a846" strokeWidth="2.5" strokeLinecap="round"><path d="M20 6L9 17l-5-5"/></svg>, "Unlimited vinyl library"],
-                      [<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#d4a846" strokeWidth="2.5" strokeLinecap="round"><path d="M20 6L9 17l-5-5"/></svg>, "Lyrics synced to every track"],
-                      [<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#d4a846" strokeWidth="2.5" strokeLinecap="round"><path d="M20 6L9 17l-5-5"/></svg>, "Play history & stats"],
-                      [<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#d4a846" strokeWidth="2.5" strokeLinecap="round"><path d="M20 6L9 17l-5-5"/></svg>, "Cancel anytime"],
-                    ].map(([icon, text], i, arr) => (
+                    {[["Unlimited vinyl library"],["Lyrics synced to every track"],["Play history & stats"],["Cancel anytime"]].map(([text], i, arr) => (
                       <div key={text} style={{ display: "flex", alignItems: "center", gap: 12, padding: "12px 20px", borderBottom: i < arr.length - 1 ? "1px solid rgba(255,255,255,0.04)" : "none" }}>
-                        <div style={{ flexShrink: 0 }}>{icon}</div>
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#d4a846" strokeWidth="2.5" strokeLinecap="round"><path d="M20 6L9 17l-5-5"/></svg>
                         <span style={{ fontSize: 13, color: "rgba(255,255,255,0.65)" }}>{text}</span>
                       </div>
                     ))}
                   </div>
-
-                  {window.Capacitor ? (
-                    /* iOS — no external payment links allowed by App Store guidelines */
-                    <div style={{ background: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.08)", borderRadius: 16, padding: "18px 20px", marginBottom: 12, textAlign: "center" }}>
-                      <div style={{ fontSize: 13, color: "rgba(255,255,255,0.5)", lineHeight: 1.7 }}>
-                        To subscribe, visit us on the web:
-                      </div>
-                      <div style={{ fontSize: 15, fontWeight: 700, color: "#d4a846", marginTop: 6 }}>getliri.com</div>
-                    </div>
-                  ) : (
-                    <button onClick={upgradeToStripe} disabled={upgradeWorking}
-                      style={{ width: "100%", background: upgradeWorking ? "rgba(255,255,255,0.05)" : "linear-gradient(135deg,#d4a846,#c9807a)", color: upgradeWorking ? "rgba(255,255,255,0.3)" : "#080810", border: "none", borderRadius: 50, padding: "17px", fontSize: 16, fontWeight: 700, cursor: upgradeWorking ? "default" : "pointer", fontFamily: "inherit", marginBottom: 12, letterSpacing: "0.2px" }}>
-                      {upgradeWorking ? "Opening checkout…" : "Get Premium · $4/mo"}
-                    </button>
-                  )}
+                  <button onClick={upgradeToStripe} disabled={upgradeWorking}
+                    style={{ width: "100%", background: upgradeWorking ? "rgba(255,255,255,0.05)" : "linear-gradient(135deg,#d4a846,#c9807a)", color: upgradeWorking ? "rgba(255,255,255,0.3)" : "#080810", border: "none", borderRadius: 50, padding: "17px", fontSize: 16, fontWeight: 700, cursor: upgradeWorking ? "default" : "pointer", fontFamily: "inherit", marginBottom: 12 }}>
+                    {upgradeWorking ? "Opening checkout…" : "Get Premium · $4/mo"}
+                  </button>
+                  <button onClick={() => setShowUpgrade(false)} style={{ background: "none", border: "none", color: "rgba(255,255,255,0.2)", fontSize: 13, cursor: "pointer", fontFamily: "inherit", padding: "8px", width: "100%" }}>Maybe later</button>
+                </div>
+              </div>
+            </>
+          ) : (
+            /* ── iOS version: no pricing, no payment links (App Store 3.1.1) ── */
+            <>
+              <div onClick={() => setShowUpgrade(false)}
+                style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.75)", zIndex: 20, backdropFilter: "blur(4px)", WebkitBackdropFilter: "blur(4px)" }} />
+              <div style={{ position: "fixed", left: 0, right: 0, bottom: 0, zIndex: 21, background: "#0d0d1c", borderRadius: "28px 28px 0 0", padding: "0 0 max(40px, env(safe-area-inset-bottom))", animation: "sheet-up 0.28s cubic-bezier(0.4,0,0.2,1)", overflow: "hidden" }}>
+                <div style={{ height: 3, background: "linear-gradient(90deg,#d4a846,#c9807a,#d4a846)" }} />
+                <div style={{ padding: "20px 28px 0", textAlign: "center" }}>
+                  <div style={{ width: 36, height: 4, borderRadius: 2, background: "rgba(255,255,255,0.1)", margin: "0 auto 28px" }} />
+                  <div style={{ width: 64, height: 64, borderRadius: "50%", background: "rgba(212,168,70,0.1)", border: "1px solid rgba(212,168,70,0.2)", display: "flex", alignItems: "center", justifyContent: "center", margin: "0 auto 20px" }}>
+                    <svg width="30" height="30" viewBox="0 0 24 24" fill="none" stroke="#d4a846" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10"/><circle cx="12" cy="12" r="3"/></svg>
+                  </div>
+                  <div style={{ fontSize: 22, fontWeight: 800, color: "#f0e6d3", marginBottom: 10, letterSpacing: "-0.4px" }}>You've reached the free limit</div>
+                  <div style={{ fontSize: 14, color: "rgba(255,255,255,0.4)", lineHeight: 1.7, margin: "0 auto 28px", maxWidth: 270 }}>
+                    Your collection is full. To add more records, manage your account at:
+                  </div>
+                  <div style={{ fontSize: 18, fontWeight: 700, color: "#d4a846", marginBottom: 32, letterSpacing: "0.3px" }}>getliri.com</div>
                   <button onClick={() => setShowUpgrade(false)}
-                    style={{ background: "none", border: "none", color: "rgba(255,255,255,0.2)", fontSize: 13, cursor: "pointer", fontFamily: "inherit", padding: "8px", width: "100%" }}>
-                    Maybe later
+                    style={{ width: "100%", background: "rgba(255,255,255,0.06)", border: "1px solid rgba(255,255,255,0.1)", color: "rgba(255,255,255,0.6)", borderRadius: 50, padding: "15px", fontSize: 15, fontWeight: 600, cursor: "pointer", fontFamily: "inherit" }}>
+                    OK
                   </button>
                 </div>
               </div>
             </>
-          )}
+          ))}
 
           {/* ── Add-album search sheet ── */}
           {showSearch && (
