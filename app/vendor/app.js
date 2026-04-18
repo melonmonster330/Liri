@@ -415,6 +415,7 @@ function Liri() {
   const [bugSending, setBugSending] = useState(false);
   const [bugSent, setBugSent] = useState(false);
   const [showHistory, setShowHistory] = useState(false);
+  const [showTrackList, setShowTrackList] = useState(false);
 
   // ── Auth ──
   const [user, setUser] = useState(null);
@@ -1253,6 +1254,7 @@ function Liri() {
   useEffect(() => {
     if (mode !== "listening") {
       setListenSecs(0);
+      setShowTrackList(false);
       return;
     }
     const id = setInterval(() => setListenSecs(s => s + 1), 1000);
@@ -4796,7 +4798,7 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
       cursor: "pointer",
       fontFamily: "inherit"
     }
-  }, isPaused ? "▶ Resume" : "❚❚ Pause"), /*#__PURE__*/React.createElement("button", {
+  }, isPaused ? "▶ Resume" : "|| Pause"), /*#__PURE__*/React.createElement("button", {
     onClick: () => { logButtonEvent("resync"); resync(); },
     disabled: isResyncing,
     style: {
@@ -5269,10 +5271,11 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
   turntableAlbum && listenSecs >= 5 && turntableTracksRef.current.length > 0 && /*#__PURE__*/React.createElement("div", {
     style: { marginTop: "24px", width: "100%", maxWidth: "320px", textAlign: "left" }
   },
-    /*#__PURE__*/React.createElement("div", {
-      style: { fontSize: "11px", letterSpacing: "1.5px", textTransform: "uppercase", color: "rgba(255,255,255,0.25)", marginBottom: "10px", textAlign: "center" }
-    }, "Or jump to a track"),
-    /*#__PURE__*/React.createElement("div", {
+    /*#__PURE__*/React.createElement("button", {
+      onClick: () => setShowTrackList(v => !v),
+      style: { fontSize: "11px", letterSpacing: "1.5px", textTransform: "uppercase", color: "rgba(255,255,255,0.35)", marginBottom: "10px", textAlign: "center", width: "100%", background: "none", border: "none", cursor: "pointer", fontFamily: "inherit" }
+    }, showTrackList ? "▲ Or jump to a track" : "▼ Or jump to a track"),
+    showTrackList && /*#__PURE__*/React.createElement("div", {
       style: { display: "flex", flexDirection: "column", gap: "4px", maxHeight: "180px", overflowY: "auto" }
     }, turntableTracksRef.current.map((t, i) => /*#__PURE__*/React.createElement("button", {
       key: i,
