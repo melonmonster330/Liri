@@ -43,6 +43,7 @@ module.exports = async (req, res) => {
       model: "whisper-1",
       file,
       language: "en",
+      temperature: 0,
       ...(prompt ? { prompt } : {}),
     });
 

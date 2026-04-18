@@ -34,7 +34,7 @@ const _nativeAudioPlugin = (() => {
 // Opens a recording loop on `stream`, sends each chunk to Whisper, calls
 // `onText(text, chunkEndTime)` for every non-empty result.
 // Returns { stop } — call stop() to tear down immediately.
-const startWhisperChunks = (stream, onText, chunkMs) => {
+const startWhisperChunks = (stream, onText, chunkMs, prompt) => {
   let active = true;
 
   // ── iOS path: single continuous recorder, accumulate all chunks ──────────────
@@ -62,7 +62,7 @@ const startWhisperChunks = (stream, onText, chunkMs) => {
         const res = await fetch(WHISPER_PROXY, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ audio: base64, mimeType: fullBlob.type || "audio/mp4" }),
+          body: JSON.stringify({ audio: base64, mimeType: fullBlob.type || "audio/mp4", ...(prompt ? { prompt } : {}) }),
         });
         if (!res.ok || !active) return;
         const { text } = await res.json();
@@ -103,7 +103,7 @@ const startWhisperChunks = (stream, onText, chunkMs) => {
         const res = await fetch(WHISPER_PROXY, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ audio: base64, mimeType: e.data.type || mimeType }),
+          body: JSON.stringify({ audio: base64, mimeType: e.data.type || mimeType, ...(prompt ? { prompt } : {}) }),
         });
         if (!res.ok || !active) return;
         const { text } = await res.json();
@@ -1753,16 +1753,42 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
     };
     speechRecRef.current = { stop };
 
+    // Known Whisper hallucination patterns — these appear when audio is noisy,
+    // too quiet, or contains music without intelligible vocals. Filter them out
+    // before accumulating so they don't crowd out real lyric matches.
+    const HALLUCINATION_PATTERNS = [
+      /thanks?\s+for\s+watching/i,
+      /thank\s+you\s+for\s+watching/i,
+      /please\s+(like|subscribe|watch)/i,
+      /you\s+have\s+\d+\s+seconds/i,
+      /subtitles?\s+by/i,
+      /transcript(ion)?\s+by/i,
+      /\[music\]/i,
+      /\[applause\]/i,
+    ];
+    const filterHallucinations = (raw) => {
+      if (!raw) return "";
+      // Strip music-note symbols Whisper emits for instrumental sections
+      let t = raw.replace(/[♪♫]/g, " ").replace(/\s+/g, " ").trim();
+      // If the whole chunk matches a known hallucination, drop it
+      if (HALLUCINATION_PATTERNS.some(p => p.test(t))) return "";
+      // If 4+ of the same word repeat consecutively, it's hallucination noise
+      if (/\b(\w+)(?:\W+\1){3,}\b/i.test(t)) return "";
+      return t;
+    };
+
     const onChunkText = (text, chunkEndTime = Date.now()) => {
       if (!text || !isActive || listenSessionRef.current !== session || recognitionWonRef.current) return;
+      const cleaned = filterHallucinations(text);
+      if (!cleaned) return; // entire chunk was hallucination noise — skip
       // iOS: startWhisperChunks sends growing accumulated audio, so Whisper returns
       // a full re-transcription of everything heard from t=0 on each call.
       // Replace fullTranscript rather than appending to avoid duplicate words.
       // Web: each chunk is independent so we append to build the transcript.
       if (window.Capacitor) {
-        fullTranscript = text.trim();
+        fullTranscript = cleaned;
       } else {
-        fullTranscript += (fullTranscript ? " " : "") + text.trim();
+        fullTranscript += (fullTranscript ? " " : "") + cleaned;
       }
       // Sliding window: keep last 60 words so repetitive songs accumulate
       // enough unique context to match. Hallucinated intro words still fall
@@ -1811,10 +1837,25 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
     };
 
     const chunkMs = window.Capacitor ? 3500 : 1750; // AAC needs more data than Opus
+
+    // Build a Whisper prompt from track titles + a handful of lyric words.
+    // Whisper treats the prompt as a "previous transcript" and biases its vocabulary
+    // toward those words — dramatically reduces hallucinations on music audio.
+    const promptWords = [];
+    for (const t of tracks) {
+      if (t.trackName) promptWords.push(t.trackName);
+      const wd = wordsData[t.trackId];
+      if (wd?.words?.length) {
+        // grab first 8 words from each track's lyric data
+        promptWords.push(...wd.words.slice(0, 8).map(w => w.word));
+      }
+    }
+    const whisperPrompt = promptWords.join(", ").slice(0, 224); // Whisper prompt max ~224 tokens
+
     const whisper = startWhisperChunks(stream, (text, chunkEndTime) => {
       if (!isActive || listenSessionRef.current !== session) return;
       onChunkText(text, chunkEndTime);
-    }, chunkMs);
+    }, chunkMs, whisperPrompt);
     currentRecorder = { stop: whisper.stop };
   };
     const startListening = async (isAutoAdvance = false) => {
