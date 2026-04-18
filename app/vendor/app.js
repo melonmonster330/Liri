@@ -1838,19 +1838,11 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
 
     const chunkMs = window.Capacitor ? 3500 : 1750; // AAC needs more data than Opus
 
-    // Build a Whisper prompt from track titles + a handful of lyric words.
-    // Whisper treats the prompt as a "previous transcript" and biases its vocabulary
-    // toward those words — dramatically reduces hallucinations on music audio.
-    const promptWords = [];
-    for (const t of tracks) {
-      if (t.trackName) promptWords.push(t.trackName);
-      const wd = wordsData[t.trackId];
-      if (wd?.words?.length) {
-        // grab first 8 words from each track's lyric data
-        promptWords.push(...wd.words.slice(0, 8).map(w => w.word));
-      }
-    }
-    const whisperPrompt = promptWords.join(", ").slice(0, 224); // Whisper prompt max ~224 tokens
+    // Build a Whisper prompt from track titles only.
+    // This biases Whisper's vocabulary toward the album's song names (reducing
+    // generic hallucinations) without feeding actual lyric words that Whisper
+    // might echo back verbatim, causing false-positive track matches.
+    const whisperPrompt = tracks.map(t => t.trackName).filter(Boolean).join(", ").slice(0, 224);
 
     const whisper = startWhisperChunks(stream, (text, chunkEndTime) => {
       if (!isActive || listenSessionRef.current !== session) return;
@@ -4429,7 +4421,20 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
       flex: 1,
       minWidth: 0
     }
-  }, artwork && /*#__PURE__*/React.createElement("img", {
+  }, /*#__PURE__*/React.createElement("button", {
+    onClick: reset,
+    style: {
+      background: "none",
+      border: "none",
+      color: "rgba(255,255,255,0.45)",
+      fontSize: "20px",
+      cursor: "pointer",
+      padding: "4px 8px 4px 0",
+      lineHeight: 1,
+      flexShrink: 0
+    },
+    title: "Home"
+  }, "\u2190"), artwork && /*#__PURE__*/React.createElement("img", {
     src: artwork,
     alt: "",
     style: {
