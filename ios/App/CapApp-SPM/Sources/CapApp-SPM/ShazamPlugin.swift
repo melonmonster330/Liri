@@ -52,7 +52,7 @@ public class ShazamPlugin: CAPPlugin, CAPBridgedPlugin, SHSessionDelegate {
         let timeoutMs = call.getDouble("timeout") ?? 15000
         matchCall = call
 
-        AVAudioApplication.requestRecordPermission { [weak self] granted in
+        AVAudioSession.sharedInstance().requestRecordPermission { [weak self] granted in
             guard let self = self else { return }
             guard granted else {
                 call.reject("Microphone permission denied")
@@ -154,7 +154,7 @@ public class ShazamPlugin: CAPPlugin, CAPBridgedPlugin, SHSessionDelegate {
         silenceCall = call
         let timeoutMs = call.getDouble("timeout") ?? 300000
 
-        AVAudioApplication.requestRecordPermission { [weak self] granted in
+        AVAudioSession.sharedInstance().requestRecordPermission { [weak self] granted in
             guard let self = self else { return }
             guard granted else {
                 call.reject("Microphone permission denied")
