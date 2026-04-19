@@ -1835,7 +1835,7 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
 
     } catch (err) {
       if (listenSessionRef.current !== session) return;
-      console.error("[shazam] findMatch error:", err);
+      console.error("[shazam] findMatch error:", err?.message || JSON.stringify(err));
       clearInterval(pulseId);
       setAudioLevel(0);
       setShowTrackList(true);
@@ -5043,9 +5043,7 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
       alignItems: "center",
       justifyContent: "center",
       padding: "24px 32px",
-      textAlign: "center",
-      overflowY: "auto",
-      WebkitOverflowScrolling: "touch"
+      textAlign: "center"
     }
   }, mode === "idle" && /*#__PURE__*/React.createElement("div", {
     style: {
@@ -5256,7 +5254,11 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
     }
   }))), mode === "listening" && /*#__PURE__*/React.createElement("div", {
     style: {
-      animation: "fade-up 0.3s ease both"
+      animation: "fade-up 0.3s ease both",
+      overflowY: showTrackList ? "auto" : "visible",
+      maxHeight: showTrackList ? "75vh" : "none",
+      width: "100%",
+      WebkitOverflowScrolling: "touch"
     }
   }, !(turntableAlbum && (!window.Capacitor || showTrackList)) && /*#__PURE__*/React.createElement("div", {
     style: {

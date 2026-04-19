@@ -28,6 +28,10 @@ public class ShazamPlugin: CAPPlugin, CAPBridgedPlugin, SHSessionDelegate {
         CAPPluginMethod(name: "cancel",         returnType: CAPPluginReturnPromise),
     ]
 
+    // Safe PCM format: 44.1 kHz mono float32 — installTap auto-converts from hardware format.
+    // Using a fixed format avoids the sampleRate=0 crash from outputFormat(forBus:) before engine start.
+    private let tapFormat = AVAudioFormat(standardFormatWithSampleRate: 44100, channels: 1)!
+
     // ── Shazam matching state ──
     private var shazamSession: SHSession?
     private var matchEngine: AVAudioEngine?
@@ -45,16 +49,31 @@ public class ShazamPlugin: CAPPlugin, CAPBridgedPlugin, SHSessionDelegate {
     // MARK: – findMatch
 
     @objc func findMatch(_ call: CAPPluginCall) {
+        call.keepAlive = true   // long-running promise — prevent Capacitor from GC-ing the call
         cancelAll()
         let timeoutMs = call.getDouble("timeout") ?? 15000
         matchCall = call
 
+        // Request microphone permission first if needed
+        AVAudioApplication.requestRecordPermission { [weak self] granted in
+            guard let self = self else { return }
+            guard granted else {
+                call.reject("Microphone permission denied")
+                self.matchCall = nil
+                return
+            }
+            DispatchQueue.main.async { self.startMatchEngine(call: call, timeoutMs: timeoutMs) }
+        }
+    }
+
+    private func startMatchEngine(call: CAPPluginCall, timeoutMs: Double) {
         let audioSession = AVAudioSession.sharedInstance()
         do {
             try audioSession.setCategory(.record, mode: .measurement)
             try audioSession.setActive(true)
         } catch {
             call.reject("Audio session error: \(error.localizedDescription)")
+            matchCall = nil
             return
         }
 
@@ -65,9 +84,9 @@ public class ShazamPlugin: CAPPlugin, CAPBridgedPlugin, SHSessionDelegate {
         let engine = AVAudioEngine()
         matchEngine = engine
         let inputNode = engine.inputNode
-        let format = inputNode.outputFormat(forBus: 0)
 
-        inputNode.installTap(onBus: 0, bufferSize: 8192, format: format) { [weak self] buffer, time in
+        // Use fixed format — installTap performs the conversion from hardware format automatically.
+        inputNode.installTap(onBus: 0, bufferSize: 8192, format: tapFormat) { [weak self] buffer, time in
             self?.shazamSession?.matchStreamingBuffer(buffer, at: time)
         }
 
@@ -76,6 +95,7 @@ public class ShazamPlugin: CAPPlugin, CAPBridgedPlugin, SHSessionDelegate {
         } catch {
             stopMatchEngine()
             call.reject("Audio engine error: \(error.localizedDescription)")
+            matchCall = nil
             return
         }
 
@@ -97,8 +117,13 @@ public class ShazamPlugin: CAPPlugin, CAPBridgedPlugin, SHSessionDelegate {
 
         let title     = item.title  ?? ""
         let artist    = item.artist ?? ""
-        let offset    = item.predictedCurrentMatchOffset
         let matchTime = Date().timeIntervalSince1970 * 1000  // ms for JS elapsed calc
+
+        // predictedCurrentMatchOffset available iOS 16+; fall back to 0 on iOS 15
+        var offset: Double = 0
+        if #available(iOS 16.0, *) {
+            offset = item.predictedCurrentMatchOffset ?? 0
+        }
 
         stopMatchEngine()
         pending.resolve([
@@ -118,26 +143,39 @@ public class ShazamPlugin: CAPPlugin, CAPBridgedPlugin, SHSessionDelegate {
     // MARK: – waitForSilence
 
     @objc func waitForSilence(_ call: CAPPluginCall) {
+        call.keepAlive = true   // long-running promise
         stopSilenceEngine()
         silenceFrameCount = 0
         silenceCall = call
         let timeoutMs = call.getDouble("timeout") ?? 300000
 
+        AVAudioApplication.requestRecordPermission { [weak self] granted in
+            guard let self = self else { return }
+            guard granted else {
+                call.reject("Microphone permission denied")
+                self.silenceCall = nil
+                return
+            }
+            DispatchQueue.main.async { self.startSilenceEngine(call: call, timeoutMs: timeoutMs) }
+        }
+    }
+
+    private func startSilenceEngine(call: CAPPluginCall, timeoutMs: Double) {
         let audioSession = AVAudioSession.sharedInstance()
         do {
             try audioSession.setCategory(.record, mode: .measurement)
             try audioSession.setActive(true)
         } catch {
             call.reject("Audio session error: \(error.localizedDescription)")
+            silenceCall = nil
             return
         }
 
         let engine = AVAudioEngine()
         silenceEngine = engine
         let inputNode = engine.inputNode
-        let format = inputNode.outputFormat(forBus: 0)
 
-        inputNode.installTap(onBus: 0, bufferSize: 4096, format: format) { [weak self] buffer, _ in
+        inputNode.installTap(onBus: 0, bufferSize: 4096, format: tapFormat) { [weak self] buffer, _ in
             guard let self = self else { return }
             let n = Int(buffer.frameLength)
             guard n > 0, let ch = buffer.floatChannelData?[0] else { return }
@@ -164,6 +202,7 @@ public class ShazamPlugin: CAPPlugin, CAPBridgedPlugin, SHSessionDelegate {
         } catch {
             stopSilenceEngine()
             call.reject("Engine error: \(error.localizedDescription)")
+            silenceCall = nil
             return
         }
 
