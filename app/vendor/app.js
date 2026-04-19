@@ -1275,37 +1275,37 @@ function Liri() {
 
   // ── Silence gap detection: auto-advance track when vinyl gap is heard (iOS only) ──
   // Vinyl records have a ~1-2s silent gap between tracks. ShazamPlugin monitors mic
-  // amplitude and fires "silenceGap" when it detects this. We advance to the next track.
+  // amplitude via waitForSilence() and we advance to the next track when it resolves.
   useEffect(() => {
     if (!window.Capacitor?.isNativePlatform?.()) return;
     const Shazam = window.Capacitor?.Plugins?.Shazam;
     if (!Shazam) return;
+    if (mode !== "syncing") return;
 
-    if (mode === "syncing") {
-      let silenceListener = null;
-      // Small delay so the audio session from ShazamKit has time to close first
-      const startTimer = setTimeout(async () => {
-        try {
-          await Shazam.startSilenceWatch();
-          silenceListener = await Shazam.addListener("silenceGap", () => {
-            console.log("[silence] gap detected — advancing track");
-            const tTracks = turntableTracksRef.current;
-            const tIdx = turntableMatchedIdxRef.current;
-            if (tTracks.length > 0 && tIdx >= 0 && tIdx < tTracks.length - 1) {
-              advanceToNextTrack(tTracks, tIdx);
-            }
-          });
-        } catch (e) {
-          console.warn("[silence] startSilenceWatch failed:", e);
+    let cancelled = false;
+    // Small delay so Shazam's audio session has time to fully tear down first
+    const startTimer = setTimeout(async () => {
+      if (cancelled) return;
+      try {
+        // waitForSilence resolves when a gap is detected or times out (5 min)
+        const result = await Shazam.waitForSilence({ timeout: 300000 });
+        if (cancelled || !result.silence) return;
+        console.log("[silence] gap detected — advancing track");
+        const tTracks = turntableTracksRef.current;
+        const tIdx = turntableMatchedIdxRef.current;
+        if (tTracks.length > 0 && tIdx >= 0 && tIdx < tTracks.length - 1) {
+          advanceToNextTrack(tTracks, tIdx);
         }
-      }, 2000);
+      } catch (e) {
+        console.warn("[silence] waitForSilence failed:", e);
+      }
+    }, 2000);
 
-      return () => {
-        clearTimeout(startTimer);
-        silenceListener?.remove();
-        Shazam.stopSilenceWatch().catch(() => {});
-      };
-    }
+    return () => {
+      cancelled = true;
+      clearTimeout(startTimer);
+      Shazam.cancel().catch(() => {});
+    };
   }, [mode]);
 
   // ── Scroll to current lyric (skip if user is manually browsing) ──
@@ -1753,7 +1753,7 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
     const stopShazam = () => {
       clearInterval(pulseId);
       setAudioLevel(0);
-      window.Capacitor.Plugins.Shazam?.stop().catch(() => {});
+      window.Capacitor.Plugins.Shazam?.cancel().catch(() => {});
     };
     speechRecRef.current = { stop: stopShazam };
 
@@ -1770,21 +1770,17 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
       if (listenSessionRef.current !== session || recognitionWonRef.current) return;
       recognitionWonRef.current = true;
       stopShazam();
-
       const ta = turntableAlbumRef.current;
       const matchedIdx = tracks.indexOf(track);
       turntableMatchedIdxRef.current = matchedIdx >= 0 ? matchedIdx : 0;
-
       const song = { title: track.trackName, artist: track.artistName || ta?.artist_name || "", album: ta?.album_name || "", artwork: ta?.artwork_url || null };
       const lyrics = buildLyrics(track);
-
       setIdentifiedBy("shazam");
       detectedAtRef.current = Date.now();
       syncCalcRef.current = { startPos: offsetSecs, phraseOffset: 0, recStart: Date.now() };
       initialPosRef.current = offsetSecs;
       autoAdvanceFiredRef.current = false;
       autoRetryCountRef.current = 0;
-
       setDetectedSong(song);
       setSongDuration(track.trackTimeMillis ? track.trackTimeMillis / 1000 : null);
       setLyrics(lyrics);
@@ -1793,65 +1789,56 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
       saveToHistory(user, song);
       fetchHistory(user);
       logListeningEvent({ userId: user?.id, title: track.trackName, artist: track.artistName || ta?.artist_name || "", album: ta?.album_name || "", artwork: ta?.artwork_url || null, itunesTrackId: track.trackId, collectionId: ta?.itunes_collection_id || track.collectionId, vinylReleaseId: null, vinylModeOn: true, source: "shazam", offsetSecs, durationSecs: track.trackTimeMillis ? track.trackTimeMillis / 1000 : null });
-
       const at = turntableTracksRef.current;
       setAlbumTracks(at);
       setAlbumCollectionId(ta?.itunes_collection_id ? String(ta.itunes_collection_id) : null);
       setCurrentTrackIndex(matchedIdx >= 0 ? matchedIdx : 0);
     };
 
-    // After 15s with no match, reveal the track list so the user can pick manually.
-    // Shazam keeps running in the background in case a recognisable moment arrives.
-    const noMatchTimeout = setTimeout(() => {
-      if (listenSessionRef.current === session) setShowTrackList(true);
-    }, 15000);
-
-    // Listen for ShazamKit match event fired from Swift
-    let matchListener = null;
+    // ── Call findMatch — a single long-running promise (same pattern as NativeAudio.record) ──
+    // Resolves with { matched: true, title, artist, offset, matchTime } or { matched: false }
     try {
-      matchListener = await window.Capacitor.Plugins.Shazam.addListener("match", ({ title, artist, offset, matchTime }) => {
-        matchListener?.remove();
-        clearTimeout(noMatchTimeout);
-        if (listenSessionRef.current !== session) return;
+      const result = await window.Capacitor.Plugins.Shazam.findMatch({ timeout: 15000 });
+      if (listenSessionRef.current !== session) return; // session changed while we waited
 
-        console.log("[shazam] match:", title, "by", artist, "offset:", offset.toFixed(1) + "s");
+      if (!result.matched) {
+        // Timeout with no match — show track list
+        clearInterval(pulseId);
+        setAudioLevel(0);
+        setShowTrackList(true);
+        return;
+      }
 
-        // Adjust for time elapsed between Shazam's fingerprint capture and JS receiving the event
-        const elapsed = (Date.now() - matchTime) / 1000;
-        const adjustedOffset = Math.max(0, offset + elapsed);
+      const { title, artist, offset, matchTime } = result;
+      console.log("[shazam] match:", title, "by", artist, "offset:", Number(offset).toFixed(1) + "s");
 
-        // Find the matched track within the selected album (case-insensitive fuzzy)
-        const norm = s => (s || "").toLowerCase().trim();
-        const matchedTrack =
-          tracks.find(t => norm(t.trackName) === norm(title)) ||
-          tracks.find(t => norm(title).includes(norm(t.trackName)) && norm(t.trackName).length > 3) ||
-          tracks.find(t => norm(t.trackName).includes(norm(title)) && norm(title).length > 3);
+      // Adjust offset for time elapsed between Shazam capturing and JS receiving result
+      const elapsed = (Date.now() - matchTime) / 1000;
+      const adjustedOffset = Math.max(0, offset + elapsed);
 
-        if (!matchedTrack) {
-          // Shazam matched something not in this album — show the list as fallback
-          console.log("[shazam] matched track not found in album, showing track list");
-          setShowTrackList(true);
-          return;
-        }
+      // Find the matched track within the selected album (case-insensitive fuzzy)
+      const norm = s => (s || "").toLowerCase().trim();
+      const matchedTrack =
+        tracks.find(t => norm(t.trackName) === norm(title)) ||
+        tracks.find(t => norm(title).includes(norm(t.trackName)) && norm(t.trackName).length > 3) ||
+        tracks.find(t => norm(t.trackName).includes(norm(title)) && norm(title).length > 3);
 
-        commitShazamMatch(matchedTrack, adjustedOffset);
-      });
+      if (!matchedTrack) {
+        console.log("[shazam] matched title not in album:", title, "— showing track list");
+        clearInterval(pulseId);
+        setAudioLevel(0);
+        setShowTrackList(true);
+        return;
+      }
+
+      commitShazamMatch(matchedTrack, adjustedOffset);
+
     } catch (err) {
-      console.error("[shazam] addListener error:", err);
-      clearTimeout(noMatchTimeout);
+      if (listenSessionRef.current !== session) return;
+      console.error("[shazam] findMatch error:", err);
       clearInterval(pulseId);
+      setAudioLevel(0);
       setShowTrackList(true);
-      return;
-    }
-
-    try {
-      await window.Capacitor.Plugins.Shazam.start();
-    } catch (err) {
-      console.error("[shazam] start error:", err);
-      matchListener?.remove();
-      clearTimeout(noMatchTimeout);
-      stopShazam();
-      setShowTrackList(true); // fall back to manual selection
     }
   };
     const startListening = async (isAutoAdvance = false) => {
