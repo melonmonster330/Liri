@@ -5,7 +5,7 @@
   "main": "index.html",
   "scripts": {
     "build": "echo 'No build step required'",
-    "sync": "npx cap sync",
+    "sync": "npx cap sync && node scripts/patch-ios-config.js",
     "ios": "npx cap open ios"
   },
   "dependencies": {
