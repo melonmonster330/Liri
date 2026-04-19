@@ -1271,6 +1271,41 @@ function Liri() {
     }
   }, [mode, detectedSong]);
 
+  // ── Silence gap detection: auto-advance track when vinyl gap is heard (iOS only) ──
+  // Vinyl records have a ~1-2s silent gap between tracks. ShazamPlugin monitors mic
+  // amplitude and fires "silenceGap" when it detects this. We advance to the next track.
+  useEffect(() => {
+    if (!window.Capacitor?.isNativePlatform?.()) return;
+    const Shazam = window.Capacitor?.Plugins?.Shazam;
+    if (!Shazam) return;
+
+    if (mode === "syncing") {
+      let silenceListener = null;
+      // Small delay so the audio session from ShazamKit has time to close first
+      const startTimer = setTimeout(async () => {
+        try {
+          await Shazam.startSilenceWatch();
+          silenceListener = await Shazam.addListener("silenceGap", () => {
+            console.log("[silence] gap detected — advancing track");
+            const tTracks = turntableTracksRef.current;
+            const tIdx = turntableMatchedIdxRef.current;
+            if (tTracks.length > 0 && tIdx >= 0 && tIdx < tTracks.length - 1) {
+              advanceToNextTrack(tTracks, tIdx);
+            }
+          });
+        } catch (e) {
+          console.warn("[silence] startSilenceWatch failed:", e);
+        }
+      }, 2000);
+
+      return () => {
+        clearTimeout(startTimer);
+        silenceListener?.remove();
+        Shazam.stopSilenceWatch().catch(() => {});
+      };
+    }
+  }, [mode]);
+
   // ── Scroll to current lyric (skip if user is manually browsing) ──
   useEffect(() => {
     if (userScrollingRef.current) return;
@@ -1670,14 +1705,15 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
     if (!tracks.length) { setError("Album tracks still loading — try again in a moment."); setMode("error"); return; }
 
     const lrcCache = turntableLyricsCacheRef.current;
+    const isNative = !!window.Capacitor?.isNativePlatform?.();
+
+    // Build wordsData so resync (Whisper-based fine-tune) can match against lyrics
     const wordsData = {};
     for (const track of tracks) {
       if (!track.trackId) continue;
       const entry = lrcCache[String(track.trackId)];
       if (!entry) continue;
-      // words_json: already-normalised [{word, start_ms}] — fastest path
       let words = Array.isArray(entry.words_json) ? entry.words_json : [];
-      // lrc_raw fallback: parse timestamps on the fly
       if (!words.length && entry.lrc_raw) {
         for (const line of parseLRC(entry.lrc_raw)) {
           for (const raw of (line.text || "").split(/\s+/)) {
@@ -1686,7 +1722,6 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
           }
         }
       }
-      // lyrics_plain fallback: no timestamps, rough 4s-per-line estimate
       if (!words.length && entry.lyrics_plain) {
         entry.lyrics_plain.split("\n").filter(l => l.trim()).forEach((line, li) => {
           for (const raw of line.split(/\s+/)) {
@@ -1697,130 +1732,57 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
       }
       wordsData[track.trackId] = { words, lrc_raw: entry.lrc_raw, lyrics_plain: entry.lyrics_plain };
     }
-    console.log("[listen] cache:", Object.keys(lrcCache).length, "wordsData tracks:", Object.keys(wordsData).length, "with words:", Object.values(wordsData).filter(d => d.words?.length > 0).length);
-    if (!Object.values(wordsData).some(d => d.words?.length > 0)) {
-      setError("No lyric data for this album — remove it from your library and re-add it to refresh.");
-      setMode("error"); return;
-    }
     wordsDataRef.current = wordsData;
 
-    const isNative = !!window.Capacitor?.isNativePlatform?.();
-
-    // ── Open mic ──
-    let stream;
-    try {
-      // Disable echo cancellation + noise suppression so iOS voice-call processing
-      // doesn't degrade music audio before it reaches Whisper (causes hallucinations).
-      stream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: false } });
-    } catch {
-      setError(isNative ? "Microphone blocked. Go to Settings → Liri → Microphone to allow access." : "Microphone blocked — check your browser's site permissions and try again.");
-      setMode("error"); return;
+    // ── Web: no fingerprinting available — show track list immediately ──────────
+    if (!isNative) {
+      setShowTrackList(true);
+      speechRecRef.current = { stop: () => {} };
+      return;
     }
 
-    const MIN_SCORE = 2;
-    let fullTranscript = "";
-    let isActive = true;
-    let currentRecorder = null;
-
-    // Tap AnalyserNode from mic stream so WaveAnimation reacts to actual beat
-    // Skip on native (Capacitor) — WKWebView AudioContext causes system errors
-    if (!window.Capacitor) {
-      try {
-        if (audioCtxRef.current) { audioCtxRef.current.close().catch(() => {}); }
-        const actx = new (window.AudioContext || window.webkitAudioContext)();
-        if (actx.state === "suspended") actx.resume().catch(() => {});
-        const src = actx.createMediaStreamSource(stream);
-        const analyser = actx.createAnalyser();
-        analyser.fftSize = 1024;
-        analyser.smoothingTimeConstant = 0.75;
-        src.connect(analyser);
-        analyserNodeRef.current = analyser;
-        audioCtxRef.current = actx;
-      } catch (e) {}
-    }
+    // ── iOS: ShazamKit audio fingerprinting ──────────────────────────────────────
+    // ShazamKit handles mic capture internally, so we don't open a MediaRecorder.
+    // It returns the matched song title + predictedCurrentMatchOffset (seconds into
+    // the track). We find the track in the album, look up its lyrics, and sync.
 
     const pulseId = setInterval(() => setAudioLevel(0.15 + Math.sin(Date.now() / 400) * 0.1), 80);
-    recordingStartRef.current = Date.now();
 
-    const stop = () => {
-      isActive = false;
+    const stopShazam = () => {
       clearInterval(pulseId);
-      try { currentRecorder?.stop(); } catch {}
-      stream.getTracks().forEach(t => t.stop());
-      try { audioCtxRef.current?.close(); } catch {}
-      analyserNodeRef.current = null;
-      audioCtxRef.current = null;
+      setAudioLevel(0);
+      window.Capacitor.Plugins.Shazam?.stop().catch(() => {});
     };
-    speechRecRef.current = { stop };
+    speechRecRef.current = { stop: stopShazam };
 
-    // Known Whisper hallucination patterns — these appear when audio is noisy,
-    // too quiet, or contains music without intelligible vocals. Filter them out
-    // before accumulating so they don't crowd out real lyric matches.
-    const HALLUCINATION_PATTERNS = [
-      /thanks?\s+for\s+watching/i,
-      /thank\s+you\s+for\s+watching/i,
-      /please\s+(like|subscribe|watch)/i,
-      /you\s+have\s+\d+\s+seconds/i,
-      /subtitles?\s+by/i,
-      /transcript(ion)?\s+by/i,
-      /\[music\]/i,
-      /\[applause\]/i,
-    ];
-    const filterHallucinations = (raw) => {
-      if (!raw) return "";
-      // Strip music-note symbols Whisper emits for instrumental sections
-      let t = raw.replace(/[♪♫]/g, " ").replace(/\s+/g, " ").trim();
-      // If the whole chunk matches a known hallucination, drop it
-      if (HALLUCINATION_PATTERNS.some(p => p.test(t))) return "";
-      // If 4+ of the same word repeat consecutively, it's hallucination noise
-      if (/\b(\w+)(?:\W+\1){3,}\b/i.test(t)) return "";
-      return t;
+    // Helper: build lyrics array from the cached entry for a given track
+    const buildLyrics = (track) => {
+      const entry = lrcCache[String(track.trackId)];
+      if (!entry) return [];
+      if (entry.lrc_raw) return parseLRC(entry.lrc_raw);
+      return (entry.lyrics_plain || "").split("\n").filter(l => l.trim()).map((text, i) => ({ time: i * 4, text }));
     };
 
-    const onChunkText = (text, chunkEndTime = Date.now()) => {
-      if (!text || !isActive || listenSessionRef.current !== session || recognitionWonRef.current) return;
-      const cleaned = filterHallucinations(text);
-      if (!cleaned) return; // entire chunk was hallucination noise — skip
-      // iOS: startWhisperChunks sends growing accumulated audio, so Whisper returns
-      // a full re-transcription of everything heard from t=0 on each call.
-      // Replace fullTranscript rather than appending to avoid duplicate words.
-      // Web: each chunk is independent so we append to build the transcript.
-      if (window.Capacitor) {
-        fullTranscript = cleaned;
-      } else {
-        fullTranscript += (fullTranscript ? " " : "") + cleaned;
-      }
-      // Sliding window: keep last 60 words so repetitive songs accumulate
-      // enough unique context to match. Hallucinated intro words still fall
-      // off naturally once real lyrics start coming in.
-      const allWords = fullTranscript.split(/\s+/).filter(Boolean);
-      const combined = allWords.slice(-60).join(" ");
-      setLiveTranscript(combined);
-      const wordCount = combined.split(/\s+/).filter(Boolean).length;
-      setListenProgress(Math.min(wordCount / 12, 0.95));
-      setAudioLevel(0.4 + Math.random() * 0.3);
-      console.log("[match] wordCount:", wordCount, "combined:", combined.substring(0, 80));
-      if (wordCount < MIN_SCORE) return;
-      const vmResult = matchTranscriptToTracks(combined, tracks, wordsData, attemptLogRef.current);
-      console.log("[match] result:", vmResult ? `score=${vmResult.score} track=${vmResult.track?.trackName}` : "null");
-      if (!vmResult || vmResult.score < MIN_SCORE || recognitionWonRef.current) return;
+    // Helper: commit a Shazam match — sets all state and transitions to "confirmed"
+    const commitShazamMatch = (track, offsetSecs) => {
+      if (listenSessionRef.current !== session || recognitionWonRef.current) return;
       recognitionWonRef.current = true;
-      stop();
-      const { track, lyrics, startPos } = vmResult;
+      stopShazam();
+
       const ta = turntableAlbumRef.current;
-      const matchedIdx = tracks.findIndex(t => t.trackName?.toLowerCase() === track.trackName?.toLowerCase());
-      turntableMatchedIdxRef.current = matchedIdx >= 0 ? matchedIdx : (track.trackNumber ? track.trackNumber - 1 : 0);
+      const matchedIdx = tracks.indexOf(track);
+      turntableMatchedIdxRef.current = matchedIdx >= 0 ? matchedIdx : 0;
+
       const song = { title: track.trackName, artist: track.artistName || ta?.artist_name || "", album: ta?.album_name || "", artwork: ta?.artwork_url || null };
-      setIdentifiedBy("speech");
+      const lyrics = buildLyrics(track);
+
+      setIdentifiedBy("shazam");
       detectedAtRef.current = Date.now();
-      // Compensate for Whisper API round-trip latency: the matched words were sung
-      // at chunkEndTime, so the song is now further ahead by that many seconds.
-      const apiLatency = (Date.now() - chunkEndTime) / 1000;
-      const adjustedPos = startPos + apiLatency;
-      syncCalcRef.current = { startPos: adjustedPos, phraseOffset: 0, recStart: chunkEndTime };
-      initialPosRef.current = adjustedPos;
+      syncCalcRef.current = { startPos: offsetSecs, phraseOffset: 0, recStart: Date.now() };
+      initialPosRef.current = offsetSecs;
       autoAdvanceFiredRef.current = false;
       autoRetryCountRef.current = 0;
+
       setDetectedSong(song);
       setSongDuration(track.trackTimeMillis ? track.trackTimeMillis / 1000 : null);
       setLyrics(lyrics);
@@ -1828,27 +1790,67 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
       setMode("confirmed");
       saveToHistory(user, song);
       fetchHistory(user);
-      logListeningEvent({ userId: user?.id, title: track.trackName, artist: track.artistName || ta?.artist_name || "", album: ta?.album_name || "", artwork: ta?.artwork_url || null, itunesTrackId: track.trackId, collectionId: ta?.itunes_collection_id || track.collectionId, vinylReleaseId: null, vinylModeOn: true, source: "speech", offsetSecs: startPos, durationSecs: track.trackTimeMillis ? track.trackTimeMillis / 1000 : null });
+      logListeningEvent({ userId: user?.id, title: track.trackName, artist: track.artistName || ta?.artist_name || "", album: ta?.album_name || "", artwork: ta?.artwork_url || null, itunesTrackId: track.trackId, collectionId: ta?.itunes_collection_id || track.collectionId, vinylReleaseId: null, vinylModeOn: true, source: "shazam", offsetSecs, durationSecs: track.trackTimeMillis ? track.trackTimeMillis / 1000 : null });
+
       const at = turntableTracksRef.current;
       setAlbumTracks(at);
       setAlbumCollectionId(ta?.itunes_collection_id ? String(ta.itunes_collection_id) : null);
-      const tIdx = at.findIndex(t => t.trackName?.toLowerCase() === track.trackName.toLowerCase());
-      setCurrentTrackIndex(tIdx >= 0 ? tIdx : 0);
+      setCurrentTrackIndex(matchedIdx >= 0 ? matchedIdx : 0);
     };
 
-    const chunkMs = window.Capacitor ? 3500 : 1750; // AAC needs more data than Opus
+    // After 15s with no match, reveal the track list so the user can pick manually.
+    // Shazam keeps running in the background in case a recognisable moment arrives.
+    const noMatchTimeout = setTimeout(() => {
+      if (listenSessionRef.current === session) setShowTrackList(true);
+    }, 15000);
 
-    // Build a Whisper prompt from track titles only.
-    // This biases Whisper's vocabulary toward the album's song names (reducing
-    // generic hallucinations) without feeding actual lyric words that Whisper
-    // might echo back verbatim, causing false-positive track matches.
-    const whisperPrompt = tracks.map(t => t.trackName).filter(Boolean).join(", ").slice(0, 224);
+    // Listen for ShazamKit match event fired from Swift
+    let matchListener = null;
+    try {
+      matchListener = await window.Capacitor.Plugins.Shazam.addListener("match", ({ title, artist, offset, matchTime }) => {
+        matchListener?.remove();
+        clearTimeout(noMatchTimeout);
+        if (listenSessionRef.current !== session) return;
 
-    const whisper = startWhisperChunks(stream, (text, chunkEndTime) => {
-      if (!isActive || listenSessionRef.current !== session) return;
-      onChunkText(text, chunkEndTime);
-    }, chunkMs, whisperPrompt);
-    currentRecorder = { stop: whisper.stop };
+        console.log("[shazam] match:", title, "by", artist, "offset:", offset.toFixed(1) + "s");
+
+        // Adjust for time elapsed between Shazam's fingerprint capture and JS receiving the event
+        const elapsed = (Date.now() - matchTime) / 1000;
+        const adjustedOffset = Math.max(0, offset + elapsed);
+
+        // Find the matched track within the selected album (case-insensitive fuzzy)
+        const norm = s => (s || "").toLowerCase().trim();
+        const matchedTrack =
+          tracks.find(t => norm(t.trackName) === norm(title)) ||
+          tracks.find(t => norm(title).includes(norm(t.trackName)) && norm(t.trackName).length > 3) ||
+          tracks.find(t => norm(t.trackName).includes(norm(title)) && norm(title).length > 3);
+
+        if (!matchedTrack) {
+          // Shazam matched something not in this album — show the list as fallback
+          console.log("[shazam] matched track not found in album, showing track list");
+          setShowTrackList(true);
+          return;
+        }
+
+        commitShazamMatch(matchedTrack, adjustedOffset);
+      });
+    } catch (err) {
+      console.error("[shazam] addListener error:", err);
+      clearTimeout(noMatchTimeout);
+      clearInterval(pulseId);
+      setShowTrackList(true);
+      return;
+    }
+
+    try {
+      await window.Capacitor.Plugins.Shazam.start();
+    } catch (err) {
+      console.error("[shazam] start error:", err);
+      matchListener?.remove();
+      clearTimeout(noMatchTimeout);
+      stopShazam();
+      setShowTrackList(true); // fall back to manual selection
+    }
   };
     const startListening = async (isAutoAdvance = false) => {
     if (!turntableAlbumRef.current) {
@@ -2300,13 +2302,15 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
     setDetectedSong(song);
     setSongDuration(track.trackTimeMillis ? track.trackTimeMillis / 1000 : null);
     setIdentifiedBy("manual");
-    // Load lyrics from cache
-    const entry = wordsDataRef.current?.[track.trackId];
-    if (entry?.lrc_raw) {
-      const parsed = parseLRC(entry.lrc_raw);
+    // Load lyrics — prefer turntableLyricsCacheRef (always populated at album-select)
+    // over wordsDataRef (only populated during a listening session)
+    const lrcEntry = turntableLyricsCacheRef.current[String(track.trackId)]
+      || wordsDataRef.current?.[track.trackId];
+    if (lrcEntry?.lrc_raw) {
+      const parsed = parseLRC(lrcEntry.lrc_raw);
       setLyrics(parsed); lyricsRef.current = parsed;
-    } else if (entry?.lyrics_plain) {
-      const parsed = entry.lyrics_plain.split("\n").filter(l => l.trim()).map((text, i) => ({ time: i * 4, text }));
+    } else if (lrcEntry?.lyrics_plain) {
+      const parsed = lrcEntry.lyrics_plain.split("\n").filter(l => l.trim()).map((text, i) => ({ time: i * 4, text }));
       setLyrics(parsed); lyricsRef.current = parsed;
     } else {
       setLyrics([]); lyricsRef.current = [];
@@ -5306,15 +5310,15 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
       marginBottom: "10px",
       marginTop: !turntableAlbum && listenAttempt > MAX_ATTEMPTS ? "20px" : "0"
     }
-  }, turntableAlbum ? "Finding your place…" : listenAttempt > MAX_ATTEMPTS ? "Matching by lyrics…" : "Listening…"), /*#__PURE__*/React.createElement("div", {
+  }, turntableAlbum ? (window.Capacitor ? "Finding your place…" : "Pick a track to start") : listenAttempt > MAX_ATTEMPTS ? "Matching by lyrics…" : "Listening…"), /*#__PURE__*/React.createElement("div", {
     style: {
       fontSize: "14px",
       color: "rgba(255,255,255,0.3)"
     }
-  }, turntableAlbum ? "Hold near your speakers" : listenAttempt > MAX_ATTEMPTS ? "Identifying by lyrics" : listenSecs === 0 ? "Hold near your speakers" : `${listenSecs}s — hold steady`),
+  }, turntableAlbum ? (window.Capacitor ? "Hold near your speakers" : "Tap any track below") : listenAttempt > MAX_ATTEMPTS ? "Identifying by lyrics" : listenSecs === 0 ? "Hold near your speakers" : `${listenSecs}s — hold steady`),
 
-  /* ── Manual track picker: appears after 5s when turntable album is set ── */
-  turntableAlbum && listenSecs >= 5 && turntableTracksRef.current.length > 0 && /*#__PURE__*/React.createElement("div", {
+  /* ── Manual track picker: always available; collapses behind toggle on iOS ── */
+  turntableAlbum && (showTrackList || listenSecs >= 5) && turntableTracksRef.current.length > 0 && /*#__PURE__*/React.createElement("div", {
     style: { marginTop: "24px", width: "100%", maxWidth: "320px", textAlign: "left" }
   },
     /*#__PURE__*/React.createElement("button", {
