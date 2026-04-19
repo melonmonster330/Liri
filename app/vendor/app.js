@@ -5312,15 +5312,22 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
       marginBottom: "10px",
       marginTop: !turntableAlbum && listenAttempt > MAX_ATTEMPTS ? "20px" : "0"
     }
-  }, turntableAlbum ? (window.Capacitor ? "Finding your place…" : "Pick a track to start") : listenAttempt > MAX_ATTEMPTS ? "Matching by lyrics…" : "Listening…"), /*#__PURE__*/React.createElement("div", {
+  }, turntableAlbum ? (window.Capacitor ? (showTrackList ? "Can't find it automatically" : "Finding your place…") : "Pick a track to start") : listenAttempt > MAX_ATTEMPTS ? "Matching by lyrics…" : "Listening…"), /*#__PURE__*/React.createElement("div", {
     style: {
       fontSize: "14px",
       color: "rgba(255,255,255,0.3)"
     }
-  }, turntableAlbum ? (window.Capacitor ? "Hold near your speakers" : "Tap any track below") : listenAttempt > MAX_ATTEMPTS ? "Identifying by lyrics" : listenSecs === 0 ? "Hold near your speakers" : `${listenSecs}s — hold steady`),
+  }, turntableAlbum ? (window.Capacitor ? (showTrackList ? "Pick a track below to start" : "Identifying with Shazam") : "Tap any track below") : listenAttempt > MAX_ATTEMPTS ? "Identifying by lyrics" : listenSecs === 0 ? "Hold near your speakers" : `${listenSecs}s — hold steady`),
+
+  /* ── Shazam timer bar (iOS only, while actively listening) ── */
+  turntableAlbum && window.Capacitor && !showTrackList && /*#__PURE__*/React.createElement("div", {
+    style: { marginTop: "20px", width: "200px", height: "2px", background: "rgba(255,255,255,0.07)", borderRadius: "2px", overflow: "hidden" }
+  }, /*#__PURE__*/React.createElement("div", {
+    style: { height: "100%", width: `${Math.min(listenSecs / 15 * 100, 100)}%`, background: "linear-gradient(90deg, #1DA0F2, #d4a846)", transition: "width 1s linear", borderRadius: "2px" }
+  })),
 
   /* ── Manual track picker with side grouping ── */
-  turntableAlbum && (showTrackList || listenSecs >= 5 || !window.Capacitor) && turntableTracksRef.current.length > 0 && (() => {
+  turntableAlbum && (showTrackList || !window.Capacitor) && turntableTracksRef.current.length > 0 && (() => {
     const allTracks = turntableTracksRef.current;
     const vt = vinylDbRelease?.vinyl_tracks;
     // Build side groups from Discogs data, or fall back to A/B split at midpoint
