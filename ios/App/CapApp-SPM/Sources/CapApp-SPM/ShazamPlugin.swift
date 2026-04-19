@@ -28,10 +28,6 @@ public class ShazamPlugin: CAPPlugin, CAPBridgedPlugin, SHSessionDelegate {
         CAPPluginMethod(name: "cancel",         returnType: CAPPluginReturnPromise),
     ]
 
-    // Safe PCM format: 44.1 kHz mono float32 — installTap auto-converts from hardware format.
-    // Using a fixed format avoids the sampleRate=0 crash from outputFormat(forBus:) before engine start.
-    private let tapFormat = AVAudioFormat(standardFormatWithSampleRate: 44100, channels: 1)!
-
     // ── Shazam matching state ──
     private var shazamSession: SHSession?
     private var matchEngine: AVAudioEngine?
@@ -39,22 +35,23 @@ public class ShazamPlugin: CAPPlugin, CAPBridgedPlugin, SHSessionDelegate {
     private var matchTimer: Timer?
 
     // ── Silence detection state ──
+    // Uses dB + time-gate approach (from Turncast) rather than frame counts:
+    // silence must hold continuously for silenceGateSecs before firing.
     private var silenceEngine: AVAudioEngine?
     private var silenceCall: CAPPluginCall?
     private var silenceTimer: Timer?
-    private var silenceFrameCount = 0
-    private let silenceThreshold: Float = 0.015  // RMS below this = silence
-    private let silenceFramesNeeded = 15          // ~1.5s of 100ms chunks
+    private var silenceStartTime: Date?
+    private let silenceDbThreshold: Float = -40.0  // dB — below this is silence
+    private let silenceGateSecs: Double    = 3.0    // silence must hold this long to fire
 
     // MARK: – findMatch
 
     @objc func findMatch(_ call: CAPPluginCall) {
-        call.keepAlive = true   // long-running promise — prevent Capacitor from GC-ing the call
+        call.keepAlive = true   // long-running promise — prevent Capacitor from releasing the call
         cancelAll()
         let timeoutMs = call.getDouble("timeout") ?? 15000
         matchCall = call
 
-        // Request microphone permission first if needed
         AVAudioApplication.requestRecordPermission { [weak self] granted in
             guard let self = self else { return }
             guard granted else {
@@ -85,7 +82,16 @@ public class ShazamPlugin: CAPPlugin, CAPBridgedPlugin, SHSessionDelegate {
         matchEngine = engine
         let inputNode = engine.inputNode
 
-        // Use fixed format — installTap performs the conversion from hardware format automatically.
+        // Derive sample rate from hardware so we never mismatched against the device's mic.
+        // Force mono float32 — ShazamKit works with any sample rate, mono is cheaper.
+        // Pattern from expo-shazamkit (alanjhughes/expo-shazamkit).
+        let hwRate = inputNode.outputFormat(forBus: 0).sampleRate
+        let sampleRate = hwRate > 0 ? hwRate : 44100
+        let tapFormat = AVAudioFormat(commonFormat: .pcmFormatFloat32,
+                                      sampleRate: sampleRate,
+                                      channels: 1,
+                                      interleaved: false)!
+
         inputNode.installTap(onBus: 0, bufferSize: 8192, format: tapFormat) { [weak self] buffer, time in
             self?.shazamSession?.matchStreamingBuffer(buffer, at: time)
         }
@@ -99,7 +105,6 @@ public class ShazamPlugin: CAPPlugin, CAPBridgedPlugin, SHSessionDelegate {
             return
         }
 
-        // Timeout — resolve with matched:false so JS can show track list
         matchTimer = Timer.scheduledTimer(withTimeInterval: timeoutMs / 1000, repeats: false) { [weak self] _ in
             guard let self = self, let pending = self.matchCall else { return }
             self.stopMatchEngine()
@@ -117,7 +122,7 @@ public class ShazamPlugin: CAPPlugin, CAPBridgedPlugin, SHSessionDelegate {
 
         let title     = item.title  ?? ""
         let artist    = item.artist ?? ""
-        let matchTime = Date().timeIntervalSince1970 * 1000  // ms for JS elapsed calc
+        let matchTime = Date().timeIntervalSince1970 * 1000
 
         // predictedCurrentMatchOffset available iOS 16+; fall back to 0 on iOS 15
         var offset: Double = 0
@@ -137,15 +142,15 @@ public class ShazamPlugin: CAPPlugin, CAPBridgedPlugin, SHSessionDelegate {
     }
 
     public func session(_ session: SHSession, didNotFindMatchFor signature: SHSignature, error: Error?) {
-        // Not fatal — Shazam tries multiple times; we let the timer decide when to give up
+        // Not fatal — Shazam keeps trying; timer decides when to give up
     }
 
     // MARK: – waitForSilence
 
     @objc func waitForSilence(_ call: CAPPluginCall) {
-        call.keepAlive = true   // long-running promise
+        call.keepAlive = true
         stopSilenceEngine()
-        silenceFrameCount = 0
+        silenceStartTime = nil
         silenceCall = call
         let timeoutMs = call.getDouble("timeout") ?? 300000
 
@@ -175,24 +180,40 @@ public class ShazamPlugin: CAPPlugin, CAPBridgedPlugin, SHSessionDelegate {
         silenceEngine = engine
         let inputNode = engine.inputNode
 
+        // Same hardware-matched mono format as findMatch
+        let hwRate = inputNode.outputFormat(forBus: 0).sampleRate
+        let sampleRate = hwRate > 0 ? hwRate : 44100
+        let tapFormat = AVAudioFormat(commonFormat: .pcmFormatFloat32,
+                                      sampleRate: sampleRate,
+                                      channels: 1,
+                                      interleaved: false)!
+
         inputNode.installTap(onBus: 0, bufferSize: 4096, format: tapFormat) { [weak self] buffer, _ in
             guard let self = self else { return }
             let n = Int(buffer.frameLength)
             guard n > 0, let ch = buffer.floatChannelData?[0] else { return }
+
+            // RMS → dB  (Turncast-style dB threshold with time gate)
             var sum: Float = 0
             for i in 0..<n { sum += ch[i] * ch[i] }
             let rms = sqrt(sum / Float(n))
+            let db  = rms > 0 ? 20.0 * log10(rms) : -160.0
+
             DispatchQueue.main.async {
-                if rms < self.silenceThreshold {
-                    self.silenceFrameCount += 1
-                    if self.silenceFrameCount == self.silenceFramesNeeded,
-                       let pending = self.silenceCall {
+                if db < self.silenceDbThreshold {
+                    // Audio is silent — start or continue the time gate
+                    if self.silenceStartTime == nil {
+                        self.silenceStartTime = Date()
+                    } else if let start = self.silenceStartTime,
+                              Date().timeIntervalSince(start) >= self.silenceGateSecs,
+                              let pending = self.silenceCall {
                         self.stopSilenceEngine()
                         pending.resolve(["silence": true])
                         self.silenceCall = nil
                     }
                 } else {
-                    self.silenceFrameCount = 0
+                    // Audio present — reset the gate
+                    self.silenceStartTime = nil
                 }
             }
         }
@@ -237,6 +258,7 @@ public class ShazamPlugin: CAPPlugin, CAPBridgedPlugin, SHSessionDelegate {
         silenceEngine?.inputNode.removeTap(onBus: 0)
         silenceEngine?.stop()
         silenceEngine = nil
+        silenceStartTime = nil
         try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
     }
 
