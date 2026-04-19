@@ -5043,7 +5043,9 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
       alignItems: "center",
       justifyContent: "center",
       padding: "24px 32px",
-      textAlign: "center"
+      textAlign: "center",
+      overflowY: "auto",
+      WebkitOverflowScrolling: "touch"
     }
   }, mode === "idle" && /*#__PURE__*/React.createElement("div", {
     style: {
@@ -5256,7 +5258,7 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
     style: {
       animation: "fade-up 0.3s ease both"
     }
-  }, !(turntableAlbum && !window.Capacitor) && /*#__PURE__*/React.createElement("div", {
+  }, !(turntableAlbum && (!window.Capacitor || showTrackList)) && /*#__PURE__*/React.createElement("div", {
     style: {
       position: "relative",
       width: "120px",
@@ -5306,12 +5308,17 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
     }
   }, turntableAlbum ? (window.Capacitor ? (showTrackList ? "Pick a track below to start" : "Identifying with Shazam") : "Tap any track below") : listenAttempt > MAX_ATTEMPTS ? "Identifying by lyrics" : listenSecs === 0 ? "Hold near your speakers" : `${listenSecs}s — hold steady`),
 
-  /* ── Shazam timer bar (iOS only, while actively listening) ── */
-  turntableAlbum && window.Capacitor && !showTrackList && /*#__PURE__*/React.createElement("div", {
-    style: { marginTop: "20px", width: "200px", height: "2px", background: "rgba(255,255,255,0.07)", borderRadius: "2px", overflow: "hidden" }
-  }, /*#__PURE__*/React.createElement("div", {
-    style: { height: "100%", width: `${Math.min(listenSecs / 15 * 100, 100)}%`, background: "linear-gradient(90deg, #1DA0F2, #d4a846)", transition: "width 1s linear", borderRadius: "2px" }
-  })),
+  /* ── Shazam timer bar (iOS only, while actively listening, not yet in fallback) ── */
+  turntableAlbum && window.Capacitor && !showTrackList && /*#__PURE__*/React.createElement(React.Fragment, null,
+    /*#__PURE__*/React.createElement("div", {
+      style: { marginTop: "20px", width: "200px", height: "2px", background: "rgba(255,255,255,0.07)", borderRadius: "2px", overflow: "hidden" }
+    }, /*#__PURE__*/React.createElement("div", {
+      style: { height: "100%", width: `${Math.min(listenSecs / 15 * 100, 100)}%`, background: "linear-gradient(90deg, #1DA0F2, #d4a846)", transition: "width 1s linear", borderRadius: "2px" }
+    })),
+    /*#__PURE__*/React.createElement("div", {
+      style: { marginTop: "10px", fontSize: "11px", letterSpacing: "1.5px", textTransform: "uppercase", color: "rgba(255,255,255,0.2)" }
+    }, "Powered by Shazam")
+  ),
 
   /* ── Manual track picker with side grouping ── */
   turntableAlbum && (showTrackList || !window.Capacitor) && turntableTracksRef.current.length > 0 && (() => {
@@ -5344,7 +5351,7 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
         style: { fontSize: "11px", letterSpacing: "1.5px", textTransform: "uppercase", color: "rgba(255,255,255,0.35)", marginBottom: "10px", textAlign: "center", width: "100%", background: "none", border: "none", cursor: "pointer", fontFamily: "inherit" }
       }, showTrackList ? "▲ Or jump to a track" : "▼ Or jump to a track"),
       (isWeb || showTrackList) && /*#__PURE__*/React.createElement("div", {
-        style: { display: "flex", flexDirection: "column", gap: "12px", maxHeight: isWeb ? "60vh" : "220px", overflowY: "auto" }
+        style: { display: "flex", flexDirection: "column", gap: "12px", maxHeight: isWeb ? "60vh" : "45vh", overflowY: "auto", WebkitOverflowScrolling: "touch" }
       }, groups.map(({ side, tracks }) =>
         /*#__PURE__*/React.createElement("div", { key: side },
           /*#__PURE__*/React.createElement("button", {
