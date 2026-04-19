@@ -416,6 +416,8 @@ function Liri() {
   const [bugSent, setBugSent] = useState(false);
   const [showHistory, setShowHistory] = useState(false);
   const [showTrackList, setShowTrackList] = useState(false);
+  const [collapsedSides, setCollapsedSides] = useState(new Set());
+  const toggleSideCollapse = (side) => setCollapsedSides(prev => { const n = new Set(prev); n.has(side) ? n.delete(side) : n.add(side); return n; });
 
   // ── Auth ──
   const [user, setUser] = useState(null);
@@ -5267,7 +5269,7 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
     style: {
       animation: "fade-up 0.3s ease both"
     }
-  }, /*#__PURE__*/React.createElement("div", {
+  }, !(turntableAlbum && !window.Capacitor) && /*#__PURE__*/React.createElement("div", {
     style: {
       position: "relative",
       width: "120px",
@@ -5317,38 +5319,76 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
     }
   }, turntableAlbum ? (window.Capacitor ? "Hold near your speakers" : "Tap any track below") : listenAttempt > MAX_ATTEMPTS ? "Identifying by lyrics" : listenSecs === 0 ? "Hold near your speakers" : `${listenSecs}s — hold steady`),
 
-  /* ── Manual track picker: always available; collapses behind toggle on iOS ── */
-  turntableAlbum && (showTrackList || listenSecs >= 5) && turntableTracksRef.current.length > 0 && /*#__PURE__*/React.createElement("div", {
-    style: { marginTop: "24px", width: "100%", maxWidth: "320px", textAlign: "left" }
-  },
-    /*#__PURE__*/React.createElement("button", {
-      onClick: () => setShowTrackList(v => !v),
-      style: { fontSize: "11px", letterSpacing: "1.5px", textTransform: "uppercase", color: "rgba(255,255,255,0.35)", marginBottom: "10px", textAlign: "center", width: "100%", background: "none", border: "none", cursor: "pointer", fontFamily: "inherit" }
-    }, showTrackList ? "▲ Or jump to a track" : "▼ Or jump to a track"),
-    showTrackList && /*#__PURE__*/React.createElement("div", {
-      style: { display: "flex", flexDirection: "column", gap: "4px", maxHeight: "180px", overflowY: "auto" }
-    }, turntableTracksRef.current.map((t, i) => /*#__PURE__*/React.createElement("button", {
-      key: i,
-      onClick: () => jumpToTrackIdx(i),
-      style: {
-        background: "rgba(255,255,255,0.04)",
-        border: "1px solid rgba(255,255,255,0.07)",
-        borderRadius: "10px",
-        padding: "9px 14px",
-        color: "#f0e6d3",
-        fontSize: "13px",
-        cursor: "pointer",
-        fontFamily: "inherit",
-        textAlign: "left",
-        display: "flex",
-        alignItems: "center",
-        gap: "10px"
+  /* ── Manual track picker with side grouping ── */
+  turntableAlbum && (showTrackList || listenSecs >= 5 || !window.Capacitor) && turntableTracksRef.current.length > 0 && (() => {
+    const allTracks = turntableTracksRef.current;
+    const vt = vinylDbRelease?.vinyl_tracks;
+    // Build side groups from Discogs data, or fall back to A/B split at midpoint
+    const groups = (() => {
+      if (vt?.length > 0) {
+        const map = {};
+        allTracks.forEach((t, i) => {
+          const side = vt[i]?.side || "A";
+          if (!map[side]) map[side] = [];
+          map[side].push({ track: t, idx: i });
+        });
+        return Object.entries(map).map(([side, tracks]) => ({ side, tracks }));
       }
+      const mid = Math.ceil(allTracks.length / 2);
+      return [
+        { side: "A", tracks: allTracks.slice(0, mid).map((t, i) => ({ track: t, idx: i })) },
+        { side: "B", tracks: allTracks.slice(mid).map((t, i) => ({ track: t, idx: mid + i })) },
+      ].filter(g => g.tracks.length > 0);
+    })();
+    const isWeb = !window.Capacitor;
+    return /*#__PURE__*/React.createElement("div", {
+      style: { marginTop: isWeb ? "8px" : "24px", width: "100%", maxWidth: "360px", textAlign: "left" }
     },
-      /*#__PURE__*/React.createElement("span", { style: { color: "rgba(255,255,255,0.25)", fontSize: "11px", minWidth: "16px" } }, i + 1),
-      t.trackName
-    )))
-  ),
+      // iOS only: toggle button to reveal/hide the list
+      !isWeb && /*#__PURE__*/React.createElement("button", {
+        onClick: () => setShowTrackList(v => !v),
+        style: { fontSize: "11px", letterSpacing: "1.5px", textTransform: "uppercase", color: "rgba(255,255,255,0.35)", marginBottom: "10px", textAlign: "center", width: "100%", background: "none", border: "none", cursor: "pointer", fontFamily: "inherit" }
+      }, showTrackList ? "▲ Or jump to a track" : "▼ Or jump to a track"),
+      (isWeb || showTrackList) && /*#__PURE__*/React.createElement("div", {
+        style: { display: "flex", flexDirection: "column", gap: "12px", maxHeight: isWeb ? "60vh" : "220px", overflowY: "auto" }
+      }, groups.map(({ side, tracks }) =>
+        /*#__PURE__*/React.createElement("div", { key: side },
+          /*#__PURE__*/React.createElement("button", {
+            onClick: () => toggleSideCollapse(side),
+            style: { display: "flex", alignItems: "center", gap: "8px", width: "100%", background: "none", border: "none", cursor: "pointer", padding: "4px 0 8px", fontFamily: "inherit" }
+          },
+            /*#__PURE__*/React.createElement("span", { style: { fontSize: "10px", letterSpacing: "2px", textTransform: "uppercase", color: "rgba(212,168,70,0.8)", fontWeight: "700" } }, `Side ${side}`),
+            /*#__PURE__*/React.createElement("span", { style: { fontSize: "10px", color: "rgba(255,255,255,0.2)", marginLeft: "auto" } }, collapsedSides.has(side) ? "▼" : "▲")
+          ),
+          !collapsedSides.has(side) && /*#__PURE__*/React.createElement("div", {
+            style: { display: "flex", flexDirection: "column", gap: "4px" }
+          }, tracks.map(({ track: t, idx: i }) =>
+            /*#__PURE__*/React.createElement("button", {
+              key: i,
+              onClick: () => jumpToTrackIdx(i),
+              style: {
+                background: "rgba(255,255,255,0.04)",
+                border: "1px solid rgba(255,255,255,0.07)",
+                borderRadius: "10px",
+                padding: "9px 14px",
+                color: "#f0e6d3",
+                fontSize: "13px",
+                cursor: "pointer",
+                fontFamily: "inherit",
+                textAlign: "left",
+                display: "flex",
+                alignItems: "center",
+                gap: "10px"
+              }
+            },
+              /*#__PURE__*/React.createElement("span", { style: { color: "rgba(255,255,255,0.25)", fontSize: "11px", minWidth: "16px" } }, i + 1),
+              t.trackName
+            )
+          ))
+        )
+      ))
+    );
+  })(),
 
   /*#__PURE__*/React.createElement("div", {
     style: {
