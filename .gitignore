@@ -17,3 +17,4 @@ dist/
 .env.local
 .env*.local
 .vercel
+.claude/worktrees/
