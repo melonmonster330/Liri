@@ -87,17 +87,24 @@ public class ShazamPlugin: CAPPlugin, CAPBridgedPlugin, SHSessionDelegate {
         // Pattern from expo-shazamkit (alanjhughes/expo-shazamkit).
         let hwRate = inputNode.outputFormat(forBus: 0).sampleRate
         let sampleRate = hwRate > 0 ? hwRate : 44100
+        print("[ShazamPlugin] hardware sampleRate=\(hwRate) using=\(sampleRate)")
         let tapFormat = AVAudioFormat(commonFormat: .pcmFormatFloat32,
                                       sampleRate: sampleRate,
                                       channels: 1,
                                       interleaved: false)!
 
+        var tapFired = false
         inputNode.installTap(onBus: 0, bufferSize: 8192, format: tapFormat) { [weak self] buffer, time in
+            if !tapFired {
+                tapFired = true
+                print("[ShazamPlugin] tap firing — frameLength=\(buffer.frameLength) format=\(buffer.format)")
+            }
             self?.shazamSession?.matchStreamingBuffer(buffer, at: time)
         }
 
         do {
             try engine.start()
+            print("[ShazamPlugin] engine started OK")
         } catch {
             stopMatchEngine()
             call.reject("Audio engine error: \(error.localizedDescription)")
@@ -143,6 +150,11 @@ public class ShazamPlugin: CAPPlugin, CAPBridgedPlugin, SHSessionDelegate {
 
     public func session(_ session: SHSession, didNotFindMatchFor signature: SHSignature, error: Error?) {
         // Not fatal — Shazam keeps trying; timer decides when to give up
+        if let error = error {
+            print("[ShazamPlugin] didNotFindMatch error: \(error.localizedDescription)")
+        } else {
+            print("[ShazamPlugin] didNotFindMatch (no error — audio processed, no catalog match)")
+        }
     }
 
     // MARK: – waitForSilence
