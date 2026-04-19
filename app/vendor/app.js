@@ -15,13 +15,6 @@ const TRANSCRIBE_PROXY = window.Capacitor ? "https://www.getliri.com/api/transcr
 const IDENTIFY_PROXY = window.Capacitor ? "https://www.getliri.com/api/identify-lyrics" : "/api/identify-lyrics";
 const ITUNES_PROXY   = window.Capacitor ? "https://www.getliri.com/api/itunes-lookup"   : "/api/itunes-lookup";
 const WHISPER_PROXY  = window.Capacitor ? "https://www.getliri.com/api/whisper"         : "/api/whisper";
-// Debug: log what Capacitor exposes so we know what APIs are available
-if (window.Capacitor) {
-  console.log('[cap-debug] keys:', Object.keys(window.Capacitor).join(', '));
-  console.log('[cap-debug] isNative:', window.Capacitor.isNativePlatform?.());
-  console.log('[cap-debug] Plugins:', Object.keys(window.Capacitor.Plugins || {}).join(', '));
-  console.log('[cap-debug] registerPlugin type:', typeof window.Capacitor.registerPlugin);
-}
 // Register native plugins so their JS bridge proxies exist before React mounts.
 const _nativeAudioPlugin = (() => {
   if (!window.Capacitor?.isNativePlatform?.()) return null;
