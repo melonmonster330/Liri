@@ -14,5 +14,6 @@
     "CapacitorHttp": {
       "enabled": true
     }
-  }
+  },
+  "packageClassList": ["NativeAudioPlugin", "ShazamPlugin"]
 }
