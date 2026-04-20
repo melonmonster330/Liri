@@ -957,6 +957,7 @@ function Liri() {
           email: authEmail.trim(),
           password: authPassword,
           options: {
+            emailRedirectTo: "https://getliri.com/app",
             data: {
               name: authName.trim()
             }
