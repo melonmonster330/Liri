@@ -3447,14 +3447,14 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
       gap: "8px"
     }
   }, [{
-    name: "OpenAI Whisper",
-    role: "Lyrics transcription"
+    name: "ShazamKit",
+    role: "Song recognition"
   }, {
     name: "LRCLib",
     role: "Synced lyrics"
   }, {
-    name: "Apple Music",
-    role: "Track & album data"
+    name: "Discogs",
+    role: "Album & track data"
   }].map(c => /*#__PURE__*/React.createElement("div", {
     key: c.name,
     style: {
@@ -4116,14 +4116,14 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
       marginBottom: "14px"
     }
   }, [{
-    name: "OpenAI Whisper",
-    role: "Lyrics transcription"
+    name: "ShazamKit",
+    role: "Song recognition"
   }, {
     name: "LRCLib",
     role: "Synced lyrics"
   }, {
-    name: "Apple Music",
-    role: "Track &amp; artwork data"
+    name: "Discogs",
+    role: "Album & track data"
   }].map(c => /*#__PURE__*/React.createElement("div", {
     key: c.name
   }, /*#__PURE__*/React.createElement("div", {
@@ -4623,7 +4623,7 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
       ...(detectedSong?.title  ? [{ text: detectedSong.title,  time: lastLyricTime + 5,  isCredit: true }] : []),
       ...(detectedSong?.artist ? [{ text: detectedSong.artist, time: lastLyricTime + 8,  isCredit: true }] : []),
       ...(detectedSong?.album  ? [{ text: detectedSong.album,  time: lastLyricTime + 11, isCredit: true }] : []),
-      { text: "Lyrics via LRCLib · Whisper by OpenAI", time: lastLyricTime + 16, isCredit: true },
+      { text: "Lyrics via LRCLib", time: lastLyricTime + 16, isCredit: true },
       { text: `© ${new Date().getFullYear()} Liri · Music rights belong to their respective artists, labels & publishers.`, time: lastLyricTime + 20, isCredit: true },
     ];
     // Effective current index across real lyrics + credits
