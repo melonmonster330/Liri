@@ -21,12 +21,12 @@ const _nativeAudioPlugin = (() => {
   return window.Capacitor.registerPlugin?.("NativeAudio") ?? null;
 })();
 // Lazy lookup — evaluated at call time so Capacitor has finished registering plugins.
-// Uses IS_IOS (!!window.Capacitor) rather than isNativePlatform() which may not exist in Cap 8.
 const _shazamPlugin = () => {
-  if (!IS_IOS) return null;
+  console.log("[shazam-debug] called — window.Capacitor:", !!window.Capacitor, "IS_IOS:", IS_IOS, "Plugins:", Object.keys(window.Capacitor?.Plugins || {}));
+  if (!window.Capacitor) return null;
   const fromPlugins = window.Capacitor.Plugins?.Shazam;
   const fromRegister = window.Capacitor.registerPlugin?.("Shazam");
-  console.log("[shazam-debug] Plugins.Shazam:", fromPlugins, "registerPlugin:", fromRegister, "keys:", Object.keys(window.Capacitor.Plugins || {}));
+  console.log("[shazam-debug2] Plugins.Shazam:", fromPlugins, "registerPlugin result:", fromRegister);
   return fromPlugins ?? fromRegister ?? null;
 };
 
