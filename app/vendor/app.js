@@ -20,8 +20,14 @@ const _nativeAudioPlugin = (() => {
   if (window.Capacitor.Plugins?.NativeAudio) return window.Capacitor.Plugins.NativeAudio;
   return window.Capacitor.registerPlugin?.("NativeAudio") ?? null;
 })();
-// Lazy lookup — evaluated at call time so Capacitor has finished registering plugins
-const _shazamPlugin = () => window.Capacitor?.Plugins?.Shazam ?? null;
+// Lazy lookup — evaluated at call time so Capacitor has finished registering plugins.
+// Falls back to registerPlugin() in case Plugins.Shazam isn't auto-populated (Capacitor 8).
+const _shazamPlugin = () => {
+  if (!window.Capacitor?.isNativePlatform?.()) return null;
+  return window.Capacitor.Plugins?.Shazam
+      ?? window.Capacitor.registerPlugin?.("Shazam")
+      ?? null;
+};
 
 //   3. Landing page feature cards (🎵 → sound/wave art, 💿 → vinyl art)
 //      Note: ✦ (sparkle character) is intentional Liri type — keep it
@@ -1784,8 +1790,15 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
 
     // ── Call findMatch — a single long-running promise (same pattern as NativeAudio.record) ──
     // Resolves with { matched: true, title, artist, offset, matchTime } or { matched: false }
+    const _shazam = _shazamPlugin();
+    if (!_shazam) {
+      console.error("[shazam] plugin unavailable — Capacitor.Plugins.Shazam is null");
+      setMode("idle");
+      setShowTrackList(false);
+      return;
+    }
     try {
-      const result = await _shazamPlugin().findMatch({ timeout: 15000 });
+      const result = await _shazam.findMatch({ timeout: 15000 });
       if (listenSessionRef.current !== session) return; // session changed while we waited
 
       if (!result.matched) {
