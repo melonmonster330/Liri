@@ -425,24 +425,7 @@
           .order("disc_number", { ascending: true })
           .order("track_number", { ascending: true });
 
-        let trackList = dbTracks || [];
-
-        // 2. If not in DB yet, fall back to iTunes
-        if (trackList.length === 0) {
-          const itunesData = await fetch(`${API_BASE}/api/itunes-lookup?id=${cid}&entity=song&limit=200`)
-            .then(r => r.json()).catch(() => null);
-          const itunesTracks = (itunesData?.results || [])
-            .filter(r => r.wrapperType === "track")
-            .sort((a, b) => (a.discNumber - b.discNumber) || (a.trackNumber - b.trackNumber));
-          trackList = itunesTracks.map(t => ({
-            itunes_track_id: t.trackId,
-            track_name: t.trackName,
-            artist_name: t.artistName,
-            track_number: t.trackNumber,
-            disc_number: t.discNumber || 1,
-            duration_ms: t.trackTimeMillis || null,
-          }));
-        }
+        const trackList = dbTracks || [];
 
         if (trackList.length === 0) { setLoading(false); return; }
 
