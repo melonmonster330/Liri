@@ -22,15 +22,17 @@ const _nativeAudioPlugin = () => {
       ?? window.Capacitor.registerPlugin?.("NativeAudio")
       ?? null;
 };
+// Call ShazamPlugin via nativePromise — the low-level Capacitor bridge that IS
+// set up by the native iOS runtime, unlike registerPlugin which requires the
+// @capacitor/core JS bundle (not loaded by this app).
 const _shazamPlugin = () => {
-  if (!window.Capacitor) return null;
-  const cap = window.Capacitor;
-  console.log("[shazam] registerPlugin fn:", typeof cap.registerPlugin, "| Plugins.Shazam:", cap.Plugins?.Shazam, "| Plugins.ShazamPlugin:", cap.Plugins?.ShazamPlugin, "| Plugins keys:", JSON.stringify(Object.keys(cap.Plugins || {})));
-  return cap.Plugins?.Shazam
-      ?? cap.Plugins?.ShazamPlugin
-      ?? cap.registerPlugin?.("Shazam")
-      ?? cap.registerPlugin?.("ShazamPlugin")
-      ?? null;
+  const np = window.Capacitor?.nativePromise;
+  if (!np) return null;
+  return {
+    findMatch:      (opts) => np("Shazam", "findMatch",      opts || {}),
+    cancel:         ()     => np("Shazam", "cancel",         {}),
+    waitForSilence: (opts) => np("Shazam", "waitForSilence", opts || {}),
+  };
 };
 
 //   3. Landing page feature cards (🎵 → sound/wave art, 💿 → vinyl art)
