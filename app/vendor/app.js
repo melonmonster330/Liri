@@ -24,8 +24,12 @@ const _nativeAudioPlugin = () => {
 };
 const _shazamPlugin = () => {
   if (!window.Capacitor) return null;
-  return window.Capacitor.Plugins?.Shazam
-      ?? window.Capacitor.registerPlugin?.("Shazam")
+  const cap = window.Capacitor;
+  console.log("[shazam] registerPlugin fn:", typeof cap.registerPlugin, "| Plugins.Shazam:", cap.Plugins?.Shazam, "| Plugins.ShazamPlugin:", cap.Plugins?.ShazamPlugin, "| Plugins keys:", JSON.stringify(Object.keys(cap.Plugins || {})));
+  return cap.Plugins?.Shazam
+      ?? cap.Plugins?.ShazamPlugin
+      ?? cap.registerPlugin?.("Shazam")
+      ?? cap.registerPlugin?.("ShazamPlugin")
       ?? null;
 };
 
