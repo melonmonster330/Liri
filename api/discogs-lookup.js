@@ -9,13 +9,21 @@
 const https = require("https");
 
 function httpsGet(url) {
+  const token  = process.env.DISCOGS_TOKEN;
   const key    = process.env.DISCOGS_KEY;
   const secret = process.env.DISCOGS_SECRET;
+  // Build auth header: prefer personal token, fall back to key+secret
+  let authHeader = {};
+  if (token) {
+    authHeader = { "Authorization": `Discogs token=${token}` };
+  } else if (key) {
+    authHeader = { "Authorization": `Discogs key=${key}, secret=${secret}` };
+  }
   return new Promise((resolve, reject) => {
     https.get(url, {
       headers: {
-        "User-Agent":    "Liri/1.0 +https://getliri.com",
-        ...(key ? { "Authorization": `Discogs key=${key}, secret=${secret}` } : {}),
+        "User-Agent": "Liri/1.0 +https://getliri.com",
+        ...authHeader,
       },
     }, (res) => {
       const chunks = [];
