@@ -684,8 +684,9 @@
                 const dash = r.title?.indexOf(' - ') ?? -1;
                 const artistName     = dash > 0 ? r.title.slice(0, dash).trim() : '';
                 const collectionName = dash > 0 ? r.title.slice(dash + 3).trim() : (r.title || '');
-                const artwork = r.cover_image && !r.cover_image.includes('spacer') ? r.cover_image
-                              : r.thumb && !r.thumb.includes('spacer') ? r.thumb : null;
+                const rawArt = r.cover_image && !r.cover_image.includes('spacer') ? r.cover_image
+                            : r.thumb && !r.thumb.includes('spacer') ? r.thumb : null;
+                const artwork = rawArt ? `${API_BASE}/api/image-proxy?url=${encodeURIComponent(rawArt)}` : null;
                 const fmt = Array.isArray(r.format) ? r.format.filter(f => !["Album","Compilation","Single","EP"].includes(f)).join(', ') || r.format[0] : null;
                 return {
                   _source:        'discogs',
