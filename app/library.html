@@ -709,7 +709,9 @@
         if (user) { fetchLibrary(user.id); fetchPlayCounts(); }
       }, [user]);
 
-      // ── Debounced iTunes search ──
+      // ── Debounced Discogs search ──
+      // Discogs has far better vinyl coverage than iTunes, including albums not on Apple Music.
+      // Results are normalised to the same shape the rest of the UI already expects.
       useEffect(() => {
         clearTimeout(searchTimer.current);
         if (!query.trim() || query.length < 2) { setResults([]); return; }
@@ -717,13 +719,30 @@
           setSearching(true);
           try {
             const res = await fetch(
-              `https://itunes.apple.com/search?term=${encodeURIComponent(query)}&entity=album&limit=8`
+              `${API_BASE}/api/discogs-lookup?q=${encodeURIComponent(query)}&per_page=10`
             ).then(r => r.json());
+
             const seen = new Set();
-            const albums = (res.results || []).filter(r => {
-              if (seen.has(r.collectionId)) return false;
-              seen.add(r.collectionId); return true;
-            });
+            const albums = (res.results || [])
+              .filter(r => r.id && !seen.has(r.id) && seen.add(r.id))
+              .map(r => {
+                // Discogs titles are usually "Artist - Album Title"
+                const dash  = r.title?.indexOf(' - ') ?? -1;
+                const artistName     = dash > 0 ? r.title.slice(0, dash).trim() : '';
+                const collectionName = dash > 0 ? r.title.slice(dash + 3).trim() : (r.title || '');
+                return {
+                  _source:        'discogs',
+                  collectionId:   r.id,          // positive Discogs release ID
+                  collectionName,
+                  artistName,
+                  // Use large cover if thumb is a tiny placeholder
+                  artworkUrl100:  r.thumb && !r.thumb.includes('spacer') ? r.thumb : (r.cover_image || null),
+                  releaseDate:    r.year ? `${r.year}-01-01` : null,
+                  _label:         Array.isArray(r.label) ? r.label[0] : null,
+                };
+              })
+              .filter(r => r.collectionName.length > 0);
+
             setResults(albums);
           } catch { setResults([]); }
           setSearching(false);
@@ -765,7 +784,11 @@
               "Content-Type": "application/json",
               "Authorization": `Bearer ${token}`,
             },
-            body: JSON.stringify({ itunes_collection_id: album.collectionId }),
+            body: JSON.stringify(
+              album._source === 'discogs'
+                ? { discogs_release_id: album.collectionId }
+                : { itunes_collection_id: album.collectionId }
+            ),
           });
           const json = await res.json().catch(() => ({}));
           if (!res.ok) {

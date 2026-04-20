@@ -183,25 +183,31 @@ async function fetchDiscogsRelease(releaseId) {
   }
 }
 
-// Map Discogs tracklist → iTunes tracks by index.
-// Discogs positions look like "A1", "A2", "B1", "B2" — we strip the number for the side.
+// Map Discogs tracklist → iTunes tracks by index for vinyl side data.
 function mapSides(discogsTracklist, itunesTracks) {
-  // Filter out side headings (those have no digit in position, e.g. just "A")
   const realTracks = discogsTracklist.filter(t => t.position && /\d/.test(t.position));
-
   return itunesTracks.map((track, i) => {
     const dt = realTracks[i];
     if (!dt) return null;
-    const side             = dt.position.replace(/\d.*$/, "").toUpperCase(); // "A", "B", "C"...
+    const side             = dt.position.replace(/\d.*$/, "").toUpperCase();
     const side_track_number = parseInt(dt.position.replace(/^[A-Za-z]+/, "")) || (i + 1);
-    return {
-      itunes_track_id:    track.trackId,
-      position:           dt.position.toUpperCase(),
-      side,
-      side_track_number,
-    };
+    return { itunes_track_id: track.trackId, position: dt.position.toUpperCase(), side, side_track_number };
   }).filter(Boolean);
 }
+
+// Parse Discogs "M:SS" duration → milliseconds
+function parseDuration(str) {
+  if (!str) return null;
+  const parts = str.split(":").map(Number);
+  if (parts.length === 2 && !parts.some(isNaN)) return (parts[0] * 60 + parts[1]) * 1000;
+  return null;
+}
+
+// Synthetic itunes_collection_id for Discogs-only albums (not on Apple Music).
+// Discogs IDs are in the low millions; iTunes IDs are in the hundreds of millions / billions.
+// We store Discogs-only albums as negative integers to guarantee no collision.
+const discogsCollectionId  = (discogsId) => -(Math.abs(discogsId));
+const discogsTrackId       = (discogsId, idx) => -(Math.abs(discogsId) * 10000 + idx);
 
 // ── Main handler ──────────────────────────────────────────────────────────────
 
@@ -222,53 +228,38 @@ module.exports = async (req, res) => {
     return res.status(401).json({ error: "Session expired — please sign out and back in.", debug: reason });
   }
 
-  const { itunes_collection_id } = req.body || {};
-  if (!itunes_collection_id) return res.status(400).json({ error: "itunes_collection_id required" });
-  const collectionId = parseInt(itunes_collection_id, 10);
+  const { itunes_collection_id, discogs_release_id } = req.body || {};
+  if (!itunes_collection_id && !discogs_release_id)
+    return res.status(400).json({ error: "itunes_collection_id or discogs_release_id required" });
+
+  // Resolve the collection ID we'll use throughout.
+  // For iTunes albums: the real iTunes ID (positive).
+  // For Discogs-only albums: negative synthetic ID.
+  // We determine the final collectionId after the Discogs cross-reference below.
+  let collectionId = itunes_collection_id ? parseInt(itunes_collection_id, 10) : null;
+  const discogsId  = discogs_release_id   ? parseInt(discogs_release_id, 10)   : null;
 
   // ── Free tier limit: 10 albums max (counts ever-added, not current library) ──
-  if (!auth.isUnlimited) {
-    const tier = await getSubscriptionTier(auth.userId, false);
-    if (tier === "free") {
-      // Check if this album was ever added by this user — if so, re-add is free
-      const { data: everRows } = await sbRequest(
-        "GET",
-        `user_library_ever?user_id=eq.${encodeURIComponent(auth.userId)}&itunes_collection_id=eq.${collectionId}&select=id&limit=1`
-      );
-      const wasEverAdded = Array.isArray(everRows) && everRows.length > 0;
-      if (!wasEverAdded) {
-        // New album — check against the ever-added count
-        const { data: allEverRows } = await sbRequest(
-          "GET",
-          `user_library_ever?user_id=eq.${encodeURIComponent(auth.userId)}&select=id`
-        );
-        const everCount = Array.isArray(allEverRows) ? allEverRows.length : 0;
-        if (everCount >= FREE_ALBUM_LIMIT) {
-          return res.status(403).json({
-            error: "free_limit_reached",
-            limit: FREE_ALBUM_LIMIT,
-            count: everCount,
-          });
-        }
-      }
-    }
-  }
+  // We check after resolving collectionId below, so skip for now and check per-path.
 
   try {
-    // ── Step 1: Skip heavy fetching if another user already added this album ──
-    const alreadyExists = await exists("catalogue", "itunes_collection_id", collectionId);
 
-    if (!alreadyExists) {
-      console.log(`[add-to-library] Fetching data for new album ${collectionId}`);
+    // ════════════════════════════════════════════════════════════════════════
+    // PATH A: iTunes collection ID provided directly (existing behaviour)
+    // ════════════════════════════════════════════════════════════════════════
+    if (collectionId && !discogsId) {
+      await checkFreeLimit(auth, collectionId, res);
+      if (res.writableEnded) return;
 
-      // ── Step 2: iTunes ──────────────────────────────────────────────────────
-      const { album, tracks } = await fetchItunesTracks(collectionId);
-      if (!album || !tracks.length) {
-        return res.status(404).json({ error: "Album not found on iTunes" });
-      }
+      const alreadyExists = await exists("catalogue", "itunes_collection_id", collectionId);
+      if (!alreadyExists) {
+        console.log(`[add-to-library] iTunes path — fetching ${collectionId}`);
+        const { album, tracks } = await fetchItunesTracks(collectionId);
+        if (!album || !tracks.length)
+          return res.status(404).json({ error: "Album not found on iTunes" });
 
-      const artistName = album.artistName || tracks[0]?.artistName || "";
-      const albumName  = album.collectionName || "";
+        const artistName = album.artistName || tracks[0]?.artistName || "";
+        const albumName  = album.collectionName || "";
 
       // ── Step 3: Save to catalogue ───────────────────────────────────────────
       await upsert("catalogue", {
@@ -316,11 +307,10 @@ module.exports = async (req, res) => {
         }
       }, 3); // 3 tracks at a time
 
-      // ── Step 5: Discogs side data (non-fatal if it fails) ───────────────────
+      // ── Step 5: Discogs side data (non-fatal) ────────────────────────────────
       try {
         const results = await searchDiscogs(artistName, albumName);
         const best    = results[0];
-
         if (best?.id) {
           const release = await fetchDiscogsRelease(best.id);
           if (release?.tracklist?.length) {
@@ -340,33 +330,249 @@ module.exports = async (req, res) => {
           }
         }
       } catch (e) {
-        console.warn("[add-to-library] Discogs fetch failed (non-fatal):", e.message);
+        console.warn("[add-to-library] Discogs side data failed (non-fatal):", e.message);
       }
     } else {
-      console.log(`[add-to-library] Album ${collectionId} already in DB — skipping fetch`);
+      console.log(`[add-to-library] iTunes album ${collectionId} already in DB — skipping fetch`);
     }
 
-    // ── Step 6: Always link this user to the album ───────────────────────────
-    await upsert("user_library", {
-      user_id:              auth.userId,
-      itunes_collection_id: collectionId,
-      added_at:             new Date().toISOString(),
-    }, "user_id,itunes_collection_id");
+    // Link user → album and record history
+    await linkUser(auth.userId, collectionId);
+    return res.status(200).json({ success: true, cached: alreadyExists });
 
-    // ── Step 7: Record in ever-added history (never deleted) ─────────────────
-    await upsert("user_library_ever", {
-      user_id:              auth.userId,
-      itunes_collection_id: collectionId,
-      first_added_at:       new Date().toISOString(),
-    }, "user_id,itunes_collection_id");
+    // ════════════════════════════════════════════════════════════════════════
+    // PATH B: Discogs release ID provided — album may not exist on Apple Music
+    // ════════════════════════════════════════════════════════════════════════
+    } else if (discogsId) {
 
-    return res.status(200).json({
-      success: true,
-      cached: alreadyExists,
-    });
+      // First try to cross-reference with iTunes so we can use real iTunes IDs
+      // (better for lyrics matching via LRCLib, which uses iTunes metadata).
+      const release = await fetchDiscogsRelease(discogsId);
+      if (!release) return res.status(404).json({ error: "Release not found on Discogs" });
+
+      const artistName = (release.artists?.[0]?.name || "").replace(/\s*\(\d+\)$/, "").trim();
+      const albumName  = release.title || "";
+      const artworkUrl = release.images?.[0]?.uri || release.thumb || null;
+      const releaseYear = release.year || null;
+
+      console.log(`[add-to-library] Discogs path — "${artistName} – ${albumName}" (id=${discogsId})`);
+
+      // Try iTunes cross-reference
+      let itunesCollectionId = null;
+      try {
+        const q = encodeURIComponent(`${artistName} ${albumName}`);
+        const { data: itunesSearch } = await httpsGet(
+          `https://itunes.apple.com/search?term=${q}&entity=album&limit=5`
+        );
+        const norm = s => (s || "").toLowerCase().replace(/[^a-z0-9]/g, "");
+        const match = (itunesSearch?.results || []).find(r =>
+          norm(r.collectionName).includes(norm(albumName)) ||
+          norm(albumName).includes(norm(r.collectionName))
+        );
+        if (match?.collectionId) itunesCollectionId = match.collectionId;
+      } catch {}
+
+      if (itunesCollectionId) {
+        // Album IS on iTunes — redirect to the iTunes path so we get full metadata
+        console.log(`[add-to-library] Found iTunes match: ${itunesCollectionId}`);
+        collectionId = itunesCollectionId;
+
+        await checkFreeLimit(auth, collectionId, res);
+        if (res.writableEnded) return;
+
+        const alreadyExists = await exists("catalogue", "itunes_collection_id", collectionId);
+        if (!alreadyExists) {
+          const { album, tracks } = await fetchItunesTracks(collectionId);
+          if (album && tracks.length) {
+            const iArtist = album.artistName || tracks[0]?.artistName || artistName;
+            const iAlbum  = album.collectionName || albumName;
+            await upsert("catalogue", {
+              itunes_collection_id: collectionId,
+              album_name:    iAlbum,
+              artist_name:   iArtist,
+              artwork_url:   (album.artworkUrl100 || "").replace("100x100bb", "600x600bb") || artworkUrl,
+              genre:         album.primaryGenreName || null,
+              release_year:  releaseYear,
+              track_count:   tracks.length,
+              last_synced_at: new Date().toISOString(),
+            }, "itunes_collection_id");
+
+            await batchedAll(tracks, async (track) => {
+              await upsert("album_tracks", {
+                itunes_collection_id: collectionId,
+                itunes_track_id: track.trackId,
+                track_name:      track.trackName,
+                artist_name:     track.artistName,
+                track_number:    track.trackNumber,
+                disc_number:     track.discNumber || 1,
+                duration_ms:     track.trackTimeMillis || null,
+              }, "itunes_track_id");
+              const lrc = await fetchLrcLib(track.trackName, track.artistName, iAlbum,
+                track.trackTimeMillis ? track.trackTimeMillis / 1000 : null);
+              if (lrc?.syncedLyrics || lrc?.plainLyrics) {
+                await upsert("track_lyrics", {
+                  itunes_track_id: track.trackId,
+                  lrc_raw:      lrc.syncedLyrics || null,
+                  lyrics_plain: lrc.plainLyrics || lrcToPlain(lrc.syncedLyrics),
+                  words_json:   lrc.syncedLyrics ? parseLrcToWords(lrc.syncedLyrics) : null,
+                  source: "lrclib", fetched_at: new Date().toISOString(),
+                }, "itunes_track_id");
+              }
+            }, 3);
+
+            // Vinyl sides from the Discogs release we already fetched
+            try {
+              if (release.tracklist?.length) {
+                const mapped = mapSides(release.tracklist, tracks);
+                await batchedAll(mapped, (m) =>
+                  upsert("vinyl_sides", {
+                    itunes_collection_id: collectionId,
+                    itunes_track_id:    m.itunes_track_id,
+                    discogs_release_id: discogsId,
+                    discogs_master_id:  release.master_id || null,
+                    side:               m.side,
+                    side_track_number:  m.side_track_number,
+                    position:           m.position,
+                    fetched_at:         new Date().toISOString(),
+                  }, "itunes_track_id")
+                , 5);
+              }
+            } catch {}
+          }
+        }
+        await linkUser(auth.userId, collectionId);
+        return res.status(200).json({ success: true, cached: alreadyExists });
+
+      } else {
+        // Album is NOT on iTunes — use negative Discogs ID as synthetic collection ID
+        collectionId = discogsCollectionId(discogsId);
+        console.log(`[add-to-library] No iTunes match — using synthetic ID ${collectionId}`);
+
+        await checkFreeLimit(auth, collectionId, res);
+        if (res.writableEnded) return;
+
+        const alreadyExists = await exists("catalogue", "itunes_collection_id", collectionId);
+        if (!alreadyExists) {
+          await upsert("catalogue", {
+            itunes_collection_id: collectionId,
+            album_name:    albumName,
+            artist_name:   artistName,
+            artwork_url:   artworkUrl,
+            release_year:  releaseYear,
+            track_count:   release.tracklist?.filter(t => t.type_ === "track" || /\d/.test(t.position || "")).length || 0,
+            last_synced_at: new Date().toISOString(),
+          }, "itunes_collection_id");
+
+          // Real tracks only (skip side headings like "A" with no digit)
+          const discogsTracks = (release.tracklist || [])
+            .filter(t => t.position && /\d/.test(t.position));
+
+          // Derive track_number and disc_number from vinyl position (A1→disc1/track1, B1→disc1/track3, C1→disc2...)
+          const sideLetters = [...new Set(discogsTracks.map(t => t.position.replace(/\d.*$/, "").toUpperCase()))];
+          const sideToDisc  = Object.fromEntries(sideLetters.map((s, i) => [s, Math.floor(i / 2) + 1]));
+
+          // Attach global index before batching so track IDs are stable and unique
+          const indexedTracks = discogsTracks.map((dt, idx) => ({ ...dt, _idx: idx }));
+          let trackNum = 1;
+          await batchedAll(indexedTracks, async (dt) => {
+            const side        = dt.position.replace(/\d.*$/, "").toUpperCase();
+            const discNum     = sideToDisc[side] || 1;
+            const trackId     = discogsTrackId(discogsId, dt._idx);
+            const durationMs  = parseDuration(dt.duration);
+
+            await upsert("album_tracks", {
+              itunes_collection_id: collectionId,
+              itunes_track_id: trackId,
+              track_name:      dt.title,
+              artist_name:     artistName,
+              track_number:    trackNum++,
+              disc_number:     discNum,
+              duration_ms:     durationMs,
+            }, "itunes_track_id");
+
+            const lrc = await fetchLrcLib(dt.title, artistName, albumName,
+              durationMs ? durationMs / 1000 : null);
+            if (lrc?.syncedLyrics || lrc?.plainLyrics) {
+              await upsert("track_lyrics", {
+                itunes_track_id: trackId,
+                lrc_raw:      lrc.syncedLyrics || null,
+                lyrics_plain: lrc.plainLyrics || lrcToPlain(lrc.syncedLyrics),
+                words_json:   lrc.syncedLyrics ? parseLrcToWords(lrc.syncedLyrics) : null,
+                source: "lrclib", fetched_at: new Date().toISOString(),
+              }, "itunes_track_id");
+            }
+          }, 3);
+
+          // Vinyl sides — we already have the release
+          try {
+            const mapped = discogsTracks.map((dt, idx) => {
+              const side             = dt.position.replace(/\d.*$/, "").toUpperCase();
+              const side_track_number = parseInt(dt.position.replace(/^[A-Za-z]+/, "")) || (idx + 1);
+              return {
+                itunes_track_id:   discogsTrackId(discogsId, idx),
+                position:          dt.position.toUpperCase(),
+                side,
+                side_track_number,
+              };
+            });
+            await batchedAll(mapped, (m) =>
+              upsert("vinyl_sides", {
+                itunes_collection_id: collectionId,
+                itunes_track_id:    m.itunes_track_id,
+                discogs_release_id: discogsId,
+                side:               m.side,
+                side_track_number:  m.side_track_number,
+                position:           m.position,
+                fetched_at:         new Date().toISOString(),
+              }, "itunes_track_id")
+            , 5);
+          } catch {}
+        } else {
+          console.log(`[add-to-library] Discogs-only album ${collectionId} already in DB`);
+        }
+
+        await linkUser(auth.userId, collectionId);
+        return res.status(200).json({ success: true, cached: alreadyExists });
+      }
+    }
 
   } catch (e) {
     console.error("[add-to-library] error:", e.message);
     return res.status(500).json({ error: "Failed to add album. Please try again." });
   }
 };
+
+// ── Shared helpers ────────────────────────────────────────────────────────────
+
+async function checkFreeLimit(auth, collectionId, res) {
+  if (auth.isUnlimited) return;
+  const tier = await getSubscriptionTier(auth.userId, false);
+  if (tier !== "free") return;
+  const { data: everRows } = await sbRequest(
+    "GET",
+    `user_library_ever?user_id=eq.${encodeURIComponent(auth.userId)}&itunes_collection_id=eq.${collectionId}&select=id&limit=1`
+  );
+  const wasEverAdded = Array.isArray(everRows) && everRows.length > 0;
+  if (!wasEverAdded) {
+    const { data: allEverRows } = await sbRequest(
+      "GET", `user_library_ever?user_id=eq.${encodeURIComponent(auth.userId)}&select=id`
+    );
+    const everCount = Array.isArray(allEverRows) ? allEverRows.length : 0;
+    if (everCount >= FREE_ALBUM_LIMIT) {
+      res.status(403).json({ error: "free_limit_reached", limit: FREE_ALBUM_LIMIT, count: everCount });
+    }
+  }
+}
+
+async function linkUser(userId, collectionId) {
+  await upsert("user_library", {
+    user_id:              userId,
+    itunes_collection_id: collectionId,
+    added_at:             new Date().toISOString(),
+  }, "user_id,itunes_collection_id");
+  await upsert("user_library_ever", {
+    user_id:              userId,
+    itunes_collection_id: collectionId,
+    first_added_at:       new Date().toISOString(),
+  }, "user_id,itunes_collection_id");
+}

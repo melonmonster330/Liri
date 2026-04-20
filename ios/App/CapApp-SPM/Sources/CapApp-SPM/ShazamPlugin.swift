@@ -66,7 +66,11 @@ public class ShazamPlugin: CAPPlugin, CAPBridgedPlugin, SHSessionDelegate {
     private func startMatchEngine(call: CAPPluginCall, timeoutMs: Double) {
         let audioSession = AVAudioSession.sharedInstance()
         do {
-            try audioSession.setCategory(.record, mode: .measurement)
+            // .playAndRecord keeps device audio playing while we capture mic input.
+            // .record alone interrupts playback — we'd be recording silence.
+            // .mixWithOthers lets the turntable/speaker audio keep playing.
+            try audioSession.setCategory(.playAndRecord, mode: .measurement,
+                                         options: [.defaultToSpeaker, .allowBluetooth, .mixWithOthers])
             try audioSession.setActive(true)
         } catch {
             call.reject("Audio session error: \(error.localizedDescription)")
@@ -180,7 +184,8 @@ public class ShazamPlugin: CAPPlugin, CAPBridgedPlugin, SHSessionDelegate {
     private func startSilenceEngine(call: CAPPluginCall, timeoutMs: Double) {
         let audioSession = AVAudioSession.sharedInstance()
         do {
-            try audioSession.setCategory(.record, mode: .measurement)
+            try audioSession.setCategory(.playAndRecord, mode: .measurement,
+                                         options: [.defaultToSpeaker, .allowBluetooth, .mixWithOthers])
             try audioSession.setActive(true)
         } catch {
             call.reject("Audio session error: \(error.localizedDescription)")
