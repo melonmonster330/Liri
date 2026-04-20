@@ -137,7 +137,7 @@
             sb.from("flip_events")
               .select("id")
               .eq("user_id", uid),
-            sb.from("user_vinyl_library")
+            sb.from("user_library")
               .select("itunes_collection_id, album_name, artist_name, artwork_url")
               .eq("user_id", uid),
             sb.from("song_history")
