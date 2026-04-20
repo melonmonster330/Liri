@@ -14,20 +14,19 @@ const IS_IOS = !!window.Capacitor; // set once at load time — used for App Sto
 const TRANSCRIBE_PROXY = window.Capacitor ? "https://www.getliri.com/api/transcribe"    : "/api/transcribe";
 const ITUNES_PROXY   = window.Capacitor ? "https://www.getliri.com/api/itunes-lookup"   : "/api/itunes-lookup";
 const WHISPER_PROXY  = window.Capacitor ? "https://www.getliri.com/api/whisper"         : "/api/whisper";
-// Register native plugins so their JS bridge proxies exist before React mounts.
-const _nativeAudioPlugin = (() => {
-  if (!window.Capacitor?.isNativePlatform?.()) return null;
-  if (window.Capacitor.Plugins?.NativeAudio) return window.Capacitor.Plugins.NativeAudio;
-  return window.Capacitor.registerPlugin?.("NativeAudio") ?? null;
-})();
-// Lazy lookup — evaluated at call time so Capacitor has finished registering plugins.
-const _shazamPlugin = () => {
-  console.log("[shazam-debug] called — window.Capacitor:", !!window.Capacitor, "IS_IOS:", IS_IOS, "Plugins:", Object.keys(window.Capacitor?.Plugins || {}));
+// Both plugins use lazy functions so window.Capacitor is read at call time,
+// not at module load — the Capacitor bridge isn't ready until after the JS parses.
+const _nativeAudioPlugin = () => {
   if (!window.Capacitor) return null;
-  const fromPlugins = window.Capacitor.Plugins?.Shazam;
-  const fromRegister = window.Capacitor.registerPlugin?.("Shazam");
-  console.log("[shazam-debug2] Plugins.Shazam:", fromPlugins, "registerPlugin result:", fromRegister);
-  return fromPlugins ?? fromRegister ?? null;
+  return window.Capacitor.Plugins?.NativeAudio
+      ?? window.Capacitor.registerPlugin?.("NativeAudio")
+      ?? null;
+};
+const _shazamPlugin = () => {
+  if (!window.Capacitor) return null;
+  return window.Capacitor.Plugins?.Shazam
+      ?? window.Capacitor.registerPlugin?.("Shazam")
+      ?? null;
 };
 
 //   3. Landing page feature cards (🎵 → sound/wave art, 💿 → vinyl art)
@@ -1284,7 +1283,7 @@ function Liri() {
   // Vinyl records have a ~1-2s silent gap between tracks. ShazamPlugin monitors mic
   // amplitude via waitForSilence() and we advance to the next track when it resolves.
   useEffect(() => {
-    if (!window.Capacitor?.isNativePlatform?.()) return;
+    if (!window.Capacitor) return;
     const Shazam = _shazamPlugin();
     if (!Shazam) return;
     if (mode !== "syncing") return;
@@ -1701,7 +1700,7 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
     if (!tracks.length) { setError("Album tracks still loading — try again in a moment."); setMode("error"); return; }
 
     const lrcCache = turntableLyricsCacheRef.current;
-    const isNative = !!window.Capacitor?.isNativePlatform?.();
+    const isNative = !!window.Capacitor; // bridge is available by call time even if isNativePlatform() isn't
 
     // Build wordsData so resync (Whisper-based fine-tune) can match against lyrics
     const wordsData = {};
