@@ -681,19 +681,23 @@
             const albums = (res.results || [])
               .filter(r => r.id && !seen.has(r.id) && seen.add(r.id))
               .map(r => {
-                // Discogs titles are usually "Artist - Album Title"
-                const dash  = r.title?.indexOf(' - ') ?? -1;
+                const dash = r.title?.indexOf(' - ') ?? -1;
                 const artistName     = dash > 0 ? r.title.slice(0, dash).trim() : '';
                 const collectionName = dash > 0 ? r.title.slice(dash + 3).trim() : (r.title || '');
+                const artwork = r.cover_image && !r.cover_image.includes('spacer') ? r.cover_image
+                              : r.thumb && !r.thumb.includes('spacer') ? r.thumb : null;
+                const fmt = Array.isArray(r.format) ? r.format.filter(f => !["Album","Compilation","Single","EP"].includes(f)).join(', ') || r.format[0] : null;
                 return {
                   _source:        'discogs',
-                  collectionId:   r.id,          // positive Discogs release ID
+                  collectionId:   r.id,
                   collectionName,
                   artistName,
-                  // Use large cover if thumb is a tiny placeholder
-                  artworkUrl100:  r.thumb && !r.thumb.includes('spacer') ? r.thumb : (r.cover_image || null),
+                  artworkUrl100:  artwork,
                   releaseDate:    r.year ? `${r.year}-01-01` : null,
-                  _label:         Array.isArray(r.label) ? r.label[0] : null,
+                  _country:       r.country || null,
+                  _format:        fmt || null,
+                  _label:         Array.isArray(r.label) ? r.label[0] : (r.label || null),
+                  _catno:         r.catno && r.catno !== 'none' ? r.catno : null,
                 };
               })
               .filter(r => r.collectionName.length > 0);
@@ -1145,13 +1149,22 @@
                       <div key={album.collectionId}
                         style={{ display: "flex", alignItems: "center", gap: 14, padding: "10px 0", borderBottom: "1px solid rgba(255,255,255,0.04)" }}>
                         {album.artworkUrl100
-                          ? <img src={album.artworkUrl100} alt="" style={{ width: 50, height: 50, borderRadius: 8, objectFit: "cover", flexShrink: 0 }} />
-                          : <div style={{ width: 50, height: 50, borderRadius: 8, background: "rgba(255,255,255,0.04)", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="rgba(255,255,255,0.3)" strokeWidth="1.5" strokeLinecap="round"><circle cx="12" cy="12" r="10"/><circle cx="12" cy="12" r="3"/></svg></div>
-                        }
+                          ? <img src={album.artworkUrl100} alt="" style={{ width: 52, height: 52, borderRadius: 8, objectFit: "cover", flexShrink: 0 }}
+                              onError={e => { e.target.style.display='none'; e.target.nextSibling.style.display='flex'; }}
+                            />
+                          : null}
+                        <div style={{ width: 52, height: 52, borderRadius: 8, background: "rgba(255,255,255,0.04)", display: album.artworkUrl100 ? "none" : "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
+                          <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="rgba(255,255,255,0.3)" strokeWidth="1.5" strokeLinecap="round"><circle cx="12" cy="12" r="10"/><circle cx="12" cy="12" r="3"/></svg>
+                        </div>
                         <div style={{ flex: 1, minWidth: 0 }}>
                           <div style={{ fontSize: 14, fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{album.collectionName}</div>
                           <div style={{ fontSize: 12, color: "rgba(255,255,255,0.4)", marginTop: 2 }}>{album.artistName}</div>
-                          {album.releaseDate && <div style={{ fontSize: 11, color: "rgba(255,255,255,0.2)", marginTop: 1 }}>{new Date(album.releaseDate).getFullYear()}</div>}
+                          <div style={{ fontSize: 11, color: "rgba(255,255,255,0.2)", marginTop: 3, display: "flex", gap: 6, flexWrap: "wrap" }}>
+                            {album.releaseDate && <span>{new Date(album.releaseDate).getFullYear()}</span>}
+                            {album._country && <span>· {album._country}</span>}
+                            {album._format && <span>· {album._format}</span>}
+                            {album._label && <span>· {album._label}</span>}
+                          </div>
                         </div>
                         {(() => {
                           const id = String(album.collectionId);
