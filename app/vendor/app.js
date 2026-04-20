@@ -24,9 +24,10 @@ const _nativeAudioPlugin = (() => {
 // Falls back to registerPlugin() in case Plugins.Shazam isn't auto-populated (Capacitor 8).
 const _shazamPlugin = () => {
   if (!window.Capacitor?.isNativePlatform?.()) return null;
-  return window.Capacitor.Plugins?.Shazam
-      ?? window.Capacitor.registerPlugin?.("Shazam")
-      ?? null;
+  const fromPlugins = window.Capacitor.Plugins?.Shazam;
+  const fromRegister = window.Capacitor.registerPlugin?.("Shazam");
+  console.log("[shazam-debug] Plugins.Shazam:", fromPlugins, "registerPlugin:", fromRegister, "keys:", Object.keys(window.Capacitor.Plugins || {}));
+  return fromPlugins ?? fromRegister ?? null;
 };
 
 //   3. Landing page feature cards (🎵 → sound/wave art, 💿 → vinyl art)
