@@ -12,7 +12,6 @@ const sb = supabase.createClient("https://xjdjpaxgymgbvcwmvorc.supabase.co", "sb
 const APP_VERSION = "1.0.0";
 const IS_IOS = !!window.Capacitor; // set once at load time — used for App Store compliance checks
 const TRANSCRIBE_PROXY = window.Capacitor ? "https://www.getliri.com/api/transcribe"    : "/api/transcribe";
-const IDENTIFY_PROXY = window.Capacitor ? "https://www.getliri.com/api/identify-lyrics" : "/api/identify-lyrics";
 const ITUNES_PROXY   = window.Capacitor ? "https://www.getliri.com/api/itunes-lookup"   : "/api/itunes-lookup";
 const WHISPER_PROXY  = window.Capacitor ? "https://www.getliri.com/api/whisper"         : "/api/whisper";
 // Register native plugins so their JS bridge proxies exist before React mounts.
@@ -124,7 +123,6 @@ const startWhisperChunks = (stream, onText, chunkMs, prompt) => {
   return { stop };
 };
 
-// How many seconds we add to ACRCloud's offset to correct for processing lag
 const PLAYBACK_OFFSET_CORRECTION = 4.0;
 // Extra offset added when auto-advancing to next track (no re-listen),
 // accounting for lyrics-fetch + state-update delay. Tune if still drifting.
@@ -572,7 +570,7 @@ function Liri() {
   const listenSessionRef = useRef(0); // increments on each startListening; guards stale async callbacks
   const attemptLogRef = useRef([]); // collects per-attempt debug info for the error screen
   const lastRecordingRef = useRef(null); // stores last recorded blob for debug download
-  const recognitionWonRef = useRef(false); // true once ACRCloud or Whisper wins — prevents double-set
+  const recognitionWonRef = useRef(false); // true once recognition wins — prevents double-set
   const [audioLevel, setAudioLevel] = useState(0); // 0–1 live mic amplitude (chunk-size proxy)
   const [lastSong, setLastSong] = useState(null);
   const [hoverNudge, setHoverNudge] = useState(null); // null | "left" | "right"
@@ -1356,9 +1354,7 @@ function Liri() {
   // ── Vinyl auto-advance: trigger when song nears its end ──
   useEffect(() => {
     if (mode !== "syncing") return;
-    // Use ACRCloud duration if available, otherwise fall back to the last
-    // lyric line's timestamp + 30s so we still fire even when duration_ms
-    // is missing from the ACRCloud response.
+    // Fall back to last lyric line + 30s if duration is missing.
     const lastLyricTime = lyrics.length > 0 ? lyrics[lyrics.length - 1].time : null;
     const effectiveDuration = songDuration ?? (lastLyricTime ? lastLyricTime + 30 : null);
     if (!effectiveDuration) return;
@@ -1395,10 +1391,7 @@ function Liri() {
     streamRef.current?.getTracks().forEach(t => t.stop());
   }, []);
 
-  // ── Process a confirmed ACRCloud match — update all app state ──
-  // recordingDuration: seconds of audio in the matched blob (passed from startListening).
-  // When provided, we use it as the dynamic offset instead of the fixed constant,
-  // since offset = where-song-was-at-clip-start + clip-length + ~network-buffer.
+  // ── Process a confirmed match — update all app state ──
   const handleMatch = async (data, isAutoAdvance) => {
     const m = data.metadata.music[0];
     const duration = m.duration_ms ? m.duration_ms / 1000 : null;
@@ -1672,16 +1665,7 @@ function Liri() {
     } else {
       const log = attemptLogRef.current;
       const summary = log.length ? log.join("\n") : "No attempts logged";
-      // Check ACR codes to give a more helpful message
-      const acrCodes = log.filter(l => l.includes("ACR")).map(l => {
-        const m = l.match(/ACR (\d+)/);
-        return m ? Number(m[1]) : null;
-      }).filter(Boolean);
-      const allSameCode = acrCodes.length > 0 && acrCodes.every(c => c === acrCodes[0]);
-      let stageMsg = stage === "whisper_failed" ? "ACRCloud: no match · Whisper fallback: also failed" : "ACRCloud: no match after all attempts";
-      let hint = "Move closer to your speakers and try again.";
-      if (allSameCode && acrCodes[0] === 2004) hint = "ACR couldn't fingerprint the audio. Check volume levels or ACRCloud trial status.";else if (allSameCode && (acrCodes[0] === 3000 || acrCodes[0] === 3002)) hint = "ACRCloud credentials are invalid. Check Vercel env vars.";else if (allSameCode && (acrCodes[0] === 3003 || acrCodes[0] === 3015)) hint = "ACRCloud rate limit reached.";
-      setError(`${stageMsg}\n\n${summary}\n\n${hint}`);
+      setError(`No match found\n\n${summary}\n\nMove closer to your speakers and try again.`);
       setMode("error");
     }
   };
@@ -1984,8 +1968,7 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
     nudgeMenuTimerRef.current = setTimeout(() => setNudgeMenu(null), 2500);
   };
 
-  // ── Fetch full album tracklist from iTunes ──
-  // Returns { tracks: [...], collectionId: "12345" | null }
+  // Fetch album tracklist
   const fetchAlbumTracks = async (title, artist) => {
     try {
       const search = await fetch(`${ITUNES_PROXY}?term=${encodeURIComponent(artist + " " + title)}&entity=song&limit=10`).then(r => r.json());
