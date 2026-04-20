@@ -878,10 +878,8 @@ function Liri() {
         session
       }
     }) => {
-      // Only treat as logged-in if email has been confirmed
-      const raw = session?.user || null;
-      const u = raw?.email_confirmed_at ? raw : null;
-      sessionTokenRef.current = u ? (session?.access_token || null) : null;
+      const u = session?.user || null;
+      sessionTokenRef.current = session?.access_token || null;
       setUser(u);
       setAuthLoading(false);
       if (u) {
@@ -896,10 +894,8 @@ function Liri() {
         subscription
       }
     } = sb.auth.onAuthStateChange((_e, s) => {
-      // Only treat as logged-in if email has been confirmed
-      const raw = s?.user || null;
-      const u = raw?.email_confirmed_at ? raw : null;
-      sessionTokenRef.current = u ? (s?.access_token || null) : null;
+      const u = s?.user || null;
+      sessionTokenRef.current = s?.access_token || null;
       setUser(u);
       if (u) {
         fetchUsage(u);
