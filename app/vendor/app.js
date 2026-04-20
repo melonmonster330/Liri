@@ -1684,6 +1684,7 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
     recognitionWonRef.current = false;
     turntableMatchedIdxRef.current = -1;
     setError(null);
+    setShowTrackList(false);
     setMode("listening");
     setListenProgress(0);
     setLiveTranscript("");
