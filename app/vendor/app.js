@@ -20,11 +20,8 @@ const _nativeAudioPlugin = (() => {
   if (window.Capacitor.Plugins?.NativeAudio) return window.Capacitor.Plugins.NativeAudio;
   return window.Capacitor.registerPlugin?.("NativeAudio") ?? null;
 })();
-const _shazamPlugin = (() => {
-  if (!window.Capacitor?.isNativePlatform?.()) return null;
-  if (window.Capacitor.Plugins?.Shazam) return window.Capacitor.Plugins.Shazam;
-  return window.Capacitor.registerPlugin?.("Shazam") ?? null;
-})();
+// Lazy lookup — evaluated at call time so Capacitor has finished registering plugins
+const _shazamPlugin = () => window.Capacitor?.Plugins?.Shazam ?? null;
 
 //   3. Landing page feature cards (🎵 → sound/wave art, 💿 → vinyl art)
 //      Note: ✦ (sparkle character) is intentional Liri type — keep it
@@ -1280,7 +1277,7 @@ function Liri() {
   // amplitude via waitForSilence() and we advance to the next track when it resolves.
   useEffect(() => {
     if (!window.Capacitor?.isNativePlatform?.()) return;
-    const Shazam = _shazamPlugin;
+    const Shazam = _shazamPlugin();
     if (!Shazam) return;
     if (mode !== "syncing") return;
 
@@ -1742,7 +1739,7 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
     const stopShazam = () => {
       clearInterval(pulseId);
       setAudioLevel(0);
-      _shazamPlugin?.cancel().catch(() => {});
+      _shazamPlugin()?.cancel().catch(() => {});
     };
     speechRecRef.current = { stop: stopShazam };
 
@@ -1787,7 +1784,7 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
     // ── Call findMatch — a single long-running promise (same pattern as NativeAudio.record) ──
     // Resolves with { matched: true, title, artist, offset, matchTime } or { matched: false }
     try {
-      const result = await _shazamPlugin.findMatch({ timeout: 15000 });
+      const result = await _shazamPlugin().findMatch({ timeout: 15000 });
       if (listenSessionRef.current !== session) return; // session changed while we waited
 
       if (!result.matched) {
