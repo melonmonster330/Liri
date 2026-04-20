@@ -2686,7 +2686,8 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
       }
     }, "Sign In"))), authSheet && /*#__PURE__*/React.createElement("div", {
       onClick: () => {
-        if (!authVerifyPending) setAuthSheet(null);
+        // Don't close on backdrop tap during signup — too easy to lose a filled form
+        if (!authVerifyPending && authSheet !== "signup") setAuthSheet(null);
       },
       style: {
         position: "fixed",
@@ -2710,10 +2711,10 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
         margin: "0 auto"
       }
     }, !authVerifyPending && /*#__PURE__*/React.createElement("div", {
-      onClick: () => setAuthSheet(null),
+      onClick: () => { if (authSheet !== "signup") setAuthSheet(null); },
       style: {
         padding: "12px 0 20px",
-        cursor: "pointer",
+        cursor: authSheet !== "signup" ? "pointer" : "default",
         textAlign: "center"
       }
     }, /*#__PURE__*/React.createElement("div", {
