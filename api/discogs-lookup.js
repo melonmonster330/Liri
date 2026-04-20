@@ -9,9 +9,14 @@
 const https = require("https");
 
 function httpsGet(url) {
+  const key    = process.env.DISCOGS_KEY;
+  const secret = process.env.DISCOGS_SECRET;
   return new Promise((resolve, reject) => {
     https.get(url, {
-      headers: { "User-Agent": "Liri/1.116 +https://getliri.com" },
+      headers: {
+        "User-Agent":    "Liri/1.0 +https://getliri.com",
+        ...(key ? { "Authorization": `Discogs key=${key}, secret=${secret}` } : {}),
+      },
     }, (res) => {
       const chunks = [];
       res.on("data", c => chunks.push(c));
