@@ -13,24 +13,31 @@ module.exports = async (req, res) => {
   }
 
   try {
-    await new Promise((resolve, reject) => {
+    const { statusCode, contentType, buffer } = await new Promise((resolve, reject) => {
       const request = https.get(url, {
         headers: {
           "User-Agent": "Liri/1.0 +https://getliri.com",
           "Referer":    "https://www.discogs.com/",
         },
       }, (upstream) => {
-        res.setHeader("Content-Type", upstream.headers["content-type"] || "image/jpeg");
-        res.setHeader("Cache-Control", "s-maxage=604800, stale-while-revalidate=2592000");
-        res.setHeader("Access-Control-Allow-Origin", "*");
-        upstream.pipe(res);
-        upstream.on("end", resolve);
+        const chunks = [];
+        upstream.on("data", c => chunks.push(c));
+        upstream.on("end", () => resolve({
+          statusCode:  upstream.statusCode,
+          contentType: upstream.headers["content-type"] || "image/jpeg",
+          buffer:      Buffer.concat(chunks),
+        }));
         upstream.on("error", reject);
       });
       request.on("error", reject);
       request.setTimeout(8000, () => { request.destroy(); reject(new Error("timeout")); });
     });
-  } catch {
+
+    res.setHeader("Content-Type", contentType);
+    res.setHeader("Cache-Control", "s-maxage=604800, stale-while-revalidate=2592000");
+    res.setHeader("Access-Control-Allow-Origin", "*");
+    res.status(statusCode).send(buffer);
+  } catch (e) {
     res.status(502).end();
   }
 };
