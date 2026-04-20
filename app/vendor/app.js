@@ -29,9 +29,9 @@ const _shazamPlugin = () => {
   const np = window.Capacitor?.nativePromise;
   if (!np) return null;
   return {
-    findMatch:      (opts) => np("Shazam", "findMatch",      opts || {}),
-    cancel:         ()     => np("Shazam", "cancel",         {}),
-    waitForSilence: (opts) => np("Shazam", "waitForSilence", opts || {}),
+    findMatch:      (opts) => np("ShazamPlugin", "findMatch",      opts || {}),
+    cancel:         ()     => np("ShazamPlugin", "cancel",         {}),
+    waitForSilence: (opts) => np("ShazamPlugin", "waitForSilence", opts || {}),
   };
 };
 
