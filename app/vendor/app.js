@@ -3137,11 +3137,7 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
       maxWidth: "280px",
       margin: "0 auto 48px"
     }
-  }, "When your record is playing, tap ", /*#__PURE__*/React.createElement("strong", {
-    style: {
-      color: "#d4a846"
-    }
-  }, "Listen"), " and hold your phone near the speakers. Liri identifies the song and syncs the words in real time."), /*#__PURE__*/React.createElement("div", {
+  }, IS_IOS ? /*#__PURE__*/React.createElement(React.Fragment, null, "When your record is playing, tap ", /*#__PURE__*/React.createElement("strong", { style: { color: "#d4a846" } }, "Listen"), ". Liri uses Shazam to find your place in the song and syncs the lyrics in real time.") : "Add your albums to your library, then tap any track to start. Liri syncs the lyrics in real time — line by line."), /*#__PURE__*/React.createElement("div", {
     style: {
       display: "flex",
       gap: "16px",
@@ -3446,7 +3442,7 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
       flexDirection: "column",
       gap: "8px"
     }
-  }, [{
+  }, (IS_IOS ? [{
     name: "ShazamKit",
     role: "Song recognition"
   }, {
@@ -3455,7 +3451,13 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
   }, {
     name: "Discogs",
     role: "Album & track data"
-  }].map(c => /*#__PURE__*/React.createElement("div", {
+  }] : [{
+    name: "LRCLib",
+    role: "Synced lyrics"
+  }, {
+    name: "Discogs",
+    role: "Album & track data"
+  }]).map(c => /*#__PURE__*/React.createElement("div", {
     key: c.name,
     style: {
       display: "flex",
@@ -4115,7 +4117,7 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
       gap: "8px 16px",
       marginBottom: "14px"
     }
-  }, [{
+  }, (IS_IOS ? [{
     name: "ShazamKit",
     role: "Song recognition"
   }, {
@@ -4124,7 +4126,13 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
   }, {
     name: "Discogs",
     role: "Album & track data"
-  }].map(c => /*#__PURE__*/React.createElement("div", {
+  }] : [{
+    name: "LRCLib",
+    role: "Synced lyrics"
+  }, {
+    name: "Discogs",
+    role: "Album & track data"
+  }]).map(c => /*#__PURE__*/React.createElement("div", {
     key: c.name
   }, /*#__PURE__*/React.createElement("div", {
     style: {
