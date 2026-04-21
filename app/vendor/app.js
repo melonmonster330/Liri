@@ -9,7 +9,7 @@ if (typeof supabase === 'undefined') {
   throw new Error('Supabase not loaded');
 }
 const sb = supabase.createClient("https://xjdjpaxgymgbvcwmvorc.supabase.co", "sb_publishable_C-NBnfg0ltAoUi46XQTUjA_ozjZW_Nd");
-const APP_VERSION = "1.2.2";
+const APP_VERSION = "1.2.3";
 const IS_IOS = !!window.Capacitor; // set once at load time — used for App Store compliance checks
 const TRANSCRIBE_PROXY = window.Capacitor ? "https://www.getliri.com/api/transcribe"    : "/api/transcribe";
 const ITUNES_PROXY   = window.Capacitor ? "https://www.getliri.com/api/itunes-lookup"   : "/api/itunes-lookup";
@@ -5808,14 +5808,14 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
       color: "#f0e6d3",
       marginBottom: "12px"
     }
-  }, "You've played 10 records"), /*#__PURE__*/React.createElement("div", {
+  }, "Your free crate is full"), /*#__PURE__*/React.createElement("div", {
     style: {
       color: "rgba(255,255,255,0.4)",
       marginBottom: "36px",
       lineHeight: "1.8",
       fontSize: "15px"
     }
-  }, "You've reached your 10 free records.", /*#__PURE__*/React.createElement("br", null), "Manage your account to continue."), IS_IOS
+  }, "You've added 10 free records.", /*#__PURE__*/React.createElement("br", null), "Upgrade to keep building your collection."), IS_IOS
     /* iOS — no pricing or payment links per App Store 3.1.1 */
     ? /*#__PURE__*/React.createElement("div", { style: { fontSize: "14px", color: "rgba(255,255,255,0.4)", marginBottom: "12px", padding: "14px 32px", textAlign: "center", lineHeight: "1.6" } }, "Manage your account at", /*#__PURE__*/React.createElement("br", null), /*#__PURE__*/React.createElement("span", { style: { color: "#d4a846", fontWeight: "700" } }, "getliri.com"))
     : /*#__PURE__*/React.createElement("button", {

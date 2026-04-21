@@ -34,7 +34,7 @@
   <script type="text/babel">
     const { useState, useEffect, useRef, useCallback } = React;
 
-    const APP_VERSION = "1.2.2";
+    const APP_VERSION = "1.2.3";
 
     // On iOS Capacitor relative URLs don't resolve — route all API calls through the live domain.
     const API_BASE = window.Capacitor ? "https://www.getliri.com" : "";
@@ -1049,7 +1049,7 @@
                   </div>
                   <div style={{ fontSize: 24, fontWeight: 800, color: "#f0e6d3", marginBottom: 8, letterSpacing: "-0.5px" }}>Liri Premium</div>
                   <div style={{ fontSize: 14, color: "rgba(255,255,255,0.4)", lineHeight: 1.6, margin: "0 auto 24px", maxWidth: 260 }}>
-                    {subscription?.albumCount >= 10 ? "You've filled your free crate. Upgrade for unlimited records." : "Unlimited records, all features. Support indie music tech."}
+                    {subscription?.albumCount >= 10 ? "Your free crate is full — upgrade to keep adding records." : "Unlimited records, all features. Support indie music tech."}
                   </div>
                   <div style={{ display: "inline-flex", alignItems: "baseline", gap: 4, background: "rgba(212,168,70,0.08)", border: "1px solid rgba(212,168,70,0.2)", borderRadius: 50, padding: "10px 24px", marginBottom: 24 }}>
                     <span style={{ fontSize: 32, fontWeight: 800, color: "#d4a846", letterSpacing: "-1px" }}>$4</span>
@@ -1083,9 +1083,9 @@
                   <div style={{ width: 64, height: 64, borderRadius: "50%", background: "rgba(212,168,70,0.1)", border: "1px solid rgba(212,168,70,0.2)", display: "flex", alignItems: "center", justifyContent: "center", margin: "0 auto 20px" }}>
                     <svg width="30" height="30" viewBox="0 0 24 24" fill="none" stroke="#d4a846" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10"/><circle cx="12" cy="12" r="3"/></svg>
                   </div>
-                  <div style={{ fontSize: 22, fontWeight: 800, color: "#f0e6d3", marginBottom: 10, letterSpacing: "-0.4px" }}>You've reached the free limit</div>
+                  <div style={{ fontSize: 22, fontWeight: 800, color: "#f0e6d3", marginBottom: 10, letterSpacing: "-0.4px" }}>Your free crate is full</div>
                   <div style={{ fontSize: 14, color: "rgba(255,255,255,0.4)", lineHeight: 1.7, margin: "0 auto 28px", maxWidth: 270 }}>
-                    Your collection is full. To add more records, manage your account at:
+                    You've added 10 free records. To keep building your collection, manage your account at:
                   </div>
                   <div style={{ fontSize: 18, fontWeight: 700, color: "#d4a846", marginBottom: 32, letterSpacing: "0.3px" }}>getliri.com</div>
                   <button onClick={() => setShowUpgrade(false)}
