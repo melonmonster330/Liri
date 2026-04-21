@@ -9,7 +9,7 @@ if (typeof supabase === 'undefined') {
   throw new Error('Supabase not loaded');
 }
 const sb = supabase.createClient("https://xjdjpaxgymgbvcwmvorc.supabase.co", "sb_publishable_C-NBnfg0ltAoUi46XQTUjA_ozjZW_Nd");
-const APP_VERSION = "1.2.1";
+const APP_VERSION = "1.2.2";
 const IS_IOS = !!window.Capacitor; // set once at load time — used for App Store compliance checks
 const TRANSCRIBE_PROXY = window.Capacitor ? "https://www.getliri.com/api/transcribe"    : "/api/transcribe";
 const ITUNES_PROXY   = window.Capacitor ? "https://www.getliri.com/api/itunes-lookup"   : "/api/itunes-lookup";
@@ -2315,6 +2315,57 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
     autoRetryCountRef.current = 0;
     saveToHistory(user, song);
     setMode("confirmed");
+  };
+
+  // ── Manual flip: jump straight to the first track of the next side ──
+  // Skips Shazam entirely — user has physically flipped the record and just
+  // wants lyrics to start from track 1 of the next side without re-identifying.
+  const manualFlipToNextSide = () => {
+    const tracks = turntableTracksRef.current;
+    if (!tracks.length) return;
+    const curIdx = turntableMatchedIdxRef.current >= 0
+      ? turntableMatchedIdxRef.current
+      : currentTrackIndexRef.current;
+    const dbRelease = vinylDbReleaseRef.current;
+    const effectiveTps = albumTpsRef.current > 0 ? albumTpsRef.current : 0;
+    const sideEnds = dbRelease?.vinyl_tracks?.length > 0
+      ? getDbSideEndIndices(tracks, dbRelease.vinyl_tracks)
+      : getSideEndIndices(tracks, effectiveTps);
+    for (let s = 0; s < sideEnds.length; s++) {
+      if (curIdx <= sideEnds[s]) {
+        const nextFirst = sideEnds[s] + 1;
+        if (nextFirst >= tracks.length) {
+          setSideEndReason("album-end");
+          setMode("side-end");
+          return;
+        }
+        jumpToTrackIdx(nextFirst);
+        return;
+      }
+    }
+    // Past all known side ends
+    setSideEndReason("album-end");
+    setMode("side-end");
+  };
+
+  // Helper: next side letter based on current track position (for UI labels)
+  const getNextSideLetter = () => {
+    const tracks = turntableTracksRef.current;
+    if (!tracks.length) return null;
+    const curIdx = turntableMatchedIdxRef.current >= 0
+      ? turntableMatchedIdxRef.current
+      : currentTrackIndexRef.current;
+    const dbRelease = vinylDbReleaseRef.current;
+    const effectiveTps = albumTpsRef.current > 0 ? albumTpsRef.current : 0;
+    const sideEnds = dbRelease?.vinyl_tracks?.length > 0
+      ? getDbSideEndIndices(tracks, dbRelease.vinyl_tracks)
+      : getSideEndIndices(tracks, effectiveTps);
+    for (let s = 0; s < sideEnds.length; s++) {
+      if (curIdx <= sideEnds[s] && sideEnds[s] + 1 < tracks.length) {
+        return "ABCDEFGH"[s + 1] || null;
+      }
+    }
+    return null;
   };
 
   // ── Resync: re-listen briefly to fix timing without changing the song ──
@@ -5253,7 +5304,22 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
       width: "100%",
       transition: "all 0.2s"
     }
-  }, turntableTracksLoading ? "Loading…" : turntableAlbum ? "Find my place" : "Listen")), mode === "listening" && /*#__PURE__*/React.createElement("div", {
+  }, turntableTracksLoading ? "Loading…" : turntableAlbum ? "Find my place" : "Listen"), !turntableTracksLoading && turntableAlbum && currentTrackIndex >= 0 && getNextSideLetter() && /*#__PURE__*/React.createElement("button", {
+    onClick: manualFlipToNextSide,
+    style: {
+      marginTop: "10px",
+      background: "none",
+      border: "1px solid rgba(255,255,255,0.12)",
+      color: "rgba(255,255,255,0.45)",
+      borderRadius: "50px",
+      padding: "12px 32px",
+      fontSize: "13px",
+      fontWeight: "600",
+      cursor: "pointer",
+      fontFamily: "inherit",
+      width: "100%"
+    }
+  }, "Flip to Side ", getNextSideLetter())), mode === "listening" && /*#__PURE__*/React.createElement("div", {
     style: {
       animation: "fade-up 0.3s ease both",
       overflowY: showTrackList ? "auto" : "visible",
@@ -5583,7 +5649,7 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
       lineHeight: "1.8",
       fontSize: "15px"
     }
-  }, "Flip your record, drop the needle,", /*#__PURE__*/React.createElement("br", null), "then tap Listen."), /*#__PURE__*/React.createElement("button", {
+  }, "Flip your record, drop the needle,", /*#__PURE__*/React.createElement("br", null), "then choose how to continue."), /*#__PURE__*/React.createElement("button", {
     onClick: () => {
       reset();
       setTimeout(() => startListening(false), 300);
@@ -5597,12 +5663,29 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
       fontSize: "14px",
       fontWeight: "700",
       cursor: "pointer",
-      fontFamily: "inherit"
+      fontFamily: "inherit",
+      width: "100%",
+      marginBottom: "10px"
     }
-  }, "Flip & Listen \u2192"), lastSong && /*#__PURE__*/React.createElement("button", {
+  }, "Flip & Listen \u2192"), turntableTracksRef.current.length > 0 && getNextSideLetter() && /*#__PURE__*/React.createElement("button", {
+    onClick: manualFlipToNextSide,
+    style: {
+      background: "rgba(255,255,255,0.06)",
+      border: "1px solid rgba(255,255,255,0.12)",
+      color: "rgba(255,255,255,0.7)",
+      borderRadius: "50px",
+      padding: "13px 36px",
+      fontSize: "14px",
+      fontWeight: "600",
+      cursor: "pointer",
+      fontFamily: "inherit",
+      width: "100%",
+      marginBottom: "10px"
+    }
+  }, "Start Side ", getNextSideLetter(), " \u2014 skip detection"), lastSong && /*#__PURE__*/React.createElement("button", {
     onClick: () => setMode("idle"),
     style: {
-      marginTop: "12px",
+      marginTop: "4px",
       background: "none",
       border: "none",
       color: "rgba(255,255,255,0.25)",
@@ -5664,8 +5747,11 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
       lineHeight: "1.8",
       fontSize: "15px"
     }
-  }, "Couldn't detect another track.", /*#__PURE__*/React.createElement("br", null), "Flip your record and tap Listen to continue."), /*#__PURE__*/React.createElement("button", {
-    onClick: reset,
+  }, "Couldn't pick up another track.", /*#__PURE__*/React.createElement("br", null), "Flip the record and choose how to continue."), /*#__PURE__*/React.createElement("button", {
+    onClick: () => {
+      reset();
+      setTimeout(() => startListening(false), 300);
+    },
     style: {
       background: "linear-gradient(135deg, #d4a846, #c9807a)",
       color: "#080810",
@@ -5675,12 +5761,29 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
       fontSize: "14px",
       fontWeight: "700",
       cursor: "pointer",
-      fontFamily: "inherit"
+      fontFamily: "inherit",
+      width: "100%",
+      marginBottom: "10px"
     }
-  }, "\u2190 Back"), lastSong && /*#__PURE__*/React.createElement("button", {
+  }, "Flip & Listen \u2192"), turntableTracksRef.current.length > 0 && getNextSideLetter() && /*#__PURE__*/React.createElement("button", {
+    onClick: manualFlipToNextSide,
+    style: {
+      background: "rgba(255,255,255,0.06)",
+      border: "1px solid rgba(255,255,255,0.12)",
+      color: "rgba(255,255,255,0.7)",
+      borderRadius: "50px",
+      padding: "13px 36px",
+      fontSize: "14px",
+      fontWeight: "600",
+      cursor: "pointer",
+      fontFamily: "inherit",
+      width: "100%",
+      marginBottom: "10px"
+    }
+  }, "Start Side ", getNextSideLetter(), " \u2014 skip detection"), lastSong && /*#__PURE__*/React.createElement("button", {
     onClick: () => setMode("idle"),
     style: {
-      marginTop: "12px",
+      marginTop: "4px",
       background: "none",
       border: "none",
       color: "rgba(255,255,255,0.25)",
