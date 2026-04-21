@@ -9,7 +9,7 @@ if (typeof supabase === 'undefined') {
   throw new Error('Supabase not loaded');
 }
 const sb = supabase.createClient("https://xjdjpaxgymgbvcwmvorc.supabase.co", "sb_publishable_C-NBnfg0ltAoUi46XQTUjA_ozjZW_Nd");
-const APP_VERSION = "1.2.0";
+const APP_VERSION = "1.2.1";
 const IS_IOS = !!window.Capacitor; // set once at load time — used for App Store compliance checks
 const TRANSCRIBE_PROXY = window.Capacitor ? "https://www.getliri.com/api/transcribe"    : "/api/transcribe";
 const ITUNES_PROXY   = window.Capacitor ? "https://www.getliri.com/api/itunes-lookup"   : "/api/itunes-lookup";
@@ -2562,15 +2562,15 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
     const features = [{
       icon: featureSvgs.identify,
       label: "Identify",
-      sub: "8-second song fingerprinting"
+      sub: "Recognises what's playing in seconds"
     }, {
       icon: featureSvgs.sync,
       label: "Sync",
-      sub: "Real-time scrolling lyrics"
+      sub: "Lyrics scroll line by line in real time"
     }, {
       icon: featureSvgs.auto,
       label: "Auto Mode",
-      sub: "Tracks side flips automatically"
+      sub: "Follows along as you flip each side"
     }];
     return /*#__PURE__*/React.createElement("div", {
       style: {
@@ -3114,7 +3114,7 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
       maxWidth: "280px",
       margin: "0 auto 48px"
     }
-  }, "Put on a record. Hold your phone near the speakers. Watch the lyrics appear \u2014 in perfect sync."), /*#__PURE__*/React.createElement("button", {
+  }, "Put a record on. Hold your phone near the speakers. Watch the lyrics scroll by \u2014 line by line, in sync."), /*#__PURE__*/React.createElement("button", {
     onClick: () => setOnboardingStep(1),
     style: {
       background: "linear-gradient(135deg, #d4a846, #c9807a)",
@@ -3352,7 +3352,7 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
       maxWidth: "280px",
       margin: "0 auto 32px"
     }
-  }, "Liri automatically listens for the next track as each song ends \u2014 no tapping needed."), /*#__PURE__*/React.createElement("div", {
+  }, "Liri automatically listens for the next song as each track ends. No tapping, no fiddling \u2014 just the music."), /*#__PURE__*/React.createElement("div", {
     style: {
       background: "rgba(212,168,70,0.07)",
       border: "1px solid rgba(212,168,70,0.15)",
@@ -3364,7 +3364,7 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
       color: "rgba(255,255,255,0.35)",
       lineHeight: "1.7"
     }
-  }, "\u2726 Detects end of side after two failed listens"), /*#__PURE__*/React.createElement("div", {
+  }, "\u2726 Listens for the next song — flip the record when you're ready"), /*#__PURE__*/React.createElement("div", {
     style: {
       display: "flex",
       gap: "16px",
@@ -3695,7 +3695,7 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
       marginBottom: 20,
       lineHeight: 1.6
     }
-  }, "Your library is empty. Add an album to get started.")) : userLibrary.map(album => {
+  }, "Head to My Records to add your first album.")) : userLibrary.map(album => {
     const isSelected = turntableAlbum?.itunes_collection_id === album.itunes_collection_id;
     return /*#__PURE__*/React.createElement("button", {
       key: album.id,
@@ -4525,8 +4525,8 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
     title: "Account"
   }, user?.email?.[0]?.toUpperCase() || "?"))), /*#__PURE__*/React.createElement("div", {
     style: {
-      height: "6px",
-      background: "rgba(255,255,255,0.07)",
+      height: "3px",
+      background: "rgba(255,255,255,0.1)",
       flexShrink: 0,
       cursor: songDuration ? "pointer" : "default",
       position: "relative"
@@ -4540,15 +4540,18 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
       syncStartRef.current = Date.now();
       setPlaybackTime(targetTime);
     }
-  }, songDuration && /*#__PURE__*/React.createElement("div", {
-    style: {
-      height: "100%",
-      background: "linear-gradient(to right, #d4a846, #c9807a)",
-      width: `${Math.min(playbackTime / songDuration * 100, 100)}%`,
-      transition: "width 0.5s linear",
-      borderRadius: "0 2px 2px 0"
-    }
-  })), /*#__PURE__*/React.createElement("div", {
+  }, (() => {
+    const effDur = songDuration ?? (lyrics.length > 0 ? lyrics[lyrics.length - 1].time + 30 : null);
+    return effDur ? /*#__PURE__*/React.createElement("div", {
+      style: {
+        height: "100%",
+        background: "linear-gradient(to right, #d4a846, #c9807a)",
+        width: `${Math.min(playbackTime / effDur * 100, 100)}%`,
+        transition: "width 1s linear",
+        borderRadius: "0 2px 2px 0"
+      }
+    }) : null;
+  })()), /*#__PURE__*/React.createElement("div", {
     style: {
       flex: 1,
       overflow: "hidden",
@@ -5250,23 +5253,7 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
       width: "100%",
       transition: "all 0.2s"
     }
-  }, turntableTracksLoading ? `${turntableTracksProgress.percent}% — ${turntableTracksProgress.stage}` : turntableAlbum ? "Find my place" : "Listen"), turntableTracksLoading && /*#__PURE__*/React.createElement("div", {
-    style: {
-      width: "100%",
-      height: 3,
-      background: "rgba(255,255,255,0.1)",
-      borderRadius: 2,
-      marginTop: 8,
-      overflow: "hidden"
-    }
-  }, /*#__PURE__*/React.createElement("div", {
-    style: {
-      height: "100%",
-      width: `${turntableTracksProgress.percent}%`,
-      background: "linear-gradient(90deg, #d4a846, #c9807a)",
-      transition: "width 0.3s ease"
-    }
-  }))), mode === "listening" && /*#__PURE__*/React.createElement("div", {
+  }, turntableTracksLoading ? "Loading…" : turntableAlbum ? "Find my place" : "Listen")), mode === "listening" && /*#__PURE__*/React.createElement("div", {
     style: {
       animation: "fade-up 0.3s ease both",
       overflowY: showTrackList ? "auto" : "visible",
