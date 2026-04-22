@@ -1,0 +1,161 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+  <title>Privacy Policy — Liri</title>
+  <link rel="icon" type="image/png" href="/favicon.png" />
+  <link rel="apple-touch-icon" href="/favicon.png" />
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    html { scroll-behavior: smooth; }
+    body {
+      background: #080810;
+      color: #f0e6d3;
+      font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Display', 'Helvetica Neue', sans-serif;
+      min-height: 100vh;
+    }
+
+    .page { max-width: 680px; margin: 0 auto; padding: 0 20px 80px; }
+
+    .header {
+      padding: max(64px, calc(env(safe-area-inset-top) + 20px)) 0 32px;
+      border-bottom: 1px solid rgba(255,255,255,0.05);
+      margin-bottom: 48px;
+    }
+    .logo { display: flex; align-items: center; gap: 12px; text-decoration: none; margin-bottom: 32px; }
+    .logo-text { font-size: 20px; font-weight: 700; color: #f0e6d3; letter-spacing: -0.5px; }
+    .header h1 {
+      font-size: clamp(26px, 5vw, 36px);
+      font-weight: 700;
+      letter-spacing: -1px;
+      color: #f0e6d3;
+      margin-bottom: 8px;
+    }
+    .header-sub { font-size: 14px; color: rgba(255,255,255,0.3); }
+
+    .section { margin-bottom: 40px; }
+    h2 {
+      font-size: 16px;
+      font-weight: 700;
+      color: #f0e6d3;
+      margin-bottom: 12px;
+      letter-spacing: -0.2px;
+    }
+    p {
+      font-size: 14px;
+      color: rgba(255,255,255,0.5);
+      line-height: 1.8;
+      margin-bottom: 12px;
+    }
+    p:last-child { margin-bottom: 0; }
+    ul {
+      margin: 8px 0 12px 0;
+      padding-left: 20px;
+    }
+    li {
+      font-size: 14px;
+      color: rgba(255,255,255,0.5);
+      line-height: 1.8;
+    }
+    a { color: #d4a846; text-decoration: none; }
+    a:hover { text-decoration: underline; }
+
+    .divider {
+      border: none;
+      border-top: 1px solid rgba(255,255,255,0.05);
+      margin: 40px 0;
+    }
+
+    .footer {
+      font-size: 12px;
+      color: rgba(255,255,255,0.15);
+      text-align: center;
+      padding-top: 32px;
+      border-top: 1px solid rgba(255,255,255,0.05);
+    }
+  </style>
+</head>
+<body>
+  <div class="page">
+    <div class="header">
+      <a href="/app" class="logo">
+        <svg width="32" height="32" viewBox="0 0 32 32">
+          <circle cx="16" cy="16" r="15" fill="#111118" />
+          <circle cx="16" cy="16" r="12.5" fill="none" stroke="rgba(255,255,255,0.07)" stroke-width="0.9" />
+          <circle cx="16" cy="16" r="10"   fill="none" stroke="rgba(255,255,255,0.06)" stroke-width="0.9" />
+          <circle cx="16" cy="16" r="7.5"  fill="none" stroke="rgba(255,255,255,0.05)" stroke-width="0.9" />
+          <circle cx="16" cy="16" r="5" fill="#1e1e2e" />
+          <circle cx="16" cy="16" r="1.8" fill="#d4a846" />
+        </svg>
+        <span class="logo-text">Liri</span>
+      </a>
+      <h1>Privacy Policy</h1>
+      <p class="header-sub">Last updated April 2026</p>
+    </div>
+
+    <div class="section">
+      <p>Liri is a lyrics app for vinyl record listeners. This policy explains what data we collect, why we collect it, and how we handle it. We keep things simple because we have no interest in your data beyond making the app work.</p>
+    </div>
+
+    <div class="section">
+      <h2>What we collect</h2>
+      <p><strong style="color:rgba(255,255,255,0.7)">Account information.</strong> When you create an account, we store your email address. This is used only to authenticate you — we don't send marketing emails.</p>
+      <p><strong style="color:rgba(255,255,255,0.7)">Your vinyl library.</strong> The albums you add to your library are stored on our servers so they sync across your devices.</p>
+      <p><strong style="color:rgba(255,255,255,0.7)">Listening history.</strong> When Liri identifies a song, we save the track name, artist, album, and timestamp to build your play history. This is linked to your account.</p>
+      <p><strong style="color:rgba(255,255,255,0.7)">Usage events.</strong> We log anonymised events (such as when a vinyl side is flipped) to understand how the app is being used. These are tied to your user ID but are never sold or shared.</p>
+    </div>
+
+    <div class="section">
+      <h2>Audio</h2>
+      <p>When you tap Listen, Liri uses your microphone to capture a short audio sample. This sample is sent to Apple's ShazamKit service to identify the song and your position within it. The audio is processed in real time and is not stored by Liri or Apple after the match is made.</p>
+      <p>Liri never records, stores, or transmits your audio for any other purpose.</p>
+    </div>
+
+    <div class="section">
+      <h2>Third-party services</h2>
+      <p>Liri uses the following third-party services:</p>
+      <ul>
+        <li><strong style="color:rgba(255,255,255,0.6)">Supabase</strong> — stores your account, library, and history data on secure servers.</li>
+        <li><strong style="color:rgba(255,255,255,0.6)">ShazamKit (Apple)</strong> — identifies songs from audio. Subject to Apple's privacy policy.</li>
+        <li><strong style="color:rgba(255,255,255,0.6)">LRCLib</strong> — provides synced lyrics. No personal data is sent; only the song title and artist are used in the lookup.</li>
+        <li><strong style="color:rgba(255,255,255,0.6)">iTunes Search API (Apple)</strong> — provides album artwork and track metadata. No personal data is sent.</li>
+      </ul>
+    </div>
+
+    <div class="section">
+      <h2>What we don't do</h2>
+      <ul>
+        <li>We don't sell your data.</li>
+        <li>We don't show you ads.</li>
+        <li>We don't share your data with third parties for marketing.</li>
+        <li>We don't track you across other apps or websites.</li>
+      </ul>
+    </div>
+
+    <div class="section">
+      <h2>Data retention</h2>
+      <p>Your data is kept for as long as your account is active. If you'd like your account and all associated data deleted, email us at <a href="mailto:hello@getliri.com">hello@getliri.com</a> and we'll take care of it promptly.</p>
+    </div>
+
+    <div class="section">
+      <h2>Children</h2>
+      <p>Liri is not directed at children under 13. We don't knowingly collect data from children.</p>
+    </div>
+
+    <div class="section">
+      <h2>Changes to this policy</h2>
+      <p>If we make meaningful changes to how we handle your data, we'll update this page and revise the date at the top. Continued use of the app after changes constitutes acceptance of the updated policy.</p>
+    </div>
+
+    <div class="section">
+      <h2>Contact</h2>
+      <p>Questions about your data or this policy? Email us at <a href="mailto:hello@getliri.com">hello@getliri.com</a>.</p>
+    </div>
+
+    <div class="footer">
+      &copy; 2026 Liri &nbsp;&middot;&nbsp; <a href="/app">Open app</a> &nbsp;&middot;&nbsp; <a href="/support">Support</a>
+    </div>
+  </div>
+</body>
+</html>

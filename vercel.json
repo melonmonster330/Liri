@@ -18,6 +18,8 @@
     { "source": "/tv",           "destination": "/tv.html"          },
     { "source": "/library",      "destination": "/app/library.html" },
     { "source": "/stats",        "destination": "/app/stats.html"   },
+    { "source": "/privacy",      "destination": "/app/privacy.html" },
+    { "source": "/support",      "destination": "/app/support.html" },
     { "source": "/vendor/:file", "destination": "/app/vendor/:file" },
     { "source": "/test",         "destination": "/app/test.html"   }
   ]
