@@ -9,7 +9,7 @@ if (typeof supabase === 'undefined') {
   throw new Error('Supabase not loaded');
 }
 const sb = supabase.createClient("https://xjdjpaxgymgbvcwmvorc.supabase.co", "sb_publishable_C-NBnfg0ltAoUi46XQTUjA_ozjZW_Nd");
-const APP_VERSION = "1.2.3";
+const APP_VERSION = "1.2.4";
 const IS_IOS = !!window.Capacitor; // set once at load time — used for App Store compliance checks
 const TRANSCRIBE_PROXY = window.Capacitor ? "https://www.getliri.com/api/transcribe"    : "/api/transcribe";
 const ITUNES_PROXY   = window.Capacitor ? "https://www.getliri.com/api/itunes-lookup"   : "/api/itunes-lookup";
@@ -421,6 +421,14 @@ function Liri() {
     window.addEventListener("resize", onResize);
     return () => window.removeEventListener("resize", onResize);
   }, []);
+  const [isLandscape, setIsLandscape] = useState(() => window.innerWidth > window.innerHeight && window.innerWidth >= 600);
+  useEffect(() => {
+    const onResize = () => setIsLandscape(window.innerWidth > window.innerHeight && window.innerWidth >= 600);
+    window.addEventListener("resize", onResize);
+    return () => window.removeEventListener("resize", onResize);
+  }, []);
+  const [controlsVisible, setControlsVisible] = useState(true);
+  const controlsHideTimerRef = useRef(null);
   const [showBugReport, setShowBugReport] = useState(false);
   const [bugText, setBugText] = useState("");
   const [bugSending, setBugSending] = useState(false);
@@ -771,6 +779,12 @@ function Liri() {
         osc.stop(ctx.currentTime + delay + 1.6);
       });
     } catch {}
+  };
+
+  const bumpControls = () => {
+    setControlsVisible(true);
+    clearTimeout(controlsHideTimerRef.current);
+    controlsHideTimerRef.current = setTimeout(() => setControlsVisible(false), 3500);
   };
   const showFlipPushNotification = song => {
     if (localStorage.getItem("liri_flip_notify") !== "true") return;
@@ -1400,6 +1414,16 @@ function Liri() {
     clearInterval(progressTimerRef.current);
     streamRef.current?.getTracks().forEach(t => t.stop());
   }, []);
+
+  // ── Landscape controls auto-hide ──
+  useEffect(() => {
+    if (isSyncing && isLandscape) {
+      bumpControls();
+    } else {
+      clearTimeout(controlsHideTimerRef.current);
+      setControlsVisible(true);
+    }
+  }, [isSyncing, isLandscape]);
 
   // ── Process a confirmed match — update all app state ──
   const handleMatch = async (data, isAutoAdvance) => {
@@ -4461,10 +4485,29 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
       zIndex: 10,
       display: "flex",
       flexDirection: "column"
-    }
+    },
+    onPointerMove: isLandscape ? bumpControls : undefined,
+    onTouchStart: isLandscape ? bumpControls : undefined
   }, /*#__PURE__*/React.createElement("div", {
     className: "safe-top",
-    style: {
+    style: isLandscape ? {
+      padding: "max(20px, calc(env(safe-area-inset-top) + 12px)) 20px 16px",
+      display: "flex",
+      flexDirection: "column",
+      width: "270px",
+      flexShrink: 0,
+      position: "fixed",
+      top: 0,
+      left: 0,
+      bottom: "130px",
+      background: "rgba(8,8,16,0.97)",
+      borderRight: "1px solid rgba(255,255,255,0.06)",
+      overflowY: "auto",
+      zIndex: 15,
+      opacity: controlsVisible ? 1 : 0,
+      transition: "opacity 0.35s",
+      pointerEvents: controlsVisible ? "auto" : "none"
+    } : {
       padding: "0 20px 16px",
       display: "flex",
       alignItems: "center",
@@ -4580,7 +4623,8 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
       background: "rgba(255,255,255,0.1)",
       flexShrink: 0,
       cursor: songDuration ? "pointer" : "default",
-      position: "relative"
+      position: "relative",
+      display: isLandscape ? "none" : "block"
     },
     onClick: e => {
       if (!songDuration) return;
@@ -4606,7 +4650,8 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
     style: {
       flex: 1,
       overflow: "hidden",
-      position: "relative"
+      position: "relative",
+      marginLeft: isLandscape ? 270 : 0
     }
   }, isResyncing && /*#__PURE__*/React.createElement("div", {
     style: {
@@ -4773,7 +4818,20 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
     }
   })), /*#__PURE__*/React.createElement("div", {
     className: "safe-bottom",
-    style: {
+    style: isLandscape ? {
+      padding: "12px 20px max(12px, calc(env(safe-area-inset-bottom) + 8px))",
+      position: "fixed",
+      left: 0,
+      bottom: 0,
+      width: "270px",
+      background: "rgba(8,8,16,0.97)",
+      borderRight: "1px solid rgba(255,255,255,0.06)",
+      borderTop: "1px solid rgba(255,255,255,0.05)",
+      zIndex: 15,
+      opacity: controlsVisible ? 1 : 0,
+      transition: "opacity 0.35s",
+      pointerEvents: controlsVisible ? "auto" : "none"
+    } : {
       padding: "12px 20px 0",
       flexShrink: 0
     }
@@ -5117,7 +5175,7 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
     style: {
       animation: "fade-up 0.5s ease both",
       width: "100%",
-      maxWidth: "320px"
+      maxWidth: isLandscape ? "560px" : "320px"
     }
   }, /*#__PURE__*/React.createElement(Vinyl, {
     size: 130,
