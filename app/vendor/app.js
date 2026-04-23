@@ -1047,7 +1047,7 @@ function Liri() {
     try {
       const session = await sb.auth.getSession();
       const token = session?.data?.session?.access_token;
-      const resp = await fetch("/api/delete-account", {
+      const resp = await fetch(`${window.Capacitor ? "https://www.getliri.com" : ""}/api/delete-account`, {
         method: "POST",
         headers: { "Content-Type": "application/json", "Authorization": `Bearer ${token}` },
       });
