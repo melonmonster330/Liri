@@ -433,6 +433,9 @@ function Liri() {
   const [bugText, setBugText] = useState("");
   const [bugSending, setBugSending] = useState(false);
   const [bugSent, setBugSent] = useState(false);
+  const [showDeleteAccount, setShowDeleteAccount] = useState(false);
+  const [deleteWorking, setDeleteWorking] = useState(false);
+  const [deleteError, setDeleteError] = useState(null);
   const [showHistory, setShowHistory] = useState(false);
   const [showTrackList, setShowTrackList] = useState(false);
   const [collapsedSides, setCollapsedSides] = useState(new Set());
@@ -1037,6 +1040,27 @@ function Liri() {
     await sb.auth.signOut();
     setShowSettings(false);
     reset();
+  };
+  const handleDeleteAccount = async () => {
+    setDeleteWorking(true);
+    setDeleteError(null);
+    try {
+      const session = await sb.auth.getSession();
+      const token = session?.data?.session?.access_token;
+      const resp = await fetch("/api/delete-account", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "Authorization": `Bearer ${token}` },
+      });
+      const data = await resp.json();
+      if (!resp.ok) throw new Error(data.error || "Delete failed");
+      await sb.auth.signOut();
+      setShowDeleteAccount(false);
+      setShowSettings(false);
+      reset();
+    } catch (e) {
+      setDeleteError(e.message);
+      setDeleteWorking(false);
+    }
   };
 
   // ── Bug report ──────────────────────────────────────────────────────────
@@ -4350,14 +4374,50 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
       cursor: "pointer",
       fontFamily: "inherit"
     }
-  }, "Sign Out"), /*#__PURE__*/React.createElement("div", {
+  }, "Sign Out"), /*#__PURE__*/React.createElement("button", {
+    onClick: () => { setShowDeleteAccount(true); setDeleteError(null); },
+    style: {
+      width: "100%",
+      background: "transparent",
+      border: "none",
+      color: "rgba(220,80,80,0.5)",
+      borderRadius: "14px",
+      padding: "10px",
+      fontSize: "12px",
+      cursor: "pointer",
+      fontFamily: "inherit",
+      marginTop: "4px"
+    }
+  }, "Delete Account"), /*#__PURE__*/React.createElement("div", {
     style: {
       textAlign: "center",
       marginTop: "16px",
       fontSize: "11px",
       color: "rgba(255,255,255,0.1)"
     }
-  }, "Liri v", APP_VERSION, " \xB7 getliri.com")))), showHistory && /*#__PURE__*/React.createElement("div", {
+  }, "Liri v", APP_VERSION, " \xB7 getliri.com")))), showDeleteAccount && /*#__PURE__*/React.createElement("div", {
+    onClick: () => { if (!deleteWorking) setShowDeleteAccount(false); },
+    style: { position: "fixed", inset: 0, zIndex: 300, background: "rgba(0,0,0,0.7)", backdropFilter: "blur(4px)", display: "flex", alignItems: "center", justifyContent: "center", padding: "24px" }
+  }, /*#__PURE__*/React.createElement("div", {
+    onClick: e => e.stopPropagation(),
+    style: { background: "#0f0f1c", borderRadius: "20px", padding: "28px 24px", maxWidth: "320px", width: "100%", border: "1px solid rgba(220,80,80,0.2)" }
+  }, /*#__PURE__*/React.createElement("div", {
+    style: { fontSize: "18px", fontWeight: "700", color: "#fff", marginBottom: "10px" }
+  }, "Delete Account?"), /*#__PURE__*/React.createElement("div", {
+    style: { fontSize: "13px", color: "rgba(255,255,255,0.5)", lineHeight: "1.5", marginBottom: "20px" }
+  }, "This permanently deletes your account, library, and listening history. This cannot be undone."), deleteError && /*#__PURE__*/React.createElement("div", {
+    style: { fontSize: "12px", color: "#e07070", marginBottom: "14px" }
+  }, deleteError), /*#__PURE__*/React.createElement("div", {
+    style: { display: "flex", gap: "10px" }
+  }, /*#__PURE__*/React.createElement("button", {
+    onClick: () => setShowDeleteAccount(false),
+    disabled: deleteWorking,
+    style: { flex: 1, background: "rgba(255,255,255,0.06)", border: "none", borderRadius: "12px", padding: "12px", fontSize: "14px", color: "rgba(255,255,255,0.6)", cursor: "pointer", fontFamily: "inherit" }
+  }, "Cancel"), /*#__PURE__*/React.createElement("button", {
+    onClick: handleDeleteAccount,
+    disabled: deleteWorking,
+    style: { flex: 1, background: "rgba(200,60,60,0.7)", border: "none", borderRadius: "12px", padding: "12px", fontSize: "14px", fontWeight: "600", color: "#fff", cursor: deleteWorking ? "not-allowed" : "pointer", fontFamily: "inherit", opacity: deleteWorking ? 0.6 : 1 }
+  }, deleteWorking ? "Deleting…" : "Delete")))), showHistory && /*#__PURE__*/React.createElement("div", {
     onClick: () => setShowHistory(false),
     style: {
       position: "fixed",
