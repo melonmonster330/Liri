@@ -1045,8 +1045,9 @@ function Liri() {
     setDeleteWorking(true);
     setDeleteError(null);
     try {
-      const session = await sb.auth.getSession();
-      const token = session?.data?.session?.access_token;
+      const { data: { session } } = await sb.auth.getSession();
+      const token = session?.access_token || sessionTokenRef.current;
+      if (!token) throw new Error("Not signed in");
       const resp = await fetch(`${window.Capacitor ? "https://www.getliri.com" : ""}/api/delete-account`, {
         method: "POST",
         headers: { "Content-Type": "application/json", "Authorization": `Bearer ${token}` },

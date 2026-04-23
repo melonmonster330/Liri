@@ -84,7 +84,7 @@ module.exports = async (req, res) => {
   if (req.method !== "POST")   return res.status(405).json({ error: "Method not allowed" });
 
   const auth = await verifyAuth(req);
-  if (!auth) return res.status(401).json({ error: "Unauthorized" });
+  if (!auth || auth._authError || !auth.userId) return res.status(401).json({ error: "Unauthorized" });
 
   try {
     // Cancel Stripe subscription if active
