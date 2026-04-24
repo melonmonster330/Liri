@@ -916,6 +916,7 @@ function Liri() {
         fetchHistory(u);
         fetch(`${window.Capacitor ? "https://www.getliri.com" : ""}/api/subscription-status`, { headers: { "Authorization": `Bearer ${session.access_token}` } })
           .then(r => r.ok ? r.json() : null).then(d => { if (d?.tier) { setUserTier(d.tier); setAlbumCount(d.albumCount || 0); } }).catch(() => {});
+        syncAppleSubscription(session.access_token);
       }
     });
     const {
@@ -935,6 +936,82 @@ function Liri() {
     });
     return () => subscription.unsubscribe();
   }, []);
+  // ── Apple IAP ─────────────────────────────────────────────────────────────
+  const [iapPrice,   setIapPrice]   = useState("$5.99/mo");
+  const [iapWorking, setIapWorking] = useState(false);
+
+  // Fetch live price from App Store on iOS (best-effort)
+  useEffect(() => {
+    if (!IS_IOS || !window.Capacitor?.Plugins?.LiriIAP) return;
+    window.Capacitor.Plugins.LiriIAP.fetchProduct()
+      .then(p => { if (p?.displayPrice) setIapPrice(`${p.displayPrice}/mo`); })
+      .catch(() => {});
+  }, []);
+
+  // On iOS login, check for an active Apple subscription and sync with server
+  const syncAppleSubscription = async (token) => {
+    if (!IS_IOS || !window.Capacitor?.Plugins?.LiriIAP) return;
+    try {
+      const status = await window.Capacitor.Plugins.LiriIAP.getSubscriptionStatus();
+      if (status?.isActive && status?.signedTransaction) {
+        const r = await fetch("https://www.getliri.com/api/stripe-checkout", {
+          method: "POST",
+          headers: { "Content-Type": "application/json", "Authorization": `Bearer ${token}` },
+          body: JSON.stringify({ appleTransaction: status.signedTransaction }),
+        });
+        if (r.ok) setUserTier("premium");
+      }
+    } catch {}
+  };
+
+  const upgradeWithApple = async () => {
+    if (!window.Capacitor?.Plugins?.LiriIAP) return;
+    setIapWorking(true);
+    try {
+      const result = await window.Capacitor.Plugins.LiriIAP.purchase();
+      if (result?.signedTransaction) {
+        const token = sessionTokenRef.current;
+        const r = await fetch("https://www.getliri.com/api/stripe-checkout", {
+          method: "POST",
+          headers: { "Content-Type": "application/json", "Authorization": `Bearer ${token}` },
+          body: JSON.stringify({ appleTransaction: result.signedTransaction }),
+        });
+        const data = await r.json();
+        if (data.tier === "premium") {
+          setUserTier("premium");
+          setAlbumCount(prev => prev); // keep count, limit lifted
+        } else {
+          alert(data.error || "Could not verify purchase. Please contact support.");
+        }
+      }
+    } catch (e) {
+      if (e?.message !== "cancelled") alert("Purchase failed. Please try again.");
+    } finally {
+      setIapWorking(false);
+    }
+  };
+
+  const restoreApplePurchases = async () => {
+    if (!window.Capacitor?.Plugins?.LiriIAP) return;
+    setIapWorking(true);
+    try {
+      const status = await window.Capacitor.Plugins.LiriIAP.restorePurchases();
+      if (status?.isActive && status?.signedTransaction) {
+        const token = sessionTokenRef.current;
+        const r = await fetch("https://www.getliri.com/api/stripe-checkout", {
+          method: "POST",
+          headers: { "Content-Type": "application/json", "Authorization": `Bearer ${token}` },
+          body: JSON.stringify({ appleTransaction: status.signedTransaction }),
+        });
+        if ((await r.json()).tier === "premium") setUserTier("premium");
+        else alert("No active subscription found.");
+      } else {
+        alert("No active subscription found.");
+      }
+    } catch { alert("Restore failed. Please try again."); }
+    finally { setIapWorking(false); }
+  };
+
   // ── Upgrade to Stripe Premium ──────────────────────────────────────────────
   const upgradeToStripe = async () => {
     setUpgradeWorking(true);
@@ -4056,8 +4133,11 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
         /*#__PURE__*/React.createElement("div", { style: { fontSize: "11px", color: "rgba(255,255,255,0.3)", marginTop: "2px" } }, `${albumCount}/10 records used`)
       ),
       IS_IOS
-        /* iOS — no pricing or payment links per App Store 3.1.1 */
-        ? /*#__PURE__*/React.createElement("div", { style: { fontSize: "11px", color: "rgba(255,255,255,0.35)", textAlign: "right", lineHeight: "1.5" } }, "Manage at", /*#__PURE__*/React.createElement("br", null), "getliri.com")
+        ? /*#__PURE__*/React.createElement("button", {
+            onClick: upgradeWithApple,
+            disabled: iapWorking,
+            style: { background: "linear-gradient(135deg,#d4a846,#c9807a)", color: "#080810", border: "none", borderRadius: "50px", padding: "7px 14px", fontSize: "12px", fontWeight: "700", cursor: "pointer", fontFamily: "inherit", whiteSpace: "nowrap", opacity: iapWorking ? 0.6 : 1 }
+          }, iapWorking ? "…" : `${iapPrice}`)
         : /*#__PURE__*/React.createElement("button", {
             onClick: () => { window.location.href = "/library?upgrade=true"; },
             style: { background: "linear-gradient(135deg,#d4a846,#c9807a)", color: "#080810", border: "none", borderRadius: "50px", padding: "7px 14px", fontSize: "12px", fontWeight: "700", cursor: "pointer", fontFamily: "inherit", whiteSpace: "nowrap" }
@@ -4375,7 +4455,11 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
       cursor: "pointer",
       fontFamily: "inherit"
     }
-  }, "Sign Out"), /*#__PURE__*/React.createElement("button", {
+  }, "Sign Out"), IS_IOS && /*#__PURE__*/React.createElement("button", {
+    onClick: restoreApplePurchases,
+    disabled: iapWorking,
+    style: { width: "100%", background: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.08)", color: "rgba(255,255,255,0.4)", borderRadius: "14px", padding: "14px", fontSize: "14px", cursor: "pointer", fontFamily: "inherit", marginTop: "8px", opacity: iapWorking ? 0.6 : 1 }
+  }, "Restore Purchases"), /*#__PURE__*/React.createElement("button", {
     onClick: () => { setShowDeleteAccount(true); setDeleteError(null); },
     style: {
       width: "100%",
@@ -5937,8 +6021,17 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
       fontSize: "15px"
     }
   }, "You've added 10 free records.", /*#__PURE__*/React.createElement("br", null), "Upgrade to keep building your collection."), IS_IOS
-    /* iOS — no pricing or payment links per App Store 3.1.1 */
-    ? /*#__PURE__*/React.createElement("div", { style: { fontSize: "14px", color: "rgba(255,255,255,0.4)", marginBottom: "12px", padding: "14px 32px", textAlign: "center", lineHeight: "1.6" } }, "Manage your account at", /*#__PURE__*/React.createElement("br", null), /*#__PURE__*/React.createElement("span", { style: { color: "#d4a846", fontWeight: "700" } }, "getliri.com"))
+    ? /*#__PURE__*/React.createElement(React.Fragment, null,
+        /*#__PURE__*/React.createElement("button", {
+          onClick: upgradeWithApple,
+          disabled: iapWorking,
+          style: { background: "linear-gradient(135deg,#d4a846,#c9807a)", color: "#080810", border: "none", borderRadius: "50px", padding: "14px 32px", fontSize: "14px", fontWeight: "700", cursor: "pointer", fontFamily: "inherit", marginBottom: "8px", width: "100%", opacity: iapWorking ? 0.6 : 1 }
+        }, iapWorking ? "Processing…" : `Subscribe · ${iapPrice}`),
+        /*#__PURE__*/React.createElement("button", {
+          onClick: restoreApplePurchases,
+          disabled: iapWorking,
+          style: { background: "none", border: "none", color: "rgba(255,255,255,0.3)", fontSize: "12px", cursor: "pointer", fontFamily: "inherit", padding: "8px", marginBottom: "4px" }
+        }, "Restore Purchases"))
     : /*#__PURE__*/React.createElement("button", {
         onClick: async () => {
           const { data: { session } } = await sb.auth.getSession();
