@@ -21,6 +21,7 @@
     { "source": "/privacy",      "destination": "/app/privacy.html" },
     { "source": "/support",      "destination": "/app/support.html" },
     { "source": "/vendor/:file", "destination": "/app/vendor/:file" },
-    { "source": "/test",         "destination": "/app/test.html"   }
+    { "source": "/test",         "destination": "/app/test.html"   },
+    { "source": "/admin",        "destination": "/app/admin.html"  }
   ]
 }

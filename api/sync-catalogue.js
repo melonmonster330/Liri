@@ -100,9 +100,142 @@ function albumToRow(album) {
   };
 }
 
+// ── Supabase helpers ──────────────────────────────────────────────────────────
+
+function sbGet(path, extraHeaders = {}) {
+  const url = process.env.SUPABASE_URL;
+  const key = process.env.SUPABASE_SERVICE_ROLE_KEY;
+  const hostname = url.replace(/^https?:\/\//, "");
+  return new Promise((resolve) => {
+    const req = https.request({ hostname, path: `/rest/v1/${path}`, method: "GET",
+      headers: { "apikey": key, "Authorization": `Bearer ${key}`, "Content-Type": "application/json", ...extraHeaders }
+    }, (res) => {
+      const chunks = [];
+      res.on("data", c => chunks.push(c));
+      res.on("end", () => {
+        try { resolve({ status: res.statusCode, body: JSON.parse(Buffer.concat(chunks).toString()), headers: res.headers }); }
+        catch { resolve({ status: res.statusCode, body: null, headers: res.headers }); }
+      });
+    });
+    req.on("error", () => resolve({ status: 0, body: null, headers: {} }));
+    req.setTimeout(10000, () => { req.destroy(); resolve({ status: 0, body: null, headers: {} }); });
+    req.end();
+  });
+}
+
+function sbAdminGet(path) {
+  const url = process.env.SUPABASE_URL;
+  const key = process.env.SUPABASE_SERVICE_ROLE_KEY;
+  const hostname = url.replace(/^https?:\/\//, "");
+  return new Promise((resolve) => {
+    const req = https.request({ hostname, path: `/auth/v1/${path}`, method: "GET",
+      headers: { "apikey": key, "Authorization": `Bearer ${key}` }
+    }, (res) => {
+      const chunks = [];
+      res.on("data", c => chunks.push(c));
+      res.on("end", () => {
+        try { resolve(JSON.parse(Buffer.concat(chunks).toString())); }
+        catch { resolve(null); }
+      });
+    });
+    req.on("error", () => resolve(null));
+    req.setTimeout(10000, () => { req.destroy(); resolve(null); });
+    req.end();
+  });
+}
+
+async function getAdminStats() {
+  const now = new Date();
+  const d7  = new Date(now - 7  * 86400000).toISOString();
+  const d30 = new Date(now - 30 * 86400000).toISOString();
+  const d1  = new Date(now - 1  * 86400000).toISOString();
+
+  const [usersResp, libraryResp, eventsResp, subsResp, releasesResp, flipsResp] = await Promise.all([
+    sbAdminGet("admin/users?page=1&per_page=1000"),
+    sbGet("user_vinyl_library?select=user_id,added_at&order=added_at.desc&limit=5000"),
+    sbGet("listening_events?select=platform,source,album_name,artist_name,logged_at&order=logged_at.desc&limit=2000"),
+    sbGet("subscriptions?select=tier,status"),
+    sbGet("vinyl_releases?select=id&limit=1", { "Prefer": "count=exact" }),
+    sbGet("flip_events?select=id&limit=1", { "Prefer": "count=exact" }),
+  ]);
+
+  // Users
+  const allUsers = usersResp?.users || [];
+  const totalUsers = allUsers.length;
+  const newUsers7d  = allUsers.filter(u => u.created_at > d7).length;
+  const newUsers30d = allUsers.filter(u => u.created_at > d30).length;
+  const recentSignups = allUsers
+    .sort((a, b) => b.created_at.localeCompare(a.created_at))
+    .slice(0, 8)
+    .map(u => ({ email: u.email, created_at: u.created_at }));
+
+  // Library
+  const libraryRows = Array.isArray(libraryResp.body) ? libraryResp.body : [];
+  const totalAlbums = libraryRows.length;
+  const uniqueLibUsers = new Set(libraryRows.map(r => r.user_id)).size;
+  const avgAlbums = uniqueLibUsers > 0 ? (totalAlbums / uniqueLibUsers).toFixed(1) : 0;
+
+  // Listening events
+  const events = Array.isArray(eventsResp.body) ? eventsResp.body : [];
+  const totalPlays  = events.length;
+  const plays7d     = events.filter(e => e.logged_at > d7).length;
+  const plays1d     = events.filter(e => e.logged_at > d1).length;
+  const webPlays    = events.filter(e => e.platform === "web").length;
+  const iosPlays    = events.filter(e => e.platform === "ios").length;
+  const recogPlays  = events.filter(e => e.source === "recognition").length;
+  const autoPlays   = events.filter(e => e.source === "auto_advance").length;
+
+  // Top albums (last 30d)
+  const recentEvents = events.filter(e => e.logged_at > d30);
+  const albumCounts = {};
+  for (const e of recentEvents) {
+    if (!e.album_name) continue;
+    const key = `${e.album_name}|||${e.artist_name || ""}`;
+    albumCounts[key] = (albumCounts[key] || 0) + 1;
+  }
+  const topAlbums = Object.entries(albumCounts)
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, 8)
+    .map(([key, count]) => { const [album, artist] = key.split("|||"); return { album, artist, count }; });
+
+  // Subscriptions
+  const subs = Array.isArray(subsResp.body) ? subsResp.body : [];
+  const premiumUsers = subs.filter(s => s.tier === "premium" && ["active","trialing"].includes(s.status)).length;
+
+  // Catalogue & flips
+  const catalogueTotal = parseInt(releasesResp.headers?.["content-range"]?.split("/")[1] || "0", 10);
+  const totalFlips     = parseInt(flipsResp.headers?.["content-range"]?.split("/")[1] || "0", 10);
+
+  return {
+    users:    { total: totalUsers, new7d: newUsers7d, new30d: newUsers30d, premium: premiumUsers, recentSignups },
+    library:  { totalAlbums, uniqueUsers: uniqueLibUsers, avgAlbums },
+    plays:    { total: totalPlays, last7d: plays7d, last24h: plays1d, web: webPlays, ios: iosPlays, recognition: recogPlays, autoAdvance: autoPlays },
+    topAlbums,
+    catalogue: { releases: catalogueTotal, flips: totalFlips },
+    generatedAt: now.toISOString(),
+  };
+}
+
 // ── Main handler ──────────────────────────────────────────────────────────────
 
 module.exports = async (req, res) => {
+  // ── GET: admin dashboard stats ─────────────────────────────────────────────
+  if (req.method === "GET") {
+    const adminPw  = process.env.ADMIN_PASSWORD;
+    const provided = req.headers["x-admin-password"];
+    if (!adminPw || provided !== adminPw) {
+      return res.status(401).json({ error: "Unauthorized" });
+    }
+    try {
+      const stats = await getAdminStats();
+      res.setHeader("Cache-Control", "no-store");
+      return res.status(200).json(stats);
+    } catch (e) {
+      return res.status(500).json({ error: e.message });
+    }
+  }
+
+  // ── POST: cron sync (existing behaviour) ──────────────────────────────────
   // Allow Vercel's cron runner OR manual trigger with a secret header
   const cronSecret = process.env.CRON_SECRET;
   const provided   = req.headers["x-cron-secret"] || req.headers["authorization"]?.replace("Bearer ", "");

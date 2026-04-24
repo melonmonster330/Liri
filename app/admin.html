@@ -1,0 +1,257 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Liri Admin</title>
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+  :root {
+    --bg: #080810;
+    --surface: #0f0f1c;
+    --border: rgba(255,255,255,0.07);
+    --gold: #d4a846;
+    --muted: rgba(255,255,255,0.35);
+    --dim: rgba(255,255,255,0.12);
+  }
+  body { background: var(--bg); color: #fff; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; min-height: 100vh; }
+
+  /* ── Login ── */
+  #login { display: flex; flex-direction: column; align-items: center; justify-content: center; min-height: 100vh; gap: 14px; }
+  #login h1 { font-size: 22px; font-weight: 700; letter-spacing: -0.5px; color: var(--gold); }
+  #login input { background: var(--surface); border: 1px solid var(--border); color: #fff; border-radius: 12px; padding: 12px 16px; font-size: 15px; width: 280px; outline: none; font-family: inherit; }
+  #login input:focus { border-color: rgba(212,168,70,0.4); }
+  #login button { background: var(--gold); color: #080810; border: none; border-radius: 12px; padding: 12px 32px; font-size: 15px; font-weight: 700; cursor: pointer; font-family: inherit; width: 280px; }
+  #login .err { color: #e07070; font-size: 13px; }
+
+  /* ── Dashboard ── */
+  #dash { display: none; max-width: 900px; margin: 0 auto; padding: 32px 20px 60px; }
+  .header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 28px; }
+  .header h1 { font-size: 20px; font-weight: 700; color: var(--gold); }
+  .header-right { display: flex; align-items: center; gap: 12px; }
+  .updated { font-size: 12px; color: var(--muted); }
+  .refresh-btn { background: var(--surface); border: 1px solid var(--border); color: var(--muted); border-radius: 8px; padding: 6px 14px; font-size: 12px; cursor: pointer; font-family: inherit; }
+  .refresh-btn:hover { color: #fff; }
+
+  .grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; margin-bottom: 12px; }
+  .grid-2 { grid-template-columns: repeat(2, 1fr); }
+  @media (max-width: 600px) { .grid, .grid.grid-2 { grid-template-columns: 1fr 1fr; } }
+
+  .card { background: var(--surface); border: 1px solid var(--border); border-radius: 16px; padding: 18px 20px; }
+  .card-label { font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.06em; margin-bottom: 6px; }
+  .card-value { font-size: 32px; font-weight: 700; letter-spacing: -1px; }
+  .card-sub { font-size: 12px; color: var(--muted); margin-top: 4px; }
+  .card-gold .card-value { color: var(--gold); }
+
+  .section { background: var(--surface); border: 1px solid var(--border); border-radius: 16px; padding: 20px; margin-bottom: 12px; }
+  .section-title { font-size: 12px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.06em; margin-bottom: 14px; }
+
+  .bar-row { display: flex; align-items: center; gap: 10px; margin-bottom: 10px; }
+  .bar-row:last-child { margin-bottom: 0; }
+  .bar-label { font-size: 13px; width: 180px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; flex-shrink: 0; }
+  .bar-label span { font-size: 11px; color: var(--muted); display: block; }
+  .bar-track { flex: 1; background: var(--dim); border-radius: 4px; height: 6px; overflow: hidden; }
+  .bar-fill { height: 100%; background: var(--gold); border-radius: 4px; transition: width 0.4s; }
+  .bar-count { font-size: 12px; color: var(--muted); width: 30px; text-align: right; flex-shrink: 0; }
+
+  .signup-row { display: flex; justify-content: space-between; align-items: center; padding: 8px 0; border-bottom: 1px solid var(--border); font-size: 13px; }
+  .signup-row:last-child { border-bottom: none; }
+  .signup-email { color: rgba(255,255,255,0.7); }
+  .signup-date { color: var(--muted); font-size: 11px; }
+
+  .split-row { display: flex; gap: 20px; }
+  .split-item { flex: 1; }
+  .split-label { font-size: 11px; color: var(--muted); margin-bottom: 4px; }
+  .split-value { font-size: 20px; font-weight: 700; }
+  .split-pct { font-size: 11px; color: var(--muted); margin-top: 2px; }
+  .split-bar { height: 4px; border-radius: 2px; margin-top: 8px; background: var(--dim); overflow: hidden; }
+  .split-bar-fill { height: 100%; border-radius: 2px; background: var(--gold); }
+
+  .loading { color: var(--muted); text-align: center; padding: 60px; font-size: 14px; }
+</style>
+</head>
+<body>
+
+<div id="login">
+  <h1>Liri Admin</h1>
+  <input type="password" id="pw-input" placeholder="Password" autocomplete="current-password">
+  <div class="err" id="login-err"></div>
+  <button id="login-btn">Enter</button>
+</div>
+
+<div id="dash">
+  <div class="header">
+    <h1>Liri Admin</h1>
+    <div class="header-right">
+      <span class="updated" id="updated-at"></span>
+      <button class="refresh-btn" id="refresh-btn">Refresh</button>
+    </div>
+  </div>
+  <div id="content"><div class="loading">Loading…</div></div>
+</div>
+
+<script>
+const API = "/api/sync-catalogue";
+let pw = "";
+
+function fmt(n) { return n?.toLocaleString() ?? "—"; }
+function pct(a, b) { return b > 0 ? Math.round(a / b * 100) : 0; }
+function timeAgo(iso) {
+  const d = new Date(iso), now = new Date();
+  const diff = now - d, mins = Math.floor(diff / 60000), hrs = Math.floor(mins / 60), days = Math.floor(hrs / 24);
+  if (days > 30) return d.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
+  if (days > 0)  return `${days}d ago`;
+  if (hrs > 0)   return `${hrs}h ago`;
+  return `${mins}m ago`;
+}
+
+async function load() {
+  const r = await fetch(API, { headers: { "x-admin-password": pw } });
+  if (r.status === 401) { showLogin("Wrong password"); return; }
+  if (!r.ok) { document.getElementById("content").innerHTML = `<div class="loading">Error loading stats</div>`; return; }
+  const d = await r.json();
+  render(d);
+  document.getElementById("updated-at").textContent = "Updated " + timeAgo(d.generatedAt);
+}
+
+function render(d) {
+  const { users, library, plays, topAlbums, catalogue } = d;
+  const totalPlatform = plays.web + plays.ios || 1;
+  const totalSource   = plays.recognition + plays.autoAdvance || 1;
+  const topMax = topAlbums[0]?.count || 1;
+
+  document.getElementById("content").innerHTML = `
+    <div class="grid">
+      <div class="card card-gold">
+        <div class="card-label">Total Users</div>
+        <div class="card-value">${fmt(users.total)}</div>
+        <div class="card-sub">+${users.new7d} this week · +${users.new30d} this month</div>
+      </div>
+      <div class="card">
+        <div class="card-label">Premium</div>
+        <div class="card-value">${fmt(users.premium)}</div>
+        <div class="card-sub">${pct(users.premium, users.total)}% of users</div>
+      </div>
+      <div class="card">
+        <div class="card-label">Avg Albums / User</div>
+        <div class="card-value">${library.avgAlbums}</div>
+        <div class="card-sub">${fmt(library.totalAlbums)} total in libraries</div>
+      </div>
+    </div>
+
+    <div class="grid">
+      <div class="card card-gold">
+        <div class="card-label">Total Plays</div>
+        <div class="card-value">${fmt(plays.total)}</div>
+        <div class="card-sub">+${plays.last7d} this week</div>
+      </div>
+      <div class="card">
+        <div class="card-label">Plays Today</div>
+        <div class="card-value">${fmt(plays.last24h)}</div>
+        <div class="card-sub">last 24 hours</div>
+      </div>
+      <div class="card">
+        <div class="card-label">Catalogue</div>
+        <div class="card-value">${fmt(catalogue.releases)}</div>
+        <div class="card-sub">${fmt(catalogue.flips)} total flips</div>
+      </div>
+    </div>
+
+    <div class="grid grid-2">
+      <div class="section">
+        <div class="section-title">Platform</div>
+        <div class="split-row">
+          <div class="split-item">
+            <div class="split-label">iOS</div>
+            <div class="split-value">${fmt(plays.ios)}</div>
+            <div class="split-pct">${pct(plays.ios, totalPlatform)}%</div>
+            <div class="split-bar"><div class="split-bar-fill" style="width:${pct(plays.ios, totalPlatform)}%"></div></div>
+          </div>
+          <div class="split-item">
+            <div class="split-label">Web</div>
+            <div class="split-value">${fmt(plays.web)}</div>
+            <div class="split-pct">${pct(plays.web, totalPlatform)}%</div>
+            <div class="split-bar"><div class="split-bar-fill" style="width:${pct(plays.web, totalPlatform)}%"></div></div>
+          </div>
+        </div>
+      </div>
+      <div class="section">
+        <div class="section-title">Play Source</div>
+        <div class="split-row">
+          <div class="split-item">
+            <div class="split-label">Recognition</div>
+            <div class="split-value">${fmt(plays.recognition)}</div>
+            <div class="split-pct">${pct(plays.recognition, totalSource)}%</div>
+            <div class="split-bar"><div class="split-bar-fill" style="width:${pct(plays.recognition, totalSource)}%"></div></div>
+          </div>
+          <div class="split-item">
+            <div class="split-label">Auto-advance</div>
+            <div class="split-value">${fmt(plays.autoAdvance)}</div>
+            <div class="split-pct">${pct(plays.autoAdvance, totalSource)}%</div>
+            <div class="split-bar"><div class="split-bar-fill" style="width:${pct(plays.autoAdvance, totalSource)}%"></div></div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="grid grid-2">
+      <div class="section">
+        <div class="section-title">Top Albums (last 30d)</div>
+        ${topAlbums.length === 0 ? '<div style="color:var(--muted);font-size:13px">No data yet</div>' :
+          topAlbums.map(a => `
+          <div class="bar-row">
+            <div class="bar-label">${esc(a.album)}<span>${esc(a.artist)}</span></div>
+            <div class="bar-track"><div class="bar-fill" style="width:${pct(a.count, topMax)}%"></div></div>
+            <div class="bar-count">${a.count}</div>
+          </div>`).join("")}
+      </div>
+      <div class="section">
+        <div class="section-title">Recent Signups</div>
+        ${users.recentSignups.length === 0 ? '<div style="color:var(--muted);font-size:13px">No signups yet</div>' :
+          users.recentSignups.map(u => `
+          <div class="signup-row">
+            <span class="signup-email">${esc(u.email)}</span>
+            <span class="signup-date">${timeAgo(u.created_at)}</span>
+          </div>`).join("")}
+      </div>
+    </div>
+  `;
+}
+
+function esc(s) { return (s || "").replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;"); }
+
+function showLogin(err) {
+  document.getElementById("dash").style.display = "none";
+  document.getElementById("login").style.display = "flex";
+  document.getElementById("login-err").textContent = err || "";
+}
+
+async function tryLogin() {
+  pw = document.getElementById("pw-input").value.trim();
+  if (!pw) return;
+  document.getElementById("login-btn").textContent = "Checking…";
+  document.getElementById("login").style.display = "none";
+  document.getElementById("dash").style.display = "block";
+  await load();
+  document.getElementById("login-btn").textContent = "Enter";
+  sessionStorage.setItem("liri_admin_pw", pw);
+}
+
+document.getElementById("login-btn").addEventListener("click", tryLogin);
+document.getElementById("pw-input").addEventListener("keydown", e => { if (e.key === "Enter") tryLogin(); });
+document.getElementById("refresh-btn").addEventListener("click", load);
+
+// Auto-restore session
+const saved = sessionStorage.getItem("liri_admin_pw");
+if (saved) {
+  pw = saved;
+  document.getElementById("login").style.display = "none";
+  document.getElementById("dash").style.display = "block";
+  load();
+}
+
+// Auto-refresh every 60s
+setInterval(() => { if (pw) load(); }, 60000);
+</script>
+</body>
+</html>
