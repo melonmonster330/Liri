@@ -586,6 +586,8 @@
       const [showUpgrade, setShowUpgrade]   = useState(false);
       const [upgradeWorking, setUpgradeWorking] = useState(false);
       const [checkoutSuccess, setCheckoutSuccess] = useState(false);
+      const [iapPrice, setIapPrice] = useState("$5.99/mo");
+      const IS_IOS = !!window.Capacitor;
 
       // ── Auth ──
       useEffect(() => {
@@ -799,6 +801,42 @@
         setUndoAlbum(null);
       };
 
+      // ── Fetch live IAP price on iOS ──
+      useEffect(() => {
+        if (!IS_IOS || !window.Capacitor?.Plugins?.LiriIAP) return;
+        window.Capacitor.Plugins.LiriIAP.fetchProduct()
+          .then(p => { if (p?.displayPrice) setIapPrice(`${p.displayPrice}/mo`); })
+          .catch(() => {});
+      }, []);
+
+      // ── Upgrade via Apple IAP (iOS only) ──
+      const upgradeWithApple = async () => {
+        if (!window.Capacitor?.Plugins?.LiriIAP) return;
+        setUpgradeWorking(true);
+        try {
+          const result = await window.Capacitor.Plugins.LiriIAP.purchase();
+          if (result?.signedTransaction) {
+            const token = sessionTokenRef.current;
+            const r = await fetch(`${API_BASE}/api/stripe-checkout`, {
+              method: "POST",
+              headers: { "Content-Type": "application/json", "Authorization": `Bearer ${token}` },
+              body: JSON.stringify({ appleTransaction: result.signedTransaction }),
+            });
+            const data = await r.json();
+            if (data.tier === "premium") {
+              setSubscription(prev => ({ ...prev, tier: "premium", albumLimit: null }));
+              setShowUpgrade(false);
+            } else {
+              alert(data.error || "Could not verify purchase. Please contact support.");
+            }
+          }
+        } catch (e) {
+          if (e?.message !== "cancelled") alert("Purchase failed. Please try again.");
+        } finally {
+          setUpgradeWorking(false);
+        }
+      };
+
       // ── Upgrade to premium via Stripe Checkout ──
       const upgradeToStripe = async () => {
         setUpgradeWorking(true);
@@ -945,10 +983,17 @@
             {subscription?.tier === "premium" && (
               <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 24 }}>
                 <div style={{ fontSize: 12, color: "rgba(212,168,70,0.7)", fontWeight: 600 }}>✦ Liri Premium</div>
-                <button onClick={openBillingPortal} disabled={upgradeWorking}
-                  style={{ background: "none", border: "1px solid rgba(255,255,255,0.1)", color: "rgba(255,255,255,0.3)", borderRadius: 50, padding: "6px 14px", fontSize: 11, cursor: upgradeWorking ? "wait" : "pointer", fontFamily: "inherit" }}>
-                  {upgradeWorking ? "…" : "Manage plan"}
-                </button>
+                {IS_IOS ? (
+                  <button onClick={() => window.open("https://apps.apple.com/account/subscriptions", "_system")}
+                    style={{ background: "none", border: "1px solid rgba(255,255,255,0.1)", color: "rgba(255,255,255,0.3)", borderRadius: 50, padding: "6px 14px", fontSize: 11, cursor: "pointer", fontFamily: "inherit" }}>
+                    Manage plan
+                  </button>
+                ) : (
+                  <button onClick={openBillingPortal} disabled={upgradeWorking}
+                    style={{ background: "none", border: "1px solid rgba(255,255,255,0.1)", color: "rgba(255,255,255,0.3)", borderRadius: 50, padding: "6px 14px", fontSize: 11, cursor: upgradeWorking ? "wait" : "pointer", fontFamily: "inherit" }}>
+                    {upgradeWorking ? "…" : "Manage plan"}
+                  </button>
+                )}
               </div>
             )}
           </div>
@@ -1072,26 +1117,34 @@
               </div>
             </>
           ) : (
-            /* ── iOS version: no pricing, no payment links (App Store 3.1.1) ── */
+            /* ── iOS version: IAP purchase (App Store 3.1.1 compliant) ── */
             <>
-              <div onClick={() => setShowUpgrade(false)}
+              <div onClick={() => { if (!upgradeWorking) setShowUpgrade(false); }}
                 style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.75)", zIndex: 20, backdropFilter: "blur(4px)", WebkitBackdropFilter: "blur(4px)" }} />
               <div style={{ position: "fixed", left: 0, right: 0, bottom: 0, zIndex: 21, background: "#0d0d1c", borderRadius: "28px 28px 0 0", padding: "0 0 max(40px, env(safe-area-inset-bottom))", animation: "sheet-up 0.28s cubic-bezier(0.4,0,0.2,1)", overflow: "hidden" }}>
                 <div style={{ height: 3, background: "linear-gradient(90deg,#d4a846,#c9807a,#d4a846)" }} />
                 <div style={{ padding: "20px 28px 0", textAlign: "center" }}>
-                  <div style={{ width: 36, height: 4, borderRadius: 2, background: "rgba(255,255,255,0.1)", margin: "0 auto 28px" }} />
-                  <div style={{ width: 64, height: 64, borderRadius: "50%", background: "rgba(212,168,70,0.1)", border: "1px solid rgba(212,168,70,0.2)", display: "flex", alignItems: "center", justifyContent: "center", margin: "0 auto 20px" }}>
-                    <svg width="30" height="30" viewBox="0 0 24 24" fill="none" stroke="#d4a846" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10"/><circle cx="12" cy="12" r="3"/></svg>
+                  <div style={{ width: 36, height: 4, borderRadius: 2, background: "rgba(255,255,255,0.1)", margin: "0 auto 24px" }} />
+                  <div style={{ width: 64, height: 64, borderRadius: "50%", background: "linear-gradient(135deg,rgba(212,168,70,0.15),rgba(201,128,122,0.15))", border: "1px solid rgba(212,168,70,0.25)", display: "flex", alignItems: "center", justifyContent: "center", margin: "0 auto 20px" }}>
+                    <svg width="30" height="30" viewBox="0 0 24 24" fill="none" stroke="#d4a846" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10"/><circle cx="12" cy="12" r="3"/><line x1="12" y1="2" x2="12" y2="5"/><line x1="12" y1="19" x2="12" y2="22"/></svg>
                   </div>
-                  <div style={{ fontSize: 22, fontWeight: 800, color: "#f0e6d3", marginBottom: 10, letterSpacing: "-0.4px" }}>Your free crate is full</div>
-                  <div style={{ fontSize: 14, color: "rgba(255,255,255,0.4)", lineHeight: 1.7, margin: "0 auto 28px", maxWidth: 270 }}>
-                    You've added 10 free records. To keep building your collection, manage your account at:
+                  <div style={{ fontSize: 24, fontWeight: 800, color: "#f0e6d3", marginBottom: 8, letterSpacing: "-0.5px" }}>Liri Premium</div>
+                  <div style={{ fontSize: 14, color: "rgba(255,255,255,0.4)", lineHeight: 1.6, margin: "0 auto 24px", maxWidth: 260 }}>
+                    {subscription?.albumCount >= 10 ? "Your free crate is full — upgrade to keep adding records." : "Unlimited records, all features. Support indie music tech."}
                   </div>
-                  <div style={{ fontSize: 18, fontWeight: 700, color: "#d4a846", marginBottom: 32, letterSpacing: "0.3px" }}>getliri.com</div>
-                  <button onClick={() => setShowUpgrade(false)}
-                    style={{ width: "100%", background: "rgba(255,255,255,0.06)", border: "1px solid rgba(255,255,255,0.1)", color: "rgba(255,255,255,0.6)", borderRadius: 50, padding: "15px", fontSize: 15, fontWeight: 600, cursor: "pointer", fontFamily: "inherit" }}>
-                    OK
+                  <div style={{ background: "rgba(255,255,255,0.03)", border: "1px solid rgba(255,255,255,0.06)", borderRadius: 18, padding: "4px 0", marginBottom: 24, textAlign: "left" }}>
+                    {[["Unlimited vinyl library"],["Lyrics synced to every track"],["Play history & stats"],["Cancel anytime"]].map(([text], i, arr) => (
+                      <div key={text} style={{ display: "flex", alignItems: "center", gap: 12, padding: "12px 20px", borderBottom: i < arr.length - 1 ? "1px solid rgba(255,255,255,0.04)" : "none" }}>
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#d4a846" strokeWidth="2.5" strokeLinecap="round"><path d="M20 6L9 17l-5-5"/></svg>
+                        <span style={{ fontSize: 13, color: "rgba(255,255,255,0.65)" }}>{text}</span>
+                      </div>
+                    ))}
+                  </div>
+                  <button onClick={upgradeWithApple} disabled={upgradeWorking}
+                    style={{ width: "100%", background: upgradeWorking ? "rgba(255,255,255,0.05)" : "linear-gradient(135deg,#d4a846,#c9807a)", color: upgradeWorking ? "rgba(255,255,255,0.3)" : "#080810", border: "none", borderRadius: 50, padding: "17px", fontSize: 16, fontWeight: 700, cursor: upgradeWorking ? "default" : "pointer", fontFamily: "inherit", marginBottom: 12 }}>
+                    {upgradeWorking ? "Opening…" : `Get Premium · ${iapPrice}`}
                   </button>
+                  <button onClick={() => setShowUpgrade(false)} style={{ background: "none", border: "none", color: "rgba(255,255,255,0.2)", fontSize: 13, cursor: "pointer", fontFamily: "inherit", padding: "8px", width: "100%" }}>Maybe later</button>
                 </div>
               </div>
             </>
