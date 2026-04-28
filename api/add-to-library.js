@@ -188,8 +188,8 @@ module.exports = async (req, res) => {
   const collectionId  = releaseId; // Discogs ID is our collection ID
 
   // ── Free tier limit ────────────────────────────────────────────────────────
-  if (!auth.isUnlimited) {
-    const tier = await getSubscriptionTier(auth.userId, false);
+  {
+    const tier = await getSubscriptionTier(auth.userId);
     if (tier === "free") {
       const { data: everRows } = await sbRequest(
         "GET",

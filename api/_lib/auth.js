@@ -117,7 +117,7 @@ async function decodeAndVerifyJWT(token) {
 }
 
 // ── Main: extract + verify auth from a request ───────────────────────────────
-// Returns { userId, email, isUnlimited } or null if the token is missing/invalid.
+// Returns { userId, email } or null if the token is missing/invalid.
 // Uses Supabase's /auth/v1/user endpoint to validate the token — works with
 // any JWT algorithm Supabase uses (HS256, ES256, sb_publishable_ keys, etc.)
 // without needing SUPABASE_JWT_SECRET or manual JWKS verification.
