@@ -1110,7 +1110,7 @@ function Liri() {
     const {
       error
     } = await sb.auth.resetPasswordForEmail(authEmail.trim(), {
-      redirectTo: window.location.origin + "/app"
+      redirectTo: "https://getliri.com/app"
     });
     setAuthWorking(false);
     setAuthError(error ? error.message : "Password reset link sent — check your email.");
