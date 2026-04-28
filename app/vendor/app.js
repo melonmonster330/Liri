@@ -436,6 +436,12 @@ function Liri() {
   const [showDeleteAccount, setShowDeleteAccount] = useState(false);
   const [deleteWorking, setDeleteWorking] = useState(false);
   const [deleteError, setDeleteError] = useState(null);
+  const [showChangePw, setShowChangePw] = useState(false);
+  const [changePwNew, setChangePwNew] = useState("");
+  const [changePwConfirm, setChangePwConfirm] = useState("");
+  const [changePwWorking, setChangePwWorking] = useState(false);
+  const [changePwError, setChangePwError] = useState(null);
+  const [changePwDone, setChangePwDone] = useState(false);
   const [showHistory, setShowHistory] = useState(false);
   const [showTrackList, setShowTrackList] = useState(false);
   const [collapsedSides, setCollapsedSides] = useState(new Set());
@@ -924,6 +930,13 @@ function Liri() {
         subscription
       }
     } = sb.auth.onAuthStateChange((_e, s) => {
+      if (_e === "PASSWORD_RECOVERY") {
+        setShowChangePw(true);
+        setChangePwError(null);
+        setChangePwNew("");
+        setChangePwConfirm("");
+        setChangePwDone(false);
+      }
       const u = s?.user || null;
       sessionTokenRef.current = s?.access_token || null;
       setUser(u);
@@ -1117,6 +1130,17 @@ function Liri() {
     await sb.auth.signOut();
     setShowSettings(false);
     reset();
+  };
+  const handleChangePassword = async () => {
+    setChangePwError(null);
+    if (changePwNew.length < 8) { setChangePwError("Password must be at least 8 characters."); return; }
+    if (changePwNew !== changePwConfirm) { setChangePwError("Passwords don't match."); return; }
+    setChangePwWorking(true);
+    const { error } = await sb.auth.updateUser({ password: changePwNew });
+    setChangePwWorking(false);
+    if (error) { setChangePwError(error.message); return; }
+    setChangePwDone(true);
+    setTimeout(() => { setShowChangePw(false); setChangePwNew(""); setChangePwConfirm(""); setChangePwDone(false); }, 2000);
   };
   const handleDeleteAccount = async () => {
     setDeleteWorking(true);
@@ -4443,6 +4467,9 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
       opacity: !bugText.trim() || bugSending ? 0.5 : 1
     }
   }, bugSent ? "✓ Sent!" : bugSending ? "Sending…" : "Send report"))), /*#__PURE__*/React.createElement("button", {
+    onClick: () => { setShowChangePw(true); setChangePwError(null); setChangePwNew(""); setChangePwConfirm(""); setChangePwDone(false); },
+    style: { width: "100%", background: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.08)", color: "rgba(255,255,255,0.4)", borderRadius: "14px", padding: "14px", fontSize: "14px", cursor: "pointer", fontFamily: "inherit", marginBottom: "8px" }
+  }, "Change Password"), /*#__PURE__*/React.createElement("button", {
     onClick: handleSignOut,
     style: {
       width: "100%",
@@ -4480,7 +4507,22 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
       fontSize: "11px",
       color: "rgba(255,255,255,0.1)"
     }
-  }, "Liri v", APP_VERSION, " \xB7 getliri.com")))), showDeleteAccount && /*#__PURE__*/React.createElement("div", {
+  }, "Liri v", APP_VERSION, " \xB7 getliri.com")))), showChangePw && /*#__PURE__*/React.createElement("div", {
+    onClick: () => { if (!changePwWorking && !changePwDone) setShowChangePw(false); },
+    style: { position: "fixed", inset: 0, zIndex: 400, background: "rgba(0,0,0,0.7)", backdropFilter: "blur(4px)", display: "flex", alignItems: "flex-end", justifyContent: "center" }
+  }, /*#__PURE__*/React.createElement("div", {
+    onClick: e => e.stopPropagation(),
+    style: { background: "#0f0f1c", borderRadius: "24px 24px 0 0", padding: "28px 28px max(40px,calc(env(safe-area-inset-bottom)+28px))", maxWidth: "520px", width: "100%", border: "1px solid rgba(255,255,255,0.07)" }
+  }, /*#__PURE__*/React.createElement("div", { style: { width: "40px", height: "4px", borderRadius: "2px", background: "rgba(255,255,255,0.12)", margin: "0 auto 20px" } }),
+  /*#__PURE__*/React.createElement("div", { style: { fontSize: "20px", fontWeight: "700", color: "#f0e6d3", textAlign: "center", marginBottom: "20px" } }, changePwDone ? "Password updated ✓" : "Change Password"),
+  changePwDone ? null : /*#__PURE__*/React.createElement(React.Fragment, null,
+    /*#__PURE__*/React.createElement("div", { style: { display: "flex", flexDirection: "column", gap: "10px", marginBottom: "16px" } },
+      /*#__PURE__*/React.createElement("input", { type: "password", placeholder: "New password (min 8 characters)", value: changePwNew, onChange: e => setChangePwNew(e.target.value), onKeyDown: e => e.key === "Enter" && handleChangePassword(), autoFocus: true, style: { width: "100%", background: "rgba(255,255,255,0.05)", border: "1px solid rgba(255,255,255,0.1)", color: "#f0e6d3", padding: "16px 18px", borderRadius: "14px", fontSize: "16px", fontFamily: "inherit" } }),
+      /*#__PURE__*/React.createElement("input", { type: "password", placeholder: "Confirm new password", value: changePwConfirm, onChange: e => setChangePwConfirm(e.target.value), onKeyDown: e => e.key === "Enter" && handleChangePassword(), style: { width: "100%", background: "rgba(255,255,255,0.05)", border: `1px solid ${changePwConfirm && changePwConfirm !== changePwNew ? "rgba(232,160,168,0.5)" : "rgba(255,255,255,0.1)"}`, color: "#f0e6d3", padding: "16px 18px", borderRadius: "14px", fontSize: "16px", fontFamily: "inherit" } })
+    ),
+    changePwError && /*#__PURE__*/React.createElement("div", { style: { fontSize: "13px", color: "#e8a0a8", textAlign: "center", marginBottom: "12px" } }, changePwError),
+    /*#__PURE__*/React.createElement("button", { onClick: handleChangePassword, disabled: changePwWorking, style: { width: "100%", background: "linear-gradient(135deg,#d4a846,#c9807a)", color: "#080810", border: "none", borderRadius: "14px", padding: "18px", fontSize: "15px", fontWeight: "700", cursor: changePwWorking ? "wait" : "pointer", opacity: changePwWorking ? 0.6 : 1, fontFamily: "inherit" } }, changePwWorking ? "Updating…" : "Update Password")
+  ))), showDeleteAccount && /*#__PURE__*/React.createElement("div", {
     onClick: () => { if (!deleteWorking) setShowDeleteAccount(false); },
     style: { position: "fixed", inset: 0, zIndex: 300, background: "rgba(0,0,0,0.7)", backdropFilter: "blur(4px)", display: "flex", alignItems: "center", justifyContent: "center", padding: "24px" }
   }, /*#__PURE__*/React.createElement("div", {
