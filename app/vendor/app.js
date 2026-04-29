@@ -979,7 +979,10 @@ function Liri() {
   };
 
   const upgradeWithApple = async () => {
-    if (!window.Capacitor?.Plugins?.LiriIAP) return;
+    if (!window.Capacitor?.Plugins?.LiriIAP) {
+      alert("In-app purchases are not available right now. Please try again or contact support.");
+      return;
+    }
     setIapWorking(true);
     try {
       const result = await window.Capacitor.Plugins.LiriIAP.purchase();
@@ -1006,7 +1009,7 @@ function Liri() {
   };
 
   const restoreApplePurchases = async () => {
-    if (!window.Capacitor?.Plugins?.LiriIAP) return;
+    if (!window.Capacitor?.Plugins?.LiriIAP) { alert("Restore is not available right now."); return; }
     setIapWorking(true);
     try {
       const status = await window.Capacitor.Plugins.LiriIAP.restorePurchases();
@@ -4004,7 +4007,7 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
   }, /*#__PURE__*/React.createElement("div", {
     onClick: e => e.stopPropagation(),
     style: isWide ? {
-      position: "absolute",
+      position: "fixed",
       top: 0,
       right: 0,
       bottom: 0,
@@ -4012,10 +4015,12 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
       background: "#0f0f1c",
       borderRadius: "20px 0 0 20px",
       overflowY: "auto",
+      WebkitOverflowScrolling: "touch",
       boxShadow: "-8px 0 48px rgba(0,0,0,0.7)",
-      animation: "slide-right 0.28s cubic-bezier(0.4,0,0.2,1)"
+      animation: "slide-right 0.28s cubic-bezier(0.4,0,0.2,1)",
+      zIndex: 201
     } : {
-      position: "absolute",
+      position: "fixed",
       bottom: 0,
       left: 0,
       right: 0,
@@ -4023,9 +4028,10 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
       borderRadius: "24px 24px 0 0",
       maxHeight: "88vh",
       overflowY: "auto",
+      WebkitOverflowScrolling: "touch",
       boxShadow: "0 -8px 48px rgba(0,0,0,0.6)",
       animation: "slide-up 0.3s ease",
-      WebkitOverflowScrolling: "touch"
+      zIndex: 201
     }
   }, isWide ? /*#__PURE__*/React.createElement("div", {
     style: {
