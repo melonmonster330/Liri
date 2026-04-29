@@ -920,7 +920,7 @@
 
           {/* ── Checkout success banner ── */}
           {checkoutSuccess && (
-            <div style={{ position: "fixed", top: "max(16px, env(safe-area-inset-top))", left: 16, right: 16, zIndex: 50, background: "rgba(100,200,120,0.15)", border: "1px solid rgba(100,200,120,0.35)", borderRadius: 14, padding: "14px 18px", display: "flex", alignItems: "center", justifyContent: "space-between", backdropFilter: "blur(12px)" }}>
+            <div style={{ position: "fixed", top: "max(20px, calc(env(safe-area-inset-top) + 8px))", left: 16, right: 16, zIndex: 50, background: "rgba(100,200,120,0.15)", border: "1px solid rgba(100,200,120,0.35)", borderRadius: 14, padding: "14px 18px", display: "flex", alignItems: "center", justifyContent: "space-between", backdropFilter: "blur(12px)" }}>
               <div>
                 <div style={{ fontSize: 14, fontWeight: 700, color: "rgba(100,220,130,0.9)" }}>Welcome to Liri Premium!</div>
                 <div style={{ fontSize: 12, color: "rgba(255,255,255,0.4)", marginTop: 2 }}>Unlimited records, all features unlocked.</div>
@@ -931,7 +931,7 @@
 
           {/* ── Add error banner (shown when search is closed but add failed) ── */}
           {addError && !showSearch && (
-            <div style={{ position: "fixed", top: "max(16px, env(safe-area-inset-top))", left: 16, right: 16, zIndex: 50, background: "rgba(201,128,122,0.15)", border: "1px solid rgba(201,128,122,0.35)", borderRadius: 14, padding: "14px 18px", display: "flex", alignItems: "center", justifyContent: "space-between", backdropFilter: "blur(12px)" }}>
+            <div style={{ position: "fixed", top: "max(20px, calc(env(safe-area-inset-top) + 8px))", left: 16, right: 16, zIndex: 50, background: "rgba(201,128,122,0.15)", border: "1px solid rgba(201,128,122,0.35)", borderRadius: 14, padding: "14px 18px", display: "flex", alignItems: "center", justifyContent: "space-between", backdropFilter: "blur(12px)" }}>
               <div style={{ fontSize: 13, color: "#e8a0a8", flex: 1 }}>{addError}</div>
               <button onClick={() => setAddError(null)} style={{ background: "none", border: "none", color: "rgba(255,255,255,0.3)", cursor: "pointer", padding: "4px 8px", display: "flex", alignItems: "center", flexShrink: 0 }}><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>
             </div>
@@ -942,7 +942,7 @@
             <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 28 }}>
               <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
                 <button onClick={() => window.history.length > 1 ? window.history.back() : (window.location.href = window.Capacitor ? "/index.html" : "/app")}
-                  style={{ background: "none", border: "none", color: "rgba(255,255,255,0.5)", cursor: "pointer", padding: "4px", display: "flex", alignItems: "center", justifyContent: "center" }}>
+                  style={{ background: "none", border: "none", color: "rgba(255,255,255,0.5)", cursor: "pointer", padding: "10px", display: "flex", alignItems: "center", justifyContent: "center", minWidth: 44, minHeight: 44 }}>
                   <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="15 18 9 12 15 6"/></svg>
                 </button>
                 <span style={{ fontSize: 18, fontWeight: 700, color: "#f0e6d3" }}>My Records</span>
@@ -1067,7 +1067,7 @@
 
           {/* ── Undo toast ── */}
           {undoAlbum && (
-            <div style={{ position: "fixed", bottom: "max(24px, env(safe-area-inset-bottom))", left: "50%", transform: "translateX(-50%)", zIndex: 50, background: "#1e1e30", border: "1px solid rgba(255,255,255,0.1)", borderRadius: 50, padding: "12px 20px", display: "flex", alignItems: "center", gap: 14, boxShadow: "0 8px 32px rgba(0,0,0,0.5)", animation: "fade-up 0.25s ease", whiteSpace: "nowrap" }}>
+            <div style={{ position: "fixed", bottom: "max(40px, calc(env(safe-area-inset-bottom) + 16px))", left: "50%", transform: "translateX(-50%)", zIndex: 50, background: "#1e1e30", border: "1px solid rgba(255,255,255,0.1)", borderRadius: 50, padding: "12px 20px", display: "flex", alignItems: "center", gap: 14, boxShadow: "0 8px 32px rgba(0,0,0,0.5)", animation: "fade-up 0.25s ease", whiteSpace: "nowrap" }}>
               <span style={{ fontSize: 13, color: "rgba(255,255,255,0.6)" }}>Removed <strong style={{ color: "#f0e6d3" }}>{undoAlbum.album.album_name}</strong></span>
               <button onClick={undoRemove} style={{ background: "#d4a846", color: "#080810", border: "none", borderRadius: 50, padding: "6px 14px", fontSize: 12, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>Undo</button>
             </div>

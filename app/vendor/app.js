@@ -4032,7 +4032,7 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
       display: "flex",
       alignItems: "center",
       justifyContent: "space-between",
-      padding: "20px 20px 4px"
+      padding: "max(20px, env(safe-area-inset-top)) 20px 4px"
     }
   }, /*#__PURE__*/React.createElement("div", {
     style: {
@@ -5371,7 +5371,7 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
       color: "rgba(255,255,255,0.35)",
       cursor: "pointer",
       fontSize: "18px",
-      padding: "4px",
+      padding: "10px",
       lineHeight: 1
     },
     title: "History"
