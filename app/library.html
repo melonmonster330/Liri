@@ -982,7 +982,7 @@
             {/* ── Premium badge + manage button ── */}
             {subscription?.tier === "premium" && (
               <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 24 }}>
-                <div style={{ fontSize: 12, color: "rgba(212,168,70,0.7)", fontWeight: 600 }}>✦ Liri Premium</div>
+                <div style={{ fontSize: 12, color: "rgba(212,168,70,0.7)", fontWeight: 600 }}>{"\u2736\uFE0E"} Liri Premium</div>
                 {IS_IOS ? (
                   <button onClick={() => window.open("https://apps.apple.com/account/subscriptions", "_system")}
                     style={{ background: "none", border: "1px solid rgba(255,255,255,0.1)", color: "rgba(255,255,255,0.3)", borderRadius: 50, padding: "6px 14px", fontSize: 11, cursor: "pointer", fontFamily: "inherit" }}>

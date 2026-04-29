@@ -4148,7 +4148,10 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
         color: "rgba(255,255,255,0.3)",
         marginTop: "2px"
       }
-    }, userTier === "premium" ? "✦ Liri Premium" : "Liri"))));
+    }, userTier === "premium" ? /*#__PURE__*/React.createElement("span", {
+      onClick: () => { setShowSettings(false); window.location.href = window.Capacitor ? "/library.html" : "/library"; },
+      style: { cursor: "pointer", color: "#d4a846" }
+    }, "\u2736\uFE0E Liri Premium") : "Liri"))));
   })(),
 
   /* ── Plan card ── */
