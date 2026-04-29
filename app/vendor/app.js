@@ -4150,7 +4150,7 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
         marginTop: "2px"
       }
     }, userTier === "premium" ? /*#__PURE__*/React.createElement("span", {
-      onClick: () => setShowPremiumInfo(true),
+      onClick: () => { setShowSettings(false); setShowPremiumInfo(true); },
       style: { cursor: "pointer", color: "#d4a846", display: "inline-flex", alignItems: "center", gap: "4px" }
     }, /*#__PURE__*/React.createElement("svg", { width: "10", height: "10", viewBox: "0 0 24 24", fill: "#d4a846" }, /*#__PURE__*/React.createElement("path", { d: "M12 2l2.4 7.4H22l-6.2 4.5 2.4 7.4L12 17l-6.2 4.3 2.4-7.4L2 9.4h7.6z" })), "Liri Premium") : "Liri"))));
   })(),
@@ -4475,7 +4475,7 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
       opacity: !bugText.trim() || bugSending ? 0.5 : 1
     }
   }, bugSent ? "✓ Sent!" : bugSending ? "Sending…" : "Send report"))), /*#__PURE__*/React.createElement("button", {
-    onClick: () => { setShowChangePw(true); setChangePwError(null); setChangePwNew(""); setChangePwConfirm(""); setChangePwDone(false); },
+    onClick: () => { setShowSettings(false); setShowChangePw(true); setChangePwError(null); setChangePwNew(""); setChangePwConfirm(""); setChangePwDone(false); },
     style: { width: "100%", background: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.08)", color: "rgba(255,255,255,0.4)", borderRadius: "14px", padding: "14px", fontSize: "14px", cursor: "pointer", fontFamily: "inherit", marginBottom: "8px" }
   }, "Change Password"), /*#__PURE__*/React.createElement("button", {
     onClick: handleSignOut,
