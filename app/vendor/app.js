@@ -3211,7 +3211,11 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
         color: "rgba(255,255,255,0.18)",
         cursor: "pointer",
         fontSize: "12px",
-        fontFamily: "inherit"
+        fontFamily: "inherit",
+        padding: "12px 16px",
+        margin: "-12px -16px",
+        minHeight: "44px",
+        minWidth: "44px"
       }
     }, "Forgot password?"))))));
   }
