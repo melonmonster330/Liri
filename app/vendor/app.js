@@ -433,6 +433,7 @@ function Liri() {
   const [bugText, setBugText] = useState("");
   const [bugSending, setBugSending] = useState(false);
   const [bugSent, setBugSent] = useState(false);
+  const [showPremiumInfo, setShowPremiumInfo] = useState(false);
   const [showDeleteAccount, setShowDeleteAccount] = useState(false);
   const [deleteWorking, setDeleteWorking] = useState(false);
   const [deleteError, setDeleteError] = useState(null);
@@ -4149,9 +4150,9 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
         marginTop: "2px"
       }
     }, userTier === "premium" ? /*#__PURE__*/React.createElement("span", {
-      onClick: () => { setShowSettings(false); window.location.href = window.Capacitor ? "/library.html" : "/library"; },
-      style: { cursor: "pointer", color: "#d4a846" }
-    }, "\u2736\uFE0E Liri Premium") : "Liri"))));
+      onClick: () => setShowPremiumInfo(true),
+      style: { cursor: "pointer", color: "#d4a846", display: "inline-flex", alignItems: "center", gap: "4px" }
+    }, /*#__PURE__*/React.createElement("svg", { width: "10", height: "10", viewBox: "0 0 24 24", fill: "#d4a846" }, /*#__PURE__*/React.createElement("path", { d: "M12 2l2.4 7.4H22l-6.2 4.5 2.4 7.4L12 17l-6.2 4.3 2.4-7.4L2 9.4h7.6z" })), "Liri Premium") : "Liri"))));
   })(),
 
   /* ── Plan card ── */
@@ -4514,7 +4515,44 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
       fontSize: "11px",
       color: "rgba(255,255,255,0.1)"
     }
-  }, "Liri v", APP_VERSION, " \xB7 getliri.com")))), showChangePw && /*#__PURE__*/React.createElement("div", {
+  }, "Liri v", APP_VERSION, " \xB7 getliri.com")))), showPremiumInfo && /*#__PURE__*/React.createElement("div", {
+    onClick: () => setShowPremiumInfo(false),
+    style: { position: "fixed", inset: 0, zIndex: 400, background: "rgba(0,0,0,0.7)", backdropFilter: "blur(4px)", display: "flex", alignItems: "flex-end", justifyContent: "center" }
+  }, /*#__PURE__*/React.createElement("div", {
+    onClick: e => e.stopPropagation(),
+    style: { background: "#0f0f1c", borderRadius: "24px 24px 0 0", padding: "28px 28px max(40px,calc(env(safe-area-inset-bottom)+28px))", maxWidth: "520px", width: "100%", border: "1px solid rgba(255,255,255,0.07)" }
+  },
+    /*#__PURE__*/React.createElement("div", { style: { width: "40px", height: "4px", borderRadius: "2px", background: "rgba(255,255,255,0.12)", margin: "0 auto 24px" } }),
+    /*#__PURE__*/React.createElement("div", { style: { display: "flex", alignItems: "center", gap: "10px", marginBottom: "6px" } },
+      /*#__PURE__*/React.createElement("svg", { width: "18", height: "18", viewBox: "0 0 24 24", fill: "#d4a846" }, /*#__PURE__*/React.createElement("path", { d: "M12 2l2.4 7.4H22l-6.2 4.5 2.4 7.4L12 17l-6.2 4.3 2.4-7.4L2 9.4h7.6z" })),
+      /*#__PURE__*/React.createElement("div", { style: { fontSize: "18px", fontWeight: "700", color: "#f0e6d3" } }, "Liri Premium")
+    ),
+    /*#__PURE__*/React.createElement("div", { style: { fontSize: "13px", color: "rgba(255,255,255,0.35)", marginBottom: "24px" } }, "Your plan includes:"),
+    /*#__PURE__*/React.createElement("div", { style: { background: "rgba(255,255,255,0.03)", border: "1px solid rgba(255,255,255,0.06)", borderRadius: "16px", padding: "4px 0", marginBottom: "24px" } },
+      [["Unlimited vinyl library", "Add as many records as you want"],
+       ["Lyrics for every track", "Synced line by line as your record plays"],
+       ["Play history & stats", "See everything you've listened to"],
+       ["Flip reminders", "Sound and notification alerts"],
+       ["Cancel anytime", "Manage in iOS Settings → Subscriptions"]
+      ].map(([title, sub], i, arr) =>
+        /*#__PURE__*/React.createElement("div", { key: title, style: { display: "flex", alignItems: "center", gap: "14px", padding: "13px 18px", borderBottom: i < arr.length - 1 ? "1px solid rgba(255,255,255,0.04)" : "none" } },
+          /*#__PURE__*/React.createElement("svg", { width: "14", height: "14", viewBox: "0 0 24 24", fill: "none", stroke: "#d4a846", strokeWidth: "2.5", strokeLinecap: "round", flexShrink: "0" }, /*#__PURE__*/React.createElement("path", { d: "M20 6L9 17l-5-5" })),
+          /*#__PURE__*/React.createElement("div", null,
+            /*#__PURE__*/React.createElement("div", { style: { fontSize: "13px", color: "#f0e6d3", fontWeight: "500" } }, title),
+            /*#__PURE__*/React.createElement("div", { style: { fontSize: "11px", color: "rgba(255,255,255,0.3)", marginTop: "2px" } }, sub)
+          )
+        )
+      )
+    ),
+    IS_IOS && /*#__PURE__*/React.createElement("button", {
+      onClick: () => window.open("https://apps.apple.com/account/subscriptions", "_system"),
+      style: { width: "100%", background: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.08)", color: "rgba(255,255,255,0.4)", borderRadius: "14px", padding: "14px", fontSize: "14px", cursor: "pointer", fontFamily: "inherit", marginBottom: "8px" }
+    }, "Manage Subscription"),
+    /*#__PURE__*/React.createElement("button", {
+      onClick: () => setShowPremiumInfo(false),
+      style: { width: "100%", background: "none", border: "none", color: "rgba(255,255,255,0.2)", fontSize: "13px", cursor: "pointer", fontFamily: "inherit", padding: "8px" }
+    }, "Close")
+  )), showChangePw && /*#__PURE__*/React.createElement("div", {
     onClick: () => { if (!changePwWorking && !changePwDone) setShowChangePw(false); },
     style: { position: "fixed", inset: 0, zIndex: 400, background: "rgba(0,0,0,0.7)", backdropFilter: "blur(4px)", display: "flex", alignItems: "flex-end", justifyContent: "center" }
   }, /*#__PURE__*/React.createElement("div", {
