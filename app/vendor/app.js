@@ -4186,6 +4186,24 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
     )
   ) : null,
 
+  /* ── Liri Premium row (always visible) ── */
+  /*#__PURE__*/React.createElement("button", {
+    onClick: () => { setShowSettings(false); setShowPremiumInfo(true); },
+    style: { width: "100%", display: "flex", alignItems: "center", justifyContent: "space-between", background: userTier === "premium" ? "rgba(212,168,70,0.06)" : "rgba(255,255,255,0.04)", border: `1px solid ${userTier === "premium" ? "rgba(212,168,70,0.2)" : "rgba(255,255,255,0.08)"}`, borderRadius: "16px", padding: "14px 16px", marginBottom: "16px", cursor: "pointer", fontFamily: "inherit", textAlign: "left" }
+  },
+    /*#__PURE__*/React.createElement("div", { style: { display: "flex", alignItems: "center", gap: "12px" } },
+      /*#__PURE__*/React.createElement("svg", { width: "16", height: "16", viewBox: "0 0 24 24", fill: "#d4a846" }, /*#__PURE__*/React.createElement("path", { d: "M12 2l2.4 7.4H22l-6.2 4.5 2.4 7.4L12 17l-6.2 4.3 2.4-7.4L2 9.4h7.6z" })),
+      /*#__PURE__*/React.createElement("div", null,
+        /*#__PURE__*/React.createElement("div", { style: { fontSize: "13px", fontWeight: "600", color: userTier === "premium" ? "#d4a846" : "#f0e6d3" } }, "Liri Premium"),
+        /*#__PURE__*/React.createElement("div", { style: { fontSize: "11px", color: "rgba(255,255,255,0.3)", marginTop: "2px" } }, userTier === "premium" ? "Active · Unlimited access" : "Unlimited library, lyrics & more")
+      )
+    ),
+    /*#__PURE__*/React.createElement("div", { style: { display: "flex", alignItems: "center", gap: "6px" } },
+      userTier === "premium" && /*#__PURE__*/React.createElement("div", { style: { fontSize: "10px", color: "rgba(212,168,70,0.6)", fontWeight: "700", letterSpacing: "0.5px" } }, "ACTIVE"),
+      /*#__PURE__*/React.createElement("svg", { width: "14", height: "14", viewBox: "0 0 24 24", fill: "none", stroke: "rgba(255,255,255,0.2)", strokeWidth: "2", strokeLinecap: "round" }, /*#__PURE__*/React.createElement("polyline", { points: "9 18 15 12 9 6" }))
+    )
+  ),
+
   /*#__PURE__*/React.createElement("div", {
     style: {
       background: "rgba(255,255,255,0.03)",
@@ -4533,7 +4551,7 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
       /*#__PURE__*/React.createElement("svg", { width: "18", height: "18", viewBox: "0 0 24 24", fill: "#d4a846" }, /*#__PURE__*/React.createElement("path", { d: "M12 2l2.4 7.4H22l-6.2 4.5 2.4 7.4L12 17l-6.2 4.3 2.4-7.4L2 9.4h7.6z" })),
       /*#__PURE__*/React.createElement("div", { style: { fontSize: "18px", fontWeight: "700", color: "#f0e6d3" } }, "Liri Premium")
     ),
-    /*#__PURE__*/React.createElement("div", { style: { fontSize: "13px", color: "rgba(255,255,255,0.35)", marginBottom: "24px" } }, "Your plan includes:"),
+    /*#__PURE__*/React.createElement("div", { style: { fontSize: "13px", color: "rgba(255,255,255,0.35)", marginBottom: "24px" } }, userTier === "premium" ? "Your plan includes:" : "Everything in Premium:"),
     /*#__PURE__*/React.createElement("div", { style: { background: "rgba(255,255,255,0.03)", border: "1px solid rgba(255,255,255,0.06)", borderRadius: "16px", padding: "4px 0", marginBottom: "24px" } },
       [["Unlimited vinyl library", "Add as many records as you want"],
        ["Lyrics for every track", "Synced line by line as your record plays"],
@@ -4550,10 +4568,23 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
         )
       )
     ),
-    IS_IOS && /*#__PURE__*/React.createElement("button", {
-      onClick: () => window.open("https://apps.apple.com/account/subscriptions", "_system"),
-      style: { width: "100%", background: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.08)", color: "rgba(255,255,255,0.4)", borderRadius: "14px", padding: "14px", fontSize: "14px", cursor: "pointer", fontFamily: "inherit", marginBottom: "8px" }
-    }, "Manage Subscription"),
+    userTier === "premium"
+      ? (IS_IOS && /*#__PURE__*/React.createElement("button", {
+          onClick: () => window.open("https://apps.apple.com/account/subscriptions", "_system"),
+          style: { width: "100%", background: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.08)", color: "rgba(255,255,255,0.4)", borderRadius: "14px", padding: "14px", fontSize: "14px", cursor: "pointer", fontFamily: "inherit", marginBottom: "8px" }
+        }, "Manage Subscription"))
+      : (IS_IOS
+          ? /*#__PURE__*/React.createElement("button", {
+              onClick: upgradeWithApple,
+              disabled: iapWorking,
+              style: { width: "100%", background: iapWorking ? "rgba(255,255,255,0.05)" : "linear-gradient(135deg,#d4a846,#c9807a)", color: iapWorking ? "rgba(255,255,255,0.3)" : "#080810", border: "none", borderRadius: "14px", padding: "17px", fontSize: "16px", fontWeight: "700", cursor: iapWorking ? "default" : "pointer", fontFamily: "inherit", marginBottom: "12px" }
+            }, iapWorking ? "Opening…" : `Get Premium · ${iapPrice}`)
+          : /*#__PURE__*/React.createElement("button", {
+              onClick: upgradeToStripe,
+              disabled: upgradeWorking,
+              style: { width: "100%", background: upgradeWorking ? "rgba(255,255,255,0.05)" : "linear-gradient(135deg,#d4a846,#c9807a)", color: upgradeWorking ? "rgba(255,255,255,0.3)" : "#080810", border: "none", borderRadius: "14px", padding: "17px", fontSize: "16px", fontWeight: "700", cursor: upgradeWorking ? "default" : "pointer", fontFamily: "inherit", marginBottom: "12px" }
+            }, upgradeWorking ? "Opening checkout…" : "Get Premium · $4/mo")
+        ),
     /*#__PURE__*/React.createElement("button", {
       onClick: () => setShowPremiumInfo(false),
       style: { width: "100%", background: "none", border: "none", color: "rgba(255,255,255,0.2)", fontSize: "13px", cursor: "pointer", fontFamily: "inherit", padding: "8px" }
