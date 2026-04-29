@@ -1,28 +1,15 @@
 // api/_lib/auth.js — Liri server-side auth helper
 //
-// Verifies Supabase JWTs and checks the unlimited-access list.
+// Verifies Supabase JWTs.
 // Supports both HS256 (old Supabase projects) and ES256 (new Supabase projects).
 //
 // Required Vercel environment variables:
 //   SUPABASE_URL             — e.g. https://xjdjpaxgymgbvcwmvorc.supabase.co
 //   SUPABASE_SERVICE_ROLE_KEY — full service role key (never expose to client)
 //   SUPABASE_JWT_SECRET      — JWT secret from Supabase dashboard (used for HS256 only)
-//   UNLIMITED_EMAILS         — comma-separated emails that bypass the free limit
-//                              e.g. "hmhelenmenne@gmail.com"
-//                              Edit in Vercel dashboard → Project Settings → Environment Variables
 
 const crypto = require("crypto");
 const https  = require("https");
-
-// ── Unlimited email list ──────────────────────────────────────────────────────
-function getUnlimitedEmails() {
-  return new Set(
-    (process.env.UNLIMITED_EMAILS || "")
-      .split(",")
-      .map(e => e.trim().toLowerCase())
-      .filter(Boolean)
-  );
-}
 
 // ── JWKS cache (ES256 public keys from Supabase) ──────────────────────────────
 // Fetched once per cold start, then cached for 1 hour.
@@ -130,7 +117,7 @@ async function decodeAndVerifyJWT(token) {
 }
 
 // ── Main: extract + verify auth from a request ───────────────────────────────
-// Returns { userId, email, isUnlimited } or null if the token is missing/invalid.
+// Returns { userId, email } or null if the token is missing/invalid.
 // Uses Supabase's /auth/v1/user endpoint to validate the token — works with
 // any JWT algorithm Supabase uses (HS256, ES256, sb_publishable_ keys, etc.)
 // without needing SUPABASE_JWT_SECRET or manual JWKS verification.
@@ -175,7 +162,7 @@ async function verifyAuth(req) {
           const user = JSON.parse(Buffer.concat(chunks).toString());
           if (!user?.id) { resolve({ _authError: "No user ID in Supabase response" }); return; }
           const email = (user.email || "").toLowerCase();
-          resolve({ userId: user.id, email, isUnlimited: getUnlimitedEmails().has(email) });
+          resolve({ userId: user.id, email });
         } catch { resolve({ _authError: "Failed to parse Supabase user response" }); }
       });
     });
@@ -243,10 +230,8 @@ async function incrementUsage(userId) {
 }
 
 // ── Subscription tier check ───────────────────────────────────────────────────
-// Returns "premium" if the user has an active/trialing premium subscription,
-// "free" otherwise. Unlimited-email users are always treated as premium.
-async function getSubscriptionTier(userId, isUnlimited = false) {
-  if (isUnlimited) return "premium";
+// Returns "premium" if the user has an active/trialing premium subscription, "free" otherwise.
+async function getSubscriptionTier(userId) {
   const { data } = await supabaseRequest(
     "GET",
     `subscriptions?user_id=eq.${encodeURIComponent(userId)}&select=tier,status&limit=1`

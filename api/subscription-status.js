@@ -65,7 +65,7 @@ module.exports = async (req, res) => {
     // albumCount uses user_library_ever (never decrements on delete) so deleting
     // a record doesn't free up a free slot.
     const [subResult, libResult] = await Promise.all([
-      supabaseGet(`subscriptions?user_id=eq.${encodeURIComponent(auth.userId)}&select=tier,status,current_period_end&limit=1`),
+      supabaseGet(`subscriptions?user_id=eq.${encodeURIComponent(auth.userId)}&select=tier,status,source,current_period_end&limit=1`),
       supabaseGet(`user_library_ever?user_id=eq.${encodeURIComponent(auth.userId)}&select=itunes_collection_id`),
     ]);
 
@@ -76,18 +76,17 @@ module.exports = async (req, res) => {
       ? libResult.data.map(r => String(r.itunes_collection_id))
       : [];
 
-    // Determine effective tier
-    // Unlimited email list bypasses all limits
+    // Determine effective tier from subscription row
     let tier   = "free";
     let status = "active";
+    let source = null;
 
-    if (auth.isUnlimited) {
-      tier = "premium";
-    } else if (sub) {
+    if (sub) {
       tier   = sub.tier   || "free";
       status = sub.status || "active";
-      // Treat past_due or unpaid as still premium (grace period)
-      if (tier === "premium" && status === "canceled") {
+      source = sub.source || null;
+      // Canceled paid subscriptions revert to free; admin/complimentary stay premium
+      if (tier === "premium" && status === "canceled" && source !== "admin") {
         tier = "free";
       }
     }
@@ -98,6 +97,7 @@ module.exports = async (req, res) => {
     return res.status(200).json({
       tier,
       status,
+      source,
       albumCount,
       albumLimit,
       everAddedIds,

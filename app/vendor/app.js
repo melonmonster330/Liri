@@ -433,9 +433,16 @@ function Liri() {
   const [bugText, setBugText] = useState("");
   const [bugSending, setBugSending] = useState(false);
   const [bugSent, setBugSent] = useState(false);
+  const [showPremiumInfo, setShowPremiumInfo] = useState(false);
   const [showDeleteAccount, setShowDeleteAccount] = useState(false);
   const [deleteWorking, setDeleteWorking] = useState(false);
   const [deleteError, setDeleteError] = useState(null);
+  const [showChangePw, setShowChangePw] = useState(false);
+  const [changePwNew, setChangePwNew] = useState("");
+  const [changePwConfirm, setChangePwConfirm] = useState("");
+  const [changePwWorking, setChangePwWorking] = useState(false);
+  const [changePwError, setChangePwError] = useState(null);
+  const [changePwDone, setChangePwDone] = useState(false);
   const [showHistory, setShowHistory] = useState(false);
   const [showTrackList, setShowTrackList] = useState(false);
   const [collapsedSides, setCollapsedSides] = useState(new Set());
@@ -924,6 +931,13 @@ function Liri() {
         subscription
       }
     } = sb.auth.onAuthStateChange((_e, s) => {
+      if (_e === "PASSWORD_RECOVERY") {
+        setShowChangePw(true);
+        setChangePwError(null);
+        setChangePwNew("");
+        setChangePwConfirm("");
+        setChangePwDone(false);
+      }
       const u = s?.user || null;
       sessionTokenRef.current = s?.access_token || null;
       setUser(u);
@@ -965,7 +979,10 @@ function Liri() {
   };
 
   const upgradeWithApple = async () => {
-    if (!window.Capacitor?.Plugins?.LiriIAP) return;
+    if (!window.Capacitor?.Plugins?.LiriIAP) {
+      alert("In-app purchases are not available right now. Please try again or contact support.");
+      return;
+    }
     setIapWorking(true);
     try {
       const result = await window.Capacitor.Plugins.LiriIAP.purchase();
@@ -992,7 +1009,7 @@ function Liri() {
   };
 
   const restoreApplePurchases = async () => {
-    if (!window.Capacitor?.Plugins?.LiriIAP) return;
+    if (!window.Capacitor?.Plugins?.LiriIAP) { alert("Restore is not available right now."); return; }
     setIapWorking(true);
     try {
       const status = await window.Capacitor.Plugins.LiriIAP.restorePurchases();
@@ -1097,7 +1114,7 @@ function Liri() {
     const {
       error
     } = await sb.auth.resetPasswordForEmail(authEmail.trim(), {
-      redirectTo: window.location.origin + "/app"
+      redirectTo: "https://getliri.com/app"
     });
     setAuthWorking(false);
     setAuthError(error ? error.message : "Password reset link sent — check your email.");
@@ -1117,6 +1134,17 @@ function Liri() {
     await sb.auth.signOut();
     setShowSettings(false);
     reset();
+  };
+  const handleChangePassword = async () => {
+    setChangePwError(null);
+    if (changePwNew.length < 8) { setChangePwError("Password must be at least 8 characters."); return; }
+    if (changePwNew !== changePwConfirm) { setChangePwError("Passwords don't match."); return; }
+    setChangePwWorking(true);
+    const { error } = await sb.auth.updateUser({ password: changePwNew });
+    setChangePwWorking(false);
+    if (error) { setChangePwError(error.message); return; }
+    setChangePwDone(true);
+    setTimeout(() => { setShowChangePw(false); setChangePwNew(""); setChangePwConfirm(""); setChangePwDone(false); }, 2000);
   };
   const handleDeleteAccount = async () => {
     setDeleteWorking(true);
@@ -3187,7 +3215,11 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
         color: "rgba(255,255,255,0.18)",
         cursor: "pointer",
         fontSize: "12px",
-        fontFamily: "inherit"
+        fontFamily: "inherit",
+        padding: "12px 16px",
+        margin: "-12px -16px",
+        minHeight: "44px",
+        minWidth: "44px"
       }
     }, "Forgot password?"))))));
   }
@@ -3975,7 +4007,7 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
   }, /*#__PURE__*/React.createElement("div", {
     onClick: e => e.stopPropagation(),
     style: isWide ? {
-      position: "absolute",
+      position: "fixed",
       top: 0,
       right: 0,
       bottom: 0,
@@ -3983,10 +4015,12 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
       background: "#0f0f1c",
       borderRadius: "20px 0 0 20px",
       overflowY: "auto",
+      WebkitOverflowScrolling: "touch",
       boxShadow: "-8px 0 48px rgba(0,0,0,0.7)",
-      animation: "slide-right 0.28s cubic-bezier(0.4,0,0.2,1)"
+      animation: "slide-right 0.28s cubic-bezier(0.4,0,0.2,1)",
+      zIndex: 201
     } : {
-      position: "absolute",
+      position: "fixed",
       bottom: 0,
       left: 0,
       right: 0,
@@ -3994,16 +4028,17 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
       borderRadius: "24px 24px 0 0",
       maxHeight: "88vh",
       overflowY: "auto",
+      WebkitOverflowScrolling: "touch",
       boxShadow: "0 -8px 48px rgba(0,0,0,0.6)",
       animation: "slide-up 0.3s ease",
-      WebkitOverflowScrolling: "touch"
+      zIndex: 201
     }
   }, isWide ? /*#__PURE__*/React.createElement("div", {
     style: {
       display: "flex",
       alignItems: "center",
       justifyContent: "space-between",
-      padding: "20px 20px 4px"
+      padding: "max(20px, env(safe-area-inset-top)) 20px 4px"
     }
   }, /*#__PURE__*/React.createElement("div", {
     style: {
@@ -4120,7 +4155,10 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
         color: "rgba(255,255,255,0.3)",
         marginTop: "2px"
       }
-    }, userTier === "premium" ? "✦ Liri Premium" : "Liri"))));
+    }, userTier === "premium" ? /*#__PURE__*/React.createElement("span", {
+      onClick: () => { setShowSettings(false); setShowPremiumInfo(true); },
+      style: { cursor: "pointer", color: "#d4a846", display: "inline-flex", alignItems: "center", gap: "4px" }
+    }, /*#__PURE__*/React.createElement("svg", { width: "10", height: "10", viewBox: "0 0 24 24", fill: "#d4a846" }, /*#__PURE__*/React.createElement("path", { d: "M12 2l2.4 7.4H22l-6.2 4.5 2.4 7.4L12 17l-6.2 4.3 2.4-7.4L2 9.4h7.6z" })), "Liri Premium") : "Liri"))));
   })(),
 
   /* ── Plan card ── */
@@ -4147,6 +4185,24 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
       /*#__PURE__*/React.createElement("div", { style: { height: "100%", borderRadius: "2px", background: albumCount >= 8 ? "#c9807a" : "#d4a846", width: `${Math.min(100, (albumCount / 10) * 100)}%`, transition: "width 0.4s ease" } })
     )
   ) : null,
+
+  /* ── Liri Premium row (always visible) ── */
+  /*#__PURE__*/React.createElement("button", {
+    onClick: () => { setShowSettings(false); setShowPremiumInfo(true); },
+    style: { width: "100%", display: "flex", alignItems: "center", justifyContent: "space-between", background: userTier === "premium" ? "rgba(212,168,70,0.06)" : "rgba(255,255,255,0.04)", border: `1px solid ${userTier === "premium" ? "rgba(212,168,70,0.2)" : "rgba(255,255,255,0.08)"}`, borderRadius: "16px", padding: "14px 16px", marginBottom: "16px", cursor: "pointer", fontFamily: "inherit", textAlign: "left" }
+  },
+    /*#__PURE__*/React.createElement("div", { style: { display: "flex", alignItems: "center", gap: "12px" } },
+      /*#__PURE__*/React.createElement("svg", { width: "16", height: "16", viewBox: "0 0 24 24", fill: "#d4a846" }, /*#__PURE__*/React.createElement("path", { d: "M12 2l2.4 7.4H22l-6.2 4.5 2.4 7.4L12 17l-6.2 4.3 2.4-7.4L2 9.4h7.6z" })),
+      /*#__PURE__*/React.createElement("div", null,
+        /*#__PURE__*/React.createElement("div", { style: { fontSize: "13px", fontWeight: "600", color: userTier === "premium" ? "#d4a846" : "#f0e6d3" } }, "Liri Premium"),
+        /*#__PURE__*/React.createElement("div", { style: { fontSize: "11px", color: "rgba(255,255,255,0.3)", marginTop: "2px" } }, userTier === "premium" ? "Active · Unlimited access" : "Unlimited library, lyrics & more")
+      )
+    ),
+    /*#__PURE__*/React.createElement("div", { style: { display: "flex", alignItems: "center", gap: "6px" } },
+      userTier === "premium" && /*#__PURE__*/React.createElement("div", { style: { fontSize: "10px", color: "rgba(212,168,70,0.6)", fontWeight: "700", letterSpacing: "0.5px" } }, "ACTIVE"),
+      /*#__PURE__*/React.createElement("svg", { width: "14", height: "14", viewBox: "0 0 24 24", fill: "none", stroke: "rgba(255,255,255,0.2)", strokeWidth: "2", strokeLinecap: "round" }, /*#__PURE__*/React.createElement("polyline", { points: "9 18 15 12 9 6" }))
+    )
+  ),
 
   /*#__PURE__*/React.createElement("div", {
     style: {
@@ -4443,6 +4499,9 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
       opacity: !bugText.trim() || bugSending ? 0.5 : 1
     }
   }, bugSent ? "✓ Sent!" : bugSending ? "Sending…" : "Send report"))), /*#__PURE__*/React.createElement("button", {
+    onClick: () => { setShowSettings(false); setShowChangePw(true); setChangePwError(null); setChangePwNew(""); setChangePwConfirm(""); setChangePwDone(false); },
+    style: { width: "100%", background: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.08)", color: "rgba(255,255,255,0.4)", borderRadius: "14px", padding: "14px", fontSize: "14px", cursor: "pointer", fontFamily: "inherit", marginBottom: "8px" }
+  }, "Change Password"), /*#__PURE__*/React.createElement("button", {
     onClick: handleSignOut,
     style: {
       width: "100%",
@@ -4480,7 +4539,72 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
       fontSize: "11px",
       color: "rgba(255,255,255,0.1)"
     }
-  }, "Liri v", APP_VERSION, " \xB7 getliri.com")))), showDeleteAccount && /*#__PURE__*/React.createElement("div", {
+  }, "Liri v", APP_VERSION, " \xB7 getliri.com")))), showPremiumInfo && /*#__PURE__*/React.createElement("div", {
+    onClick: () => setShowPremiumInfo(false),
+    style: { position: "fixed", inset: 0, zIndex: 400, background: "rgba(0,0,0,0.7)", backdropFilter: "blur(4px)", display: "flex", alignItems: "flex-end", justifyContent: "center" }
+  }, /*#__PURE__*/React.createElement("div", {
+    onClick: e => e.stopPropagation(),
+    style: { background: "#0f0f1c", borderRadius: "24px 24px 0 0", padding: "28px 28px max(40px,calc(env(safe-area-inset-bottom)+28px))", maxWidth: "520px", width: "100%", border: "1px solid rgba(255,255,255,0.07)" }
+  },
+    /*#__PURE__*/React.createElement("div", { style: { width: "40px", height: "4px", borderRadius: "2px", background: "rgba(255,255,255,0.12)", margin: "0 auto 24px" } }),
+    /*#__PURE__*/React.createElement("div", { style: { display: "flex", alignItems: "center", gap: "10px", marginBottom: "6px" } },
+      /*#__PURE__*/React.createElement("svg", { width: "18", height: "18", viewBox: "0 0 24 24", fill: "#d4a846" }, /*#__PURE__*/React.createElement("path", { d: "M12 2l2.4 7.4H22l-6.2 4.5 2.4 7.4L12 17l-6.2 4.3 2.4-7.4L2 9.4h7.6z" })),
+      /*#__PURE__*/React.createElement("div", { style: { fontSize: "18px", fontWeight: "700", color: "#f0e6d3" } }, "Liri Premium")
+    ),
+    /*#__PURE__*/React.createElement("div", { style: { fontSize: "13px", color: "rgba(255,255,255,0.35)", marginBottom: "24px" } }, userTier === "premium" ? "Your plan includes:" : "Everything in Premium:"),
+    /*#__PURE__*/React.createElement("div", { style: { background: "rgba(255,255,255,0.03)", border: "1px solid rgba(255,255,255,0.06)", borderRadius: "16px", padding: "4px 0", marginBottom: "24px" } },
+      [["Unlimited vinyl library", "Add as many records as you want"],
+       ["Lyrics for every track", "Synced line by line as your record plays"],
+       ["Play history & stats", "See everything you've listened to"],
+       ["Flip reminders", "Sound and notification alerts"],
+       ["Cancel anytime", "Manage in iOS Settings → Subscriptions"]
+      ].map(([title, sub], i, arr) =>
+        /*#__PURE__*/React.createElement("div", { key: title, style: { display: "flex", alignItems: "center", gap: "14px", padding: "13px 18px", borderBottom: i < arr.length - 1 ? "1px solid rgba(255,255,255,0.04)" : "none" } },
+          /*#__PURE__*/React.createElement("svg", { width: "14", height: "14", viewBox: "0 0 24 24", fill: "none", stroke: "#d4a846", strokeWidth: "2.5", strokeLinecap: "round", flexShrink: "0" }, /*#__PURE__*/React.createElement("path", { d: "M20 6L9 17l-5-5" })),
+          /*#__PURE__*/React.createElement("div", null,
+            /*#__PURE__*/React.createElement("div", { style: { fontSize: "13px", color: "#f0e6d3", fontWeight: "500" } }, title),
+            /*#__PURE__*/React.createElement("div", { style: { fontSize: "11px", color: "rgba(255,255,255,0.3)", marginTop: "2px" } }, sub)
+          )
+        )
+      )
+    ),
+    userTier === "premium"
+      ? (IS_IOS && /*#__PURE__*/React.createElement("button", {
+          onClick: () => window.open("https://apps.apple.com/account/subscriptions", "_system"),
+          style: { width: "100%", background: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.08)", color: "rgba(255,255,255,0.4)", borderRadius: "14px", padding: "14px", fontSize: "14px", cursor: "pointer", fontFamily: "inherit", marginBottom: "8px" }
+        }, "Manage Subscription"))
+      : (IS_IOS
+          ? /*#__PURE__*/React.createElement("button", {
+              onClick: upgradeWithApple,
+              disabled: iapWorking,
+              style: { width: "100%", background: iapWorking ? "rgba(255,255,255,0.05)" : "linear-gradient(135deg,#d4a846,#c9807a)", color: iapWorking ? "rgba(255,255,255,0.3)" : "#080810", border: "none", borderRadius: "14px", padding: "17px", fontSize: "16px", fontWeight: "700", cursor: iapWorking ? "default" : "pointer", fontFamily: "inherit", marginBottom: "12px" }
+            }, iapWorking ? "Opening…" : `Get Premium · ${iapPrice}`)
+          : /*#__PURE__*/React.createElement("button", {
+              onClick: upgradeToStripe,
+              disabled: upgradeWorking,
+              style: { width: "100%", background: upgradeWorking ? "rgba(255,255,255,0.05)" : "linear-gradient(135deg,#d4a846,#c9807a)", color: upgradeWorking ? "rgba(255,255,255,0.3)" : "#080810", border: "none", borderRadius: "14px", padding: "17px", fontSize: "16px", fontWeight: "700", cursor: upgradeWorking ? "default" : "pointer", fontFamily: "inherit", marginBottom: "12px" }
+            }, upgradeWorking ? "Opening checkout…" : "Get Premium · $4/mo")
+        ),
+    /*#__PURE__*/React.createElement("button", {
+      onClick: () => setShowPremiumInfo(false),
+      style: { width: "100%", background: "none", border: "none", color: "rgba(255,255,255,0.2)", fontSize: "13px", cursor: "pointer", fontFamily: "inherit", padding: "8px" }
+    }, "Close")
+  )), showChangePw && /*#__PURE__*/React.createElement("div", {
+    onClick: () => { if (!changePwWorking && !changePwDone) setShowChangePw(false); },
+    style: { position: "fixed", inset: 0, zIndex: 400, background: "rgba(0,0,0,0.7)", backdropFilter: "blur(4px)", display: "flex", alignItems: "flex-end", justifyContent: "center" }
+  }, /*#__PURE__*/React.createElement("div", {
+    onClick: e => e.stopPropagation(),
+    style: { background: "#0f0f1c", borderRadius: "24px 24px 0 0", padding: "28px 28px max(40px,calc(env(safe-area-inset-bottom)+28px))", maxWidth: "520px", width: "100%", border: "1px solid rgba(255,255,255,0.07)" }
+  }, /*#__PURE__*/React.createElement("div", { style: { width: "40px", height: "4px", borderRadius: "2px", background: "rgba(255,255,255,0.12)", margin: "0 auto 20px" } }),
+  /*#__PURE__*/React.createElement("div", { style: { fontSize: "20px", fontWeight: "700", color: "#f0e6d3", textAlign: "center", marginBottom: "20px" } }, changePwDone ? "Password updated ✓" : "Change Password"),
+  changePwDone ? null : /*#__PURE__*/React.createElement(React.Fragment, null,
+    /*#__PURE__*/React.createElement("div", { style: { display: "flex", flexDirection: "column", gap: "10px", marginBottom: "16px" } },
+      /*#__PURE__*/React.createElement("input", { type: "password", placeholder: "New password (min 8 characters)", value: changePwNew, onChange: e => setChangePwNew(e.target.value), onKeyDown: e => e.key === "Enter" && handleChangePassword(), autoFocus: true, style: { width: "100%", background: "rgba(255,255,255,0.05)", border: "1px solid rgba(255,255,255,0.1)", color: "#f0e6d3", padding: "16px 18px", borderRadius: "14px", fontSize: "16px", fontFamily: "inherit" } }),
+      /*#__PURE__*/React.createElement("input", { type: "password", placeholder: "Confirm new password", value: changePwConfirm, onChange: e => setChangePwConfirm(e.target.value), onKeyDown: e => e.key === "Enter" && handleChangePassword(), style: { width: "100%", background: "rgba(255,255,255,0.05)", border: `1px solid ${changePwConfirm && changePwConfirm !== changePwNew ? "rgba(232,160,168,0.5)" : "rgba(255,255,255,0.1)"}`, color: "#f0e6d3", padding: "16px 18px", borderRadius: "14px", fontSize: "16px", fontFamily: "inherit" } })
+    ),
+    changePwError && /*#__PURE__*/React.createElement("div", { style: { fontSize: "13px", color: "#e8a0a8", textAlign: "center", marginBottom: "12px" } }, changePwError),
+    /*#__PURE__*/React.createElement("button", { onClick: handleChangePassword, disabled: changePwWorking, style: { width: "100%", background: "linear-gradient(135deg,#d4a846,#c9807a)", color: "#080810", border: "none", borderRadius: "14px", padding: "18px", fontSize: "15px", fontWeight: "700", cursor: changePwWorking ? "wait" : "pointer", opacity: changePwWorking ? 0.6 : 1, fontFamily: "inherit" } }, changePwWorking ? "Updating…" : "Update Password")
+  ))), showDeleteAccount && /*#__PURE__*/React.createElement("div", {
     onClick: () => { if (!deleteWorking) setShowDeleteAccount(false); },
     style: { position: "fixed", inset: 0, zIndex: 300, background: "rgba(0,0,0,0.7)", backdropFilter: "blur(4px)", display: "flex", alignItems: "center", justifyContent: "center", padding: "24px" }
   }, /*#__PURE__*/React.createElement("div", {
@@ -5284,7 +5408,7 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
       color: "rgba(255,255,255,0.35)",
       cursor: "pointer",
       fontSize: "18px",
-      padding: "4px",
+      padding: "10px",
       lineHeight: 1
     },
     title: "History"
