@@ -9,7 +9,7 @@ if (typeof supabase === 'undefined') {
   throw new Error('Supabase not loaded');
 }
 const sb = supabase.createClient("https://xjdjpaxgymgbvcwmvorc.supabase.co", "sb_publishable_C-NBnfg0ltAoUi46XQTUjA_ozjZW_Nd");
-const APP_VERSION = "1.2.8";
+const APP_VERSION = "1.2.9";
 const IS_IOS = !!window.Capacitor; // set once at load time — used for App Store compliance checks
 const TRANSCRIBE_PROXY = window.Capacitor ? "https://www.getliri.com/api/transcribe"    : "/api/transcribe";
 const ITUNES_PROXY   = window.Capacitor ? "https://www.getliri.com/api/itunes-lookup"   : "/api/itunes-lookup";
@@ -4813,16 +4813,39 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
       animation: "fade-up 0.12s ease",
       backdropFilter: "blur(8px)"
     }
-  }, kbToast), /*#__PURE__*/React.createElement("div", {
+  }, kbToast), isLandscape && /*#__PURE__*/React.createElement("div", {
+    style: {
+      position: "fixed", top: 0, left: 0, right: 0, height: "52px",
+      display: "flex", alignItems: "center", padding: "0 16px", gap: "10px",
+      background: "rgba(8,8,16,0.92)", backdropFilter: "blur(12px)",
+      borderBottom: "1px solid rgba(255,255,255,0.06)", zIndex: 20
+    }
+  }, /*#__PURE__*/React.createElement("button", {
+    onClick: reset,
+    style: { background: "none", border: "none", color: "rgba(255,255,255,0.45)", fontSize: "18px", cursor: "pointer", padding: "4px 8px 4px 0", lineHeight: 1, flexShrink: 0 }
+  }, "\u2190"),
+  artwork && /*#__PURE__*/React.createElement("img", {
+    src: artwork, alt: "",
+    style: { width: "32px", height: "32px", borderRadius: "6px", flexShrink: 0, boxShadow: "0 2px 8px rgba(0,0,0,0.5)" }
+  }),
+  /*#__PURE__*/React.createElement("div", { style: { flex: 1, minWidth: 0 } },
+    /*#__PURE__*/React.createElement("div", { style: { fontSize: "13px", fontWeight: "600", color: "#f0e6d3", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" } }, detectedSong?.title),
+    /*#__PURE__*/React.createElement("div", { style: { fontSize: "11px", color: "rgba(255,255,255,0.35)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" } }, detectedSong?.artist)
+  ),
+  (() => { const si = getSideInfo(); return si ? /*#__PURE__*/React.createElement("div", { style: { fontSize: "10px", fontWeight: "700", letterSpacing: "2px", color: "rgba(212,168,70,0.85)", textTransform: "uppercase", flexShrink: 0 } }, si.side ? `Side ${si.side} \xB7 ${si.track}` : `Track ${si.track}`) : null; })(),
+  /*#__PURE__*/React.createElement("button", {
+    onClick: () => setShowSettings(!showSettings),
+    style: { background: "linear-gradient(135deg,#d4a846,#c9807a)", border: "none", borderRadius: "50%", width: "28px", height: "28px", display: "flex", alignItems: "center", justifyContent: "center", fontSize: "11px", fontWeight: "700", color: "#080810", cursor: "pointer", flexShrink: 0, padding: 0 }
+  }, user?.email?.[0]?.toUpperCase() || "?")), /*#__PURE__*/React.createElement("div", {
     className: "safe-top",
     style: isLandscape ? {
-      padding: "max(20px, calc(env(safe-area-inset-top) + 12px)) 20px 16px",
+      padding: "16px 20px 16px",
       display: "flex",
       flexDirection: "column",
       width: "270px",
       flexShrink: 0,
       position: "fixed",
-      top: 0,
+      top: "57px",
       left: 0,
       bottom: "130px",
       background: "rgba(8,8,16,0.97)",
@@ -4943,14 +4966,22 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
     },
     title: "Account"
   }, user?.email?.[0]?.toUpperCase() || "?"))), /*#__PURE__*/React.createElement("div", {
-    style: {
-      height: isLandscape ? "5px" : "3px",
+    style: isLandscape ? {
+      height: "5px",
+      background: "rgba(255,255,255,0.1)",
+      cursor: "pointer",
+      position: "fixed",
+      top: "52px",
+      left: 0,
+      right: 0,
+      zIndex: 19
+    } : {
+      height: "3px",
       background: "rgba(255,255,255,0.1)",
       flexShrink: 0,
-      cursor: "pointer",
+      cursor: songDuration ? "pointer" : "default",
       position: "relative",
-      display: "block",
-      marginLeft: isLandscape ? 270 : 0
+      display: "block"
     },
     onClick: e => {
       if (!songDuration) return;
@@ -4977,7 +5008,7 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
       flex: 1,
       overflow: "hidden",
       position: "relative",
-      marginLeft: isLandscape ? 270 : 0
+      paddingTop: isLandscape ? "57px" : 0
     }
   }, isResyncing && /*#__PURE__*/React.createElement("div", {
     style: {
@@ -5163,7 +5194,8 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
     style: {
       display: "flex",
       justifyContent: "center",
-      gap: "8px",
+      flexWrap: "wrap",
+      gap: "6px",
       marginBottom: "10px"
     }
   }, /*#__PURE__*/React.createElement("div", {
@@ -5178,10 +5210,10 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
       background: "rgba(255,255,255,0.07)",
       border: "1px solid rgba(255,255,255,0.15)",
       color: "rgba(255,255,255,0.7)",
-      padding: "9px 22px",
+      padding: isLandscape ? "7px 28px" : "9px 22px",
       borderRadius: "20px",
       cursor: "pointer",
-      fontSize: "14px",
+      fontSize: isLandscape ? "13px" : "14px",
       fontFamily: "inherit",
       fontWeight: "600"
     }
@@ -5217,10 +5249,10 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
       background: "rgba(255,255,255,0.07)",
       border: "1px solid rgba(255,255,255,0.15)",
       color: "rgba(255,255,255,0.7)",
-      padding: "9px 22px",
+      padding: isLandscape ? "7px 28px" : "9px 22px",
       borderRadius: "20px",
       cursor: "pointer",
-      fontSize: "14px",
+      fontSize: isLandscape ? "13px" : "14px",
       fontFamily: "inherit",
       fontWeight: "600"
     }
@@ -5248,7 +5280,8 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
     style: {
       display: "flex",
       justifyContent: "center",
-      gap: "10px",
+      flexWrap: "wrap",
+      gap: "6px",
       marginBottom: "8px"
     }
   }, userScrolling && /*#__PURE__*/React.createElement("button", {
@@ -5258,8 +5291,8 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
       border: "1px solid rgba(212,168,70,0.3)",
       color: "rgba(212,168,70,0.8)",
       borderRadius: "50px",
-      padding: "10px 22px",
-      fontSize: "13px",
+      padding: isLandscape ? "7px 14px" : "10px 22px",
+      fontSize: isLandscape ? "12px" : "13px",
       fontWeight: "500",
       cursor: "pointer",
       fontFamily: "inherit"
@@ -5271,8 +5304,8 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
       border: isPaused ? "1px solid rgba(212,168,70,0.4)" : "1px solid rgba(255,255,255,0.15)",
       color: isPaused ? "rgba(212,168,70,0.9)" : "rgba(255,255,255,0.55)",
       borderRadius: "50px",
-      padding: "10px 22px",
-      fontSize: "13px",
+      padding: isLandscape ? "7px 14px" : "10px 22px",
+      fontSize: isLandscape ? "12px" : "13px",
       fontWeight: "500",
       cursor: "pointer",
       fontFamily: "inherit"
@@ -5285,8 +5318,8 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
       border: "1px solid rgba(255,255,255,0.15)",
       color: "rgba(255,255,255,0.55)",
       borderRadius: "50px",
-      padding: "10px 22px",
-      fontSize: "13px",
+      padding: isLandscape ? "7px 14px" : "10px 22px",
+      fontSize: isLandscape ? "12px" : "13px",
       fontWeight: "500",
       cursor: isResyncing ? "wait" : "pointer",
       fontFamily: "inherit",
@@ -5303,8 +5336,8 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
       border: "1px solid rgba(255,255,255,0.09)",
       color: "rgba(255,255,255,0.35)",
       borderRadius: "50px",
-      padding: "10px 22px",
-      fontSize: "13px",
+      padding: isLandscape ? "7px 14px" : "10px 22px",
+      fontSize: isLandscape ? "12px" : "13px",
       cursor: "pointer",
       fontFamily: "inherit"
     }
