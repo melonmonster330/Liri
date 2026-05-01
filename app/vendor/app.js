@@ -9,7 +9,7 @@ if (typeof supabase === 'undefined') {
   throw new Error('Supabase not loaded');
 }
 const sb = supabase.createClient("https://xjdjpaxgymgbvcwmvorc.supabase.co", "sb_publishable_C-NBnfg0ltAoUi46XQTUjA_ozjZW_Nd");
-const APP_VERSION = "1.2.7";
+const APP_VERSION = "1.2.8";
 const IS_IOS = !!window.Capacitor; // set once at load time — used for App Store compliance checks
 const TRANSCRIBE_PROXY = window.Capacitor ? "https://www.getliri.com/api/transcribe"    : "/api/transcribe";
 const ITUNES_PROXY   = window.Capacitor ? "https://www.getliri.com/api/itunes-lookup"   : "/api/itunes-lookup";
@@ -4944,12 +4944,13 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
     title: "Account"
   }, user?.email?.[0]?.toUpperCase() || "?"))), /*#__PURE__*/React.createElement("div", {
     style: {
-      height: "3px",
+      height: isLandscape ? "5px" : "3px",
       background: "rgba(255,255,255,0.1)",
       flexShrink: 0,
-      cursor: songDuration ? "pointer" : "default",
+      cursor: "pointer",
       position: "relative",
-      display: isLandscape ? "none" : "block"
+      display: "block",
+      marginLeft: isLandscape ? 270 : 0
     },
     onClick: e => {
       if (!songDuration) return;
@@ -5034,7 +5035,10 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
     style: {
       overflowY: "auto",
       height: "100%",
-      padding: "8vh 28px 0"
+      padding: isLandscape ? "4vh 40px 0" : "8vh 28px 0",
+      maxWidth: isLandscape ? "760px" : "none",
+      marginLeft: isLandscape ? "auto" : undefined,
+      marginRight: isLandscape ? "auto" : undefined
     },
     onTouchStart: () => {
       userScrollingRef.current = true;
@@ -5082,13 +5086,13 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
           padding: near ? "6px 0" : "3px 0",
           fontSize: isCredit
             ? (cur ? "15px" : Math.abs(dist) <= 1 ? "13px" : "11px")
-            : (cur ? "32px" : Math.abs(dist) <= 1 ? "20px" : near ? "16px" : "13px"),
+            : (cur ? (isLandscape ? "36px" : "32px") : Math.abs(dist) <= 1 ? (isLandscape ? "24px" : "20px") : near ? (isLandscape ? "20px" : "16px") : (isLandscape ? "16px" : "13px")),
           fontWeight: cur && !isCredit ? "700" : "400",
           color: cur
             ? (isCredit ? "rgba(255,255,255,0.55)" : "#ffffff")
             : dist > 0
-              ? `rgba(255,255,255,${Math.max(0.07, 0.28 - Math.abs(dist) * 0.04)})`
-              : `rgba(255,255,255,${Math.max(0.05, 0.18 - Math.abs(dist) * 0.02)})`,
+              ? `rgba(255,255,255,${Math.max(isLandscape ? 0.18 : 0.07, (isLandscape ? 0.55 : 0.28) - Math.abs(dist) * (isLandscape ? 0.06 : 0.04))})`
+              : `rgba(255,255,255,${Math.max(isLandscape ? 0.12 : 0.05, (isLandscape ? 0.35 : 0.18) - Math.abs(dist) * (isLandscape ? 0.04 : 0.02))})`,
           lineHeight: "1.4",
           transition: near ? transition : "none",
           textShadow: cur && !isCredit ? "0 0 60px rgba(212,168,70,0.4), 0 2px 20px rgba(0,0,0,0.8)" : "none",
