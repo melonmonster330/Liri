@@ -9,7 +9,7 @@ if (typeof supabase === 'undefined') {
   throw new Error('Supabase not loaded');
 }
 const sb = supabase.createClient("https://xjdjpaxgymgbvcwmvorc.supabase.co", "sb_publishable_C-NBnfg0ltAoUi46XQTUjA_ozjZW_Nd");
-const APP_VERSION = "1.2.6";
+const APP_VERSION = "1.2.7";
 const IS_IOS = !!window.Capacitor; // set once at load time — used for App Store compliance checks
 const TRANSCRIBE_PROXY = window.Capacitor ? "https://www.getliri.com/api/transcribe"    : "/api/transcribe";
 const ITUNES_PROXY   = window.Capacitor ? "https://www.getliri.com/api/itunes-lookup"   : "/api/itunes-lookup";
@@ -171,8 +171,8 @@ styleEl.textContent = `
       @keyframes slide-up    { from { transform: translateY(100%); } to { transform: translateY(0); } }
       @keyframes slide-right { from { transform: translateX(100%); } to { transform: translateX(0); } }
       @keyframes pulse    { 0%, 100% { opacity: 1; } 50% { opacity: 0.35; } }
-      .safe-top { padding-top: max(64px, calc(env(safe-area-inset-top) + 20px)) !important; }
-      .safe-bottom { padding-bottom: max(32px, calc(env(safe-area-inset-bottom) + 16px)) !important; }
+      .safe-top { padding-top: max(96px, calc(env(safe-area-inset-top) + 52px)) !important; }
+      .safe-bottom { padding-bottom: max(48px, calc(env(safe-area-inset-bottom) + 28px)) !important; }
     `;
 document.head.appendChild(styleEl);
 function Vinyl({
@@ -526,6 +526,8 @@ function Liri() {
   // ── Resync / advance flags ──
   const [isResyncing, setIsResyncing] = useState(false);
   const [isPaused, setIsPaused] = useState(false);
+  const [kbToast, setKbToast] = useState(null);
+  const kbToastTimerRef = useRef(null);
   const [shouldAdvanceTrack, setShouldAdvanceTrack] = useState(false);
   const [sideEndReason, setSideEndReason] = useState("failed"); // "failed" | "flip" | "album-end"
 
@@ -1514,8 +1516,7 @@ function Liri() {
     if (!effectiveDuration) return;
     if (playbackTime >= effectiveDuration && !autoAdvanceFiredRef.current) {
       autoAdvanceFiredRef.current = true;
-      // 1 second gap between songs before advancing
-      setTimeout(() => setShouldAdvanceTrack(true), 1000);
+      setShouldAdvanceTrack(true);
     }
   }, [playbackTime, songDuration, lyrics, mode]);
 
@@ -2129,6 +2130,34 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
     setNudgeMenu(side);
     nudgeMenuTimerRef.current = setTimeout(() => setNudgeMenu(null), 2500);
   };
+
+  const showKbToast = msg => {
+    clearTimeout(kbToastTimerRef.current);
+    setKbToast(msg);
+    kbToastTimerRef.current = setTimeout(() => setKbToast(null), 1400);
+  };
+
+  useEffect(() => {
+    const onKey = e => {
+      if (mode !== "syncing") return;
+      if (e.target.tagName === "INPUT" || e.target.tagName === "TEXTAREA") return;
+      if (e.key === "ArrowLeft") {
+        e.preventDefault();
+        nudge(-1);
+        showKbToast("← −1s");
+      } else if (e.key === "ArrowRight") {
+        e.preventDefault();
+        nudge(1);
+        showKbToast("→ +1s");
+      } else if (e.key === " ") {
+        e.preventDefault();
+        togglePause();
+        showKbToast(isPaused ? "▶ Resume" : "⏸ Pause");
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [mode, isPaused]);
 
   // Fetch album tracklist
   const fetchAlbumTracks = async (title, artist) => {
@@ -4038,7 +4067,7 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
       display: "flex",
       alignItems: "center",
       justifyContent: "space-between",
-      padding: "max(20px, env(safe-area-inset-top)) 20px 4px"
+      padding: "max(72px, calc(env(safe-area-inset-top) + 52px)) 20px 8px"
     }
   }, /*#__PURE__*/React.createElement("div", {
     style: {
@@ -4585,6 +4614,13 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
               style: { width: "100%", background: upgradeWorking ? "rgba(255,255,255,0.05)" : "linear-gradient(135deg,#d4a846,#c9807a)", color: upgradeWorking ? "rgba(255,255,255,0.3)" : "#080810", border: "none", borderRadius: "14px", padding: "17px", fontSize: "16px", fontWeight: "700", cursor: upgradeWorking ? "default" : "pointer", fontFamily: "inherit", marginBottom: "12px" }
             }, upgradeWorking ? "Opening checkout…" : "Get Premium · $4/mo")
         ),
+    /*#__PURE__*/React.createElement("p", { style: { fontSize: "11px", color: "rgba(255,255,255,0.25)", textAlign: "center", margin: "12px 0 4px", lineHeight: "1.6" } },
+      "By subscribing you agree to the ",
+      /*#__PURE__*/React.createElement("a", { href: "https://www.apple.com/legal/internet-services/itunes/dev/stdeula/", target: "_blank", rel: "noopener", style: { color: "rgba(255,255,255,0.45)", textDecoration: "underline" } }, "Terms of Use"),
+      " and ",
+      /*#__PURE__*/React.createElement("a", { href: "https://getliri.com/privacy", target: "_blank", rel: "noopener", style: { color: "rgba(255,255,255,0.45)", textDecoration: "underline" } }, "Privacy Policy"),
+      "."
+    ),
     /*#__PURE__*/React.createElement("button", {
       onClick: () => setShowPremiumInfo(false),
       style: { width: "100%", background: "none", border: "none", color: "rgba(255,255,255,0.2)", fontSize: "13px", cursor: "pointer", fontFamily: "inherit", padding: "8px" }
@@ -4759,7 +4795,25 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
     },
     onPointerMove: isLandscape ? bumpControls : undefined,
     onTouchStart: isLandscape ? bumpControls : undefined
-  }, /*#__PURE__*/React.createElement("div", {
+  }, kbToast && /*#__PURE__*/React.createElement("div", {
+    style: {
+      position: "fixed",
+      top: "50%",
+      left: "50%",
+      transform: "translate(-50%, -50%)",
+      background: "rgba(20,20,30,0.92)",
+      border: "1px solid rgba(255,255,255,0.12)",
+      borderRadius: "16px",
+      padding: "12px 24px",
+      fontSize: "16px",
+      fontWeight: "600",
+      color: "#f0e6d3",
+      zIndex: 100,
+      pointerEvents: "none",
+      animation: "fade-up 0.12s ease",
+      backdropFilter: "blur(8px)"
+    }
+  }, kbToast), /*#__PURE__*/React.createElement("div", {
     className: "safe-top",
     style: isLandscape ? {
       padding: "max(20px, calc(env(safe-area-inset-top) + 12px)) 20px 16px",
@@ -4990,22 +5044,7 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
       userScrollingRef.current = true;
       setUserScrolling(true);
     }
-  }, lyrics.length > 0 ? /*#__PURE__*/React.createElement(React.Fragment, null, currentIndex < 0 && /*#__PURE__*/React.createElement("div", {
-    style: {
-      display: "flex",
-      alignItems: "center",
-      justifyContent: "center",
-      height: "60vh"
-    }
-  }, /*#__PURE__*/React.createElement("div", {
-    style: {
-      width: 6,
-      height: 6,
-      borderRadius: "50%",
-      background: "rgba(255,255,255,0.12)",
-      animation: "pulse 1.5s ease-in-out infinite"
-    }
-  })), currentIndex >= 0 && (() => {
+  }, lyrics.length > 0 ? /*#__PURE__*/React.createElement(React.Fragment, null, (() => {
     // Adaptive transition: scale with how long the current line lasts.
     // Fast rap/spoken sections have lines <1s apart — a 0.4s transition
     // overlaps and looks sluggish. Cap at 0.4s, floor at 0.1s.
