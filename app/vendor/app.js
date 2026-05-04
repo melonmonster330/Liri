@@ -34,6 +34,19 @@ const _shazamPlugin = () => {
     waitForSilence: (opts) => np("ShazamPlugin", "waitForSilence", opts || {}),
   };
 };
+const Shazam = {
+  findMatch: (opts) => {
+    const p = _shazamPlugin();
+    if (!p) return Promise.reject(new Error("ShazamPlugin unavailable"));
+    return p.findMatch(opts);
+  },
+  cancel: () => { _shazamPlugin()?.cancel().catch(() => {}); },
+  waitForSilence: (opts) => {
+    const p = _shazamPlugin();
+    if (!p) return Promise.resolve({ silence: false });
+    return p.waitForSilence(opts);
+  },
+};
 
 //   3. Landing page feature cards (🎵 → sound/wave art, 💿 → vinyl art)
 //      Note: ✦ (sparkle character) is intentional Liri type — keep it
@@ -1436,8 +1449,6 @@ function Liri() {
   // amplitude via waitForSilence() and we advance to the next track when it resolves.
   useEffect(() => {
     if (!window.Capacitor) return;
-    const Shazam = _shazamPlugin();
-    if (!Shazam) return;
     if (mode !== "syncing") return;
 
     let cancelled = false;
@@ -1462,7 +1473,7 @@ function Liri() {
     return () => {
       cancelled = true;
       clearTimeout(startTimer);
-      Shazam.cancel().catch(() => {});
+      Shazam.cancel();
     };
   }, [mode]);
 
@@ -1897,7 +1908,7 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
     const stopShazam = () => {
       clearInterval(pulseId);
       setAudioLevel(0);
-      _shazamPlugin()?.cancel().catch(() => {});
+      Shazam.cancel();
     };
     speechRecRef.current = { stop: stopShazam };
 
@@ -1941,15 +1952,8 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
 
     // ── Call findMatch — a single long-running promise (same pattern as NativeAudio.record) ──
     // Resolves with { matched: true, title, artist, offset, matchTime } or { matched: false }
-    const _shazam = _shazamPlugin();
-    if (!_shazam) {
-      console.error("[shazam] plugin unavailable — Capacitor.Plugins.Shazam is null");
-      setMode("idle");
-      setShowTrackList(false);
-      return;
-    }
     try {
-      const result = await _shazam.findMatch({ timeout: 15000 });
+      const result = await Shazam.findMatch({ timeout: 15000 });
       if (listenSessionRef.current !== session) return; // session changed while we waited
 
       if (!result.matched) {
@@ -2541,83 +2545,30 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
     return null;
   };
 
-  // ── Resync: re-listen briefly to fix timing without changing the song ──
-  // Same 1.75s overlapping chunks as initial listen, matched only against the
-  // current track. Fires position update on first match, times out at 10s.
+  // ── Resync: use Shazam to snap position back to the actual record (iOS only) ──
   const resync = async () => {
-    if (isResyncing) return;
+    if (isResyncing || !IS_IOS) return;
     setIsResyncing(true);
-
-    let stream;
     try {
-      stream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: false, noiseSuppression: false } });
-    } catch (e) {
-      setIsResyncing(false);
-      return;
+      const result = await Shazam.findMatch({ timeout: 10000 });
+      if (!result.matched) { setIsResyncing(false); return; }
+      const { title, offset, matchTime } = result;
+      const elapsed = (Date.now() - matchTime) / 1000;
+      const adjustedOffset = Math.max(0, offset + elapsed);
+      const curIdx = currentTrackIndexRef.current;
+      const track = curIdx >= 0 ? turntableTracksRef.current[curIdx] : null;
+      if (!track) { setIsResyncing(false); return; }
+      const norm = s => (s || "").toLowerCase().trim();
+      if (!norm(title).includes(norm(track.trackName)) && !norm(track.trackName).includes(norm(title))) {
+        setIsResyncing(false); return;
+      }
+      initialPosRef.current = adjustedOffset;
+      syncStartRef.current = Date.now();
+      syncCalcRef.current = null;
+    } catch (err) {
+      console.error("[resync] error:", err);
     }
-
-    const mimeType = window.Capacitor ? "" : MediaRecorder.isTypeSupported("audio/webm") ? "audio/webm" : "audio/mp4";
-    let matched = false;
-    let currentRecorder = null;
-
-    const stopResync = () => {
-      matched = true;
-      try { currentRecorder?.stop(); } catch {}
-      stream.getTracks().forEach(t => t.stop());
-    };
-
-    // Give up after 10s if no match found
-    const giveUpTimer = setTimeout(() => {
-      if (!matched) stopResync();
-      setIsResyncing(false);
-    }, 10000);
-
-    const recordChunk = () => {
-      if (matched) return;
-      const recorder = mimeType ? new MediaRecorder(stream, { mimeType }) : new MediaRecorder(stream);
-      currentRecorder = recorder;
-      recorder.ondataavailable = async (e) => {
-        if (e.data.size < 500 || matched) return;
-        const chunkEndTime = Date.now();
-        try {
-          const base64 = await new Promise((resolve, reject) => {
-            const reader = new FileReader();
-            reader.onload = () => resolve(reader.result.split(",")[1]);
-            reader.onerror = reject;
-            reader.readAsDataURL(e.data);
-          });
-          const res = await fetch(WHISPER_PROXY, {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ audio: base64, mimeType: e.data.type || mimeType || "audio/mp4" }),
-          });
-          if (!res.ok || matched) return;
-          const { text } = await res.json();
-          if (!text || matched) return;
-          // Match against current track only — we know the song, just need position
-          const currentIdx = currentTrackIndexRef.current;
-          const track = currentIdx >= 0 ? turntableTracksRef.current[currentIdx] : null;
-          if (!track) return; // no current track — never search the whole album on resync
-          const result = matchTranscriptToTracks(text, [track], wordsDataRef.current, null);
-          if (!result) return;
-          clearTimeout(giveUpTimer);
-          stopResync();
-          // Same latency compensation as initial listen
-          const apiLatency = (Date.now() - chunkEndTime) / 1000;
-          initialPosRef.current = Math.max(0, result.startPos + apiLatency);
-          syncStartRef.current = Date.now();
-          syncCalcRef.current = null; // resync owns the position
-          setIsResyncing(false);
-        } catch (err) { console.error("[resync] chunk error:", err); }
-      };
-      recorder.start();
-      setTimeout(() => {
-        if (recorder.state === "recording") recorder.stop();
-        if (!matched) recordChunk();
-      }, 1750);
-    };
-
-    recordChunk();
+    setIsResyncing(false);
   };
 
     const reset = () => {
@@ -5056,13 +5007,7 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
       fontWeight: "600",
       color: "rgba(255,255,255,0.7)"
     }
-  }, "Resyncing\u2026"), /*#__PURE__*/React.createElement("div", {
-    style: {
-      fontSize: "13px",
-      color: "rgba(255,255,255,0.3)",
-      marginTop: "6px"
-    }
-  }, "Hold near your speakers")), /*#__PURE__*/React.createElement("div", {
+  }, "Resyncing\u2026")), /*#__PURE__*/React.createElement("div", {
     style: {
       overflowY: "auto",
       height: "100%",
@@ -5310,7 +5255,7 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
       cursor: "pointer",
       fontFamily: "inherit"
     }
-  }, isPaused ? "▶ Resume" : "|| Pause"), /*#__PURE__*/React.createElement("button", {
+  }, isPaused ? "▶ Resume" : "|| Pause"), IS_IOS && /*#__PURE__*/React.createElement("button", {
     onClick: () => { logButtonEvent("resync"); resync(); },
     disabled: isResyncing,
     style: {
@@ -5775,12 +5720,7 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
       marginBottom: "10px",
       marginTop: !turntableAlbum && listenAttempt > MAX_ATTEMPTS ? "20px" : "0"
     }
-  }, turntableAlbum ? (window.Capacitor ? (showTrackList ? "Can't find it automatically" : "Finding your place…") : "Pick a track to start") : listenAttempt > MAX_ATTEMPTS ? "Matching by lyrics…" : "Listening…"), /*#__PURE__*/React.createElement("div", {
-    style: {
-      fontSize: "14px",
-      color: "rgba(255,255,255,0.3)"
-    }
-  }, turntableAlbum ? (window.Capacitor ? (showTrackList ? "Pick a track below to start" : "Identifying with Shazam") : "Tap any track below") : listenAttempt > MAX_ATTEMPTS ? "Identifying by lyrics" : listenSecs === 0 ? "Hold near your speakers" : `${listenSecs}s — hold steady`),
+  }, turntableAlbum ? (window.Capacitor ? (showTrackList ? "Can't find it automatically" : "Finding your place…") : "Pick a track to start") : listenAttempt > MAX_ATTEMPTS ? "Matching by lyrics…" : "Listening…"),
 
   /* ── Shazam timer bar (iOS only, while actively listening, not yet in fallback) ── */
   turntableAlbum && window.Capacitor && !showTrackList && /*#__PURE__*/React.createElement(React.Fragment, null,
@@ -6054,11 +5994,8 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
       lineHeight: "1.8",
       fontSize: "15px"
     }
-  }, "Flip your record, drop the needle,", /*#__PURE__*/React.createElement("br", null), "then choose how to continue."), /*#__PURE__*/React.createElement("button", {
-    onClick: () => {
-      reset();
-      setTimeout(() => startListening(false), 300);
-    },
+  }, "Flip the record, then tap below."), turntableTracksRef.current.length > 0 && getNextSideLetter() && /*#__PURE__*/React.createElement("button", {
+    onClick: manualFlipToNextSide,
     style: {
       background: "linear-gradient(135deg, #d4a846, #c9807a)",
       color: "#080810",
@@ -6072,22 +6009,19 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
       width: "100%",
       marginBottom: "10px"
     }
-  }, "Flip & Listen \u2192"), turntableTracksRef.current.length > 0 && getNextSideLetter() && /*#__PURE__*/React.createElement("button", {
-    onClick: manualFlipToNextSide,
+  }, "Start Side ", getNextSideLetter(), " \u2192"), IS_IOS && /*#__PURE__*/React.createElement("button", {
+    onClick: () => { reset(); setTimeout(() => startListening(false), 300); },
     style: {
-      background: "rgba(255,255,255,0.06)",
-      border: "1px solid rgba(255,255,255,0.12)",
-      color: "rgba(255,255,255,0.7)",
-      borderRadius: "50px",
-      padding: "13px 36px",
-      fontSize: "14px",
-      fontWeight: "600",
+      marginTop: "4px",
+      marginBottom: "4px",
+      background: "none",
+      border: "none",
+      color: "rgba(255,255,255,0.25)",
+      fontSize: "13px",
       cursor: "pointer",
-      fontFamily: "inherit",
-      width: "100%",
-      marginBottom: "10px"
+      fontFamily: "inherit"
     }
-  }, "Start Side ", getNextSideLetter(), " \u2014 skip detection"), lastSong && /*#__PURE__*/React.createElement("button", {
+  }, "\u21BB Listen with Shazam"), lastSong && /*#__PURE__*/React.createElement("button", {
     onClick: () => setMode("idle"),
     style: {
       marginTop: "4px",
@@ -6145,18 +6079,15 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
       color: "#f0e6d3",
       marginBottom: "12px"
     }
-  }, "End of side?"), /*#__PURE__*/React.createElement("div", {
+  }, "Time to flip?"), /*#__PURE__*/React.createElement("div", {
     style: {
       color: "rgba(255,255,255,0.4)",
       marginBottom: "36px",
       lineHeight: "1.8",
       fontSize: "15px"
     }
-  }, "Couldn't pick up another track.", /*#__PURE__*/React.createElement("br", null), "Flip the record and choose how to continue."), /*#__PURE__*/React.createElement("button", {
-    onClick: () => {
-      reset();
-      setTimeout(() => startListening(false), 300);
-    },
+  }, "Flip the record, then tap below."), turntableTracksRef.current.length > 0 && getNextSideLetter() && /*#__PURE__*/React.createElement("button", {
+    onClick: manualFlipToNextSide,
     style: {
       background: "linear-gradient(135deg, #d4a846, #c9807a)",
       color: "#080810",
@@ -6170,22 +6101,19 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
       width: "100%",
       marginBottom: "10px"
     }
-  }, "Flip & Listen \u2192"), turntableTracksRef.current.length > 0 && getNextSideLetter() && /*#__PURE__*/React.createElement("button", {
-    onClick: manualFlipToNextSide,
+  }, "Start Side ", getNextSideLetter(), " \u2192"), IS_IOS && /*#__PURE__*/React.createElement("button", {
+    onClick: () => { reset(); setTimeout(() => startListening(false), 300); },
     style: {
-      background: "rgba(255,255,255,0.06)",
-      border: "1px solid rgba(255,255,255,0.12)",
-      color: "rgba(255,255,255,0.7)",
-      borderRadius: "50px",
-      padding: "13px 36px",
-      fontSize: "14px",
-      fontWeight: "600",
+      marginTop: "4px",
+      marginBottom: "4px",
+      background: "none",
+      border: "none",
+      color: "rgba(255,255,255,0.25)",
+      fontSize: "13px",
       cursor: "pointer",
-      fontFamily: "inherit",
-      width: "100%",
-      marginBottom: "10px"
+      fontFamily: "inherit"
     }
-  }, "Start Side ", getNextSideLetter(), " \u2014 skip detection"), lastSong && /*#__PURE__*/React.createElement("button", {
+  }, "\u21BB Listen with Shazam"), lastSong && /*#__PURE__*/React.createElement("button", {
     onClick: () => setMode("idle"),
     style: {
       marginTop: "4px",
