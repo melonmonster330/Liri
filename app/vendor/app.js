@@ -1072,6 +1072,10 @@ function Liri() {
         setAuthError("Please enter your email.");
         return;
       }
+      if (!/^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(authEmail.trim())) {
+        setAuthError("Please enter a valid email address.");
+        return;
+      }
       if (authPassword.length < 8) {
         setAuthError("Password must be at least 8 characters.");
         return;
