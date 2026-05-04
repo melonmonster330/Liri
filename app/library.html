@@ -74,25 +74,27 @@
     }
 
     function deriveSideFromIndex(idx, tracks) {
-      const SIDE_LIMIT_MS = 22 * 60 * 1000;
-      let sideIdx = 0;
-      let sideMs = 0;
-      let trackOnSide = 0;
-      const assignments = [];
-      for (const t of tracks) {
-        const dur = t.trackTimeMillis || 0;
-        // Flip to next side only if we already have songs on this side AND adding
-        // this song would exceed the limit.
-        if (sideMs > 0 && sideMs + dur > SIDE_LIMIT_MS) {
-          sideIdx++;
-          sideMs = 0;
-          trackOnSide = 0;
-        }
-        trackOnSide++;
-        sideMs += dur;
-        assignments.push({ side: String.fromCharCode(65 + sideIdx), track: trackOnSide });
+      if (tracks.length === 0 || idx < 0) return { side: "A", track: idx + 1 };
+      // Matches app.js getSideEndIndices: split by cumulative duration targeting 20-min sides
+      if (tracks.length <= 4) return { side: "A", track: idx + 1 }; // short releases are single-sided
+      const totalMs = tracks.reduce((s, t) => s + (t.trackTimeMillis || 0), 0);
+      const SIDE_MS = 20 * 60 * 1000;
+      const numSides = totalMs > 0 ? Math.max(2, Math.round(totalMs / SIDE_MS)) : 2;
+      const targetMs = totalMs > 0 ? totalMs / numSides : 0;
+      const sideEnds = [];
+      let cumMs = 0;
+      for (let i = 0; i < tracks.length - 1; i++) {
+        cumMs += tracks[i].trackTimeMillis || 0;
+        if (sideEnds.length < numSides - 1 && cumMs >= targetMs * (sideEnds.length + 1)) sideEnds.push(i);
       }
-      return assignments[idx] || { side: "A", track: idx + 1 };
+      sideEnds.push(tracks.length - 1);
+      for (let s = 0; s < sideEnds.length; s++) {
+        if (idx <= sideEnds[s]) {
+          const prevEnd = s === 0 ? -1 : sideEnds[s - 1];
+          return { side: String.fromCharCode(65 + s), track: idx - prevEnd };
+        }
+      }
+      return { side: "A", track: idx + 1 };
     }
 
     // Parse "4:32" duration string → milliseconds (null if unparseable)

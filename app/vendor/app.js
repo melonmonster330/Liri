@@ -552,6 +552,9 @@ function Liri() {
   // ── Liri vinyl database ──
   const [vinylDbRelease, setVinylDbRelease] = useState(null);
   const vinylDbReleaseRef = useRef(null);
+  // vinyl_sides: itunes_track_id → { side, side_track_number, position }
+  // Same table library.html uses — single source of truth for side assignments.
+  const vinylSidesRef = useRef({});
 
   // ── Flip notifications ──
   const [flipSound, setFlipSound] = useState(() => localStorage.getItem("liri_flip_sound") !== "false");
@@ -1321,11 +1324,25 @@ function Liri() {
         // without a re-render cycle. React state would be stale inside the closure.
         turntableLyricsCacheRef.current = cache;
 
-        // ── Load vinyl side data (Discogs) for accurate side display ──
+        // ── Load vinyl side data ──
         setTurntableTracksProgress({ percent: 90, stage: "Loading side data…" });
+
+        // Primary: vinyl_sides (keyed by itunes_track_id — same table library.html uses)
+        const trackIdsForSides = trackRows.map(t => t.itunes_track_id).filter(Boolean);
+        vinylSidesRef.current = {};
+        if (trackIdsForSides.length > 0) {
+          const { data: sidesRows } = await sb
+            .from("vinyl_sides")
+            .select("itunes_track_id, side, side_track_number, position")
+            .eq("itunes_collection_id", collectionId)
+            .in("itunes_track_id", trackIdsForSides);
+          for (const s of sidesRows || []) vinylSidesRef.current[String(s.itunes_track_id)] = s;
+        }
+
+        // Secondary: vinyl_releases/vinyl_tracks (Discogs title-matched) — used as fallback
         let dbRelease = await fetchVinylRelease(collectionId);
-        if (!dbRelease?.vinyl_tracks?.length) {
-          // Not in DB yet — fetch from Discogs and retry once
+        if (!dbRelease?.vinyl_tracks?.length && !Object.keys(vinylSidesRef.current).length) {
+          // Neither source has data — try Discogs auto-populate then retry
           await autoPopulateVinylSides(collectionId, albumName, artistName);
           dbRelease = await fetchVinylRelease(collectionId);
         }
@@ -2286,15 +2303,17 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
     const tTracks = turntableTracksRef.current;
     const tIdx = turntableMatchedIdxRef.current;
     if (turntableAlbum && tTracks.length > 0 && tIdx >= 0) {
+      // Primary: vinyl_sides (same source as library.html, keyed by iTunes track ID)
+      const sideRow = vinylSidesRef.current[String(tTracks[tIdx]?.trackId)];
+      if (sideRow?.side) return { side: sideRow.side.toUpperCase(), track: sideRow.side_track_number };
+      // Secondary: vinyl_tracks (Discogs title match)
       const vinylTracks = vinylDbRelease?.vinyl_tracks;
       if (vinylTracks?.length > 0) {
         const vt = resolveVinylTrack(tTracks[tIdx]?.trackName, tIdx, vinylTracks);
         const si = vinylTrackToSideInfo(vt, vinylTracks);
         if (si) return si;
       }
-      return deriveSideFromIndex(tIdx, tTracks) || {
-        track: tIdx + 1
-      };
+      return deriveSideFromIndex(tIdx, tTracks) || { track: tIdx + 1 };
     }
 
     // ── Path 1: Full vinyl auto-mode — albumTracks + currentTrackIndex ──
@@ -2312,6 +2331,20 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
     }
     return null;
   };
+  // Returns side-end indices from vinyl_sides map (same source as library.html).
+  // A track is a side end when the next track has a different side letter.
+  // Returns null when the map has no data so callers can fall back to heuristic.
+  const getSideEndsFromSidesMap = (tracks, sidesMap) => {
+    if (!Object.keys(sidesMap).length) return null;
+    const ends = [];
+    for (let i = 0; i < tracks.length; i++) {
+      const thisSide = sidesMap[String(tracks[i]?.trackId)]?.side?.toUpperCase();
+      const nextSide = i + 1 < tracks.length ? sidesMap[String(tracks[i + 1]?.trackId)]?.side?.toUpperCase() : null;
+      if (thisSide && (nextSide === null || thisSide !== nextSide)) ends.push(i);
+    }
+    return ends.length ? ends : null;
+  };
+
   const getSideEndIndices = (tracks, tps) => {
     if (tracks.length <= 1) return [];
     if (tps > 0) {
@@ -2358,10 +2391,11 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
     clearInterval(syncIntervalRef.current);
     setPlaybackTime(0);
 
-    // Use Liri DB side data (most accurate), then local learning, then heuristic
+    // Priority: vinyl_sides (same source as library.html) → vinyl_tracks (Discogs title match) → heuristic
     const dbRelease = vinylDbReleaseRef.current;
-    const effectiveTps = albumTpsRef.current > 0 ? albumTpsRef.current : 0; // 0 = use duration heuristic
-    const sideEnds = dbRelease?.vinyl_tracks?.length > 0 ? getDbSideEndIndices(tracks, dbRelease.vinyl_tracks) : getSideEndIndices(tracks, effectiveTps);
+    const effectiveTps = albumTpsRef.current > 0 ? albumTpsRef.current : 0;
+    const sideEnds = getSideEndsFromSidesMap(tracks, vinylSidesRef.current)
+      ?? (dbRelease?.vinyl_tracks?.length > 0 ? getDbSideEndIndices(tracks, dbRelease.vinyl_tracks) : getSideEndIndices(tracks, effectiveTps));
     const isLastTrack = idx === tracks.length - 1;
     const isSideEnd = sideEnds.includes(idx);
     if (isLastTrack) {
@@ -2509,9 +2543,8 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
       : currentTrackIndexRef.current;
     const dbRelease = vinylDbReleaseRef.current;
     const effectiveTps = albumTpsRef.current > 0 ? albumTpsRef.current : 0;
-    const sideEnds = dbRelease?.vinyl_tracks?.length > 0
-      ? getDbSideEndIndices(tracks, dbRelease.vinyl_tracks)
-      : getSideEndIndices(tracks, effectiveTps);
+    const sideEnds = getSideEndsFromSidesMap(tracks, vinylSidesRef.current)
+      ?? (dbRelease?.vinyl_tracks?.length > 0 ? getDbSideEndIndices(tracks, dbRelease.vinyl_tracks) : getSideEndIndices(tracks, effectiveTps));
     for (let s = 0; s < sideEnds.length; s++) {
       if (curIdx <= sideEnds[s]) {
         const nextFirst = sideEnds[s] + 1;
@@ -2538,9 +2571,8 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
       : currentTrackIndexRef.current;
     const dbRelease = vinylDbReleaseRef.current;
     const effectiveTps = albumTpsRef.current > 0 ? albumTpsRef.current : 0;
-    const sideEnds = dbRelease?.vinyl_tracks?.length > 0
-      ? getDbSideEndIndices(tracks, dbRelease.vinyl_tracks)
-      : getSideEndIndices(tracks, effectiveTps);
+    const sideEnds = getSideEndsFromSidesMap(tracks, vinylSidesRef.current)
+      ?? (dbRelease?.vinyl_tracks?.length > 0 ? getDbSideEndIndices(tracks, dbRelease.vinyl_tracks) : getSideEndIndices(tracks, effectiveTps));
     for (let s = 0; s < sideEnds.length; s++) {
       if (curIdx <= sideEnds[s] && sideEnds[s] + 1 < tracks.length) {
         return "ABCDEFGH"[s + 1] || null;
@@ -2609,6 +2641,7 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
     setVinylDbRelease(null);
     albumTpsRef.current = 0;
     vinylDbReleaseRef.current = null;
+    vinylSidesRef.current = {};
     userNudgeRef.current = 0;
   };
 
