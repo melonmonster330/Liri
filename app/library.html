@@ -80,12 +80,18 @@
       const totalMs = tracks.reduce((s, t) => s + (t.trackTimeMillis || 0), 0);
       const SIDE_MS = 20 * 60 * 1000;
       const numSides = totalMs > 0 ? Math.max(2, Math.round(totalMs / SIDE_MS)) : 2;
-      const targetMs = totalMs > 0 ? totalMs / numSides : 0;
       const sideEnds = [];
-      let cumMs = 0;
-      for (let i = 0; i < tracks.length - 1; i++) {
-        cumMs += tracks[i].trackTimeMillis || 0;
-        if (sideEnds.length < numSides - 1 && cumMs >= targetMs * (sideEnds.length + 1)) sideEnds.push(i);
+      if (totalMs > 0) {
+        const targetMs = totalMs / numSides;
+        let cumMs = 0;
+        for (let i = 0; i < tracks.length - 1; i++) {
+          cumMs += tracks[i].trackTimeMillis || 0;
+          if (sideEnds.length < numSides - 1 && cumMs >= targetMs * (sideEnds.length + 1)) sideEnds.push(i);
+        }
+      } else {
+        // No duration data — split evenly by track count
+        const perSide = Math.ceil(tracks.length / numSides);
+        for (let i = perSide - 1; i < tracks.length - 1; i += perSide) sideEnds.push(i);
       }
       sideEnds.push(tracks.length - 1);
       for (let s = 0; s < sideEnds.length; s++) {
@@ -405,27 +411,35 @@
 
         if (trackList.length === 0) { setLoading(false); return; }
 
-        // 3. Load vinyl side data from vinyl_sides table
-        const trackIds = trackList.map(t => t.itunes_track_id).filter(Boolean);
-        let sidesMap = {}; // itunes_track_id → { side, side_track_number, position }
-        if (trackIds.length > 0) {
+        // 3. Load vinyl side data — query by collection only (track IDs can be
+        //    synthetic Discogs values that won't match real iTunes IDs in trackList).
+        //    Deduplicate by (side, side_track_number) so multiple releases don't
+        //    produce duplicate rows, then assign to tracks by sorted position index.
+        let sidesByPosition = []; // sorted: A1, A2…B1, B2… ordered by side then track number
+        {
           const { data: sides } = await sb.from("vinyl_sides")
-            .select("itunes_track_id, side, side_track_number, position")
+            .select("side, side_track_number, position")
             .eq("itunes_collection_id", cid)
-            .in("itunes_track_id", trackIds);
-          for (const s of sides || []) sidesMap[s.itunes_track_id] = s;
+            .order("side", { ascending: true })
+            .order("side_track_number", { ascending: true });
+          // Deduplicate: keep first occurrence of each (side, side_track_number)
+          const seen = new Set();
+          for (const s of sides || []) {
+            const key = `${s.side}|${s.side_track_number}`;
+            if (!seen.has(key)) { seen.add(key); sidesByPosition.push(s); }
+          }
         }
 
-        const hasSideData = Object.keys(sidesMap).length > 0;
+        const hasSideData = sidesByPosition.length > 0 && sidesByPosition.length >= trackList.length;
         setVinylSource(hasSideData ? "db" : "estimated");
 
         const merged = trackList.map((t, i) => {
-          const sideRow = sidesMap[t.itunes_track_id];
           let side, trackOnSide, position;
-          if (sideRow?.side) {
-            side = sideRow.side.toUpperCase();
-            trackOnSide = sideRow.side_track_number;
-            position = sideRow.position || (side + trackOnSide);
+          if (hasSideData && sidesByPosition[i]) {
+            const s = sidesByPosition[i];
+            side = s.side.toUpperCase();
+            trackOnSide = s.side_track_number;
+            position = s.position || (side + trackOnSide);
           } else {
             const d = deriveSideFromIndex(i, trackList.map(tr => ({ trackTimeMillis: tr.duration_ms })));
             side = d.side; trackOnSide = d.track; position = side + trackOnSide;

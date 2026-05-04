@@ -552,9 +552,9 @@ function Liri() {
   // ── Liri vinyl database ──
   const [vinylDbRelease, setVinylDbRelease] = useState(null);
   const vinylDbReleaseRef = useRef(null);
-  // vinyl_sides: itunes_track_id → { side, side_track_number, position }
-  // Same table library.html uses — single source of truth for side assignments.
-  const vinylSidesRef = useRef({});
+  // vinyl_sides: array of { side, side_track_number, position } sorted A1…B1…
+  // Positionally indexed — vinylSidesRef.current[i] is the side for turntableTracksRef[i].
+  const vinylSidesRef = useRef([]);
 
   // ── Flip notifications ──
   const [flipSound, setFlipSound] = useState(() => localStorage.getItem("liri_flip_sound") !== "false");
@@ -1247,6 +1247,7 @@ function Liri() {
     // to score against the wrong album's word list.
     turntableTracksRef.current = [];
     turntableLyricsCacheRef.current = {};
+    vinylSidesRef.current = [];
     try {
       const alb = turntableAlbumRef.current;
       const artistName = alb?.artist_name || "";
@@ -1327,21 +1328,30 @@ function Liri() {
         // ── Load vinyl side data ──
         setTurntableTracksProgress({ percent: 90, stage: "Loading side data…" });
 
-        // Primary: vinyl_sides (keyed by itunes_track_id — same table library.html uses)
-        const trackIdsForSides = trackRows.map(t => t.itunes_track_id).filter(Boolean);
-        vinylSidesRef.current = {};
-        if (trackIdsForSides.length > 0) {
+        // Primary: vinyl_sides — query by collection only, assign to tracks by sorted position index.
+        // Track IDs in vinyl_sides may be synthetic Discogs values that don't match album_tracks IDs,
+        // so we match positionally (sorted A1, A2…B1, B2…) rather than by ID.
+        vinylSidesRef.current = []; // array indexed by track position, same order as trackRows
+        {
           const { data: sidesRows } = await sb
             .from("vinyl_sides")
-            .select("itunes_track_id, side, side_track_number, position")
+            .select("side, side_track_number, position")
             .eq("itunes_collection_id", collectionId)
-            .in("itunes_track_id", trackIdsForSides);
-          for (const s of sidesRows || []) vinylSidesRef.current[String(s.itunes_track_id)] = s;
+            .order("side", { ascending: true })
+            .order("side_track_number", { ascending: true });
+          const seen = new Set();
+          const sorted = [];
+          for (const s of sidesRows || []) {
+            const key = `${s.side}|${s.side_track_number}`;
+            if (!seen.has(key)) { seen.add(key); sorted.push(s); }
+          }
+          // Only use if we have at least as many side rows as tracks (otherwise incomplete data)
+          if (sorted.length >= trackRows.length) vinylSidesRef.current = sorted;
         }
 
         // Secondary: vinyl_releases/vinyl_tracks (Discogs title-matched) — used as fallback
         let dbRelease = await fetchVinylRelease(collectionId);
-        if (!dbRelease?.vinyl_tracks?.length && !Object.keys(vinylSidesRef.current).length) {
+        if (!dbRelease?.vinyl_tracks?.length && !vinylSidesRef.current.length) {
           // Neither source has data — try Discogs auto-populate then retry
           await autoPopulateVinylSides(collectionId, albumName, artistName);
           dbRelease = await fetchVinylRelease(collectionId);
@@ -2303,8 +2313,8 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
     const tTracks = turntableTracksRef.current;
     const tIdx = turntableMatchedIdxRef.current;
     if (turntableAlbum && tTracks.length > 0 && tIdx >= 0) {
-      // Primary: vinyl_sides (same source as library.html, keyed by iTunes track ID)
-      const sideRow = vinylSidesRef.current[String(tTracks[tIdx]?.trackId)];
+      // Primary: vinyl_sides positional array (same source as library.html)
+      const sideRow = vinylSidesRef.current[tIdx];
       if (sideRow?.side) return { side: sideRow.side.toUpperCase(), track: sideRow.side_track_number };
       // Secondary: vinyl_tracks (Discogs title match)
       const vinylTracks = vinylDbRelease?.vinyl_tracks;
@@ -2331,15 +2341,15 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
     }
     return null;
   };
-  // Returns side-end indices from vinyl_sides map (same source as library.html).
+  // Returns side-end indices from vinylSidesRef array (same source as library.html).
   // A track is a side end when the next track has a different side letter.
-  // Returns null when the map has no data so callers can fall back to heuristic.
-  const getSideEndsFromSidesMap = (tracks, sidesMap) => {
-    if (!Object.keys(sidesMap).length) return null;
+  // Returns null when the array is empty so callers can fall back to heuristic.
+  const getSideEndsFromSidesMap = (tracks, sidesArr) => {
+    if (!sidesArr.length) return null;
     const ends = [];
     for (let i = 0; i < tracks.length; i++) {
-      const thisSide = sidesMap[String(tracks[i]?.trackId)]?.side?.toUpperCase();
-      const nextSide = i + 1 < tracks.length ? sidesMap[String(tracks[i + 1]?.trackId)]?.side?.toUpperCase() : null;
+      const thisSide = sidesArr[i]?.side?.toUpperCase();
+      const nextSide = i + 1 < tracks.length ? sidesArr[i + 1]?.side?.toUpperCase() : null;
       if (thisSide && (nextSide === null || thisSide !== nextSide)) ends.push(i);
     }
     return ends.length ? ends : null;
@@ -2641,7 +2651,7 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
     setVinylDbRelease(null);
     albumTpsRef.current = 0;
     vinylDbReleaseRef.current = null;
-    vinylSidesRef.current = {};
+    vinylSidesRef.current = [];
     userNudgeRef.current = 0;
   };
 
