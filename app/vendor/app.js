@@ -1552,9 +1552,13 @@ function Liri() {
   // ── Vinyl auto-advance: trigger when song nears its end ──
   useEffect(() => {
     if (mode !== "syncing") return;
-    // Fall back to last lyric line + 30s if duration is missing.
     const lastLyricTime = lyrics.length > 0 ? lyrics[lyrics.length - 1].time : null;
-    const effectiveDuration = songDuration ?? (lastLyricTime ? lastLyricTime + 30 : null);
+    // Read duration from turntable track ref directly — more reliable than state
+    // when songDuration hasn't updated yet for the new track.
+    const tIdx = turntableMatchedIdxRef.current;
+    const trackDuration = tIdx >= 0 ? (turntableTracksRef.current[tIdx]?.trackTimeMillis ?? 0) / 1000 || null : null;
+    // Fallback: last lyric + 3s (was 30s — trimmed so same-side advance is immediate)
+    const effectiveDuration = songDuration ?? trackDuration ?? (lastLyricTime ? lastLyricTime + 3 : null);
     if (!effectiveDuration) return;
     if (playbackTime >= effectiveDuration && !autoAdvanceFiredRef.current) {
       autoAdvanceFiredRef.current = true;
