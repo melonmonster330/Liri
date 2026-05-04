@@ -153,7 +153,7 @@ async function getAdminStats() {
   const [usersResp, libraryResp, eventsResp, subsResp, releasesResp, flipsResp] = await Promise.all([
     sbAdminGet("admin/users?page=1&per_page=1000"),
     sbGet("user_vinyl_library?select=user_id,added_at&order=added_at.desc&limit=5000"),
-    sbGet("listening_events?select=platform,source,album_name,artist_name,logged_at&order=logged_at.desc&limit=2000"),
+    sbGet("listening_events?select=platform,source,album_name,artist_name,listened_at&order=listened_at.desc&limit=2000"),
     sbGet("subscriptions?select=tier,status"),
     sbGet("vinyl_releases?select=id&limit=1", { "Prefer": "count=exact" }),
     sbGet("flip_events?select=id&limit=1", { "Prefer": "count=exact" }),
@@ -178,15 +178,15 @@ async function getAdminStats() {
   // Listening events
   const events = Array.isArray(eventsResp.body) ? eventsResp.body : [];
   const totalPlays  = events.length;
-  const plays7d     = events.filter(e => e.logged_at > d7).length;
-  const plays1d     = events.filter(e => e.logged_at > d1).length;
+  const plays7d     = events.filter(e => e.listened_at > d7).length;
+  const plays1d     = events.filter(e => e.listened_at > d1).length;
   const webPlays    = events.filter(e => e.platform === "web").length;
   const iosPlays    = events.filter(e => e.platform === "ios").length;
   const recogPlays  = events.filter(e => e.source === "recognition").length;
   const autoPlays   = events.filter(e => e.source === "auto_advance").length;
 
   // Top albums (last 30d)
-  const recentEvents = events.filter(e => e.logged_at > d30);
+  const recentEvents = events.filter(e => e.listened_at > d30);
   const albumCounts = {};
   for (const e of recentEvents) {
     if (!e.album_name) continue;
