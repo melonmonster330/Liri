@@ -153,7 +153,7 @@ async function getAdminStats() {
   const [usersResp, libraryResp, eventsResp, subsResp, releasesResp, flipsResp] = await Promise.all([
     sbAdminGet("admin/users?page=1&per_page=1000"),
     sbGet("user_vinyl_library?select=user_id,added_at&order=added_at.desc&limit=5000"),
-    sbGet("listening_events?select=platform,source,album_name,artist_name,listened_at&order=listened_at.desc&limit=2000"),
+    sbGet("listening_events?select=user_id,platform,source,album_name,artist_name,listened_at&order=listened_at.desc&limit=2000"),
     sbGet("subscriptions?select=tier,status"),
     sbGet("vinyl_releases?select=id&limit=1", { "Prefer": "count=exact" }),
     sbGet("flip_events?select=id&limit=1", { "Prefer": "count=exact" }),
@@ -198,6 +198,18 @@ async function getAdminStats() {
     .slice(0, 8)
     .map(([key, count]) => { const [album, artist] = key.split("|||"); return { album, artist, count }; });
 
+  // Top users by play count (all-time, using events window)
+  const emailById = Object.fromEntries(allUsers.map(u => [u.id, u.email]));
+  const userPlayCounts = {};
+  for (const e of events) {
+    if (!e.user_id) continue;
+    userPlayCounts[e.user_id] = (userPlayCounts[e.user_id] || 0) + 1;
+  }
+  const topUsers = Object.entries(userPlayCounts)
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, 10)
+    .map(([uid, count]) => ({ email: emailById[uid] || uid.slice(0, 8) + "…", count }));
+
   // Subscriptions
   const subs = Array.isArray(subsResp.body) ? subsResp.body : [];
   const premiumUsers = subs.filter(s => s.tier === "premium" && ["active","trialing"].includes(s.status)).length;
@@ -211,6 +223,7 @@ async function getAdminStats() {
     library:  { totalAlbums, uniqueUsers: uniqueLibUsers, avgAlbums },
     plays:    { total: totalPlays, last7d: plays7d, last24h: plays1d, web: webPlays, ios: iosPlays, recognition: recogPlays, autoAdvance: autoPlays },
     topAlbums,
+    topUsers,
     catalogue: { releases: catalogueTotal, flips: totalFlips },
     generatedAt: now.toISOString(),
   };
