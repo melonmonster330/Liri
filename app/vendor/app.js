@@ -538,6 +538,7 @@ function Liri() {
 
   // ── Resync / advance flags ──
   const [isResyncing, setIsResyncing] = useState(false);
+  const [isNeedleDrop, setIsNeedleDrop] = useState(false);
   const [isPaused, setIsPaused] = useState(false);
   const [kbToast, setKbToast] = useState(null);
   const kbToastTimerRef = useRef(null);
@@ -2549,7 +2550,7 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
   // ── Manual flip: jump straight to the first track of the next side ──
   // Skips Shazam entirely — user has physically flipped the record and just
   // wants lyrics to start from track 1 of the next side without re-identifying.
-  const manualFlipToNextSide = () => {
+  const manualFlipToNextSide = async () => {
     const tracks = turntableTracksRef.current;
     if (!tracks.length) return;
     const curIdx = turntableMatchedIdxRef.current >= 0
@@ -2567,6 +2568,9 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
           setMode("side-end");
           return;
         }
+        setIsNeedleDrop(true);
+        await new Promise(r => setTimeout(r, 1800));
+        setIsNeedleDrop(false);
         jumpToTrackIdx(nextFirst);
         return;
       }
@@ -6045,7 +6049,27 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
       lineHeight: "1.8",
       fontSize: "15px"
     }
-  }, "Flip the record, then tap below."), turntableTracksRef.current.length > 0 && getNextSideLetter() && /*#__PURE__*/React.createElement("button", {
+  }, "Flip the record, then tap below."), isNeedleDrop ? /*#__PURE__*/React.createElement("div", {
+    style: {
+      marginTop: "8px",
+      display: "flex",
+      flexDirection: "column",
+      alignItems: "center",
+      gap: "10px",
+      animation: "fade-up 0.3s ease both"
+    }
+  }, /*#__PURE__*/React.createElement("div", {
+    style: {
+      width: "36px",
+      height: "36px",
+      border: "3px solid rgba(212,168,70,0.2)",
+      borderTop: "3px solid #d4a846",
+      borderRadius: "50%",
+      animation: "spin 0.9s linear infinite"
+    }
+  }), /*#__PURE__*/React.createElement("div", {
+    style: { fontSize: "13px", color: "rgba(255,255,255,0.35)" }
+  }, "Dropping needle…")) : /*#__PURE__*/React.createElement(React.Fragment, null, turntableTracksRef.current.length > 0 && getNextSideLetter() && /*#__PURE__*/React.createElement("button", {
     onClick: manualFlipToNextSide,
     style: {
       background: "linear-gradient(135deg, #d4a846, #c9807a)",
@@ -6137,7 +6161,27 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
       lineHeight: "1.8",
       fontSize: "15px"
     }
-  }, "Flip the record, then tap below."), turntableTracksRef.current.length > 0 && getNextSideLetter() && /*#__PURE__*/React.createElement("button", {
+  }, "Flip the record, then tap below."), isNeedleDrop ? /*#__PURE__*/React.createElement("div", {
+    style: {
+      marginTop: "8px",
+      display: "flex",
+      flexDirection: "column",
+      alignItems: "center",
+      gap: "10px",
+      animation: "fade-up 0.3s ease both"
+    }
+  }, /*#__PURE__*/React.createElement("div", {
+    style: {
+      width: "36px",
+      height: "36px",
+      border: "3px solid rgba(212,168,70,0.2)",
+      borderTop: "3px solid #d4a846",
+      borderRadius: "50%",
+      animation: "spin 0.9s linear infinite"
+    }
+  }), /*#__PURE__*/React.createElement("div", {
+    style: { fontSize: "13px", color: "rgba(255,255,255,0.35)" }
+  }, "Dropping needle…")) : /*#__PURE__*/React.createElement(React.Fragment, null, turntableTracksRef.current.length > 0 && getNextSideLetter() && /*#__PURE__*/React.createElement("button", {
     onClick: manualFlipToNextSide,
     style: {
       background: "linear-gradient(135deg, #d4a846, #c9807a)",
