@@ -448,9 +448,9 @@ function Liri() {
   // ── Resync / advance flags ──
   const [isResyncing, setIsResyncing] = useState(false);
   const [isNeedleDrop, setIsNeedleDrop] = useState(false);
-  const [isPaused, setIsPaused] = useState(false);
   const [keepScreenAwake, setKeepScreenAwake] = useState(() => localStorage.getItem("liri_keep_awake") === "true");
   const wakeLockRef = useRef(null);
+  const [isPaused, setIsPaused] = useState(false);
   const [kbToast, setKbToast] = useState(null);
   const kbToastTimerRef = useRef(null);
   const [shouldAdvanceTrack, setShouldAdvanceTrack] = useState(false);
@@ -514,7 +514,7 @@ function Liri() {
   const userNudgeRef = useRef(0); // cumulative nudge applied by user this session
   // Deferred timing: identification paths store { startPos, phraseOffset, recStart } here.
   // startSync reads it to compute initialPos at the last possible moment — capturing the
-  // full elapsed time from recording start through API + React render.
+  // full elapsed time from recording start through Whisper API + React render.
   const syncCalcRef = useRef(null);
   const recordingStartRef = useRef(null); // wall-clock time when mic started recording
   const lyricsRef = useRef([]);
@@ -2517,7 +2517,7 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
     return () => { release(); document.removeEventListener("visibilitychange", onVisibility); };
   }, [keepScreenAwake]);
 
-  // ── Landscape controls auto-hide ──
+    // ── Landscape controls auto-hide ──
   // Must live here — BEFORE any conditional early returns — to satisfy React hooks rules.
   useEffect(() => {
     if (mode === "syncing" && isLandscape) {
@@ -4170,16 +4170,70 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
       paddingTop: "20px",
       marginBottom: "20px"
     }
-  }, /*#__PURE__*/React.createElement("button", {
-    onClick: () => { const next = !keepScreenAwake; setKeepScreenAwake(next); localStorage.setItem("liri_keep_awake", String(next)); },
-    style: { width:"100%", display:"flex", alignItems:"center", justifyContent:"space-between", background:"rgba(255,255,255,0.04)", border:"1px solid rgba(255,255,255,0.08)", borderRadius:"14px", padding:"13px 16px", marginBottom:"12px", cursor:"pointer", fontFamily:"inherit" }
   }, /*#__PURE__*/React.createElement("div", {
-    style: { display:"flex", alignItems:"center", gap:"10px" }
-  }, /*#__PURE__*/React.createElement("svg", {width:"15",height:"15",viewBox:"0 0 24 24",fill:"none",stroke:"rgba(255,255,255,0.45)",strokeWidth:"2",strokeLinecap:"round",strokeLinejoin:"round"}, /*#__PURE__*/React.createElement("circle",{cx:"12",cy:"12",r:"5"}), /*#__PURE__*/React.createElement("line",{x1:"12",y1:"1",x2:"12",y2:"3"}), /*#__PURE__*/React.createElement("line",{x1:"12",y1:"21",x2:"12",y2:"23"}), /*#__PURE__*/React.createElement("line",{x1:"4.22",y1:"4.22",x2:"5.64",y2:"5.64"}), /*#__PURE__*/React.createElement("line",{x1:"18.36",y1:"18.36",x2:"19.78",y2:"19.78"}), /*#__PURE__*/React.createElement("line",{x1:"1",y1:"12",x2:"3",y2:"12"}), /*#__PURE__*/React.createElement("line",{x1:"21",y1:"12",x2:"23",y2:"12"}), /*#__PURE__*/React.createElement("line",{x1:"4.22",y1:"19.78",x2:"5.64",y2:"18.36"}), /*#__PURE__*/React.createElement("line",{x1:"18.36",y1:"5.64",x2:"19.78",y2:"4.22"})), /*#__PURE__*/React.createElement("span", {style:{fontSize:"14px",color:"rgba(255,255,255,0.5)"}}, "Keep screen on")), /*#__PURE__*/React.createElement("div", {
-    style: { width:"38px", height:"22px", borderRadius:"11px", background: keepScreenAwake ? "#d4a846" : "rgba(255,255,255,0.12)", transition:"background 0.2s", position:"relative", flexShrink:0 }
-  }, /*#__PURE__*/React.createElement("div", {
-    style: { position:"absolute", top:"3px", left: keepScreenAwake ? "19px" : "3px", width:"16px", height:"16px", borderRadius:"50%", background:"#fff", transition:"left 0.2s", boxShadow:"0 1px 3px rgba(0,0,0,0.3)" }
-  }))), /*#__PURE__*/React.createElement("div", {
+  onClick: () => {
+    const next = !keepScreenAwake;
+    setKeepScreenAwake(next);
+    localStorage.setItem("liri_keep_awake", next ? "true" : "false");
+  },
+  style: {
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "space-between",
+    padding: "14px 0",
+    cursor: "pointer",
+    borderBottom: "1px solid rgba(255,255,255,0.05)",
+    marginBottom: "20px"
+  }
+}, /*#__PURE__*/React.createElement("div", {
+  style: {display: "flex", alignItems: "center", gap: "12px"}
+}, /*#__PURE__*/React.createElement("div", {
+  style: {
+    width: "32px",
+    height: "32px",
+    borderRadius: "8px",
+    background: "rgba(255,255,255,0.06)",
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "center"
+  }
+}, /*#__PURE__*/React.createElement("svg", {
+  width: "16",
+  height: "16",
+  viewBox: "0 0 24 24",
+  fill: "none",
+  stroke: "currentColor",
+  strokeWidth: "2",
+  style: {color: "rgba(255,255,255,0.5)"}
+}, /*#__PURE__*/React.createElement("circle", {
+  cx: "12", cy: "12", r: "4"
+}), /*#__PURE__*/React.createElement("path", {
+  d: "M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M4.93 19.07l1.41-1.41M17.66 6.34l1.41-1.41"
+}))), /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("div", {
+  style: {fontSize: "14px", color: "rgba(255,255,255,0.85)", fontWeight: "500"}
+}, "Keep screen on"), /*#__PURE__*/React.createElement("div", {
+  style: {fontSize: "11px", color: "rgba(255,255,255,0.35)", marginTop: "2px"}
+}, "Prevent display from sleeping"))), /*#__PURE__*/React.createElement("div", {
+  style: {
+    width: "44px",
+    height: "26px",
+    borderRadius: "13px",
+    background: keepScreenAwake ? "rgba(212,168,70,0.9)" : "rgba(255,255,255,0.1)",
+    position: "relative",
+    transition: "background 0.2s"
+  }
+}, /*#__PURE__*/React.createElement("div", {
+  style: {
+    position: "absolute",
+    top: "3px",
+    left: keepScreenAwake ? "21px" : "3px",
+    width: "20px",
+    height: "20px",
+    borderRadius: "50%",
+    background: "white",
+    transition: "left 0.2s"
+  }
+}))), /*#__PURE__*/React.createElement("div", {
     style: {
       fontSize: "11px",
       letterSpacing: "2px",
