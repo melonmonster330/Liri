@@ -150,13 +150,14 @@ async function getAdminStats() {
   const d30 = new Date(now - 30 * 86400000).toISOString();
   const d1  = new Date(now - 1  * 86400000).toISOString();
 
-  const [usersResp, libraryResp, eventsResp, subsResp, releasesResp, flipsResp] = await Promise.all([
+  const [usersResp, libraryResp, eventsResp, subsResp, releasesResp, flipsResp, bugsResp] = await Promise.all([
     sbAdminGet("admin/users?page=1&per_page=1000"),
     sbGet("user_vinyl_library?select=user_id,added_at&order=added_at.desc&limit=5000"),
     sbGet("listening_events?select=user_id,platform,source,album_name,artist_name,listened_at&order=listened_at.desc&limit=2000"),
     sbGet("subscriptions?select=tier,status"),
     sbGet("vinyl_releases?select=id&limit=1", { "Prefer": "count=exact" }),
     sbGet("flip_events?select=id&limit=1", { "Prefer": "count=exact" }),
+    sbGet("bug_reports?select=id,created_at,user_email,app_version,platform,description,meta&order=created_at.desc&limit=50"),
   ]);
 
   // Users
@@ -218,12 +219,15 @@ async function getAdminStats() {
   const catalogueTotal = parseInt(releasesResp.headers?.["content-range"]?.split("/")[1] || "0", 10);
   const totalFlips     = parseInt(flipsResp.headers?.["content-range"]?.split("/")[1] || "0", 10);
 
+  const bugReports = Array.isArray(bugsResp.body) ? bugsResp.body : [];
+
   return {
     users:    { total: totalUsers, new7d: newUsers7d, new30d: newUsers30d, premium: premiumUsers, recentSignups },
     library:  { totalAlbums, uniqueUsers: uniqueLibUsers, avgAlbums },
     plays:    { total: totalPlays, last7d: plays7d, last24h: plays1d, web: webPlays, ios: iosPlays, recognition: recogPlays, autoAdvance: autoPlays },
     topAlbums,
     topUsers,
+    bugReports,
     catalogue: { releases: catalogueTotal, flips: totalFlips },
     generatedAt: now.toISOString(),
   };

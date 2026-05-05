@@ -68,6 +68,20 @@
   .split-bar-fill { height: 100%; border-radius: 2px; background: var(--gold); }
 
   .loading { color: var(--muted); text-align: center; padding: 60px; font-size: 14px; }
+
+  .bug-row { border-bottom: 1px solid var(--border); cursor: pointer; }
+  .bug-row:last-child { border-bottom: none; }
+  .bug-summary { display: flex; align-items: center; gap: 10px; padding: 10px 0; }
+  .bug-summary:hover .bug-desc { color: #fff; }
+  .bug-badge { font-size: 10px; font-weight: 700; padding: 2px 7px; border-radius: 6px; flex-shrink: 0; text-transform: uppercase; letter-spacing: 0.04em; }
+  .badge-ios { background: rgba(212,168,70,0.15); color: var(--gold); }
+  .badge-web { background: rgba(100,160,255,0.15); color: #7ab4ff; }
+  .bug-desc { font-size: 13px; flex: 1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; color: rgba(255,255,255,0.7); }
+  .bug-meta { font-size: 11px; color: var(--muted); flex-shrink: 0; }
+  .bug-detail { display: none; background: rgba(255,255,255,0.03); border-radius: 10px; padding: 12px 14px; margin-bottom: 10px; font-size: 12px; line-height: 1.7; color: rgba(255,255,255,0.6); }
+  .bug-detail.open { display: block; }
+  .bug-detail strong { color: rgba(255,255,255,0.9); font-size: 13px; display: block; margin-bottom: 6px; }
+  .bug-detail pre { font-size: 11px; color: var(--muted); white-space: pre-wrap; word-break: break-all; margin-top: 8px; }
 </style>
 </head>
 <body>
@@ -115,7 +129,7 @@ async function load() {
 }
 
 function render(d) {
-  const { users, library, plays, topAlbums, topUsers, catalogue } = d;
+  const { users, library, plays, topAlbums, topUsers, bugReports, catalogue } = d;
   const totalPlatform = plays.web + plays.ios || 1;
   const totalSource   = plays.recognition + plays.autoAdvance || 1;
   const topMax = topAlbums[0]?.count || 1;
@@ -228,10 +242,34 @@ function render(d) {
           </div>`).join("");
       })()}
     </div>
+
+    <div class="section">
+      <div class="section-title">Bug Reports (${(bugReports || []).length})</div>
+      ${!bugReports || bugReports.length === 0 ? '<div style="color:var(--muted);font-size:13px">No reports yet 🎉</div>' :
+        bugReports.map((b, i) => `
+          <div class="bug-row">
+            <div class="bug-summary" onclick="toggleBug(${i})">
+              <span class="bug-badge ${b.platform === 'ios' ? 'badge-ios' : 'badge-web'}">${esc(b.platform || '?')}</span>
+              <span class="bug-desc">${esc(b.description)}</span>
+              <span class="bug-meta">${b.user_email ? esc(b.user_email) + ' · ' : ''}v${esc(b.app_version || '?')} · ${timeAgo(b.created_at)}</span>
+            </div>
+            <div class="bug-detail" id="bug-${i}">
+              <strong>${esc(b.description)}</strong>
+              ${b.user_email ? `<div>👤 ${esc(b.user_email)}</div>` : '<div style="color:var(--muted)">Anonymous</div>'}
+              <div>📱 ${esc(b.platform || '—')} · v${esc(b.app_version || '—')} · ${new Date(b.created_at).toLocaleString()}</div>
+              ${b.meta ? `<pre>${esc(JSON.stringify(b.meta, null, 2))}</pre>` : ''}
+            </div>
+          </div>`).join("")}
+    </div>
   `;
 }
 
 function esc(s) { return (s || "").replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;"); }
+
+function toggleBug(i) {
+  const el = document.getElementById("bug-" + i);
+  if (el) el.classList.toggle("open");
+}
 
 function showLogin(err) {
   document.getElementById("dash").style.display = "none";
