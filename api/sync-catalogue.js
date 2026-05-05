@@ -16,7 +16,14 @@
 //   SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY  (already set)
 //   CRON_SECRET                              (add in Vercel dashboard — any random string)
 
-const https = require("https");
+const https  = require("https");
+const crypto = require("crypto");
+
+function safeCompare(a, b) {
+  const ab = Buffer.from(String(a)), bb = Buffer.from(String(b));
+  if (ab.length !== bb.length) return false;
+  return crypto.timingSafeEqual(ab, bb);
+}
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -240,7 +247,7 @@ module.exports = async (req, res) => {
   if (req.method === "GET") {
     const adminPw  = process.env.ADMIN_PASSWORD;
     const provided = req.headers["x-admin-password"];
-    if (!adminPw || provided !== adminPw) {
+    if (!adminPw || !provided || !safeCompare(adminPw, provided)) {
       return res.status(401).json({ error: "Unauthorized" });
     }
     try {
@@ -257,7 +264,7 @@ module.exports = async (req, res) => {
   const cronSecret = process.env.CRON_SECRET;
   const provided   = req.headers["x-cron-secret"] || req.headers["authorization"]?.replace("Bearer ", "");
 
-  if (cronSecret && provided !== cronSecret) {
+  if (!cronSecret || !provided || !safeCompare(cronSecret, provided)) {
     return res.status(401).json({ error: "Unauthorized" });
   }
 

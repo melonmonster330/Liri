@@ -51,9 +51,7 @@ CREATE POLICY "Submitter update releases"
   ON vinyl_releases FOR UPDATE
   USING (auth.uid() = submitted_by);
 
-CREATE POLICY "Auth delete releases"
-  ON vinyl_releases FOR DELETE
-  USING (auth.uid() IS NOT NULL);
+-- DELETE is service-role only; no client policy intentionally
 
 CREATE OR REPLACE FUNCTION update_updated_at()
 RETURNS TRIGGER LANGUAGE plpgsql AS $$
@@ -96,9 +94,7 @@ CREATE POLICY "Auth insert tracks"
   ON vinyl_tracks FOR INSERT
   WITH CHECK (auth.uid() IS NOT NULL);
 
-CREATE POLICY "Auth delete tracks"
-  ON vinyl_tracks FOR DELETE
-  USING (auth.uid() IS NOT NULL);
+-- DELETE is service-role only; no client policy intentionally
 
 
 -- -----------------------------------------------------------
@@ -159,13 +155,7 @@ CREATE POLICY "Auth insert lyric cache"
   ON liri_lyric_cache FOR INSERT
   WITH CHECK (auth.uid() IS NOT NULL);
 
-CREATE POLICY "Auth update lyric cache"
-  ON liri_lyric_cache FOR UPDATE
-  USING (auth.uid() IS NOT NULL);
-
-CREATE POLICY "Auth delete lyric cache"
-  ON liri_lyric_cache FOR DELETE
-  USING (auth.uid() IS NOT NULL);
+-- UPDATE and DELETE are service-role only; clients may only read/insert
 
 
 -- -----------------------------------------------------------
@@ -190,9 +180,7 @@ CREATE POLICY "Users insert own usage"
   ON user_usage FOR INSERT
   WITH CHECK (auth.uid() = user_id);
 
-CREATE POLICY "Users update own usage"
-  ON user_usage FOR UPDATE
-  USING (auth.uid() = user_id);
+-- UPDATE is service-role only to prevent clients resetting their own counter
 
 
 -- -----------------------------------------------------------
@@ -339,13 +327,14 @@ CREATE POLICY "Auth update cast sessions"
 -- -----------------------------------------------------------
 CREATE OR REPLACE FUNCTION get_collection_play_counts()
 RETURNS TABLE(collection_id text, play_count bigint)
-LANGUAGE sql STABLE
+LANGUAGE sql STABLE SECURITY INVOKER
 AS $$
   SELECT
     itunes_collection_id::text AS collection_id,
     COUNT(*)                   AS play_count
   FROM listening_events
   WHERE itunes_collection_id IS NOT NULL
+    AND user_id = auth.uid()
   GROUP BY itunes_collection_id
   ORDER BY play_count DESC;
 $$;

@@ -285,21 +285,11 @@ async function tryLogin() {
   document.getElementById("dash").style.display = "block";
   await load();
   document.getElementById("login-btn").textContent = "Enter";
-  sessionStorage.setItem("liri_admin_pw", pw);
 }
 
 document.getElementById("login-btn").addEventListener("click", tryLogin);
 document.getElementById("pw-input").addEventListener("keydown", e => { if (e.key === "Enter") tryLogin(); });
 document.getElementById("refresh-btn").addEventListener("click", load);
-
-// Auto-restore session
-const saved = sessionStorage.getItem("liri_admin_pw");
-if (saved) {
-  pw = saved;
-  document.getElementById("login").style.display = "none";
-  document.getElementById("dash").style.display = "block";
-  load();
-}
 
 // Auto-refresh every 60s
 setInterval(() => { if (pw) load(); }, 60000);

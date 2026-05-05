@@ -1,10 +1,16 @@
 const OpenAI = require("openai");
+const { verifyAuth } = require("./_lib/auth");
 
 // Disable body parser so we can handle both raw binary (web) and base64 JSON (iOS)
 module.exports.config = { api: { bodyParser: false } };
 
 module.exports = async (req, res) => {
   if (req.method !== "POST") return res.status(405).end();
+
+  const auth = await verifyAuth(req);
+  if (!auth || auth._authError || !auth.userId)
+    return res.status(401).json({ error: "Unauthorized" });
+
   if (!process.env.OPENAI_API_KEY) return res.status(500).json({ error: "OPENAI_API_KEY not set" });
 
   try {

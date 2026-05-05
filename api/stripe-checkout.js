@@ -35,6 +35,9 @@ function jwsSigToDer(raw) {
   ]);
 }
 
+// Apple Root CA - G3 SHA-256 fingerprint (pinned — must match Apple's known root)
+const APPLE_ROOT_FINGERPRINT = "3EB023E9B4B89D59E77DDD2A08FF8C8B3E380B32F7BE70FAA5BA517B3CFC4697";
+
 function verifyAppleJWS(jws) {
   const parts = jws.split(".");
   if (parts.length !== 3) throw new Error("Invalid JWS format");
@@ -42,17 +45,35 @@ function verifyAppleJWS(jws) {
   const header  = JSON.parse(b64urlDecode(parts[0]).toString());
   const payload = JSON.parse(b64urlDecode(parts[1]).toString());
 
-  // Verify signature against leaf certificate from Apple's x5c chain
-  const certPem  = `-----BEGIN CERTIFICATE-----\n${header.x5c[0]}\n-----END CERTIFICATE-----`;
-  const leafCert = new crypto.X509Certificate(certPem);
+  if (!Array.isArray(header.x5c) || header.x5c.length < 3)
+    throw new Error("x5c chain must have at least 3 certificates");
+
+  const toPem = b64 => `-----BEGIN CERTIFICATE-----\n${b64}\n-----END CERTIFICATE-----`;
+  const leafCert         = new crypto.X509Certificate(toPem(header.x5c[0]));
+  const intermediateCert = new crypto.X509Certificate(toPem(header.x5c[1]));
+  const rootCert         = new crypto.X509Certificate(toPem(header.x5c[2]));
+
+  // Verify root fingerprint matches Apple Root CA - G3
+  const rootFingerprint = crypto.createHash("sha256")
+    .update(rootCert.raw)
+    .digest("hex")
+    .toUpperCase();
+  if (rootFingerprint !== APPLE_ROOT_FINGERPRINT)
+    throw new Error("Root certificate is not Apple Root CA - G3");
+
+  // Verify certificate chain: leaf signed by intermediate, intermediate signed by root
+  if (!leafCert.verify(intermediateCert.publicKey))
+    throw new Error("Leaf certificate not signed by intermediate");
+  if (!intermediateCert.verify(rootCert.publicKey))
+    throw new Error("Intermediate certificate not signed by root");
+
+  // Verify the JWS signature against the leaf cert's public key
   const sigInput = Buffer.from(`${parts[0]}.${parts[1]}`);
   const sigDer   = jwsSigToDer(b64urlDecode(parts[2]));
-
   const verifier = crypto.createVerify("SHA256");
   verifier.update(sigInput);
-  if (!verifier.verify(leafCert.publicKey, sigDer)) {
+  if (!verifier.verify(leafCert.publicKey, sigDer))
     throw new Error("JWS signature verification failed");
-  }
 
   return payload;
 }
