@@ -796,19 +796,22 @@ function Liri() {
     if (localStorage.getItem("liri_flip_sound") === "false") return;
     try {
       const ctx = new (window.AudioContext || window.webkitAudioContext)();
-      [[523.25, 0], [659.25, 0.35], [783.99, 0.7]].forEach(([freq, delay]) => {
-        const osc = ctx.createOscillator();
-        const gain = ctx.createGain();
-        osc.connect(gain);
-        gain.connect(ctx.destination);
-        osc.type = "sine";
-        osc.frequency.value = freq;
-        gain.gain.setValueAtTime(0, ctx.currentTime + delay);
-        gain.gain.linearRampToValueAtTime(0.3, ctx.currentTime + delay + 0.02);
-        gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + delay + 1.6);
-        osc.start(ctx.currentTime + delay);
-        osc.stop(ctx.currentTime + delay + 1.6);
-      });
+      const play = () => {
+        [[523.25, 0], [659.25, 0.35], [783.99, 0.7]].forEach(([freq, delay]) => {
+          const osc = ctx.createOscillator();
+          const gain = ctx.createGain();
+          osc.connect(gain);
+          gain.connect(ctx.destination);
+          osc.type = "sine";
+          osc.frequency.value = freq;
+          gain.gain.setValueAtTime(0, ctx.currentTime + delay);
+          gain.gain.linearRampToValueAtTime(0.3, ctx.currentTime + delay + 0.02);
+          gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + delay + 1.6);
+          osc.start(ctx.currentTime + delay);
+          osc.stop(ctx.currentTime + delay + 1.6);
+        });
+      };
+      if (ctx.state === "suspended") { ctx.resume().then(play); } else { play(); }
     } catch {}
   };
 
