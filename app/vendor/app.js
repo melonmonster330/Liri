@@ -546,6 +546,7 @@ function Liri() {
   const kbToastTimerRef = useRef(null);
   const [shouldAdvanceTrack, setShouldAdvanceTrack] = useState(false);
   const [sideEndReason, setSideEndReason] = useState("failed"); // "failed" | "flip" | "album-end"
+  const [sideEndNextDiscInfo, setSideEndNextDiscInfo] = useState(null); // {isNewDisc, nextDisc, nextSide}
 
   // ── Per-album side learning (silent — no user-facing UI) ──
   const [albumCollectionId, setAlbumCollectionId] = useState(null);
@@ -598,6 +599,7 @@ function Liri() {
   const speechRecRef = useRef(null); // active SpeechRecognition instance (turntable mode)
   const analyserNodeRef = useRef(null); // AnalyserNode for frequency-bar wave
   const audioCtxRef = useRef(null); // AudioContext for the analyser
+  const chimeCtxRef = useRef(null); // Persistent AudioContext unlocked on first Listen tap
   const syncIntervalRef = useRef(null);
   const syncStartRef = useRef(null);
   const detectedAtRef = useRef(null);
@@ -795,7 +797,7 @@ function Liri() {
   const playFlipChime = () => {
     if (localStorage.getItem("liri_flip_sound") === "false") return;
     try {
-      const ctx = new (window.AudioContext || window.webkitAudioContext)();
+      const ctx = chimeCtxRef.current || new (window.AudioContext || window.webkitAudioContext)();
       const play = () => {
         [[523.25, 0], [659.25, 0.35], [783.99, 0.7]].forEach(([freq, delay]) => {
           const osc = ctx.createOscillator();
@@ -1905,6 +1907,17 @@ function Liri() {
   // to transcribe words in real time and match them against the known lyrics.
   // No server calls, no delays — match fires the moment enough words are recognised.
 const startListeningSpeech = async (isAutoAdvance = false) => {
+    // Unlock the chime AudioContext during this user-gesture window so it can
+    // play later (auto-advance) without being blocked by autoplay policy.
+    if (!isAutoAdvance) {
+      try {
+        if (!chimeCtxRef.current) {
+          chimeCtxRef.current = new (window.AudioContext || window.webkitAudioContext)();
+        } else if (chimeCtxRef.current.state === "suspended") {
+          chimeCtxRef.current.resume();
+        }
+      } catch {}
+    }
     clearInterval(progressTimerRef.current);
     const session = ++listenSessionRef.current;
     attemptLogRef.current = [];
@@ -2446,6 +2459,7 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
       return;
     }
     if (isSideEnd) {
+      setSideEndNextDiscInfo(getNextDiscInfo());
       setSideEndReason("flip");
       playFlipChime();
       showFlipPushNotification(detectedSong);
@@ -2576,6 +2590,13 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
   // Skips Shazam entirely — user has physically flipped the record and just
   // wants lyrics to start from track 1 of the next side without re-identifying.
   const manualFlipToNextSide = async () => {
+    try {
+      if (!chimeCtxRef.current) {
+        chimeCtxRef.current = new (window.AudioContext || window.webkitAudioContext)();
+      } else if (chimeCtxRef.current.state === "suspended") {
+        chimeCtxRef.current.resume();
+      }
+    } catch {}
     const tracks = turntableTracksRef.current;
     if (!tracks.length) return;
     const curIdx = turntableMatchedIdxRef.current >= 0
@@ -2619,6 +2640,27 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
     for (let s = 0; s < sideEnds.length; s++) {
       if (curIdx <= sideEnds[s] && sideEnds[s] + 1 < tracks.length) {
         return "ABCDEFGH"[s + 1] || null;
+      }
+    }
+    return null;
+  };
+
+  const getNextDiscInfo = () => {
+    const tracks = turntableTracksRef.current;
+    if (!tracks.length) return null;
+    const curIdx = turntableMatchedIdxRef.current >= 0
+      ? turntableMatchedIdxRef.current
+      : currentTrackIndexRef.current;
+    const dbRelease = vinylDbReleaseRef.current;
+    const effectiveTps = albumTpsRef.current > 0 ? albumTpsRef.current : 0;
+    const sideEnds = getSideEndsFromSidesMap(tracks, vinylSidesRef.current)
+      ?? (dbRelease?.vinyl_tracks?.length > 0 ? getDbSideEndIndices(tracks, dbRelease.vinyl_tracks) : getSideEndIndices(tracks, effectiveTps));
+    for (let s = 0; s < sideEnds.length; s++) {
+      if (curIdx <= sideEnds[s] && sideEnds[s] + 1 < tracks.length) {
+        const curDisc = tracks[curIdx] ? (tracks[curIdx].discNumber || 1) : 1;
+        const nextDisc = tracks[sideEnds[s] + 1] ? (tracks[sideEnds[s] + 1].discNumber || 1) : 1;
+        const nextSide = "ABCDEFGH"[s + 1] || null;
+        return { isNewDisc: nextDisc !== curDisc, nextDisc: nextDisc, nextSide: nextSide };
       }
     }
     return null;
@@ -5825,7 +5867,7 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
       fontFamily: "inherit",
       width: "100%"
     }
-  }, "Flip to Side ", getNextSideLetter())), mode === "listening" && /*#__PURE__*/React.createElement("div", {
+  }, (function(){ var _di = getNextDiscInfo(); return _di && (_di.isNewDisc ? "Grab LP " + _di.nextDisc : "Flip to Side " + _di.nextSide); })()), mode === "listening" && /*#__PURE__*/React.createElement("div", {
     style: {
       animation: "fade-up 0.3s ease both",
       overflowY: showTrackList ? "auto" : "visible",
@@ -6143,14 +6185,14 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
       color: "#f0e6d3",
       marginBottom: "12px"
     }
-  }, "Time to flip! \uD83D\uDCBF"), /*#__PURE__*/React.createElement("div", {
+  }, sideEndNextDiscInfo && sideEndNextDiscInfo.isNewDisc ? "Time for LP " + sideEndNextDiscInfo.nextDisc + "! \uD83D\uDCBF" : "Time to flip! \uD83D\uDCBF"), /*#__PURE__*/React.createElement("div", {
     style: {
       color: "rgba(255,255,255,0.4)",
       marginBottom: "36px",
       lineHeight: "1.8",
       fontSize: "15px"
     }
-  }, "Flip the record, then tap below."), isNeedleDrop ? /*#__PURE__*/React.createElement("div", {
+  }, sideEndNextDiscInfo && sideEndNextDiscInfo.isNewDisc ? "Grab LP " + sideEndNextDiscInfo.nextDisc + " and tap below." : "Flip the record, then tap below."), isNeedleDrop ? /*#__PURE__*/React.createElement("div", {
     style: {
       marginTop: "8px",
       display: "flex",
@@ -6170,7 +6212,7 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
     }
   }), /*#__PURE__*/React.createElement("div", {
     style: { fontSize: "13px", color: "rgba(255,255,255,0.35)" }
-  }, "Dropping needle…")) : /*#__PURE__*/React.createElement(React.Fragment, null, turntableTracksRef.current.length > 0 && getNextSideLetter() && /*#__PURE__*/React.createElement("button", {
+  }, "Dropping needle…")) : /*#__PURE__*/React.createElement(React.Fragment, null, turntableTracksRef.current.length > 0 && (sideEndNextDiscInfo || getNextSideLetter()) && /*#__PURE__*/React.createElement("button", {
     onClick: manualFlipToNextSide,
     style: {
       background: "linear-gradient(135deg, #d4a846, #c9807a)",
@@ -6185,7 +6227,7 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
       width: "100%",
       marginBottom: "10px"
     }
-  }, "Start Side ", getNextSideLetter(), " \u2192"), IS_IOS && /*#__PURE__*/React.createElement("button", {
+  }, sideEndNextDiscInfo && sideEndNextDiscInfo.isNewDisc ? "Start Side " + sideEndNextDiscInfo.nextSide + " \u2192" : "Flip to Side " + (sideEndNextDiscInfo ? sideEndNextDiscInfo.nextSide : getNextSideLetter()) + " \u2192"), IS_IOS && /*#__PURE__*/React.createElement("button", {
     onClick: () => { reset(); setTimeout(() => startListening(false), 300); },
     style: {
       marginTop: "4px",
@@ -6216,14 +6258,14 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
       color: "#f0e6d3",
       marginBottom: "12px"
     }
-  }, "That's the album \u2713"), /*#__PURE__*/React.createElement("div", {
+  }, "That's the album! \ud83c\udfb6"), /*#__PURE__*/React.createElement("div", {
     style: {
       color: "rgba(255,255,255,0.4)",
       marginBottom: "36px",
       lineHeight: "1.8",
       fontSize: "15px"
     }
-  }, "You've reached the end.", /*#__PURE__*/React.createElement("br", null), "Put on another record to keep going."), /*#__PURE__*/React.createElement("button", {
+  }, "Put on your next LP to keep going."), /*#__PURE__*/React.createElement("button", {
     onClick: reset,
     style: {
       background: "linear-gradient(135deg, #d4a846, #c9807a)",
@@ -6236,7 +6278,7 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
       cursor: "pointer",
       fontFamily: "inherit"
     }
-  }, "New Record \u2192"), lastSong && /*#__PURE__*/React.createElement("button", {
+  }, "New LP \u2192"), lastSong && /*#__PURE__*/React.createElement("button", {
     onClick: () => setMode("idle"),
     style: {
       marginTop: "12px",
@@ -6255,14 +6297,14 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
       color: "#f0e6d3",
       marginBottom: "12px"
     }
-  }, "Time to flip?"), /*#__PURE__*/React.createElement("div", {
+  }, (function(){ var _di = getNextDiscInfo(); return _di && _di.isNewDisc ? "Time for LP " + _di.nextDisc + "?" : "Time to flip?"; })()), /*#__PURE__*/React.createElement("div", {
     style: {
       color: "rgba(255,255,255,0.4)",
       marginBottom: "36px",
       lineHeight: "1.8",
       fontSize: "15px"
     }
-  }, "Flip the record, then tap below."), isNeedleDrop ? /*#__PURE__*/React.createElement("div", {
+  }, (function(){ var _di = getNextDiscInfo(); return _di && _di.isNewDisc ? "Grab LP " + _di.nextDisc + " and tap below." : "Flip the record, then tap below."; })()), isNeedleDrop ? /*#__PURE__*/React.createElement("div", {
     style: {
       marginTop: "8px",
       display: "flex",
@@ -6282,7 +6324,7 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
     }
   }), /*#__PURE__*/React.createElement("div", {
     style: { fontSize: "13px", color: "rgba(255,255,255,0.35)" }
-  }, "Dropping needle…")) : /*#__PURE__*/React.createElement(React.Fragment, null, turntableTracksRef.current.length > 0 && getNextSideLetter() && /*#__PURE__*/React.createElement("button", {
+  }, "Dropping needle…")) : /*#__PURE__*/React.createElement(React.Fragment, null, turntableTracksRef.current.length > 0 && (getNextDiscInfo() || getNextSideLetter()) && /*#__PURE__*/React.createElement("button", {
     onClick: manualFlipToNextSide,
     style: {
       background: "linear-gradient(135deg, #d4a846, #c9807a)",
@@ -6297,7 +6339,7 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
       width: "100%",
       marginBottom: "10px"
     }
-  }, "Start Side ", getNextSideLetter(), " \u2192"), IS_IOS && /*#__PURE__*/React.createElement("button", {
+  }, (function(){ var _di = getNextDiscInfo(); return _di && _di.isNewDisc ? "Start Side " + _di.nextSide + " \u2192" : "Flip to Side " + (_di ? _di.nextSide : getNextSideLetter()) + " \u2192"; })()), IS_IOS && /*#__PURE__*/React.createElement("button", {
     onClick: () => { reset(); setTimeout(() => startListening(false), 300); },
     style: {
       marginTop: "4px",
@@ -6390,6 +6432,6 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
       cursor: "pointer",
       fontFamily: "inherit"
     }
-  }, "Maybe later")))))));
+  }, "Maybe later"))))))));
 }
 ReactDOM.createRoot(document.getElementById("root")).render(/*#__PURE__*/React.createElement(Liri, null));
