@@ -16,7 +16,6 @@
 		}
 	},
 	"packageClassList": [
-		"NativeAudioPlugin",
-		"ShazamPlugin"
+		"LocalNotificationsPlugin"
 	]
 }

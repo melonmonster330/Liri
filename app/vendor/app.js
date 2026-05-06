@@ -817,38 +817,56 @@ function Liri() {
     clearTimeout(controlsHideTimerRef.current);
     controlsHideTimerRef.current = setTimeout(() => setControlsVisible(false), 3500);
   };
+  const _localNotif = () => window.Capacitor?.Plugins?.LocalNotifications;
   const showFlipPushNotification = song => {
     if (localStorage.getItem("liri_flip_notify") !== "true") return;
-    if (Notification.permission !== "granted") return;
-    try {
-      new Notification("Time to flip! 💿", {
-        body: song ? `${song.artist} — ${song.album || "Side A done"}` : "Your side has ended — flip the record",
-        icon: song?.artwork || undefined,
-        tag: "liri-flip" // replaces any previous flip notification
-      });
-    } catch {}
+    const title = "Time to flip! 💿";
+    const body = song ? `${song.artist} — ${song.album || "Side A done"}` : "Your side has ended — flip the record";
+    if (window.Capacitor) {
+      try { _localNotif()?.schedule({ notifications: [{ id: 1001, title, body }] }); } catch {}
+    } else {
+      if (Notification.permission !== "granted") return;
+      try { new Notification(title, { body, icon: song?.artwork || undefined, tag: "liri-flip" }); } catch {}
+    }
   };
   const showAlbumEndPushNotification = song => {
     if (localStorage.getItem("liri_flip_notify") !== "true") return;
-    if (Notification.permission !== "granted") return;
-    try {
-      new Notification("That's the album! Time for a new LP 🎶", {
-        body: song ? `${song.artist} — ${song.album || "Album complete"}` : "Put on your next record to keep going",
-        icon: song?.artwork || undefined,
-        tag: "liri-album-end"
-      });
-    } catch {}
+    const title = "That's the album! 🎶";
+    const body = song ? `${song.artist} — ${song.album || "Album complete"}` : "Put on your next record to keep going";
+    if (window.Capacitor) {
+      try { _localNotif()?.schedule({ notifications: [{ id: 1002, title, body }] }); } catch {}
+    } else {
+      if (Notification.permission !== "granted") return;
+      try { new Notification(title, { body, icon: song?.artwork || undefined, tag: "liri-album-end" }); } catch {}
+    }
   };
   const enableFlipNotify = async () => {
-    const perm = await Notification.requestPermission();
-    if (perm === "granted") {
-      setFlipNotify(true);
-      localStorage.setItem("liri_flip_notify", "true");
-      setNotifyDenied(false);
+    if (window.Capacitor) {
+      try {
+        const { display } = await (_localNotif()?.requestPermissions() ?? Promise.resolve({ display: "denied" }));
+        if (display === "granted") {
+          setFlipNotify(true);
+          localStorage.setItem("liri_flip_notify", "true");
+          setNotifyDenied(false);
+        } else {
+          setNotifyDenied(true);
+          setFlipNotify(false);
+          localStorage.setItem("liri_flip_notify", "false");
+        }
+      } catch {
+        setNotifyDenied(true);
+      }
     } else {
-      setNotifyDenied(true);
-      setFlipNotify(false);
-      localStorage.setItem("liri_flip_notify", "false");
+      const perm = await Notification.requestPermission();
+      if (perm === "granted") {
+        setFlipNotify(true);
+        localStorage.setItem("liri_flip_notify", "true");
+        setNotifyDenied(false);
+      } else {
+        setNotifyDenied(true);
+        setFlipNotify(false);
+        localStorage.setItem("liri_flip_notify", "false");
+      }
     }
   };
 
@@ -1583,6 +1601,8 @@ function Liri() {
       advanceToNextTrack(tracks, idx);
     } else {
       setSideEndReason("flip");
+      playFlipChime();
+      showFlipPushNotification(detectedSong);
       if (detectedSong) setLastSong(detectedSong);
       setMode("side-end");
     }
@@ -2571,7 +2591,7 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
           return;
         }
         setIsNeedleDrop(true);
-        await new Promise(r => setTimeout(r, 1800));
+        await new Promise(r => setTimeout(r, 3000));
         setIsNeedleDrop(false);
         jumpToTrackIdx(nextFirst);
         return;
