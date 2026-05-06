@@ -6367,6 +6367,6 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
       cursor: "pointer",
       fontFamily: "inherit"
     }
-  }, "Maybe later")))));
+  }, "Maybe later")))))));
 }
 ReactDOM.createRoot(document.getElementById("root")).render(/*#__PURE__*/React.createElement(Liri, null));
