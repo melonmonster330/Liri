@@ -13,6 +13,7 @@ const APP_VERSION = "1.3.1";
 const IS_IOS = !!window.Capacitor; // set once at load time — used for App Store compliance checks
 const TRANSCRIBE_PROXY = window.Capacitor ? "https://www.getliri.com/api/transcribe"    : "/api/transcribe";
 const ITUNES_PROXY   = window.Capacitor ? "https://www.getliri.com/api/itunes-lookup"   : "/api/itunes-lookup";
+const WHISPER_PROXY  = window.Capacitor ? "https://www.getliri.com/api/whisper"         : "/api/whisper";
 // Both plugins use lazy functions so window.Capacitor is read at call time,
 // not at module load — the Capacitor bridge isn't ready until after the JS parses.
 const _nativeAudioPlugin = () => {
@@ -53,6 +54,96 @@ const Shazam = {
 // All original artwork should match the dark palette: deep navy #080810, gold #d4a846, rose #c9807a
 // ─────────────────────────────────────────────────────────────────────────────────────────────
 
+// ── Whisper chunk recorder ────────────────────────────────────────────────────
+// Shared by initial listen, resync, and any future listening entry points.
+// Opens a recording loop on `stream`, sends each chunk to Whisper, calls
+// `onText(text, chunkEndTime)` for every non-empty result.
+// Returns { stop } — call stop() to tear down immediately.
+const startWhisperChunks = (stream, onText, chunkMs, prompt) => {
+  let active = true;
+
+  // ── iOS path: single continuous recorder, accumulate all chunks ──────────────
+  // iOS MediaRecorder outputs fragmented MP4 (fMP4): only the FIRST chunk contains
+  // the codec init data (moov box). Subsequent chunks are raw moof+mdat — Whisper
+  // can't decode them standalone and hallucinates instead of transcribing.
+  // Fix: keep one recorder running, accumulate every chunk into a growing blob, and
+  // send the full blob (init + all media data) to Whisper each interval. The result
+  // is always a valid decodable MP4 regardless of which chunk number we're on.
+  if (window.Capacitor) {
+    const iosChunks = [];
+    const recorder = new MediaRecorder(stream);
+    recorder.ondataavailable = async (e) => {
+      if (!active || e.data.size < 500) return;
+      iosChunks.push(e.data);
+      const fullBlob = new Blob(iosChunks, { type: e.data.type || "audio/mp4" });
+      const chunkEndTime = Date.now();
+      try {
+        const base64 = await new Promise((resolve, reject) => {
+          const reader = new FileReader();
+          reader.onload  = () => resolve(reader.result.split(",")[1]);
+          reader.onerror = reject;
+          reader.readAsDataURL(fullBlob);
+        });
+        const res = await fetch(WHISPER_PROXY, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ audio: base64, mimeType: fullBlob.type || "audio/mp4", ...(prompt ? { prompt } : {}) }),
+        });
+        if (!res.ok || !active) return;
+        const { text } = await res.json();
+        onText(text, chunkEndTime);
+      } catch (err) { console.error("[whisper] chunk error:", err); }
+    };
+    recorder.start(chunkMs); // timeslice — ondataavailable fires every chunkMs
+    const stop = () => {
+      active = false;
+      try { recorder.stop(); } catch {}
+      stream.getTracks().forEach(t => t.stop());
+    };
+    return { stop };
+  }
+
+  // ── Web path: overlapping short chunks (WebM is self-contained per chunk) ────
+  const mimeType = MediaRecorder.isTypeSupported("audio/webm") ? "audio/webm" : "audio/mp4";
+  let currentRecorder = null;
+  const stop = () => {
+    active = false;
+    try { currentRecorder?.stop(); } catch {}
+    stream.getTracks().forEach(t => t.stop());
+  };
+  const recordChunk = () => {
+    if (!active) return;
+    const recorder = new MediaRecorder(stream, { mimeType });
+    currentRecorder = recorder;
+    recorder.ondataavailable = async (e) => {
+      if (e.data.size < 500 || !active) return;
+      const chunkEndTime = Date.now();
+      try {
+        const base64 = await new Promise((resolve, reject) => {
+          const reader = new FileReader();
+          reader.onload  = () => resolve(reader.result.split(",")[1]);
+          reader.onerror = reject;
+          reader.readAsDataURL(e.data);
+        });
+        const res = await fetch(WHISPER_PROXY, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ audio: base64, mimeType: e.data.type || mimeType, ...(prompt ? { prompt } : {}) }),
+        });
+        if (!res.ok || !active) return;
+        const { text } = await res.json();
+        onText(text, chunkEndTime);
+      } catch (err) { console.error("[whisper] chunk error:", err); }
+    };
+    recorder.start();
+    setTimeout(() => {
+      if (recorder.state === "recording") recorder.stop();
+      recordChunk();
+    }, chunkMs);
+  };
+  recordChunk();
+  return { stop };
+};
 
 const PLAYBACK_OFFSET_CORRECTION = 4.0;
 // Extra offset added when auto-advancing to next track (no re-listen),
@@ -1599,6 +1690,153 @@ function Liri() {
     }).catch(() => {});
   };
 
+  // ── Vinyl-aware track matching ──────────────────────────────────────────────
+  // When the user has told us what album is on the turntable, fetch LRC lyrics
+  // for ALL tracks in parallel and score the Whisper transcript against each.
+  // Returns { track, lrcMatch, lyrics, startPos, score } or null.
+  // Skips GPT entirely — much more accurate for obscure / re-recorded albums.
+  // ── Unique consecutive-word match against cached lyrics ──
+  // Tries word runs from 1 upward — shortest unique run wins.
+  // A single rare word is enough if it appears in only one track.
+  // Pure in-memory, no network calls.
+  const matchTranscriptToTracks = (transcript, tracks, wordsData, logRef) => {
+    // Normalise a single word: lowercase, strip non-alphanumeric except apostrophe
+    const normWord = w => w.toLowerCase().replace(/[^a-z0-9']/g, "");
+
+    // Fuzzy word equality: allow small edit-distance for Whisper transcription noise
+    // Short words (≤3 chars) must match exactly — too risky to fuzz "I", "me", "the"
+    // Medium words (4-6 chars): allow 1 edit; long words (7+): allow 2 edits
+    const editDist = (a, b) => {
+      if (Math.abs(a.length - b.length) > 2) return 99;
+      const dp = Array.from({length: a.length + 1}, (_, i) => i);
+      for (let j = 1; j <= b.length; j++) {
+        let prev = dp[0]; dp[0] = j;
+        for (let i = 1; i <= a.length; i++) {
+          const temp = dp[i];
+          dp[i] = a[i-1] === b[j-1] ? prev : 1 + Math.min(prev, dp[i], dp[i-1]);
+          prev = temp;
+        }
+      }
+      return dp[a.length];
+    };
+    const fuzzyEq = (a, b) => {
+      if (a === b) return true;
+      if (!a || !b) return false;
+      if (a.length <= 3 || b.length <= 3) return false; // short words: exact only
+      return editDist(a, b) <= (a.length <= 6 ? 1 : 2);
+    };
+    const heardWords = transcript.toLowerCase().split(/\s+/).map(normWord).filter(w => w.length > 1);
+    if (logRef) logRef.push(`match: ${heardWords.length} words from transcript`);
+    if (!heardWords.length) return null;
+
+    // baseName strips suffixes like "(live)", "[bonus track]", "(remastered)" etc.
+    // Albums that include both a studio take and a live/session version of the same
+    // song would otherwise have two tracks with identical word sets. Without this
+    // deduplication both tracks would match the same phrase, producing hits.length > 1
+    // and breaking the uniqueness requirement. seenNames ensures only the FIRST
+    // occurrence (by track order from the DB) is used as the canonical version.
+    const baseName = n => (n || "").toLowerCase().replace(/\s*[\(\[].*/, "").trim();
+    const seenNames = new Set();
+
+    // Build per-track word arrays from words_json stored in Supabase
+    const tracksWithWords = tracks.map(t => {
+      const data = wordsData[t.trackId];
+      if (!data?.words?.length) return null;
+      const base = baseName(t.trackName);
+      if (seenNames.has(base)) return null; // skip duplicates
+      seenNames.add(base);
+      return {
+        ...t,
+        wordArr: data.words.map(w => w.word), // already normalised at store time
+        wordTimings: data.words,               // [{word, start_ms}] for position lookup
+        lrc_raw: data.lrc_raw,
+        lyrics_plain: data.lyrics_plain,
+      };
+    }).filter(Boolean);
+
+    if (logRef) logRef.push(`match: ${tracksWithWords.length}/${tracks.length} tracks have lyrics`);
+    console.log("[match] tracksWithWords:", tracksWithWords.length, "/", tracks.length, "| heardWords:", heardWords.slice(0, 8).join(" "));
+    if (tracksWithWords.length > 0) console.log("[match] sample track words:", tracksWithWords[0]?.trackName, tracksWithWords[0]?.wordArr?.slice(0, 10));
+    if (!tracksWithWords.length) return null;
+
+    // MIN_RUN = 4: require at least 4 consecutive matching words before committing.
+    // Why 4 and not lower?
+    //   1-word match: too many false positives — common words like "love" appear in
+    //     almost every track on the album.
+    //   2-3 word match: still ambiguous on pop albums with similar lyric vocabulary.
+    //   4+ word match: in practice almost always unique within an album AND across
+    //     repeated choruses within a single track (uniqueness-within-track is also
+    //     required — count > 1 → rejected).
+    // Why not higher? Longer runs mean the user has to hold the mic for longer before
+    // anything happens, degrading perceived responsiveness. 4 words ≈ 1–2 seconds of
+    // speech, which feels instant.
+    const MIN_RUN = 3; // 3 consecutive fuzzy-matching words is enough within a single album
+
+    // Scan all possible windows of length MIN_RUN upward through the transcript.
+    // Stops at the SHORTEST run that satisfies BOTH:
+    //   (a) appears in exactly ONE track in the album (uniqueness across tracks)
+    //   (b) appears exactly ONCE inside that track (not a repeated chorus fragment)
+    // Requiring exactly-one-track (not "best scoring track") is intentional — if we
+    // accepted a best-guess the lyrics display would start at the wrong song entirely
+    // with no error shown to the user. Forcing strict uniqueness means we keep
+    // listening until we are certain, which is always the right trade-off here.
+    for (let len = MIN_RUN; len <= heardWords.length; len++) {
+      for (let start = 0; start <= heardWords.length - len; start++) {
+        const phrase = heardWords.slice(start, start + len);
+
+        const hits = tracksWithWords.filter(t => {
+          let count = 0;
+          const arr = t.wordArr;
+          for (let i = 0; i <= arr.length - len; i++) {
+            let ok = true;
+            for (let j = 0; j < len; j++) {
+              if (!fuzzyEq(arr[i + j], phrase[j])) { ok = false; break; }
+            }
+            if (ok) { count++; if (count > 1) return false; } // repeats within track → not unique enough
+          }
+          return count === 1;
+        });
+
+        if (hits.length !== 1) continue; // not unique across tracks
+
+        const match = hits[0];
+
+        // Find the position (in seconds) of the matched phrase in this track.
+        // matchWordIdx is the index into match.wordTimings of the first word of the
+        // matched phrase. start_ms / 1000 gives the lyric display start position.
+        // This is also returned as startPos, which flows into the sync offset formula
+        // in startSync / startListeningSpeech.
+        let matchWordIdx = -1;
+        const arr = match.wordArr;
+        for (let i = 0; i <= arr.length - len; i++) {
+          let ok = true;
+          for (let j = 0; j < len; j++) {
+            if (!fuzzyEq(arr[i + j], phrase[j])) { ok = false; break; }
+          }
+          if (ok) { matchWordIdx = i; break; }
+        }
+        const startPos = matchWordIdx >= 0 ? (match.wordTimings[matchWordIdx].start_ms / 1000) : 0;
+
+        // Build lyrics array for display — prefer timestamped LRC, fall back to plain
+        const lyrics = match.lrc_raw
+          ? parseLRC(match.lrc_raw)
+          : (match.lyrics_plain || "").split("\n").filter(l => l.trim()).map((text, i) => ({ time: i * 4, text }));
+
+        if (logRef) logRef.push(`match: unique run (${len}w) → "${match.trackName}" at ${startPos.toFixed(1)}s`);
+
+        // phraseWordStart: the index (in heardWords[]) of the first word of the
+        // matched phrase. Returned so the caller can calculate how far into the
+        // live transcript the match landed — used in _phraseOffset to estimate how
+        // many seconds of audio had already played before the matching words were
+        // spoken. Without this, sync always assumes the match happened at the very
+        // end of the recording window, causing a consistent early-offset bug.
+        return { track: match, lyrics, startPos, score: len, phraseWordStart: start, totalWords: heardWords.length };
+      }
+    }
+
+    if (logRef) logRef.push(`match: no unique run yet — keep listening`);
+    return null;
+  };
 
   // ── Analytics: log a button tap (resync / wrong_song) to button_events ──
   const logButtonEvent = async (buttonName) => {
@@ -1640,8 +1878,9 @@ function Liri() {
 
   // ── Turntable mode: real-time speech recognition → lyric word match ──────────
   // When an album is selected in the library, Liri already has all lyrics cached.
-  // Uses the Web Speech API to transcribe words in real time and match them
-  // against the known lyrics. No server calls, no delays.
+  // Instead of recording + sending to ACRCloud/Whisper, we use the Web Speech API
+  // to transcribe words in real time and match them against the known lyrics.
+  // No server calls, no delays — match fires the moment enough words are recognised.
 const startListeningSpeech = async (isAutoAdvance = false) => {
     clearInterval(progressTimerRef.current);
     const session = ++listenSessionRef.current;
@@ -1663,7 +1902,7 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
     const lrcCache = turntableLyricsCacheRef.current;
     const isNative = !!window.Capacitor; // bridge is available by call time even if isNativePlatform() isn't
 
-    // Build wordsData so speech recognition can match against lyrics
+    // Build wordsData so resync (Whisper-based fine-tune) can match against lyrics
     const wordsData = {};
     for (const track of tracks) {
       if (!track.trackId) continue;
@@ -1839,7 +2078,7 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
     // (Date.now() - recStart) includes:
     //   • the time spent in the onresult handler
     //   • React's reconciliation + paint cycle
-    //   • any ACR API round-trip
+    //   • any Whisper API round-trip (for ACR-path matches)
     // …which can add up to ~0.5–1.5 s beyond what the elapsed calculation inside
     // onresult captured. By storing {startPos, phraseOffset, recStart} in syncCalcRef
     // and doing the final arithmetic HERE (rather than in onresult), the full latency
@@ -2517,7 +2756,7 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
     return () => { release(); document.removeEventListener("visibilitychange", onVisibility); };
   }, [keepScreenAwake]);
 
-    // ── Landscape controls auto-hide ──
+  // ── Landscape controls auto-hide ──
   // Must live here — BEFORE any conditional early returns — to satisfy React hooks rules.
   useEffect(() => {
     if (mode === "syncing" && isLandscape) {
