@@ -157,19 +157,42 @@ async function getAdminStats() {
   const d30 = new Date(now - 30 * 86400000).toISOString();
   const d1  = new Date(now - 1  * 86400000).toISOString();
 
-  const [usersResp, libraryResp, eventsResp, subsResp, releasesResp, flipsResp, bugsResp] = await Promise.all([
-    sbAdminGet("admin/users?page=1&per_page=1000"),
-    sbGet("user_vinyl_library?select=user_id,added_at&order=added_at.desc&limit=5000"),
-    sbGet("listening_events?select=user_id,platform,source,album_name,artist_name,listened_at&order=listened_at.desc&limit=2000"),
+  // Paginate auth admin API — 1000 per page, loop until exhausted
+  const allUsers = [];
+  for (let page = 1; ; page++) {
+    const resp = await sbAdminGet(`admin/users?page=${page}&per_page=1000`);
+    const batch = resp?.users || [];
+    allUsers.push(...batch);
+    if (batch.length < 1000) break;
+  }
+
+  // Parallel: exact-count queries for totals + data queries for breakdowns
+  const [
+    totalPlaysResp,
+    plays7dResp,
+    plays1dResp,
+    totalLibResp,
+    eventsResp,
+    libResp,
+    subsResp,
+    releasesResp,
+    flipsResp,
+    bugsResp,
+  ] = await Promise.all([
+    sbGet("listening_events?select=id&limit=1",                                  { "Prefer": "count=exact" }),
+    sbGet(`listening_events?select=id&listened_at=gte.${d7}&limit=1`,            { "Prefer": "count=exact" }),
+    sbGet(`listening_events?select=id&listened_at=gte.${d1}&limit=1`,            { "Prefer": "count=exact" }),
+    sbGet("user_vinyl_library?select=id&limit=1",                                { "Prefer": "count=exact" }),
+    sbGet("listening_events?select=user_id,platform,source,album_name,artist_name,listened_at&order=listened_at.desc&limit=5000"),
+    sbGet("user_vinyl_library?select=user_id&limit=20000"),
     sbGet("subscriptions?select=tier,status"),
-    sbGet("vinyl_releases?select=id&limit=1", { "Prefer": "count=exact" }),
-    sbGet("flip_events?select=id&limit=1", { "Prefer": "count=exact" }),
+    sbGet("vinyl_releases?select=id&limit=1",                                    { "Prefer": "count=exact" }),
+    sbGet("flip_events?select=id&limit=1",                                       { "Prefer": "count=exact" }),
     sbGet("bug_reports?select=id,created_at,user_email,app_version,platform,description,meta&order=created_at.desc&limit=50"),
   ]);
 
   // Users
-  const allUsers = usersResp?.users || [];
-  const totalUsers = allUsers.length;
+  const totalUsers  = allUsers.length;
   const newUsers7d  = allUsers.filter(u => u.created_at > d7).length;
   const newUsers30d = allUsers.filter(u => u.created_at > d30).length;
   const recentSignups = allUsers
@@ -177,25 +200,27 @@ async function getAdminStats() {
     .slice(0, 8)
     .map(u => ({ email: u.email, created_at: u.created_at }));
 
-  // Library
-  const libraryRows = Array.isArray(libraryResp.body) ? libraryResp.body : [];
-  const totalAlbums = libraryRows.length;
-  const uniqueLibUsers = new Set(libraryRows.map(r => r.user_id)).size;
-  const avgAlbums = uniqueLibUsers > 0 ? (totalAlbums / uniqueLibUsers).toFixed(1) : 0;
+  // Library — exact total from count header, unique users from fetched rows
+  const totalAlbums   = parseInt(totalLibResp.headers?.["content-range"]?.split("/")[1] || "0", 10);
+  const libRows       = Array.isArray(libResp.body) ? libResp.body : [];
+  const uniqueLibUsers = new Set(libRows.map(r => r.user_id)).size;
+  const avgAlbums     = uniqueLibUsers > 0 ? (totalAlbums / uniqueLibUsers).toFixed(1) : 0;
 
-  // Listening events
-  const events = Array.isArray(eventsResp.body) ? eventsResp.body : [];
-  const totalPlays  = events.length;
-  const plays7d     = events.filter(e => e.listened_at > d7).length;
-  const plays1d     = events.filter(e => e.listened_at > d1).length;
-  const webPlays    = events.filter(e => e.platform === "web").length;
-  const iosPlays    = events.filter(e => e.platform === "ios").length;
-  const recogPlays  = events.filter(e => e.source === "recognition").length;
-  const autoPlays   = events.filter(e => e.source === "auto_advance").length;
+  // Plays — exact counts from count=exact headers
+  const totalPlays = parseInt(totalPlaysResp.headers?.["content-range"]?.split("/")[1] || "0", 10);
+  const plays7d    = parseInt(plays7dResp.headers?.["content-range"]?.split("/")[1] || "0", 10);
+  const plays1d    = parseInt(plays1dResp.headers?.["content-range"]?.split("/")[1] || "0", 10);
 
-  // Top albums (last 30d)
+  // Platform / source split from recent-events sample (last 5000)
+  const events     = Array.isArray(eventsResp.body) ? eventsResp.body : [];
+  const webPlays   = events.filter(e => e.platform === "web").length;
+  const iosPlays   = events.filter(e => e.platform === "ios").length;
+  const recogPlays = events.filter(e => e.source === "recognition").length;
+  const autoPlays  = events.filter(e => e.source === "auto_advance").length;
+
+  // Top albums (last 30d from sample)
   const recentEvents = events.filter(e => e.listened_at > d30);
-  const albumCounts = {};
+  const albumCounts  = {};
   for (const e of recentEvents) {
     if (!e.album_name) continue;
     const key = `${e.album_name}|||${e.artist_name || ""}`;
@@ -206,8 +231,8 @@ async function getAdminStats() {
     .slice(0, 8)
     .map(([key, count]) => { const [album, artist] = key.split("|||"); return { album, artist, count }; });
 
-  // Top users by play count (all-time, using events window)
-  const emailById = Object.fromEntries(allUsers.map(u => [u.id, u.email]));
+  // Top users by play count (from sample)
+  const emailById      = Object.fromEntries(allUsers.map(u => [u.id, u.email]));
   const userPlayCounts = {};
   for (const e of events) {
     if (!e.user_id) continue;
@@ -219,7 +244,7 @@ async function getAdminStats() {
     .map(([uid, count]) => ({ email: emailById[uid] || uid.slice(0, 8) + "…", count }));
 
   // Subscriptions
-  const subs = Array.isArray(subsResp.body) ? subsResp.body : [];
+  const subs        = Array.isArray(subsResp.body) ? subsResp.body : [];
   const premiumUsers = subs.filter(s => s.tier === "premium" && ["active","trialing"].includes(s.status)).length;
 
   // Catalogue & flips
