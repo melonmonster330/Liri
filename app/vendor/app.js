@@ -1606,8 +1606,7 @@ function Liri() {
       advanceToNextTrack(tracks, idx);
     } else {
       setSideEndReason("flip");
-      playFlipChime();
-      showFlipPushNotification(detectedSong);
+      setTimeout(() => { playFlipChime(); showFlipPushNotification(detectedSong); }, 7000);
       if (detectedSong) setLastSong(detectedSong);
       setMode("side-end");
     }
@@ -2464,8 +2463,7 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
     if (isSideEnd) {
       setSideEndNextDiscInfo(getNextDiscInfo());
       setSideEndReason("flip");
-      playFlipChime();
-      showFlipPushNotification(detectedSong);
+      setTimeout(() => { playFlipChime(); showFlipPushNotification(detectedSong); }, 7000);
 
       // ── Log the flip event to analytics ──
       const sideIdx = sideEnds.indexOf(idx); // 0 = first flip (A→B), 1 = B→C, etc.
