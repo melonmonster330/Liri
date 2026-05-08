@@ -2584,6 +2584,7 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
     autoAdvanceFiredRef.current = false;
     autoRetryCountRef.current = 0;
     saveToHistory(user, song);
+    setShowTrackList(false);
     setMode("confirmed");
   };
 
@@ -4110,7 +4111,53 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
       color: "rgba(255,255,255,0.2)",
       textDecoration: "none"
     }
-  }, "Manage My Records \u2192"))))), showSettings && /*#__PURE__*/React.createElement("div", {
+  }, "Manage My Records \u2192"))))), showTrackList && !window.Capacitor && /*#__PURE__*/React.createElement("div", {
+    onClick: () => setShowTrackList(false),
+    style: { position: "fixed", inset: 0, zIndex: 201, background: "rgba(0,0,0,0.6)", backdropFilter: "blur(4px)", cursor: "pointer", display: "flex", alignItems: "flex-end", justifyContent: "center" }
+  }, /*#__PURE__*/React.createElement("div", {
+    onClick: e => e.stopPropagation(),
+    style: { width: "100%", maxWidth: "520px", background: "#0f0f1c", borderRadius: "24px 24px 0 0", maxHeight: "80vh", display: "flex", flexDirection: "column", boxShadow: "0 -8px 48px rgba(0,0,0,0.6)", animation: "slide-up 0.3s ease" }
+  }, /*#__PURE__*/React.createElement("div", {
+    style: { display: "flex", justifyContent: "center", padding: "12px 0 4px" }
+  }, /*#__PURE__*/React.createElement("div", {
+    style: { width: 36, height: 4, borderRadius: 2, background: "rgba(255,255,255,0.12)" }
+  })), /*#__PURE__*/React.createElement("div", {
+    style: { display: "flex", alignItems: "center", justifyContent: "space-between", padding: "12px 24px 16px" }
+  }, /*#__PURE__*/React.createElement("div", {
+    style: { fontSize: 18, fontWeight: 700, color: "#f0e6d3" }
+  }, "Pick a track"), /*#__PURE__*/React.createElement("button", {
+    onClick: () => setShowTrackList(false),
+    style: { background: "rgba(255,255,255,0.07)", border: "none", color: "rgba(255,255,255,0.5)", width: 30, height: 30, borderRadius: "50%", cursor: "pointer", fontSize: 18, lineHeight: "1", display: "flex", alignItems: "center", justifyContent: "center", fontFamily: "inherit" }
+  }, "\u00d7")), /*#__PURE__*/React.createElement("div", {
+    style: { overflowY: "auto", WebkitOverflowScrolling: "touch", padding: "0 24px 40px", display: "flex", flexDirection: "column", gap: "20px" }
+  }, (() => {
+    const _wt = turntableTracksRef.current;
+    if (!_wt.length) return null;
+    const _vt = vinylDbRelease?.vinyl_tracks;
+    const _groups = (() => {
+      if (_vt?.length > 0) {
+        const _m = {};
+        _wt.forEach((t, i) => { const s = _vt[i]?.side || "A"; if (!_m[s]) _m[s] = []; _m[s].push({ track: t, idx: i }); });
+        return Object.entries(_m).map(([side, tracks]) => ({ side, tracks }));
+      }
+      const _mid = Math.ceil(_wt.length / 2);
+      return [{ side: "A", tracks: _wt.slice(0, _mid).map((t, i) => ({ track: t, idx: i })) }, { side: "B", tracks: _wt.slice(_mid).map((t, i) => ({ track: t, idx: _mid + i })) }].filter(g => g.tracks.length > 0);
+    })();
+    return _groups.map(({ side, tracks }) => /*#__PURE__*/React.createElement("div", { key: side },
+      /*#__PURE__*/React.createElement("div", {
+        style: { fontSize: "10px", letterSpacing: "2px", textTransform: "uppercase", color: "rgba(212,168,70,0.8)", fontWeight: "700", marginBottom: "10px", paddingBottom: "6px", borderBottom: "1px solid rgba(255,255,255,0.06)" }
+      }, "Side ", side),
+      /*#__PURE__*/React.createElement("div", {
+        style: { display: "flex", flexDirection: "column", gap: "4px" }
+      }, tracks.map(({ track: t, idx: i }) => /*#__PURE__*/React.createElement("button", {
+        key: i,
+        onClick: () => jumpToTrackIdx(i),
+        style: { background: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.07)", borderRadius: "10px", padding: "11px 16px", color: "#f0e6d3", fontSize: "14px", cursor: "pointer", fontFamily: "inherit", textAlign: "left", display: "flex", alignItems: "center", gap: "12px" }
+      }, /*#__PURE__*/React.createElement("span", {
+        style: { color: "rgba(255,255,255,0.25)", fontSize: "12px", minWidth: "20px", flexShrink: 0 }
+      }, i + 1), t.trackName)))
+    ));
+  })()))), showSettings && /*#__PURE__*/React.createElement("div", {
     onClick: () => setShowSettings(false),
     style: {
       position: "fixed",
@@ -5868,7 +5915,7 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
       fontFamily: "inherit",
       width: "100%"
     }
-  }, (function(){ var _di = getNextDiscInfo(); return _di && (_di.isNewDisc ? "Grab LP " + _di.nextDisc : "Flip to Side " + _di.nextSide); })()), (mode === "listening" || (!window.Capacitor && showTrackList)) && /*#__PURE__*/React.createElement("div", {
+  }, (function(){ var _di = getNextDiscInfo(); return _di && (_di.isNewDisc ? "Grab LP " + _di.nextDisc : "Flip to Side " + _di.nextSide); })()), mode === "listening" && /*#__PURE__*/React.createElement("div", {
     style: {
       animation: "fade-up 0.3s ease both",
       overflowY: showTrackList ? "auto" : "visible",
