@@ -1965,8 +1965,11 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
     }
     wordsDataRef.current = wordsData;
 
-    // ── Web: no fingerprinting available — show track list immediately ──────────
+    // ── Web: no fingerprinting available — show track list inside idle screen ───
+    // Keep mode as "idle" so the idle container (which holds the track picker)
+    // stays mounted. Setting mode to "listening" earlier would unmount it.
     if (!isNative) {
+      setMode("idle");
       setShowTrackList(true);
       speechRecRef.current = { stop: () => {} };
       return;
@@ -5867,7 +5870,7 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
       fontFamily: "inherit",
       width: "100%"
     }
-  }, (function(){ var _di = getNextDiscInfo(); return _di && (_di.isNewDisc ? "Grab LP " + _di.nextDisc : "Flip to Side " + _di.nextSide); })()), mode === "listening" && /*#__PURE__*/React.createElement("div", {
+  }, (function(){ var _di = getNextDiscInfo(); return _di && (_di.isNewDisc ? "Grab LP " + _di.nextDisc : "Flip to Side " + _di.nextSide); })()), (mode === "listening" || (!window.Capacitor && showTrackList)) && /*#__PURE__*/React.createElement("div", {
     style: {
       animation: "fade-up 0.3s ease both",
       overflowY: showTrackList ? "auto" : "visible",
