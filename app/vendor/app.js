@@ -3344,7 +3344,7 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
   // ─────────────────────────────────────────
   // MAIN APP
   // ─────────────────────────────────────────
-  const isSyncing = mode === "syncing" || mode === "side-end" || mode === "error";
+  const isSyncing = mode === "syncing";
 
   const artwork = detectedSong?.artwork;
   return /*#__PURE__*/React.createElement("div", {
