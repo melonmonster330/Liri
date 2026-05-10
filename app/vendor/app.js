@@ -4134,13 +4134,19 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
     const _wt = turntableTracksRef.current;
     if (!_wt.length) return null;
     const _vt = vinylDbRelease?.vinyl_tracks;
+    const _vs = vinylSidesRef.current;
     const _groups = (() => {
+      if (_vs?.length >= _wt.length) {
+        const _m = {};
+        _wt.forEach((t, i) => { const s = _vs[i]?.side || "A"; if (!_m[s]) _m[s] = []; _m[s].push({ track: t, idx: i }); });
+        return Object.entries(_m).sort(([a], [b]) => a.localeCompare(b)).map(([side, tracks]) => ({ side, tracks }));
+      }
       if (_vt?.length > 0) {
         const _titleToSide = {};
         _vt.forEach(v => { if (v.title) _titleToSide[normTitle(v.title)] = v.side; });
         const _m = {};
         _wt.forEach((t, i) => { const s = _titleToSide[normTitle(t.trackName)] || _vt[i]?.side || "A"; if (!_m[s]) _m[s] = []; _m[s].push({ track: t, idx: i }); });
-        return Object.entries(_m).map(([side, tracks]) => ({ side, tracks }));
+        return Object.entries(_m).sort(([a], [b]) => a.localeCompare(b)).map(([side, tracks]) => ({ side, tracks }));
       }
       const _mid = Math.ceil(_wt.length / 2);
       return [{ side: "A", tracks: _wt.slice(0, _mid).map((t, i) => ({ track: t, idx: i })) }, { side: "B", tracks: _wt.slice(_mid).map((t, i) => ({ track: t, idx: _mid + i })) }].filter(g => g.tracks.length > 0);
@@ -5987,7 +5993,13 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
     const allTracks = turntableTracksRef.current;
     const vt = vinylDbRelease?.vinyl_tracks;
     // Build side groups from Discogs data, or fall back to A/B split at midpoint
+    const vs = vinylSidesRef.current;
     const groups = (() => {
+      if (vs?.length >= allTracks.length) {
+        const map = {};
+        allTracks.forEach((t, i) => { const side = vs[i]?.side || "A"; if (!map[side]) map[side] = []; map[side].push({ track: t, idx: i }); });
+        return Object.entries(map).sort(([a], [b]) => a.localeCompare(b)).map(([side, tracks]) => ({ side, tracks }));
+      }
       if (vt?.length > 0) {
         const titleToSide = {};
         vt.forEach(v => { if (v.title) titleToSide[normTitle(v.title)] = v.side; });
@@ -5997,7 +6009,7 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
           if (!map[side]) map[side] = [];
           map[side].push({ track: t, idx: i });
         });
-        return Object.entries(map).map(([side, tracks]) => ({ side, tracks }));
+        return Object.entries(map).sort(([a], [b]) => a.localeCompare(b)).map(([side, tracks]) => ({ side, tracks }));
       }
       const mid = Math.ceil(allTracks.length / 2);
       return [
