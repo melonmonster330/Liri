@@ -4136,8 +4136,10 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
     const _vt = vinylDbRelease?.vinyl_tracks;
     const _groups = (() => {
       if (_vt?.length > 0) {
+        const _titleToSide = {};
+        _vt.forEach(v => { if (v.title) _titleToSide[normTitle(v.title)] = v.side; });
         const _m = {};
-        _wt.forEach((t, i) => { const s = _vt[i]?.side || "A"; if (!_m[s]) _m[s] = []; _m[s].push({ track: t, idx: i }); });
+        _wt.forEach((t, i) => { const s = _titleToSide[normTitle(t.trackName)] || _vt[i]?.side || "A"; if (!_m[s]) _m[s] = []; _m[s].push({ track: t, idx: i }); });
         return Object.entries(_m).map(([side, tracks]) => ({ side, tracks }));
       }
       const _mid = Math.ceil(_wt.length / 2);
@@ -5987,9 +5989,11 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
     // Build side groups from Discogs data, or fall back to A/B split at midpoint
     const groups = (() => {
       if (vt?.length > 0) {
+        const titleToSide = {};
+        vt.forEach(v => { if (v.title) titleToSide[normTitle(v.title)] = v.side; });
         const map = {};
         allTracks.forEach((t, i) => {
-          const side = vt[i]?.side || "A";
+          const side = titleToSide[normTitle(t.trackName)] || vt[i]?.side || "A";
           if (!map[side]) map[side] = [];
           map[side].push({ track: t, idx: i });
         });
