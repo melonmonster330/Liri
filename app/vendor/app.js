@@ -9,7 +9,7 @@ if (typeof supabase === 'undefined') {
   throw new Error('Supabase not loaded');
 }
 const sb = supabase.createClient("https://xjdjpaxgymgbvcwmvorc.supabase.co", "sb_publishable_C-NBnfg0ltAoUi46XQTUjA_ozjZW_Nd");
-const APP_VERSION = "1.3.4";
+const APP_VERSION = "1.3.5";
 const IS_IOS = !!window.Capacitor; // set once at load time — used for App Store compliance checks
 const TRANSCRIBE_PROXY = window.Capacitor ? "https://www.getliri.com/api/transcribe"    : "/api/transcribe";
 const ITUNES_PROXY   = window.Capacitor ? "https://www.getliri.com/api/itunes-lookup"   : "/api/itunes-lookup";
@@ -5926,7 +5926,7 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
       fontFamily: "inherit",
       width: "100%"
     }
-  }, (function(){ var _di = getNextDiscInfo(); return _di && (_di.isNewDisc ? "Grab LP " + _di.nextDisc : "Flip to Side " + _di.nextSide); })()), mode === "listening" && /*#__PURE__*/React.createElement("div", {
+  }, (function(){ var _di = getNextDiscInfo(); return _di && (_di.isNewDisc ? "Grab LP " + _di.nextDisc : "Flip to Side " + _di.nextSide); })())), mode === "listening" && /*#__PURE__*/React.createElement("div", {
     style: {
       animation: "fade-up 0.3s ease both",
       overflowY: showTrackList ? "auto" : "visible",
@@ -6241,9 +6241,7 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
       animation: "fade-up 0.3s ease both",
       textAlign: "center"
     }
-  }, /*#__PURE__*/React.createElement("div", {
-    style: { background: "lime", color: "black", padding: "40px", fontSize: "30px", fontWeight: "700" }
-  }, "SIDE-END DIV RENDERED"), /*#__PURE__*/React.createElement(Vinyl, {
+  }, /*#__PURE__*/React.createElement(Vinyl, {
     size: 100,
     spinning: false
   }), sideEndReason === "flip" && /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("div", {
@@ -6319,7 +6317,7 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
       cursor: "pointer",
       fontFamily: "inherit"
     }
-  }, "\u2190 Back")), sideEndReason === "album-end" && /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("div", {
+  }, "\u2190 Back"))), sideEndReason === "album-end" && /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("div", {
     style: {
       marginTop: "32px",
       fontSize: "22px",
@@ -6431,7 +6429,7 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
       cursor: "pointer",
       fontFamily: "inherit"
     }
-  }, "\u2190 Back"))), mode === "limit" && /*#__PURE__*/React.createElement("div", {
+  }, "\u2190 Back")))), mode === "limit" && /*#__PURE__*/React.createElement("div", {
     style: {
       maxWidth: "300px",
       animation: "fade-up 0.3s ease both",
@@ -6501,6 +6499,6 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
       cursor: "pointer",
       fontFamily: "inherit"
     }
-  }, "Maybe later"))))))));
+  }, "Maybe later")))));
 }
 ReactDOM.createRoot(document.getElementById("root")).render(/*#__PURE__*/React.createElement(Liri, null));
