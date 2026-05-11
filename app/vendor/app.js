@@ -9,7 +9,7 @@ if (typeof supabase === 'undefined') {
   throw new Error('Supabase not loaded');
 }
 const sb = supabase.createClient("https://xjdjpaxgymgbvcwmvorc.supabase.co", "sb_publishable_C-NBnfg0ltAoUi46XQTUjA_ozjZW_Nd");
-const APP_VERSION = "1.3.2";
+const APP_VERSION = "1.3.3";
 const IS_IOS = !!window.Capacitor; // set once at load time — used for App Store compliance checks
 const TRANSCRIBE_PROXY = window.Capacitor ? "https://www.getliri.com/api/transcribe"    : "/api/transcribe";
 const ITUNES_PROXY   = window.Capacitor ? "https://www.getliri.com/api/itunes-lookup"   : "/api/itunes-lookup";
@@ -413,7 +413,8 @@ function ProgressRing({
 }
 function Liri() {
   // ── Core state ──
-  const [mode, setMode] = useState("idle");
+  const [mode, _setMode] = useState("idle");
+  const setMode = (m) => { console.log("[mode]", m, "← from", new Error().stack?.split("\n")[2]?.trim()); _setMode(m); };
   const [detectedSong, setDetectedSong] = useState(null);
   const [identifiedBy, setIdentifiedBy] = useState(null); // "speech"
   const [songDuration, setSongDuration] = useState(null); // seconds
@@ -3356,7 +3357,9 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
       position: "relative",
       overflow: "hidden"
     }
-  }, artwork && /*#__PURE__*/React.createElement("div", {
+  }, /*#__PURE__*/React.createElement("div", {
+    style: { position: "fixed", top: 0, left: 0, right: 0, background: "red", color: "white", fontSize: "14px", fontWeight: "700", padding: "4px 8px", zIndex: 99999, textAlign: "center", fontFamily: "monospace", pointerEvents: "none" }
+  }, "DEBUG mode=", String(mode), " reason=", String(sideEndReason), " ds=", detectedSong ? "Y" : "N", " sync=", String(!!syncIntervalRef.current)), artwork && /*#__PURE__*/React.createElement("div", {
     style: {
       position: "fixed",
       inset: "-20px",
@@ -5659,7 +5662,7 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
       color: "rgba(255,255,255,0.15)",
       fontWeight: "400"
     }
-  }, "v", APP_VERSION, " · mode=", String(mode), " · reason=", String(sideEndReason)), /*#__PURE__*/React.createElement("div", {
+  }, "v", APP_VERSION), /*#__PURE__*/React.createElement("div", {
     style: {
       fontSize: "16px",
       letterSpacing: "10px",
