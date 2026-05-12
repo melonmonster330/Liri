@@ -9,7 +9,7 @@ if (typeof supabase === 'undefined') {
   throw new Error('Supabase not loaded');
 }
 const sb = supabase.createClient("https://xjdjpaxgymgbvcwmvorc.supabase.co", "sb_publishable_C-NBnfg0ltAoUi46XQTUjA_ozjZW_Nd");
-const APP_VERSION = "1.3.8";
+const APP_VERSION = "1.3.9";
 const IS_IOS = !!window.Capacitor; // set once at load time — used for App Store compliance checks
 const TRANSCRIBE_PROXY = window.Capacitor ? "https://www.getliri.com/api/transcribe"    : "/api/transcribe";
 const ITUNES_PROXY   = window.Capacitor ? "https://www.getliri.com/api/itunes-lookup"   : "/api/itunes-lookup";
@@ -819,11 +819,12 @@ function Liri() {
     } catch {}
   };
 
-  // Schedule 4 flip chimes (every 30s for ~2 min) starting 7s after song end.
-  // First fire also surfaces the push notification.
+  // Schedule flip chimes: every 10s for the first 30s, then one more 30s
+  // later. Delays are measured from song end (the side-end card itself
+  // appears 4s in). First fire also surfaces the push notification.
   const scheduleFlipChimes = (song) => {
     flipChimeTimersRef.current.forEach(clearTimeout);
-    flipChimeTimersRef.current = [7000, 37000, 67000, 97000].map((delay, i) =>
+    flipChimeTimersRef.current = [10000, 20000, 30000, 60000].map((delay, i) =>
       setTimeout(() => {
         playFlipChime();
         if (i === 0) showFlipPushNotification(song);
