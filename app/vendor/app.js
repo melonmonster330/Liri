@@ -9,7 +9,7 @@ if (typeof supabase === 'undefined') {
   throw new Error('Supabase not loaded');
 }
 const sb = supabase.createClient("https://xjdjpaxgymgbvcwmvorc.supabase.co", "sb_publishable_C-NBnfg0ltAoUi46XQTUjA_ozjZW_Nd");
-const APP_VERSION = "1.3.7";
+const APP_VERSION = "1.3.8";
 const IS_IOS = !!window.Capacitor; // set once at load time — used for App Store compliance checks
 const TRANSCRIBE_PROXY = window.Capacitor ? "https://www.getliri.com/api/transcribe"    : "/api/transcribe";
 const ITUNES_PROXY   = window.Capacitor ? "https://www.getliri.com/api/itunes-lookup"   : "/api/itunes-lookup";
@@ -547,6 +547,8 @@ function Liri() {
   const [shouldAdvanceTrack, setShouldAdvanceTrack] = useState(false);
   const [sideEndReason, setSideEndReason] = useState("failed"); // "failed" | "flip" | "album-end"
   const [sideEndNextDiscInfo, setSideEndNextDiscInfo] = useState(null); // {isNewDisc, nextDisc, nextSide}
+  const flipChimeTimersRef = useRef([]); // ids for the repeating flip-chime setTimeouts
+  const flipStartDelayMsRef = useRef(0); // when set, startSync will hold playbackTime at 0 for this many ms (used after manual flip)
 
   // ── Per-album side learning (silent — no user-facing UI) ──
   const [albumCollectionId, setAlbumCollectionId] = useState(null);
@@ -815,6 +817,22 @@ function Liri() {
       };
       if (ctx.state === "suspended") { ctx.resume().then(play); } else { play(); }
     } catch {}
+  };
+
+  // Schedule 4 flip chimes (every 30s for ~2 min) starting 7s after song end.
+  // First fire also surfaces the push notification.
+  const scheduleFlipChimes = (song) => {
+    flipChimeTimersRef.current.forEach(clearTimeout);
+    flipChimeTimersRef.current = [7000, 37000, 67000, 97000].map((delay, i) =>
+      setTimeout(() => {
+        playFlipChime();
+        if (i === 0) showFlipPushNotification(song);
+      }, delay)
+    );
+  };
+  const cancelFlipChimes = () => {
+    flipChimeTimersRef.current.forEach(clearTimeout);
+    flipChimeTimersRef.current = [];
   };
 
   const bumpControls = () => {
@@ -1606,7 +1624,7 @@ function Liri() {
       advanceToNextTrack(tracks, idx);
     } else {
       setSideEndReason("flip");
-      setTimeout(() => { playFlipChime(); showFlipPushNotification(detectedSong); }, 7000);
+      scheduleFlipChimes(detectedSong);
       if (detectedSong) setLastSong(detectedSong);
       setMode("side-end");
     }
@@ -1618,6 +1636,11 @@ function Liri() {
     clearInterval(progressTimerRef.current);
     streamRef.current?.getTracks().forEach(t => t.stop());
   }, []);
+
+  // ── Cancel flip chimes whenever we leave the side-end screen ──
+  useEffect(() => {
+    if (mode !== "side-end") cancelFlipChimes();
+  }, [mode]);
 
   // ── Process a confirmed match — update all app state ──
   const handleMatch = async (data, isAutoAdvance) => {
@@ -2140,6 +2163,13 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
       syncCalcRef.current = null;
       initialPosRef.current = Math.max(0, startPos - phraseOffset + (Date.now() - recStart) / 1000);
     }
+    // Manual flip: park playbackTime at 0 while the user drops the needle.
+    // We start the clock in the "past" so (Date.now() - syncStart)/1000 is
+    // negative for the delay window; the interval below clamps display to 0.
+    if (flipStartDelayMsRef.current > 0) {
+      initialPosRef.current = -flipStartDelayMsRef.current / 1000;
+      flipStartDelayMsRef.current = 0;
+    }
     syncStartRef.current = Date.now();
     // Jump to correct starting index immediately so the scroll effect lands on the right
     // line without smooth-scrolling from 0 (which caused a ~3s visual lag on load).
@@ -2157,7 +2187,8 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
     clearInterval(syncIntervalRef.current);
     syncIntervalRef.current = setInterval(() => {
       const t = initialPosRef.current + (Date.now() - syncStartRef.current) / 1000;
-      setPlaybackTime(t);
+      // Clamp displayed time to 0 during the manual-flip pause window.
+      setPlaybackTime(t < 0 ? 0 : t);
       const lrc = lyricsRef.current;
       if (!lrc.length) return;
       // Stay at -1 (no highlight) until playback reaches the first lyric timestamp
@@ -2465,7 +2496,7 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
       setSideEndNextDiscInfo(getNextDiscInfo());
       setSideEndReason("flip");
       // Chime ~3s after the flip card appears (≈7s from song end).
-      setTimeout(() => { playFlipChime(); showFlipPushNotification(detectedSong); }, 7000);
+      scheduleFlipChimes(detectedSong);
 
       // ── Log the flip event to analytics ──
       const sideIdx = sideEnds.indexOf(idx); // 0 = first flip (A→B), 1 = B→C, etc.
@@ -2619,9 +2650,10 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
           setMode("side-end");
           return;
         }
-        setIsNeedleDrop(true);
-        await new Promise(r => setTimeout(r, 3000));
-        setIsNeedleDrop(false);
+        // Hop straight into the lyrics page; song progression is paused for
+        // 12s while the user actually drops the needle on the new side.
+        cancelFlipChimes();
+        flipStartDelayMsRef.current = 12000;
         jumpToTrackIdx(nextFirst);
         return;
       }
@@ -2698,6 +2730,8 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
   };
 
     const reset = () => {
+    cancelFlipChimes();
+    flipStartDelayMsRef.current = 0;
     clearInterval(syncIntervalRef.current);
     clearInterval(progressTimerRef.current);
     streamRef.current?.getTracks().forEach(t => t.stop());
