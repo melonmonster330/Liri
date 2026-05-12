@@ -9,7 +9,7 @@ if (typeof supabase === 'undefined') {
   throw new Error('Supabase not loaded');
 }
 const sb = supabase.createClient("https://xjdjpaxgymgbvcwmvorc.supabase.co", "sb_publishable_C-NBnfg0ltAoUi46XQTUjA_ozjZW_Nd");
-const APP_VERSION = "1.3.9";
+const APP_VERSION = "1.4.0";
 const IS_IOS = !!window.Capacitor; // set once at load time — used for App Store compliance checks
 const TRANSCRIBE_PROXY = window.Capacitor ? "https://www.getliri.com/api/transcribe"    : "/api/transcribe";
 const ITUNES_PROXY   = window.Capacitor ? "https://www.getliri.com/api/itunes-lookup"   : "/api/itunes-lookup";
@@ -2652,9 +2652,9 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
           return;
         }
         // Hop straight into the lyrics page; song progression is paused for
-        // 12s while the user actually drops the needle on the new side.
+        // 10s while the user actually drops the needle on the new side.
         cancelFlipChimes();
-        flipStartDelayMsRef.current = 12000;
+        flipStartDelayMsRef.current = 10000;
         jumpToTrackIdx(nextFirst);
         return;
       }
