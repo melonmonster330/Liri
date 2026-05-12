@@ -9,7 +9,7 @@ if (typeof supabase === 'undefined') {
   throw new Error('Supabase not loaded');
 }
 const sb = supabase.createClient("https://xjdjpaxgymgbvcwmvorc.supabase.co", "sb_publishable_C-NBnfg0ltAoUi46XQTUjA_ozjZW_Nd");
-const APP_VERSION = "1.3.6";
+const APP_VERSION = "1.3.7";
 const IS_IOS = !!window.Capacitor; // set once at load time — used for App Store compliance checks
 const TRANSCRIBE_PROXY = window.Capacitor ? "https://www.getliri.com/api/transcribe"    : "/api/transcribe";
 const ITUNES_PROXY   = window.Capacitor ? "https://www.getliri.com/api/itunes-lookup"   : "/api/itunes-lookup";
@@ -2457,12 +2457,14 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
       showAlbumEndPushNotification(detectedSong);
       setSideEndReason("album-end");
       if (detectedSong) setLastSong(detectedSong);
-      setMode("side-end");
+      // Let the last lyric linger for a beat before showing the album-end card.
+      setTimeout(() => setMode("side-end"), 4000);
       return;
     }
     if (isSideEnd) {
       setSideEndNextDiscInfo(getNextDiscInfo());
       setSideEndReason("flip");
+      // Chime ~3s after the flip card appears (≈7s from song end).
       setTimeout(() => { playFlipChime(); showFlipPushNotification(detectedSong); }, 7000);
 
       // ── Log the flip event to analytics ──
@@ -2479,7 +2481,8 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
         method
       });
       if (detectedSong) setLastSong(detectedSong);
-      setMode("side-end");
+      // Let the last lyric linger for a beat before showing the flip card.
+      setTimeout(() => setMode("side-end"), 4000);
       return;
     }
     const next = tracks[nextIdx];
