@@ -34,7 +34,7 @@
   <script type="text/babel">
     const { useState, useEffect, useRef, useCallback } = React;
 
-    const APP_VERSION = "1.4.0";
+    const APP_VERSION = "1.1.0";
 
     // On iOS Capacitor relative URLs don't resolve — route all API calls through the live domain.
     const API_BASE = window.Capacitor ? "https://www.getliri.com" : "";
@@ -603,6 +603,7 @@
       const [upgradeWorking, setUpgradeWorking] = useState(false);
       const [checkoutSuccess, setCheckoutSuccess] = useState(false);
       const [iapPrice, setIapPrice] = useState("$5.99/mo");
+      const [upgradePlan, setUpgradePlan] = useState("monthly"); // "monthly" | "lifetime"
       const IS_IOS = !!window.Capacitor;
 
       // ── Auth ──
@@ -1112,24 +1113,33 @@
                     <svg width="30" height="30" viewBox="0 0 24 24" fill="none" stroke="#d4a846" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10"/><circle cx="12" cy="12" r="3"/><line x1="12" y1="2" x2="12" y2="5"/><line x1="12" y1="19" x2="12" y2="22"/></svg>
                   </div>
                   <div style={{ fontSize: 24, fontWeight: 800, color: "#f0e6d3", marginBottom: 8, letterSpacing: "-0.5px" }}>Liri Premium</div>
-                  <div style={{ fontSize: 14, color: "rgba(255,255,255,0.4)", lineHeight: 1.6, margin: "0 auto 24px", maxWidth: 260 }}>
+                  <div style={{ fontSize: 14, color: "rgba(255,255,255,0.4)", lineHeight: 1.6, margin: "0 auto 20px", maxWidth: 260 }}>
                     {subscription?.albumCount >= 10 ? "Your free crate is full — upgrade to keep adding records." : "Unlimited records, all features. Support indie music tech."}
                   </div>
+                  {/* Plan toggle */}
+                  <div style={{ display: "flex", gap: 6, background: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.06)", borderRadius: 50, padding: 4, marginBottom: 16 }}>
+                    {["monthly","lifetime"].map(p => (
+                      <button key={p} onClick={() => setUpgradePlan(p)}
+                        style={{ flex: 1, background: upgradePlan === p ? "linear-gradient(135deg,#d4a846,#c9807a)" : "transparent", color: upgradePlan === p ? "#080810" : "rgba(255,255,255,0.5)", border: "none", borderRadius: 50, padding: "9px 12px", fontSize: 12, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>
+                        {p === "monthly" ? "Monthly" : "Lifetime"}
+                      </button>
+                    ))}
+                  </div>
                   <div style={{ display: "inline-flex", alignItems: "baseline", gap: 4, background: "rgba(212,168,70,0.08)", border: "1px solid rgba(212,168,70,0.2)", borderRadius: 50, padding: "10px 24px", marginBottom: 24 }}>
-                    <span style={{ fontSize: 32, fontWeight: 800, color: "#d4a846", letterSpacing: "-1px" }}>$4</span>
-                    <span style={{ fontSize: 14, color: "rgba(212,168,70,0.6)", fontWeight: 500 }}>/month</span>
+                    <span style={{ fontSize: 32, fontWeight: 800, color: "#d4a846", letterSpacing: "-1px" }}>{upgradePlan === "monthly" ? "$2" : "$20"}</span>
+                    <span style={{ fontSize: 14, color: "rgba(212,168,70,0.6)", fontWeight: 500 }}>{upgradePlan === "monthly" ? "/month" : "one-time"}</span>
                   </div>
                   <div style={{ background: "rgba(255,255,255,0.03)", border: "1px solid rgba(255,255,255,0.06)", borderRadius: 18, padding: "4px 0", marginBottom: 24, textAlign: "left" }}>
-                    {[["Unlimited vinyl library"],["Lyrics synced to every track"],["Play history & stats"],["Cancel anytime"]].map(([text], i, arr) => (
+                    {[["Unlimited vinyl library"],["Lyrics synced to every track"],["Play history & stats"],[upgradePlan === "monthly" ? "Cancel anytime" : "Yours forever — no subscription"]].map(([text], i, arr) => (
                       <div key={text} style={{ display: "flex", alignItems: "center", gap: 12, padding: "12px 20px", borderBottom: i < arr.length - 1 ? "1px solid rgba(255,255,255,0.04)" : "none" }}>
                         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#d4a846" strokeWidth="2.5" strokeLinecap="round"><path d="M20 6L9 17l-5-5"/></svg>
                         <span style={{ fontSize: 13, color: "rgba(255,255,255,0.65)" }}>{text}</span>
                       </div>
                     ))}
                   </div>
-                  <button onClick={upgradeToStripe} disabled={upgradeWorking}
+                  <button onClick={upgradePlan === "lifetime" ? () => alert("Lifetime access launches soon — we'll notify you when it's ready!") : upgradeToStripe} disabled={upgradeWorking}
                     style={{ width: "100%", background: upgradeWorking ? "rgba(255,255,255,0.05)" : "linear-gradient(135deg,#d4a846,#c9807a)", color: upgradeWorking ? "rgba(255,255,255,0.3)" : "#080810", border: "none", borderRadius: 50, padding: "17px", fontSize: 16, fontWeight: 700, cursor: upgradeWorking ? "default" : "pointer", fontFamily: "inherit", marginBottom: 12 }}>
-                    {upgradeWorking ? "Opening checkout…" : "Get Premium · $4/mo"}
+                    {upgradeWorking ? "Opening checkout…" : (upgradePlan === "monthly" ? "Get Premium · $2/mo" : "Get Lifetime · $20")}
                   </button>
                   <button onClick={() => setShowUpgrade(false)} style={{ background: "none", border: "none", color: "rgba(255,255,255,0.2)", fontSize: 13, cursor: "pointer", fontFamily: "inherit", padding: "8px", width: "100%" }}>Maybe later</button>
                 </div>
@@ -1148,20 +1158,29 @@
                     <svg width="30" height="30" viewBox="0 0 24 24" fill="none" stroke="#d4a846" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10"/><circle cx="12" cy="12" r="3"/><line x1="12" y1="2" x2="12" y2="5"/><line x1="12" y1="19" x2="12" y2="22"/></svg>
                   </div>
                   <div style={{ fontSize: 24, fontWeight: 800, color: "#f0e6d3", marginBottom: 8, letterSpacing: "-0.5px" }}>Liri Premium</div>
-                  <div style={{ fontSize: 14, color: "rgba(255,255,255,0.4)", lineHeight: 1.6, margin: "0 auto 24px", maxWidth: 260 }}>
+                  <div style={{ fontSize: 14, color: "rgba(255,255,255,0.4)", lineHeight: 1.6, margin: "0 auto 20px", maxWidth: 260 }}>
                     {subscription?.albumCount >= 10 ? "Your free crate is full — upgrade to keep adding records." : "Unlimited records, all features. Support indie music tech."}
                   </div>
+                  {/* Plan toggle */}
+                  <div style={{ display: "flex", gap: 6, background: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.06)", borderRadius: 50, padding: 4, marginBottom: 20 }}>
+                    {["monthly","lifetime"].map(p => (
+                      <button key={p} onClick={() => setUpgradePlan(p)}
+                        style={{ flex: 1, background: upgradePlan === p ? "linear-gradient(135deg,#d4a846,#c9807a)" : "transparent", color: upgradePlan === p ? "#080810" : "rgba(255,255,255,0.5)", border: "none", borderRadius: 50, padding: "9px 12px", fontSize: 12, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>
+                        {p === "monthly" ? "Monthly" : "Lifetime"}
+                      </button>
+                    ))}
+                  </div>
                   <div style={{ background: "rgba(255,255,255,0.03)", border: "1px solid rgba(255,255,255,0.06)", borderRadius: 18, padding: "4px 0", marginBottom: 24, textAlign: "left" }}>
-                    {[["Unlimited vinyl library"],["Lyrics synced to every track"],["Play history & stats"],["Cancel anytime"]].map(([text], i, arr) => (
+                    {[["Unlimited vinyl library"],["Lyrics synced to every track"],["Play history & stats"],[upgradePlan === "monthly" ? "Cancel anytime" : "Yours forever — no subscription"]].map(([text], i, arr) => (
                       <div key={text} style={{ display: "flex", alignItems: "center", gap: 12, padding: "12px 20px", borderBottom: i < arr.length - 1 ? "1px solid rgba(255,255,255,0.04)" : "none" }}>
                         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#d4a846" strokeWidth="2.5" strokeLinecap="round"><path d="M20 6L9 17l-5-5"/></svg>
                         <span style={{ fontSize: 13, color: "rgba(255,255,255,0.65)" }}>{text}</span>
                       </div>
                     ))}
                   </div>
-                  <button onClick={upgradeWithApple} disabled={upgradeWorking}
+                  <button onClick={upgradePlan === "lifetime" ? () => alert("Lifetime access launches soon — we'll notify you when it's ready!") : upgradeWithApple} disabled={upgradeWorking}
                     style={{ width: "100%", background: upgradeWorking ? "rgba(255,255,255,0.05)" : "linear-gradient(135deg,#d4a846,#c9807a)", color: upgradeWorking ? "rgba(255,255,255,0.3)" : "#080810", border: "none", borderRadius: 50, padding: "17px", fontSize: 16, fontWeight: 700, cursor: upgradeWorking ? "default" : "pointer", fontFamily: "inherit", marginBottom: 12 }}>
-                    {upgradeWorking ? "Opening…" : `Get Premium · ${iapPrice}`}
+                    {upgradeWorking ? "Opening…" : (upgradePlan === "monthly" ? `Get Premium · ${iapPrice}` : "Get Lifetime · $24.99")}
                   </button>
                   <button onClick={() => setShowUpgrade(false)} style={{ background: "none", border: "none", color: "rgba(255,255,255,0.2)", fontSize: 13, cursor: "pointer", fontFamily: "inherit", padding: "8px", width: "100%" }}>Maybe later</button>
                 </div>
