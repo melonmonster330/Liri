@@ -18,3 +18,4 @@ dist/
 .env*.local
 .vercel
 .claude/worktrees/
+.claude/
