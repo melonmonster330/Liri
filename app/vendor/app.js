@@ -6014,18 +6014,6 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
     }
   }, turntableAlbum ? (window.Capacitor ? (showTrackList ? "Can't find it automatically" : "Finding your place…") : "Pick a track to start") : listenAttempt > MAX_ATTEMPTS ? "Matching by lyrics…" : "Listening…"),
 
-  /* ── Shazam timer bar (iOS only, while actively listening, not yet in fallback) ── */
-  turntableAlbum && window.Capacitor && !showTrackList && /*#__PURE__*/React.createElement(React.Fragment, null,
-    /*#__PURE__*/React.createElement("div", {
-      style: { marginTop: "20px", width: "200px", height: "2px", background: "rgba(255,255,255,0.07)", borderRadius: "2px", overflow: "hidden" }
-    }, /*#__PURE__*/React.createElement("div", {
-      style: { height: "100%", width: `${Math.min(listenSecs / 15 * 100, 100)}%`, background: "linear-gradient(90deg, #1DA0F2, #d4a846)", transition: "width 1s linear", borderRadius: "2px" }
-    })),
-    /*#__PURE__*/React.createElement("div", {
-      style: { marginTop: "10px", fontSize: "11px", letterSpacing: "1.5px", textTransform: "uppercase", color: "rgba(255,255,255,0.2)" }
-    }, "Powered by Shazam")
-  ),
-
   /* ── Manual track picker with side grouping ── */
   turntableAlbum && (showTrackList || !window.Capacitor) && turntableTracksRef.current.length > 0 && (() => {
     const allTracks = turntableTracksRef.current;
