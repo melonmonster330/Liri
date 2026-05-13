@@ -2071,8 +2071,11 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
       const elapsed = (Date.now() - matchTime) / 1000;
       const adjustedOffset = Math.max(0, offset + elapsed);
 
-      // Find the matched track within the selected album (case-insensitive fuzzy)
-      const norm = s => (s || "").toLowerCase().trim();
+      // Find the matched track within the selected album.
+      // Strip ALL non-alphanumeric chars so curly vs straight apostrophes (' vs '),
+      // dashes, parens, etc. don't break the lookup — Shazam/Apple Music titles use
+      // curly punctuation, library titles may differ.
+      const norm = s => (s || "").toLowerCase().replace(/[^a-z0-9]/g, "");
       const matchedTrack =
         tracks.find(t => norm(t.trackName) === norm(title)) ||
         tracks.find(t => norm(title).includes(norm(t.trackName)) && norm(t.trackName).length > 3) ||
@@ -2717,7 +2720,7 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
       const curIdx = currentTrackIndexRef.current;
       const track = curIdx >= 0 ? turntableTracksRef.current[curIdx] : null;
       if (!track) { setIsResyncing(false); return; }
-      const norm = s => (s || "").toLowerCase().trim();
+      const norm = s => (s || "").toLowerCase().replace(/[^a-z0-9]/g, "");
       if (!norm(title).includes(norm(track.trackName)) && !norm(track.trackName).includes(norm(title))) {
         setIsResyncing(false); return;
       }
