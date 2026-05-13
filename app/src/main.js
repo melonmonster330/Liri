@@ -2,6 +2,8 @@ import { parseLRC, formatTime, timeAgo } from "../base/lib/text.js";
 import { Vinyl }          from "../base/components/Vinyl.js";
 import { WaveAnimation }  from "../base/components/WaveAnimation.js";
 import { ProgressRing }   from "../base/components/ProgressRing.js";
+import { Shazam }         from "../ios/shazam.js";
+import { getNativeAudio } from "../ios/audio.js";
 
 const {
   useState,
@@ -19,39 +21,7 @@ const IS_IOS = !!window.Capacitor; // set once at load time — used for App Sto
 const TRANSCRIBE_PROXY = window.Capacitor ? "https://www.getliri.com/api/transcribe"    : "/api/transcribe";
 const ITUNES_PROXY   = window.Capacitor ? "https://www.getliri.com/api/itunes-lookup"   : "/api/itunes-lookup";
 const WHISPER_PROXY  = window.Capacitor ? "https://www.getliri.com/api/whisper"         : "/api/whisper";
-// Both plugins use lazy functions so window.Capacitor is read at call time,
-// not at module load — the Capacitor bridge isn't ready until after the JS parses.
-const _nativeAudioPlugin = () => {
-  if (!window.Capacitor) return null;
-  return window.Capacitor.Plugins?.NativeAudio
-      ?? window.Capacitor.registerPlugin?.("NativeAudio")
-      ?? null;
-};
-// Call ShazamPlugin via nativePromise — the low-level Capacitor bridge that IS
-// set up by the native iOS runtime, unlike registerPlugin which requires the
-// @capacitor/core JS bundle (not loaded by this app).
-const _shazamPlugin = () => {
-  const np = window.Capacitor?.nativePromise;
-  if (!np) return null;
-  return {
-    findMatch:      (opts) => np("ShazamPlugin", "findMatch",      opts || {}),
-    cancel:         ()     => np("ShazamPlugin", "cancel",         {}),
-    waitForSilence: (opts) => np("ShazamPlugin", "waitForSilence", opts || {}),
-  };
-};
-const Shazam = {
-  findMatch: (opts) => {
-    const p = _shazamPlugin();
-    if (!p) return Promise.reject(new Error("ShazamPlugin unavailable"));
-    return p.findMatch(opts);
-  },
-  cancel: () => { _shazamPlugin()?.cancel().catch(() => {}); },
-  waitForSilence: (opts) => {
-    const p = _shazamPlugin();
-    if (!p) return Promise.resolve({ silence: false });
-    return p.waitForSilence(opts);
-  },
-};
+// Shazam + NativeAudio plugin bridges are imported from app/ios/.
 
 //   3. Landing page feature cards (🎵 → sound/wave art, 💿 → vinyl art)
 //      Note: ✦ (sparkle character) is intentional Liri type — keep it

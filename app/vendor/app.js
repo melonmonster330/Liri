@@ -211,6 +211,33 @@
     );
   }
 
+  // app/ios/shazam.js
+  function getPlugin() {
+    const np = window.Capacitor?.nativePromise;
+    if (!np) return null;
+    return {
+      findMatch: (opts) => np("ShazamPlugin", "findMatch", opts || {}),
+      cancel: () => np("ShazamPlugin", "cancel", {}),
+      waitForSilence: (opts) => np("ShazamPlugin", "waitForSilence", opts || {})
+    };
+  }
+  var Shazam = {
+    findMatch: (opts) => {
+      const p = getPlugin();
+      if (!p) return Promise.reject(new Error("ShazamPlugin unavailable"));
+      return p.findMatch(opts);
+    },
+    cancel: () => {
+      getPlugin()?.cancel().catch(() => {
+      });
+    },
+    waitForSilence: (opts) => {
+      const p = getPlugin();
+      if (!p) return Promise.resolve({ silence: false });
+      return p.waitForSilence(opts);
+    }
+  };
+
   // app/src/main.js
   var {
     useState: useState2,
@@ -228,31 +255,6 @@
   var TRANSCRIBE_PROXY = window.Capacitor ? "https://www.getliri.com/api/transcribe" : "/api/transcribe";
   var ITUNES_PROXY = window.Capacitor ? "https://www.getliri.com/api/itunes-lookup" : "/api/itunes-lookup";
   var WHISPER_PROXY = window.Capacitor ? "https://www.getliri.com/api/whisper" : "/api/whisper";
-  var _shazamPlugin = () => {
-    const np = window.Capacitor?.nativePromise;
-    if (!np) return null;
-    return {
-      findMatch: (opts) => np("ShazamPlugin", "findMatch", opts || {}),
-      cancel: () => np("ShazamPlugin", "cancel", {}),
-      waitForSilence: (opts) => np("ShazamPlugin", "waitForSilence", opts || {})
-    };
-  };
-  var Shazam = {
-    findMatch: (opts) => {
-      const p = _shazamPlugin();
-      if (!p) return Promise.reject(new Error("ShazamPlugin unavailable"));
-      return p.findMatch(opts);
-    },
-    cancel: () => {
-      _shazamPlugin()?.cancel().catch(() => {
-      });
-    },
-    waitForSilence: (opts) => {
-      const p = _shazamPlugin();
-      if (!p) return Promise.resolve({ silence: false });
-      return p.waitForSilence(opts);
-    }
-  };
   var styleEl = document.createElement("style");
   styleEl.textContent = `
       @keyframes vinyl-spin { to { transform: rotate(360deg); } }
