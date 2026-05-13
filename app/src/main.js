@@ -1,9 +1,11 @@
 import { parseLRC, formatTime, timeAgo } from "../base/lib/text.js";
+import { showFlipPushNotification, showAlbumEndPushNotification, getLocalNotif } from "../base/lib/notifications.js";
 import { Vinyl }          from "../base/components/Vinyl.js";
 import { WaveAnimation }  from "../base/components/WaveAnimation.js";
 import { ProgressRing }   from "../base/components/ProgressRing.js";
 import { Shazam }         from "../ios/shazam.js";
 import { getNativeAudio } from "../ios/audio.js";
+import { getLiriIAP }     from "../ios/iap.js";
 
 const {
   useState,
@@ -569,33 +571,11 @@ function Liri() {
     clearTimeout(controlsHideTimerRef.current);
     controlsHideTimerRef.current = setTimeout(() => setControlsVisible(false), 3500);
   };
-  const _localNotif = () => window.Capacitor?.Plugins?.LocalNotifications;
-  const showFlipPushNotification = song => {
-    if (localStorage.getItem("liri_flip_notify") !== "true") return;
-    const title = "Time to flip! 💿";
-    const body = song ? `${song.artist} — ${song.album || "Side A done"}` : "Your side has ended — flip the record";
-    if (window.Capacitor) {
-      try { _localNotif()?.schedule({ notifications: [{ id: 1001, title, body }] }); } catch {}
-    } else {
-      if (Notification.permission !== "granted") return;
-      try { new Notification(title, { body, icon: song?.artwork || undefined, tag: "liri-flip" }); } catch {}
-    }
-  };
-  const showAlbumEndPushNotification = song => {
-    if (localStorage.getItem("liri_flip_notify") !== "true") return;
-    const title = "That's the album! 🎶";
-    const body = song ? `${song.artist} — ${song.album || "Album complete"}` : "Put on your next record to keep going";
-    if (window.Capacitor) {
-      try { _localNotif()?.schedule({ notifications: [{ id: 1002, title, body }] }); } catch {}
-    } else {
-      if (Notification.permission !== "granted") return;
-      try { new Notification(title, { body, icon: song?.artwork || undefined, tag: "liri-album-end" }); } catch {}
-    }
-  };
+  // Notification helpers are imported from base/lib/notifications.js.
   const enableFlipNotify = async () => {
     if (window.Capacitor) {
       try {
-        const { display } = await (_localNotif()?.requestPermissions() ?? Promise.resolve({ display: "denied" }));
+        const { display } = await (getLocalNotif()?.requestPermissions() ?? Promise.resolve({ display: "denied" }));
         if (display === "granted") {
           setFlipNotify(true);
           localStorage.setItem("liri_flip_notify", "true");
@@ -747,17 +727,19 @@ function Liri() {
 
   // Fetch live price from App Store on iOS (best-effort)
   useEffect(() => {
-    if (!IS_IOS || !window.Capacitor?.Plugins?.LiriIAP) return;
-    window.Capacitor.Plugins.LiriIAP.fetchProduct()
+    const iap = getLiriIAP();
+    if (!IS_IOS || !iap) return;
+    iap.fetchProduct()
       .then(p => { if (p?.displayPrice) setIapPrice(`${p.displayPrice}/mo`); })
       .catch(() => {});
   }, []);
 
   // On iOS login, check for an active Apple subscription and sync with server
   const syncAppleSubscription = async (token) => {
-    if (!IS_IOS || !window.Capacitor?.Plugins?.LiriIAP) return;
+    const iap = getLiriIAP();
+    if (!IS_IOS || !iap) return;
     try {
-      const status = await window.Capacitor.Plugins.LiriIAP.getSubscriptionStatus();
+      const status = await iap.getSubscriptionStatus();
       if (status?.isActive && status?.signedTransaction) {
         const r = await fetch("https://www.getliri.com/api/stripe-checkout", {
           method: "POST",
@@ -770,13 +752,14 @@ function Liri() {
   };
 
   const upgradeWithApple = async () => {
-    if (!window.Capacitor?.Plugins?.LiriIAP) {
+    const iap = getLiriIAP();
+    if (!iap) {
       alert("In-app purchases are not available right now. Please try again or contact support.");
       return;
     }
     setIapWorking(true);
     try {
-      const result = await window.Capacitor.Plugins.LiriIAP.purchase();
+      const result = await iap.purchase();
       if (result?.signedTransaction) {
         const token = sessionTokenRef.current;
         const r = await fetch("https://www.getliri.com/api/stripe-checkout", {
@@ -800,10 +783,11 @@ function Liri() {
   };
 
   const restoreApplePurchases = async () => {
-    if (!window.Capacitor?.Plugins?.LiriIAP) { alert("Restore is not available right now."); return; }
+    const iap = getLiriIAP();
+    if (!iap) { alert("Restore is not available right now."); return; }
     setIapWorking(true);
     try {
-      const status = await window.Capacitor.Plugins.LiriIAP.restorePurchases();
+      const status = await iap.restorePurchases();
       if (status?.isActive && status?.signedTransaction) {
         const token = sessionTokenRef.current;
         const r = await fetch("https://www.getliri.com/api/stripe-checkout", {
