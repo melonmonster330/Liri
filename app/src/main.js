@@ -1,3 +1,5 @@
+import { parseLRC, formatTime, timeAgo } from "../base/lib/text.js";
+
 const {
   useState,
   useEffect,
@@ -149,30 +151,6 @@ const PLAYBACK_OFFSET_CORRECTION = 4.0;
 // Extra offset added when auto-advancing to next track (no re-listen),
 // accounting for lyrics-fetch + state-update delay. Tune if still drifting.
 const AUTO_ADVANCE_OFFSET = 2.0;
-function parseLRC(lrc) {
-  const re = /\[(\d{2}):(\d{2})[.:](\d{2,3})\](.*)/;
-  return lrc.split("\n").reduce((acc, line) => {
-    const m = line.match(re);
-    if (!m) return acc;
-    const t = parseInt(m[1]) * 60 + parseInt(m[2]) + parseInt(m[3].padEnd(3, "0").slice(0, 3)) / 1000;
-    const text = m[4].trim();
-    if (text) acc.push({
-      time: t,
-      text
-    });
-    return acc;
-  }, []).sort((a, b) => a.time - b.time);
-}
-function formatTime(s) {
-  return `${Math.floor(s / 60)}:${Math.floor(s % 60).toString().padStart(2, "0")}`;
-}
-function timeAgo(iso) {
-  const diff = (Date.now() - new Date(iso)) / 1000;
-  if (diff < 60) return "just now";
-  if (diff < 3600) return `${Math.floor(diff / 60)}m ago`;
-  if (diff < 86400) return `${Math.floor(diff / 3600)}h ago`;
-  return `${Math.floor(diff / 86400)}d ago`;
-}
 const styleEl = document.createElement("style");
 styleEl.textContent = `
       @keyframes vinyl-spin { to { transform: rotate(360deg); } }
