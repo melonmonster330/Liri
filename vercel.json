@@ -1,5 +1,6 @@
 {
-  "installCommand": "npm install --omit=dev",
+  "installCommand": "npm install",
+  "buildCommand": "npm run build",
   "outputDirectory": ".",
   "crons": [
     { "path": "/api/sync-catalogue", "schedule": "0 3 1 * *" }
