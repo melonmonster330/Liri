@@ -14,6 +14,9 @@
   function formatTime(s) {
     return `${Math.floor(s / 60)}:${Math.floor(s % 60).toString().padStart(2, "0")}`;
   }
+  function normText(s) {
+    return (s || "").toLowerCase().replace(/[^a-z0-9]/g, "");
+  }
   function timeAgo(iso) {
     const diff = (Date.now() - new Date(iso)) / 1e3;
     if (diff < 60) return "just now";
@@ -21,6 +24,9 @@
     if (diff < 86400) return `${Math.floor(diff / 3600)}h ago`;
     return `${Math.floor(diff / 86400)}d ago`;
   }
+
+  // app/base/lib/whisper.js
+  var WHISPER_PROXY = window.Capacitor ? "https://www.getliri.com/api/whisper" : "/api/whisper";
 
   // app/base/lib/notifications.js
   function getLocalNotif() {
@@ -297,11 +303,10 @@
     throw new Error("Supabase not loaded");
   }
   var sb = supabase.createClient("https://xjdjpaxgymgbvcwmvorc.supabase.co", "sb_publishable_C-NBnfg0ltAoUi46XQTUjA_ozjZW_Nd");
-  var APP_VERSION = "1.1.1";
+  var APP_VERSION = "1.1.2";
   var IS_IOS = !!window.Capacitor;
   var TRANSCRIBE_PROXY = window.Capacitor ? "https://www.getliri.com/api/transcribe" : "/api/transcribe";
   var ITUNES_PROXY = window.Capacitor ? "https://www.getliri.com/api/itunes-lookup" : "/api/itunes-lookup";
-  var WHISPER_PROXY = window.Capacitor ? "https://www.getliri.com/api/whisper" : "/api/whisper";
   var styleEl = document.createElement("style");
   styleEl.textContent = `
       @keyframes vinyl-spin { to { transform: rotate(360deg); } }
@@ -531,7 +536,7 @@
           data: existing
         } = await sb.from("vinyl_releases").select("id").eq("itunes_collection_id", String(collectionId)).maybeSingle();
         if (existing) return existing.id;
-        const norm = (s) => (s || "").toLowerCase().replace(/[^a-z0-9]/g, "");
+        const norm = normText;
         const normAlbum = norm(albumName);
         const normArtist = norm(artistName);
         const normAlbumBase = norm(albumName.split("(")[0].trim());
@@ -596,7 +601,7 @@
         return null;
       }
     };
-    const normTitle = (s) => (s || "").toLowerCase().replace(/[^a-z0-9]/g, "");
+    const normTitle = normText;
     const getDbSideEndIndices = (itunesTracks, dbTracks) => {
       const sideGroups = {};
       dbTracks.forEach((t) => {
@@ -1690,7 +1695,7 @@ Move closer to your speakers and try again.`);
         console.log("[shazam] match:", title, "by", artist, "offset:", Number(offset).toFixed(1) + "s");
         const elapsed = (Date.now() - matchTime) / 1e3;
         const adjustedOffset = Math.max(0, offset + elapsed);
-        const norm = (s) => (s || "").toLowerCase().replace(/[^a-z0-9]/g, "");
+        const norm = normText;
         const matchedTrack = tracks.find((t) => norm(t.trackName) === norm(title)) || tracks.find((t) => norm(title).includes(norm(t.trackName)) && norm(t.trackName).length > 3) || tracks.find((t) => norm(t.trackName).includes(norm(title)) && norm(title).length > 3);
         if (!matchedTrack) {
           console.log("[shazam] matched title not in album:", title, "\u2014 showing track list");
@@ -2207,7 +2212,7 @@ Move closer to your speakers and try again.`);
           setIsResyncing(false);
           return;
         }
-        const norm = (s) => (s || "").toLowerCase().replace(/[^a-z0-9]/g, "");
+        const norm = normText;
         if (!norm(title).includes(norm(track.trackName)) && !norm(track.trackName).includes(norm(title))) {
           setIsResyncing(false);
           return;

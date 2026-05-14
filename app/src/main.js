@@ -1,4 +1,5 @@
-import { parseLRC, formatTime, timeAgo } from "../base/lib/text.js";
+import { parseLRC, formatTime, timeAgo, normText } from "../base/lib/text.js";
+import { startWhisperChunks } from "../base/lib/whisper.js";
 import { showFlipPushNotification, showAlbumEndPushNotification, getLocalNotif } from "../base/lib/notifications.js";
 import { Vinyl }          from "../base/components/Vinyl.js";
 import { WaveAnimation }  from "../base/components/WaveAnimation.js";
@@ -18,11 +19,10 @@ if (typeof supabase === 'undefined') {
   throw new Error('Supabase not loaded');
 }
 const sb = supabase.createClient("https://xjdjpaxgymgbvcwmvorc.supabase.co", "sb_publishable_C-NBnfg0ltAoUi46XQTUjA_ozjZW_Nd");
-const APP_VERSION = "1.1.1";
+const APP_VERSION = "1.1.2";
 const IS_IOS = !!window.Capacitor; // set once at load time — used for App Store compliance checks
 const TRANSCRIBE_PROXY = window.Capacitor ? "https://www.getliri.com/api/transcribe"    : "/api/transcribe";
 const ITUNES_PROXY   = window.Capacitor ? "https://www.getliri.com/api/itunes-lookup"   : "/api/itunes-lookup";
-const WHISPER_PROXY  = window.Capacitor ? "https://www.getliri.com/api/whisper"         : "/api/whisper";
 // Shazam + NativeAudio plugin bridges are imported from app/ios/.
 
 //   3. Landing page feature cards (🎵 → sound/wave art, 💿 → vinyl art)
@@ -31,96 +31,6 @@ const WHISPER_PROXY  = window.Capacitor ? "https://www.getliri.com/api/whisper" 
 // All original artwork should match the dark palette: deep navy #080810, gold #d4a846, rose #c9807a
 // ─────────────────────────────────────────────────────────────────────────────────────────────
 
-// ── Whisper chunk recorder ────────────────────────────────────────────────────
-// Shared by initial listen, resync, and any future listening entry points.
-// Opens a recording loop on `stream`, sends each chunk to Whisper, calls
-// `onText(text, chunkEndTime)` for every non-empty result.
-// Returns { stop } — call stop() to tear down immediately.
-const startWhisperChunks = (stream, onText, chunkMs, prompt) => {
-  let active = true;
-
-  // ── iOS path: single continuous recorder, accumulate all chunks ──────────────
-  // iOS MediaRecorder outputs fragmented MP4 (fMP4): only the FIRST chunk contains
-  // the codec init data (moov box). Subsequent chunks are raw moof+mdat — Whisper
-  // can't decode them standalone and hallucinates instead of transcribing.
-  // Fix: keep one recorder running, accumulate every chunk into a growing blob, and
-  // send the full blob (init + all media data) to Whisper each interval. The result
-  // is always a valid decodable MP4 regardless of which chunk number we're on.
-  if (window.Capacitor) {
-    const iosChunks = [];
-    const recorder = new MediaRecorder(stream);
-    recorder.ondataavailable = async (e) => {
-      if (!active || e.data.size < 500) return;
-      iosChunks.push(e.data);
-      const fullBlob = new Blob(iosChunks, { type: e.data.type || "audio/mp4" });
-      const chunkEndTime = Date.now();
-      try {
-        const base64 = await new Promise((resolve, reject) => {
-          const reader = new FileReader();
-          reader.onload  = () => resolve(reader.result.split(",")[1]);
-          reader.onerror = reject;
-          reader.readAsDataURL(fullBlob);
-        });
-        const res = await fetch(WHISPER_PROXY, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ audio: base64, mimeType: fullBlob.type || "audio/mp4", ...(prompt ? { prompt } : {}) }),
-        });
-        if (!res.ok || !active) return;
-        const { text } = await res.json();
-        onText(text, chunkEndTime);
-      } catch (err) { console.error("[whisper] chunk error:", err); }
-    };
-    recorder.start(chunkMs); // timeslice — ondataavailable fires every chunkMs
-    const stop = () => {
-      active = false;
-      try { recorder.stop(); } catch {}
-      stream.getTracks().forEach(t => t.stop());
-    };
-    return { stop };
-  }
-
-  // ── Web path: overlapping short chunks (WebM is self-contained per chunk) ────
-  const mimeType = MediaRecorder.isTypeSupported("audio/webm") ? "audio/webm" : "audio/mp4";
-  let currentRecorder = null;
-  const stop = () => {
-    active = false;
-    try { currentRecorder?.stop(); } catch {}
-    stream.getTracks().forEach(t => t.stop());
-  };
-  const recordChunk = () => {
-    if (!active) return;
-    const recorder = new MediaRecorder(stream, { mimeType });
-    currentRecorder = recorder;
-    recorder.ondataavailable = async (e) => {
-      if (e.data.size < 500 || !active) return;
-      const chunkEndTime = Date.now();
-      try {
-        const base64 = await new Promise((resolve, reject) => {
-          const reader = new FileReader();
-          reader.onload  = () => resolve(reader.result.split(",")[1]);
-          reader.onerror = reject;
-          reader.readAsDataURL(e.data);
-        });
-        const res = await fetch(WHISPER_PROXY, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ audio: base64, mimeType: e.data.type || mimeType, ...(prompt ? { prompt } : {}) }),
-        });
-        if (!res.ok || !active) return;
-        const { text } = await res.json();
-        onText(text, chunkEndTime);
-      } catch (err) { console.error("[whisper] chunk error:", err); }
-    };
-    recorder.start();
-    setTimeout(() => {
-      if (recorder.state === "recording") recorder.stop();
-      recordChunk();
-    }, chunkMs);
-  };
-  recordChunk();
-  return { stop };
-};
 
 const PLAYBACK_OFFSET_CORRECTION = 4.0;
 // Extra offset added when auto-advancing to next track (no re-listen),
@@ -423,7 +333,7 @@ function Liri() {
         data: existing
       } = await sb.from("vinyl_releases").select("id").eq("itunes_collection_id", String(collectionId)).maybeSingle();
       if (existing) return existing.id;
-      const norm = s => (s || "").toLowerCase().replace(/[^a-z0-9]/g, "");
+      const norm = normText;
       const normAlbum = norm(albumName);
       const normArtist = norm(artistName);
       const normAlbumBase = norm(albumName.split("(")[0].trim());
@@ -502,7 +412,7 @@ function Liri() {
 
   // Shared title normaliser: strip punctuation + lowercase so Discogs ↔ iTunes title
   // mismatches (feat., trailing periods, dashes, etc.) don't break side matching.
-  const normTitle = s => (s || "").toLowerCase().replace(/[^a-z0-9]/g, "");
+  const normTitle = normText;
 
   // Convert our DB track list into side-end indices that advanceToNextTrack can use.
   // Returns an array of iTunes track indices that are the last track of each side.
@@ -1787,7 +1697,7 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
       // Strip ALL non-alphanumeric chars so curly vs straight apostrophes (' vs '),
       // dashes, parens, etc. don't break the lookup — Shazam/Apple Music titles use
       // curly punctuation, library titles may differ.
-      const norm = s => (s || "").toLowerCase().replace(/[^a-z0-9]/g, "");
+      const norm = normText;
       const matchedTrack =
         tracks.find(t => norm(t.trackName) === norm(title)) ||
         tracks.find(t => norm(title).includes(norm(t.trackName)) && norm(t.trackName).length > 3) ||
@@ -2432,7 +2342,7 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
       const curIdx = currentTrackIndexRef.current;
       const track = curIdx >= 0 ? turntableTracksRef.current[curIdx] : null;
       if (!track) { setIsResyncing(false); return; }
-      const norm = s => (s || "").toLowerCase().replace(/[^a-z0-9]/g, "");
+      const norm = normText;
       if (!norm(title).includes(norm(track.trackName)) && !norm(track.trackName).includes(norm(title))) {
         setIsResyncing(false); return;
       }

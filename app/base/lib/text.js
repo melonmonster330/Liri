@@ -20,6 +20,14 @@ export function formatTime(s) {
   return `${Math.floor(s / 60)}:${Math.floor(s % 60).toString().padStart(2, "0")}`;
 }
 
+// Normalise text for loose comparison: lowercase + strip all non-alphanumeric.
+// Used so Shazam matches survive curly vs straight quotes, "(Remastered)"
+// suffixes, dashes, etc. when comparing track titles against library tracks.
+//   normText("Don't Blame Me") === normText("Don’t Blame Me")  // true
+export function normText(s) {
+  return (s || "").toLowerCase().replace(/[^a-z0-9]/g, "");
+}
+
 // Format an ISO timestamp as a short relative string ("just now", "5m ago").
 export function timeAgo(iso) {
   const diff = (Date.now() - new Date(iso)) / 1000;
