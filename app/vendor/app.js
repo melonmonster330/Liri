@@ -338,7 +338,7 @@
     throw new Error("Supabase not loaded");
   }
   var sb = supabase.createClient("https://xjdjpaxgymgbvcwmvorc.supabase.co", "sb_publishable_C-NBnfg0ltAoUi46XQTUjA_ozjZW_Nd");
-  var APP_VERSION = "1.1.5";
+  var APP_VERSION = "1.1.6";
   var IS_IOS = !!window.Capacitor;
   var TRANSCRIBE_PROXY = window.Capacitor ? "https://www.getliri.com/api/transcribe" : "/api/transcribe";
   var ITUNES_PROXY = window.Capacitor ? "https://www.getliri.com/api/itunes-lookup" : "/api/itunes-lookup";
@@ -6067,78 +6067,95 @@ Move closer to your speakers and try again.`);
         cursor: "pointer",
         fontFamily: "inherit"
       }
-    }, "\u2190 Back")))), mode === "limit" && /* @__PURE__ */ React.createElement("div", {
-      style: {
-        maxWidth: "300px",
-        animation: "fade-up 0.3s ease both",
-        textAlign: "center"
-      }
-    }, /* @__PURE__ */ React.createElement(Vinyl, {
-      size: 100,
-      spinning: false
-    }), /* @__PURE__ */ React.createElement("div", {
-      style: {
-        marginTop: "32px",
-        fontSize: "22px",
-        fontWeight: "700",
-        color: "#f0e6d3",
-        marginBottom: "12px"
-      }
-    }, "Your free crate is full"), /* @__PURE__ */ React.createElement("div", {
-      style: {
-        color: "rgba(255,255,255,0.4)",
-        marginBottom: "36px",
-        lineHeight: "1.8",
-        fontSize: "15px"
-      }
-    }, "You've added 10 free records.", /* @__PURE__ */ React.createElement("br", null), "Upgrade to keep building your collection."), IS_IOS ? /* @__PURE__ */ React.createElement(
-      React.Fragment,
-      null,
-      /* @__PURE__ */ React.createElement("button", {
-        onClick: upgradeWithApple,
-        disabled: iapWorking,
-        style: { background: "linear-gradient(135deg,#d4a846,#c9807a)", color: "#080810", border: "none", borderRadius: "50px", padding: "14px 32px", fontSize: "14px", fontWeight: "700", cursor: "pointer", fontFamily: "inherit", marginBottom: "8px", width: "100%", opacity: iapWorking ? 0.6 : 1 }
-      }, iapWorking ? "Processing\u2026" : `Subscribe \xB7 ${iapPrice}`),
-      /* @__PURE__ */ React.createElement("button", {
-        onClick: restoreApplePurchases,
-        disabled: iapWorking,
-        style: { background: "none", border: "none", color: "rgba(255,255,255,0.3)", fontSize: "12px", cursor: "pointer", fontFamily: "inherit", padding: "8px", marginBottom: "4px" }
-      }, "Restore Purchases")
-    ) : /* @__PURE__ */ React.createElement("button", {
-      onClick: async () => {
-        const { data: { session } } = await sb.auth.getSession();
-        const token = session?.access_token || sessionTokenRef.current;
-        if (!token) return;
-        const res = await fetch("/api/stripe-checkout", { method: "POST", headers: { "Content-Type": "application/json", "Authorization": `Bearer ${token}` } });
-        const json = await res.json().catch(() => ({}));
-        if (json.url) window.location.href = json.url;
+    }, "\u2190 Back")))), mode === "limit" && /* @__PURE__ */ React.createElement(
+      "div",
+      {
+        style: {
+          maxWidth: "300px",
+          animation: "fade-up 0.3s ease both",
+          textAlign: "center"
+        }
       },
-      style: {
-        background: "linear-gradient(135deg,#d4a846,#c9807a)",
-        color: "#080810",
-        border: "none",
-        borderRadius: "50px",
-        padding: "14px 32px",
-        fontSize: "14px",
-        fontWeight: "700",
-        cursor: "pointer",
-        fontFamily: "inherit",
-        marginBottom: "12px",
-        width: "100%"
-      }
-    }, "Upgrade to Premium \u2192"), /* @__PURE__ */ React.createElement("button", {
-      onClick: () => setMode("idle"),
-      style: {
-        background: "none",
-        border: "1px solid rgba(255,255,255,0.1)",
-        color: "rgba(255,255,255,0.3)",
-        borderRadius: "50px",
-        padding: "10px 28px",
-        fontSize: "13px",
-        cursor: "pointer",
-        fontFamily: "inherit"
-      }
-    }, "Maybe later")))));
+      /* @__PURE__ */ React.createElement(Vinyl, {
+        size: 100,
+        spinning: false
+      }),
+      /* @__PURE__ */ React.createElement("div", {
+        style: {
+          marginTop: "32px",
+          fontSize: "22px",
+          fontWeight: "700",
+          color: "#f0e6d3",
+          marginBottom: "12px"
+        }
+      }, "Your free crate is full"),
+      /* @__PURE__ */ React.createElement("div", {
+        style: {
+          color: "rgba(255,255,255,0.4)",
+          marginBottom: "36px",
+          lineHeight: "1.8",
+          fontSize: "15px"
+        }
+      }, "You've added 10 free records.", /* @__PURE__ */ React.createElement("br", null), "Upgrade to keep building your collection."),
+      /* Monthly / Lifetime toggle */
+      /* @__PURE__ */ React.createElement(
+        "div",
+        {
+          style: { display: "flex", gap: "6px", background: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.06)", borderRadius: "50px", padding: "4px", marginBottom: "16px" }
+        },
+        ["monthly", "lifetime"].map(
+          (p) => /* @__PURE__ */ React.createElement("button", {
+            key: p,
+            onClick: () => setPremiumPlan(p),
+            style: { flex: "1", background: premiumPlan === p ? "linear-gradient(135deg,#d4a846,#c9807a)" : "transparent", color: premiumPlan === p ? "#080810" : "rgba(255,255,255,0.5)", border: "none", borderRadius: "50px", padding: "9px 12px", fontSize: "12px", fontWeight: "700", cursor: "pointer", fontFamily: "inherit" }
+          }, p === "monthly" ? "Monthly" : "Lifetime")
+        )
+      ),
+      IS_IOS ? /* @__PURE__ */ React.createElement(
+        React.Fragment,
+        null,
+        /* @__PURE__ */ React.createElement("button", {
+          onClick: () => upgradeWithApple(premiumPlan),
+          disabled: iapWorking,
+          style: { background: "linear-gradient(135deg,#d4a846,#c9807a)", color: "#080810", border: "none", borderRadius: "50px", padding: "14px 32px", fontSize: "14px", fontWeight: "700", cursor: "pointer", fontFamily: "inherit", marginBottom: "8px", width: "100%", opacity: iapWorking ? 0.6 : 1 }
+        }, iapWorking ? "Processing\u2026" : premiumPlan === "monthly" ? `Subscribe \xB7 ${iapPrice}` : "Get Lifetime \xB7 $24.99"),
+        /* @__PURE__ */ React.createElement("button", {
+          onClick: restoreApplePurchases,
+          disabled: iapWorking,
+          style: { background: "none", border: "none", color: "rgba(255,255,255,0.3)", fontSize: "12px", cursor: "pointer", fontFamily: "inherit", padding: "8px", marginBottom: "4px" }
+        }, "Restore Purchases")
+      ) : /* @__PURE__ */ React.createElement("button", {
+        onClick: () => upgradeToStripe(premiumPlan),
+        disabled: upgradeWorking,
+        style: {
+          background: "linear-gradient(135deg,#d4a846,#c9807a)",
+          color: "#080810",
+          border: "none",
+          borderRadius: "50px",
+          padding: "14px 32px",
+          fontSize: "14px",
+          fontWeight: "700",
+          cursor: "pointer",
+          fontFamily: "inherit",
+          marginBottom: "12px",
+          width: "100%",
+          opacity: upgradeWorking ? 0.6 : 1
+        }
+      }, upgradeWorking ? "Opening checkout\u2026" : premiumPlan === "monthly" ? "Upgrade to Premium \xB7 $2/mo" : "Get Lifetime \xB7 $20"),
+      /* @__PURE__ */ React.createElement("button", {
+        onClick: () => setMode("idle"),
+        style: {
+          background: "none",
+          border: "1px solid rgba(255,255,255,0.1)",
+          color: "rgba(255,255,255,0.3)",
+          borderRadius: "50px",
+          padding: "10px 28px",
+          fontSize: "13px",
+          cursor: "pointer",
+          fontFamily: "inherit"
+        }
+      }, "Maybe later")
+    ))));
   }
   ReactDOM.createRoot(document.getElementById("root")).render(/* @__PURE__ */ React.createElement(Liri, null));
 })();

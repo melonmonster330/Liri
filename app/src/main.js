@@ -20,7 +20,7 @@ if (typeof supabase === 'undefined') {
   throw new Error('Supabase not loaded');
 }
 const sb = supabase.createClient("https://xjdjpaxgymgbvcwmvorc.supabase.co", "sb_publishable_C-NBnfg0ltAoUi46XQTUjA_ozjZW_Nd");
-const APP_VERSION = "1.1.5";
+const APP_VERSION = "1.1.6";
 const IS_IOS = !!window.Capacitor; // set once at load time — used for App Store compliance checks
 const TRANSCRIBE_PROXY = window.Capacitor ? "https://www.getliri.com/api/transcribe"    : "/api/transcribe";
 const ITUNES_PROXY   = window.Capacitor ? "https://www.getliri.com/api/itunes-lookup"   : "/api/itunes-lookup";
@@ -6082,27 +6082,34 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
       lineHeight: "1.8",
       fontSize: "15px"
     }
-  }, "You've added 10 free records.", /*#__PURE__*/React.createElement("br", null), "Upgrade to keep building your collection."), IS_IOS
+  }, "You've added 10 free records.", /*#__PURE__*/React.createElement("br", null), "Upgrade to keep building your collection."),
+  /* Monthly / Lifetime toggle */
+  /*#__PURE__*/React.createElement("div", {
+    style: { display: "flex", gap: "6px", background: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.06)", borderRadius: "50px", padding: "4px", marginBottom: "16px" }
+  },
+    ["monthly", "lifetime"].map(p =>
+      /*#__PURE__*/React.createElement("button", {
+        key: p,
+        onClick: () => setPremiumPlan(p),
+        style: { flex: "1", background: premiumPlan === p ? "linear-gradient(135deg,#d4a846,#c9807a)" : "transparent", color: premiumPlan === p ? "#080810" : "rgba(255,255,255,0.5)", border: "none", borderRadius: "50px", padding: "9px 12px", fontSize: "12px", fontWeight: "700", cursor: "pointer", fontFamily: "inherit" }
+      }, p === "monthly" ? "Monthly" : "Lifetime")
+    )
+  ),
+  IS_IOS
     ? /*#__PURE__*/React.createElement(React.Fragment, null,
         /*#__PURE__*/React.createElement("button", {
-          onClick: upgradeWithApple,
+          onClick: () => upgradeWithApple(premiumPlan),
           disabled: iapWorking,
           style: { background: "linear-gradient(135deg,#d4a846,#c9807a)", color: "#080810", border: "none", borderRadius: "50px", padding: "14px 32px", fontSize: "14px", fontWeight: "700", cursor: "pointer", fontFamily: "inherit", marginBottom: "8px", width: "100%", opacity: iapWorking ? 0.6 : 1 }
-        }, iapWorking ? "Processing…" : `Subscribe · ${iapPrice}`),
+        }, iapWorking ? "Processing…" : (premiumPlan === "monthly" ? `Subscribe · ${iapPrice}` : "Get Lifetime · $24.99")),
         /*#__PURE__*/React.createElement("button", {
           onClick: restoreApplePurchases,
           disabled: iapWorking,
           style: { background: "none", border: "none", color: "rgba(255,255,255,0.3)", fontSize: "12px", cursor: "pointer", fontFamily: "inherit", padding: "8px", marginBottom: "4px" }
         }, "Restore Purchases"))
     : /*#__PURE__*/React.createElement("button", {
-        onClick: async () => {
-          const { data: { session } } = await sb.auth.getSession();
-          const token = session?.access_token || sessionTokenRef.current;
-          if (!token) return;
-          const res = await fetch("/api/stripe-checkout", { method: "POST", headers: { "Content-Type": "application/json", "Authorization": `Bearer ${token}` } });
-          const json = await res.json().catch(() => ({}));
-          if (json.url) window.location.href = json.url;
-        },
+        onClick: () => upgradeToStripe(premiumPlan),
+        disabled: upgradeWorking,
         style: {
           background: "linear-gradient(135deg,#d4a846,#c9807a)",
           color: "#080810",
@@ -6114,9 +6121,10 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
           cursor: "pointer",
           fontFamily: "inherit",
           marginBottom: "12px",
-          width: "100%"
+          width: "100%",
+          opacity: upgradeWorking ? 0.6 : 1
         }
-      }, "Upgrade to Premium →"), /*#__PURE__*/React.createElement("button", {
+      }, upgradeWorking ? "Opening checkout…" : (premiumPlan === "monthly" ? "Upgrade to Premium · $2/mo" : "Get Lifetime · $20")), /*#__PURE__*/React.createElement("button", {
     onClick: () => setMode("idle"),
     style: {
       background: "none",
