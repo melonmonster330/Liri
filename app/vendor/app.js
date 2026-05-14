@@ -28,6 +28,41 @@
   // app/base/lib/whisper.js
   var WHISPER_PROXY = window.Capacitor ? "https://www.getliri.com/api/whisper" : "/api/whisper";
 
+  // app/base/lib/sides.js
+  function getSideForIndex(idx, track, vinylSides, dbTracks) {
+    const v = vinylSides?.[idx];
+    if (v?.side) return v.side;
+    if (dbTracks?.length) {
+      const titleNorm = normText(track?.trackName);
+      if (titleNorm) {
+        const titled = dbTracks.find((d) => d.title && normText(d.title) === titleNorm);
+        if (titled?.side) return titled.side;
+      }
+      const dbAt = dbTracks[idx];
+      if (dbAt?.side) return dbAt.side;
+    }
+    return null;
+  }
+  function getSideGroups(tracks, vinylSides, dbTracks) {
+    if (!tracks?.length) return [];
+    const sides = tracks.map((t, i) => getSideForIndex(i, t, vinylSides, dbTracks));
+    const haveAnyReal = sides.some((s) => !!s);
+    if (haveAnyReal) {
+      const map = {};
+      tracks.forEach((t, i) => {
+        const s = sides[i] || "?";
+        if (!map[s]) map[s] = [];
+        map[s].push({ track: t, idx: i });
+      });
+      return Object.entries(map).sort(([a], [b]) => a.localeCompare(b)).map(([side, group]) => ({ side, tracks: group }));
+    }
+    const mid = Math.ceil(tracks.length / 2);
+    return [
+      { side: "A", tracks: tracks.slice(0, mid).map((t, i) => ({ track: t, idx: i })) },
+      { side: "B", tracks: tracks.slice(mid).map((t, i) => ({ track: t, idx: mid + i })) }
+    ].filter((g) => g.tracks.length > 0);
+  }
+
   // app/base/lib/notifications.js
   function getLocalNotif() {
     return window.Capacitor?.Plugins?.LocalNotifications ?? null;
@@ -303,7 +338,7 @@
     throw new Error("Supabase not loaded");
   }
   var sb = supabase.createClient("https://xjdjpaxgymgbvcwmvorc.supabase.co", "sb_publishable_C-NBnfg0ltAoUi46XQTUjA_ozjZW_Nd");
-  var APP_VERSION = "1.1.2";
+  var APP_VERSION = "1.1.3";
   var IS_IOS = !!window.Capacitor;
   var TRANSCRIBE_PROXY = window.Capacitor ? "https://www.getliri.com/api/transcribe" : "/api/transcribe";
   var ITUNES_PROXY = window.Capacitor ? "https://www.getliri.com/api/itunes-lookup" : "/api/itunes-lookup";
@@ -3657,34 +3692,7 @@ Move closer to your speakers and try again.`);
     }, (() => {
       const _wt = turntableTracksRef.current;
       if (!_wt.length) return null;
-      const _vt = vinylDbRelease?.vinyl_tracks;
-      const _vs = vinylSidesRef.current;
-      const _groups = (() => {
-        if (_vs?.length >= _wt.length) {
-          const _m = {};
-          _wt.forEach((t, i) => {
-            const s = _vs[i]?.side || "A";
-            if (!_m[s]) _m[s] = [];
-            _m[s].push({ track: t, idx: i });
-          });
-          return Object.entries(_m).sort(([a], [b]) => a.localeCompare(b)).map(([side, tracks]) => ({ side, tracks }));
-        }
-        if (_vt?.length > 0) {
-          const _titleToSide = {};
-          _vt.forEach((v) => {
-            if (v.title) _titleToSide[normTitle(v.title)] = v.side;
-          });
-          const _m = {};
-          _wt.forEach((t, i) => {
-            const s = _titleToSide[normTitle(t.trackName)] || _vt[i]?.side || "A";
-            if (!_m[s]) _m[s] = [];
-            _m[s].push({ track: t, idx: i });
-          });
-          return Object.entries(_m).sort(([a], [b]) => a.localeCompare(b)).map(([side, tracks]) => ({ side, tracks }));
-        }
-        const _mid = Math.ceil(_wt.length / 2);
-        return [{ side: "A", tracks: _wt.slice(0, _mid).map((t, i) => ({ track: t, idx: i })) }, { side: "B", tracks: _wt.slice(_mid).map((t, i) => ({ track: t, idx: _mid + i })) }].filter((g) => g.tracks.length > 0);
-      })();
+      const _groups = getSideGroups(_wt, vinylSidesRef.current, vinylDbRelease?.vinyl_tracks);
       return _groups.map(({ side, tracks }) => /* @__PURE__ */ React.createElement(
         "div",
         { key: side },
@@ -5603,37 +5611,7 @@ Move closer to your speakers and try again.`);
       /* ── Manual track picker with side grouping ── */
       turntableAlbum && (showTrackList || !window.Capacitor) && turntableTracksRef.current.length > 0 && (() => {
         const allTracks = turntableTracksRef.current;
-        const vt = vinylDbRelease?.vinyl_tracks;
-        const vs = vinylSidesRef.current;
-        const groups = (() => {
-          if (vs?.length >= allTracks.length) {
-            const map = {};
-            allTracks.forEach((t, i) => {
-              const side = vs[i]?.side || "A";
-              if (!map[side]) map[side] = [];
-              map[side].push({ track: t, idx: i });
-            });
-            return Object.entries(map).sort(([a], [b]) => a.localeCompare(b)).map(([side, tracks]) => ({ side, tracks }));
-          }
-          if (vt?.length > 0) {
-            const titleToSide = {};
-            vt.forEach((v) => {
-              if (v.title) titleToSide[normTitle(v.title)] = v.side;
-            });
-            const map = {};
-            allTracks.forEach((t, i) => {
-              const side = titleToSide[normTitle(t.trackName)] || vt[i]?.side || "A";
-              if (!map[side]) map[side] = [];
-              map[side].push({ track: t, idx: i });
-            });
-            return Object.entries(map).sort(([a], [b]) => a.localeCompare(b)).map(([side, tracks]) => ({ side, tracks }));
-          }
-          const mid = Math.ceil(allTracks.length / 2);
-          return [
-            { side: "A", tracks: allTracks.slice(0, mid).map((t, i) => ({ track: t, idx: i })) },
-            { side: "B", tracks: allTracks.slice(mid).map((t, i) => ({ track: t, idx: mid + i })) }
-          ].filter((g) => g.tracks.length > 0);
-        })();
+        const groups = getSideGroups(allTracks, vinylSidesRef.current, vinylDbRelease?.vinyl_tracks);
         const isWeb = !window.Capacitor;
         return /* @__PURE__ */ React.createElement(
           "div",
