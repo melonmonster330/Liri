@@ -34,7 +34,7 @@
   <script type="text/babel">
     const { useState, useEffect, useRef, useCallback } = React;
 
-    const APP_VERSION = "1.1.3";
+    const APP_VERSION = "1.1.4";
 
     // On iOS Capacitor relative URLs don't resolve — route all API calls through the live domain.
     const API_BASE = window.Capacitor ? "https://www.getliri.com" : "";
@@ -827,21 +827,25 @@
       }, []);
 
       // ── Upgrade via Apple IAP (iOS only) ──
-      const upgradeWithApple = async () => {
-        if (!window.Capacitor?.Plugins?.LiriIAP) return;
+      // plan: "monthly" → renewable subscription, "lifetime" → non-consumable
+      const upgradeWithApple = async (plan = "monthly") => {
+        const iap = window.Capacitor?.Plugins?.LiriIAP;
+        if (!iap) return;
         setUpgradeWorking(true);
         try {
-          const result = await window.Capacitor.Plugins.LiriIAP.purchase();
+          const result = plan === "lifetime"
+            ? await iap.purchaseLifetime()
+            : await iap.purchase();
           if (result?.signedTransaction) {
             const token = sessionTokenRef.current;
             const r = await fetch(`${API_BASE}/api/stripe-checkout`, {
               method: "POST",
               headers: { "Content-Type": "application/json", "Authorization": `Bearer ${token}` },
-              body: JSON.stringify({ appleTransaction: result.signedTransaction }),
+              body: JSON.stringify({ appleTransaction: result.signedTransaction, plan }),
             });
             const data = await r.json();
-            if (data.tier === "premium") {
-              setSubscription(prev => ({ ...prev, tier: "premium", albumLimit: null }));
+            if (data.tier === "premium" || data.tier === "lifetime") {
+              setSubscription(prev => ({ ...prev, tier: data.tier, albumLimit: null }));
               setShowUpgrade(false);
             } else {
               alert(data.error || "Could not verify purchase. Please contact support.");
@@ -854,14 +858,16 @@
         }
       };
 
-      // ── Upgrade to premium via Stripe Checkout ──
-      const upgradeToStripe = async () => {
+      // ── Upgrade via Stripe Checkout (web) ──
+      // plan: "monthly" → recurring sub, "lifetime" → one-time payment
+      const upgradeToStripe = async (plan = "monthly") => {
         setUpgradeWorking(true);
         try {
           const token = sessionTokenRef.current;
           const res  = await fetch(`${API_BASE}/api/stripe-checkout`, {
             method: "POST",
             headers: { "Content-Type": "application/json", "Authorization": `Bearer ${token}` },
+            body: JSON.stringify({ plan }),
           });
           const json = await res.json().catch(() => ({}));
           if (json.url) {
@@ -1137,7 +1143,7 @@
                       </div>
                     ))}
                   </div>
-                  <button onClick={upgradePlan === "lifetime" ? () => alert("Lifetime access launches soon — we'll notify you when it's ready!") : upgradeToStripe} disabled={upgradeWorking}
+                  <button onClick={() => upgradeToStripe(upgradePlan)} disabled={upgradeWorking}
                     style={{ width: "100%", background: upgradeWorking ? "rgba(255,255,255,0.05)" : "linear-gradient(135deg,#d4a846,#c9807a)", color: upgradeWorking ? "rgba(255,255,255,0.3)" : "#080810", border: "none", borderRadius: 50, padding: "17px", fontSize: 16, fontWeight: 700, cursor: upgradeWorking ? "default" : "pointer", fontFamily: "inherit", marginBottom: 12 }}>
                     {upgradeWorking ? "Opening checkout…" : (upgradePlan === "monthly" ? "Get Premium · $2/mo" : "Get Lifetime · $20")}
                   </button>
@@ -1178,7 +1184,7 @@
                       </div>
                     ))}
                   </div>
-                  <button onClick={upgradePlan === "lifetime" ? () => alert("Lifetime access launches soon — we'll notify you when it's ready!") : upgradeWithApple} disabled={upgradeWorking}
+                  <button onClick={() => upgradeWithApple(upgradePlan)} disabled={upgradeWorking}
                     style={{ width: "100%", background: upgradeWorking ? "rgba(255,255,255,0.05)" : "linear-gradient(135deg,#d4a846,#c9807a)", color: upgradeWorking ? "rgba(255,255,255,0.3)" : "#080810", border: "none", borderRadius: 50, padding: "17px", fontSize: 16, fontWeight: 700, cursor: upgradeWorking ? "default" : "pointer", fontFamily: "inherit", marginBottom: 12 }}>
                     {upgradeWorking ? "Opening…" : (upgradePlan === "monthly" ? `Get Premium · ${iapPrice}` : "Get Lifetime · $24.99")}
                   </button>
