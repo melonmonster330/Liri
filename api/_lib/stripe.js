@@ -6,7 +6,8 @@
 // Required Vercel environment variables:
 //   STRIPE_SECRET_KEY      — sk_live_… or sk_test_…
 //   STRIPE_WEBHOOK_SECRET  — whsec_… (from Stripe dashboard → Webhooks)
-//   STRIPE_PRICE_ID        — price_… for Liri Premium monthly
+//   STRIPE_PRICE_ID          — price_… for Liri Premium monthly (recurring)
+//   STRIPE_LIFETIME_PRICE_ID — price_… for Liri Lifetime (one-time)
 //
 // Set these in Vercel → Project Settings → Environment Variables.
 
@@ -102,6 +103,26 @@ async function createCheckoutSession(customerId, userId, successUrl, cancelUrl) 
   });
 }
 
+// Lifetime one-time purchase. Uses mode=payment with the STRIPE_LIFETIME_PRICE_ID
+// (a Stripe Price configured as one-time, not recurring). The resulting checkout
+// session fires `checkout.session.completed` with mode=payment on success — the
+// webhook handler writes a tier=lifetime row in public.subscriptions.
+async function createLifetimeCheckoutSession(customerId, userId, successUrl, cancelUrl) {
+  const priceId = process.env.STRIPE_LIFETIME_PRICE_ID;
+  if (!priceId) throw new Error("STRIPE_LIFETIME_PRICE_ID not set");
+
+  return stripeRequest("POST", "/v1/checkout/sessions", {
+    customer:                customerId,
+    mode:                    "payment",
+    "line_items[0][price]":  priceId,
+    "line_items[0][quantity]": "1",
+    success_url:             successUrl,
+    cancel_url:              cancelUrl,
+    "metadata[liri_user_id]": userId,
+    "metadata[plan]":         "lifetime",
+  });
+}
+
 // ── Customer portal session ───────────────────────────────────────────────────
 
 async function createPortalSession(customerId, returnUrl) {
@@ -154,6 +175,7 @@ module.exports = {
   stripeRequest,
   getOrCreateCustomer,
   createCheckoutSession,
+  createLifetimeCheckoutSession,
   createPortalSession,
   constructWebhookEvent,
 };

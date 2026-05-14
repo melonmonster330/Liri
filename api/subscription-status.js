@@ -3,10 +3,10 @@
 // GET /api/subscription-status
 // Returns:
 //   {
-//     tier:       "free" | "premium",
+//     tier:       "free" | "premium" | "lifetime",
 //     status:     "active" | "trialing" | "past_due" | "canceled" | ...,
 //     albumCount: number,   // current library size
-//     albumLimit: 10 | null // null = unlimited
+//     albumLimit: 10 | null // null = unlimited (premium OR lifetime)
 //   }
 //
 // Used by library.html on load to show plan info and enforce the album limit UI.
@@ -85,14 +85,15 @@ module.exports = async (req, res) => {
       tier   = sub.tier   || "free";
       status = sub.status || "active";
       source = sub.source || null;
-      // Canceled paid subscriptions revert to free; admin/complimentary stay premium
+      // Canceled monthly subs revert to free; admin/complimentary stay premium;
+      // lifetime never reverts (no recurring billing to cancel).
       if (tier === "premium" && status === "canceled" && source !== "admin") {
         tier = "free";
       }
     }
 
-    const isPremium  = tier === "premium";
-    const albumLimit = isPremium ? null : FREE_ALBUM_LIMIT;
+    const isEntitled = tier === "premium" || tier === "lifetime";
+    const albumLimit = isEntitled ? null : FREE_ALBUM_LIMIT;
 
     return res.status(200).json({
       tier,

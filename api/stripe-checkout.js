@@ -1,11 +1,13 @@
 // api/stripe-checkout.js — Stripe Checkout session + Apple IAP verification
 //
 // POST /api/stripe-checkout
-//   Body: {}                          → create Stripe checkout session (web)
-//   Body: { appleTransaction: "..." } → verify Apple JWS & grant premium (iOS)
+//   Body: {}                                          → Stripe monthly checkout (web)
+//   Body: { plan: "lifetime" }                        → Stripe lifetime one-time checkout (web)
+//   Body: { appleTransaction: "..." }                 → verify Apple JWS & grant premium (iOS)
+//   Body: { appleTransaction: "...", plan: "lifetime" }→ same, lifetime product
 
 const { verifyAuth }            = require("./_lib/auth");
-const { getOrCreateCustomer, createCheckoutSession } = require("./_lib/stripe");
+const { getOrCreateCustomer, createCheckoutSession, createLifetimeCheckoutSession } = require("./_lib/stripe");
 const crypto = require("crypto");
 const https  = require("https");
 
@@ -13,8 +15,9 @@ const ALLOWED_ORIGINS = ["https://getliri.com", "https://www.getliri.com", "capa
 const SUCCESS_URL = "https://getliri.com/library?checkout_success=true";
 const CANCEL_URL  = "https://getliri.com/library";
 
-const APPLE_BUNDLE_ID  = "com.getliri.app";
-const APPLE_PRODUCT_ID = "com.getliri.app.premium.monthly";
+const APPLE_BUNDLE_ID           = "com.getliri.app";
+const APPLE_MONTHLY_PRODUCT_ID  = "com.getliri.app.premium.monthly";
+const APPLE_LIFETIME_PRODUCT_ID = "com.getliri.app.lifetime";
 
 // ── Apple JWS verification ────────────────────────────────────────────────────
 
@@ -120,42 +123,66 @@ module.exports = async (req, res) => {
   if (!auth || auth._authError || !auth.userId) return res.status(401).json({ error: "Unauthorized" });
 
   const body = req.body || {};
+  const plan = body.plan === "lifetime" ? "lifetime" : "monthly";
 
   // ── Apple IAP branch ───────────────────────────────────────────────────────
   if (body.appleTransaction) {
     try {
       const payload = verifyAppleJWS(body.appleTransaction);
 
-      if (payload.bundleId  !== APPLE_BUNDLE_ID)  throw new Error("Bundle ID mismatch");
-      if (payload.productId !== APPLE_PRODUCT_ID) throw new Error("Product ID mismatch");
-      if (payload.expiresDate && payload.expiresDate < Date.now()) throw new Error("Subscription expired");
+      if (payload.bundleId !== APPLE_BUNDLE_ID) throw new Error("Bundle ID mismatch");
 
-      const expiresAt = payload.expiresDate ? new Date(payload.expiresDate).toISOString() : null;
+      // Accept both monthly (recurring) and lifetime (non-consumable) product IDs.
+      // The product ID in the signed transaction is the source of truth — we don't
+      // trust the `plan` param to determine tier here.
+      let tier;
+      if (payload.productId === APPLE_MONTHLY_PRODUCT_ID) {
+        tier = "premium";
+        if (payload.expiresDate && payload.expiresDate < Date.now()) {
+          throw new Error("Subscription expired");
+        }
+      } else if (payload.productId === APPLE_LIFETIME_PRODUCT_ID) {
+        tier = "lifetime";
+        // Non-consumables don't expire; ignore expiresDate.
+      } else {
+        throw new Error("Product ID mismatch");
+      }
+
+      const expiresAt = (tier === "premium" && payload.expiresDate)
+        ? new Date(payload.expiresDate).toISOString()
+        : null;
+      const lifetimePurchasedAt = tier === "lifetime"
+        ? new Date(payload.purchaseDate || Date.now()).toISOString()
+        : null;
 
       await supabaseUpsert(
         "subscriptions?on_conflict=user_id",
         {
           user_id:                auth.userId,
-          tier:                   "premium",
+          tier,
           status:                 "active",
-          stripe_subscription_id: null,          // Apple sub — no Stripe ID
-          current_period_end:     expiresAt,
+          source:                 "apple",
+          stripe_subscription_id: null,          // Apple — no Stripe ID
+          current_period_end:     expiresAt,     // null for lifetime
+          lifetime_purchased_at:  lifetimePurchasedAt,
           updated_at:             new Date().toISOString(),
         }
       );
 
-      console.log(`[apple-iap] granted premium to ${auth.userId} expires ${expiresAt}`);
-      return res.status(200).json({ success: true, tier: "premium" });
+      console.log(`[apple-iap] granted ${tier} to ${auth.userId} expires ${expiresAt || "never"}`);
+      return res.status(200).json({ success: true, tier });
     } catch (e) {
       console.error("[apple-iap] error:", e.message);
       return res.status(400).json({ error: e.message });
     }
   }
 
-  // ── Stripe branch (existing) ───────────────────────────────────────────────
+  // ── Stripe branch — monthly OR lifetime ───────────────────────────────────
   try {
     const customer = await getOrCreateCustomer(auth.email, auth.userId);
-    const session  = await createCheckoutSession(customer.id, auth.userId, SUCCESS_URL, CANCEL_URL);
+    const session  = plan === "lifetime"
+      ? await createLifetimeCheckoutSession(customer.id, auth.userId, SUCCESS_URL, CANCEL_URL)
+      : await createCheckoutSession(customer.id, auth.userId, SUCCESS_URL, CANCEL_URL);
     return res.status(200).json({ url: session.url });
   } catch (e) {
     console.error("[stripe-checkout] error:", e.message);

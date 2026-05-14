@@ -66,6 +66,16 @@ async function upsertSubscription(row) {
   });
 }
 
+// Look up the current tier for a user_id. Used to avoid downgrading a
+// lifetime customer when their (separate) recurring subscription is canceled.
+async function getCurrentTier(userId) {
+  const { data } = await supabaseRequest(
+    "GET",
+    `subscriptions?user_id=eq.${encodeURIComponent(userId)}&select=tier&limit=1`
+  );
+  return Array.isArray(data) && data[0] ? data[0].tier : null;
+}
+
 // Look up a Liri user_id from their Stripe customer_id
 // We store liri_user_id in customer metadata at checkout time.
 async function getUserIdFromCustomer(customerId, customerObj) {
@@ -127,27 +137,42 @@ module.exports = async (req, res) => {
   try {
     switch (event.type) {
 
-      // ── Checkout completed → activate subscription ─────────────────────────
+      // ── Checkout completed → activate subscription or lifetime ─────────────
       case "checkout.session.completed": {
-        const session  = event.data.object;
-        if (session.mode !== "subscription") break;
-
-        const userId = session.metadata?.liri_user_id;
+        const session = event.data.object;
+        const userId  = session.metadata?.liri_user_id;
         if (!userId) {
           console.error("[stripe-webhook] checkout.session.completed: no liri_user_id in metadata");
           break;
         }
 
-        await upsertSubscription({
-          user_id:                userId,
-          stripe_customer_id:     session.customer,
-          stripe_subscription_id: session.subscription,
-          tier:                   "premium",
-          status:                 "active",
-          current_period_end:     null, // will be filled on subscription.updated
-        });
-
-        console.log(`[stripe-webhook] Activated premium for user ${userId}`);
+        if (session.mode === "subscription") {
+          await upsertSubscription({
+            user_id:                userId,
+            stripe_customer_id:     session.customer,
+            stripe_subscription_id: session.subscription,
+            tier:                   "premium",
+            status:                 "active",
+            source:                 "stripe",
+            current_period_end:     null, // filled on subscription.updated
+          });
+          console.log(`[stripe-webhook] Activated premium for user ${userId}`);
+        } else if (session.mode === "payment") {
+          // One-time payment — lifetime purchase. No subscription ID, never expires.
+          await upsertSubscription({
+            user_id:                userId,
+            stripe_customer_id:     session.customer,
+            stripe_subscription_id: null,
+            tier:                   "lifetime",
+            status:                 "active",
+            source:                 "stripe",
+            current_period_end:     null,
+            lifetime_purchased_at:  new Date().toISOString(),
+          });
+          console.log(`[stripe-webhook] Activated lifetime for user ${userId}`);
+        } else {
+          console.log(`[stripe-webhook] checkout.session.completed: ignoring mode=${session.mode}`);
+        }
         break;
       }
 
@@ -155,37 +180,53 @@ module.exports = async (req, res) => {
       case "customer.subscription.updated": {
         const sub    = event.data.object;
         const status = mapStatus(sub.status);
-        const tier   = (status === "active" || status === "trialing") ? "premium" : "free";
         const endTs  = sub.current_period_end
           ? new Date(sub.current_period_end * 1000).toISOString()
           : null;
 
-        // Find user_id from customer
         const userId = await getUserIdFromCustomer(sub.customer, sub.customer);
         if (!userId) {
           console.error("[stripe-webhook] subscription.updated: cannot find user for customer", sub.customer);
           break;
         }
 
+        // If the user already has lifetime, ignore monthly-sub events — lifetime
+        // entitlement supersedes the recurring sub state.
+        const currentTier = await getCurrentTier(userId);
+        if (currentTier === "lifetime") {
+          console.log(`[stripe-webhook] Ignoring subscription.updated for lifetime user ${userId}`);
+          break;
+        }
+
+        const tier = (status === "active" || status === "trialing") ? "premium" : "free";
         await upsertSubscription({
           user_id:                userId,
           stripe_customer_id:     sub.customer,
           stripe_subscription_id: sub.id,
           tier,
           status,
-          current_period_end: endTs,
+          source:                 "stripe",
+          current_period_end:     endTs,
         });
 
         console.log(`[stripe-webhook] Updated subscription for user ${userId}: ${tier}/${status}`);
         break;
       }
 
-      // ── Subscription deleted → downgrade to free ───────────────────────────
+      // ── Subscription deleted → downgrade to free (UNLESS lifetime) ─────────
       case "customer.subscription.deleted": {
         const sub    = event.data.object;
         const userId = await getUserIdFromCustomer(sub.customer, sub.customer);
         if (!userId) {
           console.error("[stripe-webhook] subscription.deleted: cannot find user for customer", sub.customer);
+          break;
+        }
+
+        // Lifetime customers keep premium entitlement even if a separate
+        // recurring sub is canceled — don't touch their row.
+        const currentTier = await getCurrentTier(userId);
+        if (currentTier === "lifetime") {
+          console.log(`[stripe-webhook] Ignoring subscription.deleted for lifetime user ${userId}`);
           break;
         }
 
@@ -195,6 +236,7 @@ module.exports = async (req, res) => {
           stripe_subscription_id: sub.id,
           tier:                   "free",
           status:                 "canceled",
+          source:                 "stripe",
           current_period_end:     sub.current_period_end
             ? new Date(sub.current_period_end * 1000).toISOString()
             : null,
