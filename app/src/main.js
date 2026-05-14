@@ -20,7 +20,7 @@ if (typeof supabase === 'undefined') {
   throw new Error('Supabase not loaded');
 }
 const sb = supabase.createClient("https://xjdjpaxgymgbvcwmvorc.supabase.co", "sb_publishable_C-NBnfg0ltAoUi46XQTUjA_ozjZW_Nd");
-const APP_VERSION = "1.1.4";
+const APP_VERSION = "1.1.5";
 const IS_IOS = !!window.Capacitor; // set once at load time — used for App Store compliance checks
 const TRANSCRIBE_PROXY = window.Capacitor ? "https://www.getliri.com/api/transcribe"    : "/api/transcribe";
 const ITUNES_PROXY   = window.Capacitor ? "https://www.getliri.com/api/itunes-lookup"   : "/api/itunes-lookup";
@@ -633,7 +633,8 @@ function Liri() {
     return () => subscription.unsubscribe();
   }, []);
   // ── Apple IAP ─────────────────────────────────────────────────────────────
-  const [iapPrice,   setIapPrice]   = useState("$5.99/mo");
+  const [iapPrice,   setIapPrice]   = useState("$2.99/mo"); // overwritten by iap.fetchProduct() on mount
+  const [premiumPlan, setPremiumPlan] = useState("monthly"); // "monthly" | "lifetime"
   const [iapWorking, setIapWorking] = useState(false);
 
   // Fetch live price from App Store on iOS (best-effort)
@@ -662,7 +663,8 @@ function Liri() {
     } catch {}
   };
 
-  const upgradeWithApple = async () => {
+  // plan: "monthly" (renewable sub) | "lifetime" (non-consumable)
+  const upgradeWithApple = async (plan = "monthly") => {
     const iap = getLiriIAP();
     if (!iap) {
       alert("In-app purchases are not available right now. Please try again or contact support.");
@@ -670,17 +672,19 @@ function Liri() {
     }
     setIapWorking(true);
     try {
-      const result = await iap.purchase();
+      const result = plan === "lifetime"
+        ? await iap.purchaseLifetime()
+        : await iap.purchase();
       if (result?.signedTransaction) {
         const token = sessionTokenRef.current;
         const r = await fetch("https://www.getliri.com/api/stripe-checkout", {
           method: "POST",
           headers: { "Content-Type": "application/json", "Authorization": `Bearer ${token}` },
-          body: JSON.stringify({ appleTransaction: result.signedTransaction }),
+          body: JSON.stringify({ appleTransaction: result.signedTransaction, plan }),
         });
         const data = await r.json();
-        if (data.tier === "premium") {
-          setUserTier("premium");
+        if (data.tier === "premium" || data.tier === "lifetime") {
+          setUserTier(data.tier);
           setAlbumCount(prev => prev); // keep count, limit lifted
         } else {
           alert(data.error || "Could not verify purchase. Please contact support.");
@@ -701,12 +705,15 @@ function Liri() {
       const status = await iap.restorePurchases();
       if (status?.isActive && status?.signedTransaction) {
         const token = sessionTokenRef.current;
+        // restorePurchases tells us which product is active; pass the matching plan.
+        const plan = status.isLifetime ? "lifetime" : "monthly";
         const r = await fetch("https://www.getliri.com/api/stripe-checkout", {
           method: "POST",
           headers: { "Content-Type": "application/json", "Authorization": `Bearer ${token}` },
-          body: JSON.stringify({ appleTransaction: status.signedTransaction }),
+          body: JSON.stringify({ appleTransaction: status.signedTransaction, plan }),
         });
-        if ((await r.json()).tier === "premium") setUserTier("premium");
+        const data = await r.json();
+        if (data.tier === "premium" || data.tier === "lifetime") setUserTier(data.tier);
         else alert("No active subscription found.");
       } else {
         alert("No active subscription found.");
@@ -715,8 +722,9 @@ function Liri() {
     finally { setIapWorking(false); }
   };
 
-  // ── Upgrade to Stripe Premium ──────────────────────────────────────────────
-  const upgradeToStripe = async () => {
+  // ── Upgrade via Stripe Checkout (web) ──
+  // plan: "monthly" (recurring) | "lifetime" (one-time)
+  const upgradeToStripe = async (plan = "monthly") => {
     setUpgradeWorking(true);
     try {
       const { data: { session: s } } = await sb.auth.getSession();
@@ -724,6 +732,7 @@ function Liri() {
       const res  = await fetch("/api/stripe-checkout", {
         method: "POST",
         headers: { "Content-Type": "application/json", "Authorization": `Bearer ${token}` },
+        body: JSON.stringify({ plan }),
       });
       const json = await res.json().catch(() => ({}));
       if (json.url) { window.location.href = json.url; }
@@ -4449,22 +4458,35 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
         )
       )
     ),
-    userTier === "premium"
-      ? (IS_IOS && /*#__PURE__*/React.createElement("button", {
+    userTier === "premium" || userTier === "lifetime"
+      ? (IS_IOS && userTier === "premium" && /*#__PURE__*/React.createElement("button", {
           onClick: () => window.open("https://apps.apple.com/account/subscriptions", "_system"),
           style: { width: "100%", background: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.08)", color: "rgba(255,255,255,0.4)", borderRadius: "14px", padding: "14px", fontSize: "14px", cursor: "pointer", fontFamily: "inherit", marginBottom: "8px" }
         }, "Manage Subscription"))
-      : (IS_IOS
-          ? /*#__PURE__*/React.createElement("button", {
-              onClick: upgradeWithApple,
-              disabled: iapWorking,
-              style: { width: "100%", background: iapWorking ? "rgba(255,255,255,0.05)" : "linear-gradient(135deg,#d4a846,#c9807a)", color: iapWorking ? "rgba(255,255,255,0.3)" : "#080810", border: "none", borderRadius: "14px", padding: "17px", fontSize: "16px", fontWeight: "700", cursor: iapWorking ? "default" : "pointer", fontFamily: "inherit", marginBottom: "12px" }
-            }, iapWorking ? "Opening…" : `Get Premium · ${iapPrice}`)
-          : /*#__PURE__*/React.createElement("button", {
-              onClick: upgradeToStripe,
-              disabled: upgradeWorking,
-              style: { width: "100%", background: upgradeWorking ? "rgba(255,255,255,0.05)" : "linear-gradient(135deg,#d4a846,#c9807a)", color: upgradeWorking ? "rgba(255,255,255,0.3)" : "#080810", border: "none", borderRadius: "14px", padding: "17px", fontSize: "16px", fontWeight: "700", cursor: upgradeWorking ? "default" : "pointer", fontFamily: "inherit", marginBottom: "12px" }
-            }, upgradeWorking ? "Opening checkout…" : "Get Premium · $2/mo")
+      : /*#__PURE__*/React.createElement(React.Fragment, null,
+          /* Monthly / Lifetime toggle */
+          /*#__PURE__*/React.createElement("div", {
+            style: { display: "flex", gap: "6px", background: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.06)", borderRadius: "50px", padding: "4px", marginBottom: "16px" }
+          },
+            ["monthly", "lifetime"].map(p =>
+              /*#__PURE__*/React.createElement("button", {
+                key: p,
+                onClick: () => setPremiumPlan(p),
+                style: { flex: "1", background: premiumPlan === p ? "linear-gradient(135deg,#d4a846,#c9807a)" : "transparent", color: premiumPlan === p ? "#080810" : "rgba(255,255,255,0.5)", border: "none", borderRadius: "50px", padding: "9px 12px", fontSize: "12px", fontWeight: "700", cursor: "pointer", fontFamily: "inherit" }
+              }, p === "monthly" ? "Monthly" : "Lifetime")
+            )
+          ),
+          IS_IOS
+            ? /*#__PURE__*/React.createElement("button", {
+                onClick: () => upgradeWithApple(premiumPlan),
+                disabled: iapWorking,
+                style: { width: "100%", background: iapWorking ? "rgba(255,255,255,0.05)" : "linear-gradient(135deg,#d4a846,#c9807a)", color: iapWorking ? "rgba(255,255,255,0.3)" : "#080810", border: "none", borderRadius: "14px", padding: "17px", fontSize: "16px", fontWeight: "700", cursor: iapWorking ? "default" : "pointer", fontFamily: "inherit", marginBottom: "12px" }
+              }, iapWorking ? "Opening…" : (premiumPlan === "monthly" ? `Get Premium · ${iapPrice}` : "Get Lifetime · $24.99"))
+            : /*#__PURE__*/React.createElement("button", {
+                onClick: () => upgradeToStripe(premiumPlan),
+                disabled: upgradeWorking,
+                style: { width: "100%", background: upgradeWorking ? "rgba(255,255,255,0.05)" : "linear-gradient(135deg,#d4a846,#c9807a)", color: upgradeWorking ? "rgba(255,255,255,0.3)" : "#080810", border: "none", borderRadius: "14px", padding: "17px", fontSize: "16px", fontWeight: "700", cursor: upgradeWorking ? "default" : "pointer", fontFamily: "inherit", marginBottom: "12px" }
+              }, upgradeWorking ? "Opening checkout…" : (premiumPlan === "monthly" ? "Get Premium · $2/mo" : "Get Lifetime · $20"))
         ),
     /*#__PURE__*/React.createElement("p", { style: { fontSize: "11px", color: "rgba(255,255,255,0.25)", textAlign: "center", margin: "12px 0 4px", lineHeight: "1.6" } },
       "By subscribing you agree to the ",
