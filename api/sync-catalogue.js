@@ -188,6 +188,7 @@ async function getAdminStats() {
     releasesResp,
     flipsResp,
     bugsResp,
+    bugsBacklogResp,
   ] = await Promise.all([
     sbGet("listening_events?select=id&limit=1",                                  { "Prefer": "count=exact" }),
     sbGet(`listening_events?select=id&listened_at=gte.${d7}&limit=1`,            { "Prefer": "count=exact" }),
@@ -198,8 +199,12 @@ async function getAdminStats() {
     sbGet("subscriptions?select=tier,status"),
     sbGet("vinyl_releases?select=id&limit=1",                                    { "Prefer": "count=exact" }),
     sbGet("flip_events?select=id&limit=1",                                       { "Prefer": "count=exact" }),
-    sbGet("bug_reports?select=id,created_at,user_email,app_version,platform,description,meta&order=created_at.desc&limit=50"),
+    // Default to open bugs only — backlog/fixed/wontfix are hidden from the
+    // main view but still queryable via ?action=bugs&status=backlog
+    sbGet("bug_reports?status=eq.open&select=id,created_at,user_email,app_version,platform,description,meta,status,retry_count&order=created_at.desc&limit=50"),
+    sbGet("bug_reports?status=eq.backlog&select=id&limit=1", { "Prefer": "count=exact" }),
   ]);
+  const backlogTotal = parseInt(bugsBacklogResp?.headers?.["content-range"]?.split("/")[1] || "0", 10);
 
   // Users
   const totalUsers  = allUsers.length;
@@ -271,6 +276,7 @@ async function getAdminStats() {
     topAlbums,
     topUsers,
     bugReports,
+    backlogTotal,
     catalogue: { releases: catalogueTotal, flips: totalFlips },
     generatedAt: now.toISOString(),
   };
@@ -322,20 +328,23 @@ async function getAlbumsList() {
 
 // ── Album drill-in: tracks + per-track play counts + missing-lyrics flag ─────
 async function getAlbumDetail(collectionId) {
-  // First fetch album metadata, tracks, and events in parallel.
-  const [catRow, trackRows, eventRows] = await Promise.all([
+  // First fetch album metadata, tracks, events, and side info in parallel.
+  const [catRow, trackRows, eventRows, sideRows] = await Promise.all([
     sbGet(`catalogue?itunes_collection_id=eq.${collectionId}&select=album_name,artist_name,artwork_url,release_year,track_count&limit=1`),
     sbGetAll(`album_tracks?itunes_collection_id=eq.${collectionId}&select=itunes_track_id,track_name,track_number,disc_number,duration_ms`),
     sbGetAll(`listening_events?itunes_collection_id=eq.${collectionId}&select=itunes_track_id,track_title`),
+    sbGetAll(`vinyl_sides?itunes_collection_id=eq.${collectionId}&select=itunes_track_id,side,position,side_track_number`),
   ]);
 
   // Then look up lyrics for the track IDs we actually have.
   const tids = trackRows.map(t => t.itunes_track_id).filter(x => x != null);
   const lyricRows = tids.length
-    ? await sbGetAll(`track_lyrics?itunes_track_id=in.(${tids.join(",")})&select=itunes_track_id`)
+    ? await sbGetAll(`track_lyrics?itunes_track_id=in.(${tids.join(",")})&select=itunes_track_id,source`)
     : [];
 
+  const lyricByTid = new Map(lyricRows.map(r => [r.itunes_track_id, r.source]));
   const haveLyrics = new Set(lyricRows.map(r => r.itunes_track_id));
+  const sideByTid  = new Map(sideRows.map(r => [r.itunes_track_id, r]));
   const playByTid  = {};
   const playByTitle = {};
   for (const e of eventRows) {
@@ -350,17 +359,29 @@ async function getAlbumDetail(collectionId) {
   const album = (catRow.body && catRow.body[0]) || null;
   const tracks = trackRows
     .sort((a, b) => (a.disc_number || 1) - (b.disc_number || 1) || (a.track_number || 0) - (b.track_number || 0))
-    .map(t => ({
-      itunes_track_id: t.itunes_track_id,
-      track_name:      t.track_name,
-      track_number:    t.track_number,
-      disc_number:     t.disc_number,
-      duration_ms:     t.duration_ms,
-      has_lyrics:      haveLyrics.has(t.itunes_track_id),
-      plays:           playByTid[t.itunes_track_id] || playByTitle[(t.track_name || "").toLowerCase()] || 0,
-    }));
+    .map(t => {
+      const sideRow = sideByTid.get(t.itunes_track_id);
+      return {
+        itunes_track_id: t.itunes_track_id,
+        track_name:      t.track_name,
+        track_number:    t.track_number,
+        disc_number:     t.disc_number,
+        duration_ms:     t.duration_ms,
+        has_lyrics:      haveLyrics.has(t.itunes_track_id),
+        lyrics_source:   lyricByTid.get(t.itunes_track_id) || null,
+        side:            sideRow?.side || null,       // 'A' / 'B' / etc.
+        position:        sideRow?.position || null,   // 'A1' / 'B2'
+        plays:           playByTid[t.itunes_track_id] || playByTitle[(t.track_name || "").toLowerCase()] || 0,
+      };
+    });
 
-  return { album, tracks };
+  const sideCoverage = {
+    total: tracks.length,
+    with_side: tracks.filter(t => t.position).length,
+    missing:   tracks.filter(t => !t.position).length,
+  };
+
+  return { album, tracks, sideCoverage };
 }
 
 // ── Main handler ──────────────────────────────────────────────────────────────
@@ -387,6 +408,18 @@ module.exports = async (req, res) => {
         const id = parseInt(url.searchParams.get("id") || "0", 10);
         if (!id) return res.status(400).json({ error: "id required" });
         return res.status(200).json(await getAlbumDetail(id));
+      }
+      if (action === "bugs") {
+        const status = (url.searchParams.get("status") || "open").toLowerCase();
+        if (!["open", "backlog", "fixed", "wontfix"].includes(status)) {
+          return res.status(400).json({ error: "invalid status" });
+        }
+        const { body } = await sbGet(
+          `bug_reports?status=eq.${status}&select=id,created_at,user_email,app_version,platform,description,meta,status,retry_count,last_retried_at&order=created_at.desc&limit=200`
+        );
+        const rows = (Array.isArray(body) ? body : [])
+          .map(b => ({ ...b, user_email: maskEmail(b.user_email) }));
+        return res.status(200).json({ bugs: rows });
       }
 
       const stats = await getAdminStats();

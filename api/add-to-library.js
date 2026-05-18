@@ -263,16 +263,24 @@ module.exports = async (req, res) => {
       }, 3);
 
       // ── Save vinyl sides ─────────────────────────────────────────────────
+      // Tracks without a parseable position (e.g. CD-style "1" without an
+      // A/B/C prefix, or a Discogs release missing position data) get
+      // collected so we can file one bug per album rather than per-track.
+      const tracksMissingSide = [];
       try {
         await batchedAll(tracks, (t) => {
-          const side              = t.position.replace(/\d.*$/, "").toUpperCase();
+          const sidePrefix = (t.position || "").replace(/\d.*$/, "").toUpperCase();
+          if (!sidePrefix) {
+            tracksMissingSide.push(t);
+            return Promise.resolve();
+          }
           const side_track_number = parseInt(t.position.replace(/^[A-Za-z]+/, "")) || (t._idx + 1);
           return upsert("vinyl_sides", {
             itunes_collection_id: collectionId,
             itunes_track_id:    trackId(releaseId, t._idx),
             discogs_release_id: releaseId,
             discogs_master_id:  release.master_id || null,
-            side,
+            side:               sidePrefix,
             side_track_number,
             position:           t.position.toUpperCase(),
             fetched_at:         new Date().toISOString(),
@@ -280,6 +288,36 @@ module.exports = async (req, res) => {
         }, 5);
       } catch (e) {
         console.warn("[add-to-library] vinyl_sides failed (non-fatal):", e.message);
+        tracksMissingSide.push(...tracks); // assume all failed
+      }
+
+      // One bug per album when any track is missing side info — these need
+      // manual research (find the correct Discogs vinyl edition or input
+      // sides by hand) rather than retry, so they go straight to backlog.
+      if (tracksMissingSide.length > 0) {
+        try {
+          await sbRequest("POST", "bug_reports", {
+            user_id:     auth.userId,
+            user_email:  auth.email || null,
+            app_version: null,
+            platform:    "auto",
+            description: `Missing side info on "${albumName}" by ${artistName} (${tracksMissingSide.length}/${tracks.length} tracks)`,
+            meta: {
+              category:             "missing_side_info",
+              source:               "auto",
+              requires_app_push:    false,
+              itunes_collection_id: collectionId,
+              discogs_release_id:   releaseId,
+              album_name:           albumName,
+              artist_name:          artistName,
+              total_tracks:         tracks.length,
+              missing_count:        tracksMissingSide.length,
+              missing_track_names:  tracksMissingSide.map(t => t.title),
+            },
+          });
+        } catch (e) {
+          console.warn("[add-to-library] side-info bug_report insert failed (non-fatal):", e.message);
+        }
       }
 
     } else {

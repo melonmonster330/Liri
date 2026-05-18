@@ -56,6 +56,11 @@ const SUPABASE_HOST        = SUPABASE_URL_RAW.replace(/^https?:\/\//, "").replac
 const args   = Object.fromEntries(process.argv.slice(2).map(a => a.replace(/^--/, "").split("=")));
 const LIMIT  = args.limit ? parseInt(args.limit) : null;
 const DRY    = "dry-run" in args;
+// After this many failed retries, an open bug auto-moves to 'backlog'
+// (still re-checked on --include-backlog runs, but hidden from the main
+// admin view since it's likely unobtainable).
+const BACKLOG_AFTER_RETRIES = 3;
+const INCLUDE_BACKLOG = "include-backlog" in args;
 
 if (!SUPABASE_SERVICE_KEY) {
   console.error("❌ Missing SUPABASE_SERVICE_KEY. Set it in scripts/.env or as an env var.");
@@ -151,21 +156,26 @@ async function fetchAll(pathBase) {
     return;
   }
 
-  // Pull existing open missing_lyrics bug_reports keyed by itunes_track_id
-  console.log("• Loading open missing_lyrics bug_reports…");
+  // Pull open (and optionally backlog) missing_lyrics bug_reports.
+  // Bugs that fail to find lyrics N times in a row get auto-moved to
+  // 'backlog' so they don't clutter the active admin view, but a sweep
+  // run with --include-backlog will retry them too.
+  console.log(`• Loading ${INCLUDE_BACKLOG ? "open + backlog" : "open"} missing_lyrics bug_reports…`);
+  const statusFilter = INCLUDE_BACKLOG ? "status=in.(open,backlog)" : "status=eq.open";
   const openBugs = await fetchAll(
-    `bug_reports?status=eq.open&meta->>category=eq.missing_lyrics&select=id,meta`
+    `bug_reports?${statusFilter}&meta->>category=eq.missing_lyrics&select=id,status,retry_count,meta`
   );
   const openBugByTid = new Map();
   for (const b of openBugs) {
     const tid = b.meta?.itunes_track_id;
-    if (tid != null) openBugByTid.set(tid, b.id);
+    if (tid != null) openBugByTid.set(tid, b);
   }
-  console.log(`  ${openBugs.length} open lyric bugs`);
+  console.log(`  ${openBugs.length} bug(s) to retry`);
 
   // ── Phase 1: discovery + retry ────────────────────────────────────────────
   console.log(`\n🎯 Sweeping ${missing.length} tracks (LRCLib → Genius)…\n`);
   let filled = 0, stillMissing = 0, newBugs = 0, alreadyBugged = 0;
+  let backloggedThisRun = 0;
   const bySource = {};
   const BATCH = 3;
 
@@ -190,10 +200,10 @@ async function fetchAll(pathBase) {
             source:       found.source,
             fetched_at:   new Date().toISOString(),
           });
-          // Close any existing open bug for this track
-          const bugId = openBugByTid.get(t.itunes_track_id);
-          if (bugId) {
-            await sb("PATCH", `bug_reports?id=eq.${bugId}`, {
+          // Close any existing open/backlog bug for this track
+          const bug = openBugByTid.get(t.itunes_track_id);
+          if (bug) {
+            await sb("PATCH", `bug_reports?id=eq.${bug.id}`, {
               status:   "fixed",
               fixed_at: new Date().toISOString(),
             });
@@ -202,8 +212,22 @@ async function fetchAll(pathBase) {
         }
       } else {
         stillMissing++;
-        if (openBugByTid.has(t.itunes_track_id)) {
+        const existing = openBugByTid.get(t.itunes_track_id);
+        if (existing) {
           alreadyBugged++;
+          if (!DRY) {
+            const nextCount = (existing.retry_count || 0) + 1;
+            const moveToBacklog = existing.status === "open" && nextCount >= BACKLOG_AFTER_RETRIES;
+            await sb("PATCH", `bug_reports?id=eq.${existing.id}`, {
+              retry_count:     nextCount,
+              last_retried_at: new Date().toISOString(),
+              ...(moveToBacklog ? { status: "backlog" } : {}),
+            });
+            if (moveToBacklog) {
+              backloggedThisRun++;
+              console.log(`  ⤓ backlogged (${nextCount} retries): "${t.track_name}" — ${t.artist_name}`);
+            }
+          }
         } else {
           newBugs++;
           if (DRY) {
@@ -244,6 +268,7 @@ async function fetchAll(pathBase) {
   console.log(`   still missing:  ${stillMissing}`);
   console.log(`     • new bugs filed:     ${newBugs}`);
   console.log(`     • already had a bug:  ${alreadyBugged}`);
+  console.log(`     • moved to backlog:   ${backloggedThisRun}`);
   console.log("");
 })().catch(e => {
   console.error("\n❌ Sweep failed:", e);
