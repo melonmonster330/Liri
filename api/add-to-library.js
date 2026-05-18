@@ -19,6 +19,7 @@
 
 const https = require("https");
 const { verifyAuth, getSubscriptionTier } = require("./_lib/auth");
+const { fetchLyrics, parseLrcToWords, lrcToPlain } = require("./_lib/lyrics");
 
 const FREE_ALBUM_LIMIT = 10;
 
@@ -90,44 +91,6 @@ async function upsert(table, row, onConflict) {
 async function exists(table, col, val) {
   const { data } = await sbRequest("GET", `${table}?${col}=eq.${encodeURIComponent(val)}&select=id&limit=1`);
   return Array.isArray(data) && data.length > 0;
-}
-
-// ── LRCLib ────────────────────────────────────────────────────────────────────
-
-async function fetchLrcLib(trackName, artistName, albumName, durationSec) {
-  const params = new URLSearchParams({ track_name: trackName, artist_name: artistName, album_name: albumName });
-  if (durationSec) params.set("duration", String(Math.round(durationSec)));
-  const url = `https://lrclib.net/api/get?${params}`;
-  try {
-    const { data } = await httpsGet(url, { "Lrclib-Client": "Liri/1.0 (https://getliri.com)" });
-    return data?.statusCode === 404 ? null : data;
-  } catch { return null; }
-}
-
-function parseLrcToWords(lrc) {
-  if (!lrc) return [];
-  const timeRe = /^\[(\d{2}):(\d{2})\.(\d{2,3})\]/;
-  const words   = [];
-  for (const line of lrc.split("\n")) {
-    const m = line.match(timeRe);
-    if (!m) continue;
-    const start_ms = (parseInt(m[1]) * 60 + parseInt(m[2])) * 1000
-                   + parseInt(m[3].padEnd(3, "0").slice(0, 3));
-    const text = line.replace(timeRe, "").trim();
-    if (!text) continue;
-    for (const raw of text.split(/\s+/)) {
-      const word = raw.toLowerCase().replace(/[^a-z0-9']/g, "");
-      if (word) words.push({ word, start_ms });
-    }
-  }
-  return words;
-}
-
-function lrcToPlain(lrc) {
-  if (!lrc) return "";
-  return lrc.split("\n")
-    .map(l => l.replace(/^\[\d{2}:\d{2}\.\d{2,3}\]/, "").trim())
-    .filter(Boolean).join("\n");
 }
 
 // ── Discogs ───────────────────────────────────────────────────────────────────
@@ -257,17 +220,17 @@ module.exports = async (req, res) => {
           duration_ms:      durationMs,
         }, "itunes_track_id");
 
-        const lrc = await fetchLrcLib(
+        const found = await fetchLyrics(
           t.title, artistName, albumName,
           durationMs ? durationMs / 1000 : null
         );
-        if (lrc?.syncedLyrics || lrc?.plainLyrics) {
+        if (found) {
           await upsert("track_lyrics", {
             itunes_track_id: tid,
-            lrc_raw:      lrc.syncedLyrics || null,
-            lyrics_plain: lrc.plainLyrics || lrcToPlain(lrc.syncedLyrics),
-            words_json:   lrc.syncedLyrics ? parseLrcToWords(lrc.syncedLyrics) : null,
-            source:       "lrclib",
+            lrc_raw:      found.lrc,
+            lyrics_plain: found.plain,
+            words_json:   found.lrc ? parseLrcToWords(found.lrc) : null,
+            source:       found.source,
             fetched_at:   new Date().toISOString(),
           }, "itunes_track_id");
         } else {

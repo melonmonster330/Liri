@@ -32,6 +32,7 @@
 const https = require("https");
 const fs    = require("fs");
 const path  = require("path");
+const { fetchLyrics, parseLrcToWords } = require("../api/_lib/lyrics");
 
 // ── Load scripts/.env if present ─────────────────────────────────────────────
 const envPath = path.join(__dirname, ".env");
@@ -99,77 +100,8 @@ function sb(method, path, body) {
   }, bodyStr);
 }
 
-function lrclibGetOnce(params) {
-  return httpsRequest({
-    hostname: "lrclib.net",
-    path: `/api/get?${params}`,
-    method: "GET",
-    headers: { "Lrclib-Client": "Liri/1.0 (https://getliri.com)" },
-  }).then(r => (r.data?.statusCode === 404 ? null : r.data)).catch(() => null);
-}
-
-function lrclibSearch(trackName, artistName, albumName) {
-  const params = new URLSearchParams({ track_name: trackName, artist_name: artistName });
-  return httpsRequest({
-    hostname: "lrclib.net",
-    path: `/api/search?${params}`,
-    method: "GET",
-    headers: { "Lrclib-Client": "Liri/1.0 (https://getliri.com)" },
-  }).then(r => {
-    if (!Array.isArray(r.data) || r.data.length === 0) return null;
-    // Prefer a result whose album matches; otherwise prefer one that has synced lyrics.
-    const wantAlbum = (albumName || "").toLowerCase();
-    const byAlbum   = r.data.find(x => (x.albumName || "").toLowerCase() === wantAlbum);
-    const synced    = r.data.find(x => x.syncedLyrics);
-    return byAlbum || synced || r.data[0];
-  }).catch(() => null);
-}
-
-async function lrclibGet(trackName, artistName, albumName, durationSec) {
-  // 1. Strict: with duration
-  if (durationSec) {
-    const params = new URLSearchParams({
-      track_name: trackName, artist_name: artistName, album_name: albumName,
-      duration: String(Math.round(durationSec)),
-    });
-    const hit = await lrclibGetOnce(params);
-    if (hit?.syncedLyrics || hit?.plainLyrics) return hit;
-  }
-  // 2. Relaxed: without duration (LRCLib's duration matching is strict ~±2s)
-  {
-    const params = new URLSearchParams({
-      track_name: trackName, artist_name: artistName, album_name: albumName,
-    });
-    const hit = await lrclibGetOnce(params);
-    if (hit?.syncedLyrics || hit?.plainLyrics) return hit;
-  }
-  // 3. Last resort: /api/search by track + artist, pick best match
-  return await lrclibSearch(trackName, artistName, albumName);
-}
-
-// ── LRC parsing (mirrors api/add-to-library.js) ──────────────────────────────
-function parseLrcToWords(lrc) {
-  if (!lrc) return [];
-  const timeRe = /^\[(\d{2}):(\d{2})\.(\d{2,3})\]/;
-  const words = [];
-  for (const line of lrc.split("\n")) {
-    const m = line.match(timeRe); if (!m) continue;
-    const start_ms = (parseInt(m[1]) * 60 + parseInt(m[2])) * 1000
-                   + parseInt(m[3].padEnd(3, "0").slice(0, 3));
-    const text = line.replace(timeRe, "").trim(); if (!text) continue;
-    for (const raw of text.split(/\s+/)) {
-      const w = raw.toLowerCase().replace(/[^a-z0-9']/g, "");
-      if (w) words.push({ word: w, start_ms });
-    }
-  }
-  return words;
-}
-function lrcToPlain(lrc) {
-  if (!lrc) return "";
-  return lrc.split("\n")
-    .map(l => l.replace(/^\[\d{2}:\d{2}\.\d{2,3}\]/, "").trim())
-    .filter(Boolean).join("\n");
-}
+// Lyrics fetching (LRCLib → NetEase → Genius) lives in api/_lib/lyrics.js
+// so api/add-to-library.js and this script share the same provider chain.
 
 // ── Page helper (Supabase caps at 1000 per request) ──────────────────────────
 async function fetchAll(pathBase) {
@@ -232,8 +164,9 @@ async function fetchAll(pathBase) {
   console.log(`  ${openBugs.length} open lyric bugs`);
 
   // ── Phase 1: discovery + retry ────────────────────────────────────────────
-  console.log(`\n🎯 Sweeping ${missing.length} tracks against LRCLib…\n`);
+  console.log(`\n🎯 Sweeping ${missing.length} tracks (LRCLib → NetEase → Genius)…\n`);
   let filled = 0, stillMissing = 0, newBugs = 0, alreadyBugged = 0;
+  const bySource = {};
   const BATCH = 3;
 
   for (let i = 0; i < missing.length; i += BATCH) {
@@ -241,19 +174,20 @@ async function fetchAll(pathBase) {
     await Promise.all(batch.map(async (t) => {
       const albumName = albumNameById.get(t.itunes_collection_id) || "";
       const durSec    = t.duration_ms ? t.duration_ms / 1000 : null;
-      const lrc       = await lrclibGet(t.track_name, t.artist_name, albumName, durSec);
+      const found     = await fetchLyrics(t.track_name, t.artist_name, albumName, durSec);
 
-      if (lrc?.syncedLyrics || lrc?.plainLyrics) {
+      if (found) {
         filled++;
+        bySource[found.source] = (bySource[found.source] || 0) + 1;
         if (DRY) {
-          console.log(`  ✓ would fill: "${t.track_name}" — ${t.artist_name}`);
+          console.log(`  ✓ would fill [${found.source}]: "${t.track_name}" — ${t.artist_name}`);
         } else {
           await sb("POST", "track_lyrics?on_conflict=itunes_track_id", {
             itunes_track_id: t.itunes_track_id,
-            lrc_raw:      lrc.syncedLyrics || null,
-            lyrics_plain: lrc.plainLyrics || lrcToPlain(lrc.syncedLyrics),
-            words_json:   lrc.syncedLyrics ? parseLrcToWords(lrc.syncedLyrics) : null,
-            source:       "lrclib",
+            lrc_raw:      found.lrc,
+            lyrics_plain: found.plain,
+            words_json:   found.lrc ? parseLrcToWords(found.lrc) : null,
+            source:       found.source,
             fetched_at:   new Date().toISOString(),
           });
           // Close any existing open bug for this track
@@ -264,7 +198,7 @@ async function fetchAll(pathBase) {
               fixed_at: new Date().toISOString(),
             });
           }
-          console.log(`  ✓ filled: "${t.track_name}" — ${t.artist_name}`);
+          console.log(`  ✓ filled [${found.source}]: "${t.track_name}" — ${t.artist_name}`);
         }
       } else {
         stillMissing++;
@@ -304,6 +238,9 @@ async function fetchAll(pathBase) {
   // ── Summary ───────────────────────────────────────────────────────────────
   console.log(`\n📊 Sweep complete${DRY ? " (DRY RUN — no writes)" : ""}`);
   console.log(`   filled:         ${filled}`);
+  for (const [src, n] of Object.entries(bySource)) {
+    console.log(`     • via ${src.padEnd(8)}: ${n}`);
+  }
   console.log(`   still missing:  ${stillMissing}`);
   console.log(`     • new bugs filed:     ${newBugs}`);
   console.log(`     • already had a bug:  ${alreadyBugged}`);
