@@ -164,7 +164,7 @@ async function fetchAll(pathBase) {
   console.log(`  ${openBugs.length} open lyric bugs`);
 
   // ── Phase 1: discovery + retry ────────────────────────────────────────────
-  console.log(`\n🎯 Sweeping ${missing.length} tracks (LRCLib → NetEase → Genius)…\n`);
+  console.log(`\n🎯 Sweeping ${missing.length} tracks (LRCLib → Genius)…\n`);
   let filled = 0, stillMissing = 0, newBugs = 0, alreadyBugged = 0;
   const bySource = {};
   const BATCH = 3;

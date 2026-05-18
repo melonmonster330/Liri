@@ -2,9 +2,13 @@
 //
 // Order:
 //   1. LRCLib    — synced (LRC), best for English-language popular music
-//   2. NetEase   — synced (LRC), surprisingly strong international catalogue
-//   3. Genius    — plain only (scraped), English-strong fallback for tracks
-//                  the synced providers don't have
+//   2. Genius    — plain only (scraped), English-strong fallback for tracks
+//                  LRCLib doesn't have. Requires GENIUS_ACCESS_TOKEN env var,
+//                  no-ops if not set so the chain still works without it.
+//
+// NetEase was tried as a 2nd synced source but they added RSA+AES encryption
+// to their search endpoints in 2024 — not usable without a hosted proxy
+// (NeteaseCloudMusicApi package). Removed.
 //
 // Each provider returns { lrc, plain, source } or null on miss.
 // Shared by api/add-to-library.js (Vercel) and scripts/sweep-missing-lyrics.js.
@@ -112,47 +116,7 @@ function packLrclib(hit) {
   };
 }
 
-// ── 2. NetEase Cloud Music (synced, unofficial) ──────────────────────────────
-// Two-step: search → fetch lyric by song id. No auth required; needs a
-// browser-ish User-Agent and Referer for the search endpoint to respond.
-
-const NETEASE_HEADERS = {
-  "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0 Safari/537.36",
-  "Referer":    "https://music.163.com/",
-};
-
-async function neteaseSearch(track, artist) {
-  const q = encodeURIComponent(`${track} ${artist}`);
-  const data = await getJson("music.163.com",
-    `/api/search/get/web?s=${q}&type=1&offset=0&limit=5`, NETEASE_HEADERS);
-  const songs = data?.result?.songs;
-  if (!Array.isArray(songs) || songs.length === 0) return null;
-  // Prefer a match where artist name overlaps
-  const wantArtist = (artist || "").toLowerCase();
-  const byArtist = songs.find(s => (s.artists || []).some(a => (a.name || "").toLowerCase() === wantArtist));
-  return byArtist || songs[0];
-}
-
-async function neteaseLyric(songId) {
-  const data = await getJson("music.163.com",
-    `/api/song/lyric?id=${songId}&lv=-1&kv=-1&tv=-1`, NETEASE_HEADERS);
-  return data?.lrc?.lyric || null;
-}
-
-async function fetchNetease(trackName, artistName /*, albumName, durationSec*/) {
-  try {
-    const song = await neteaseSearch(trackName, artistName);
-    if (!song) return null;
-    const lrc = await neteaseLyric(song.id);
-    if (!lrc) return null;
-    // NetEase often returns LRC headers / non-timed metadata. Require at least
-    // one timestamped line so we don't mistake credits for lyrics.
-    if (!/\[\d{2}:\d{2}\.\d{2,3}\]/.test(lrc)) return null;
-    return { lrc, plain: lrcToPlain(lrc), source: "netease" };
-  } catch { return null; }
-}
-
-// ── 3. Genius (plain only, scraped) ──────────────────────────────────────────
+// ── 2. Genius (plain only, scraped) ──────────────────────────────────────────
 // Genius's API only returns the URL of the lyrics page; the lyrics themselves
 // are inside data-lyrics-container divs on the HTML page. This scrape pattern
 // is the standard one used by lyricsgenius/genius-lyrics-api. No-ops if
@@ -220,7 +184,7 @@ async function fetchGenius(trackName, artistName) {
 // ── Public: try each provider in order ───────────────────────────────────────
 
 async function fetchLyrics(trackName, artistName, albumName, durationSec) {
-  const providers = [fetchLrclib, fetchNetease, fetchGenius];
+  const providers = [fetchLrclib, fetchGenius];
   for (const fn of providers) {
     try {
       const hit = await fn(trackName, artistName, albumName, durationSec);
@@ -236,5 +200,5 @@ module.exports = {
   lrcToPlain,
   // exported individually too, in case a caller wants to know which providers
   // hit/miss for diagnostics
-  _providers: { fetchLrclib, fetchNetease, fetchGenius },
+  _providers: { fetchLrclib, fetchGenius },
 };
