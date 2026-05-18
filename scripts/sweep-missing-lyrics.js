@@ -99,15 +99,52 @@ function sb(method, path, body) {
   }, bodyStr);
 }
 
-function lrclibGet(trackName, artistName, albumName, durationSec) {
-  const params = new URLSearchParams({ track_name: trackName, artist_name: artistName, album_name: albumName });
-  if (durationSec) params.set("duration", String(Math.round(durationSec)));
+function lrclibGetOnce(params) {
   return httpsRequest({
     hostname: "lrclib.net",
     path: `/api/get?${params}`,
     method: "GET",
     headers: { "Lrclib-Client": "Liri/1.0 (https://getliri.com)" },
   }).then(r => (r.data?.statusCode === 404 ? null : r.data)).catch(() => null);
+}
+
+function lrclibSearch(trackName, artistName, albumName) {
+  const params = new URLSearchParams({ track_name: trackName, artist_name: artistName });
+  return httpsRequest({
+    hostname: "lrclib.net",
+    path: `/api/search?${params}`,
+    method: "GET",
+    headers: { "Lrclib-Client": "Liri/1.0 (https://getliri.com)" },
+  }).then(r => {
+    if (!Array.isArray(r.data) || r.data.length === 0) return null;
+    // Prefer a result whose album matches; otherwise prefer one that has synced lyrics.
+    const wantAlbum = (albumName || "").toLowerCase();
+    const byAlbum   = r.data.find(x => (x.albumName || "").toLowerCase() === wantAlbum);
+    const synced    = r.data.find(x => x.syncedLyrics);
+    return byAlbum || synced || r.data[0];
+  }).catch(() => null);
+}
+
+async function lrclibGet(trackName, artistName, albumName, durationSec) {
+  // 1. Strict: with duration
+  if (durationSec) {
+    const params = new URLSearchParams({
+      track_name: trackName, artist_name: artistName, album_name: albumName,
+      duration: String(Math.round(durationSec)),
+    });
+    const hit = await lrclibGetOnce(params);
+    if (hit?.syncedLyrics || hit?.plainLyrics) return hit;
+  }
+  // 2. Relaxed: without duration (LRCLib's duration matching is strict ~±2s)
+  {
+    const params = new URLSearchParams({
+      track_name: trackName, artist_name: artistName, album_name: albumName,
+    });
+    const hit = await lrclibGetOnce(params);
+    if (hit?.syncedLyrics || hit?.plainLyrics) return hit;
+  }
+  // 3. Last resort: /api/search by track + artist, pick best match
+  return await lrclibSearch(trackName, artistName, albumName);
 }
 
 // ── LRC parsing (mirrors api/add-to-library.js) ──────────────────────────────
