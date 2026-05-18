@@ -270,6 +270,32 @@ module.exports = async (req, res) => {
             source:       "lrclib",
             fetched_at:   new Date().toISOString(),
           }, "itunes_track_id");
+        } else {
+          // No lyrics found — auto-file a bug report so Helen can sweep these later.
+          // Future: query user_library_ever to email everyone who added this album.
+          try {
+            await sbRequest("POST", "bug_reports", {
+              user_id:     auth.userId,
+              user_email:  auth.email || null,
+              app_version: null,
+              platform:    "auto",
+              description: `Missing lyrics: "${t.title}" by ${artistName} on ${albumName}`,
+              meta: {
+                category:            "missing_lyrics",
+                source:              "auto",
+                requires_app_push:   false,
+                itunes_track_id:     tid,
+                itunes_collection_id: collectionId,
+                discogs_release_id:  releaseId,
+                track_name:          t.title,
+                artist_name:         artistName,
+                album_name:          albumName,
+                duration_ms:         durationMs,
+              },
+            });
+          } catch (e) {
+            console.warn("[add-to-library] bug_report insert failed (non-fatal):", e.message);
+          }
         }
       }, 3);
 
