@@ -359,10 +359,12 @@ function renderUser(d) {
   const c = document.getElementById("content");
   const p = d.profile || {};
   const albums = d.albums || [];
-  const plays = d.plays || { total: 0, byPlatform: {}, bySource: {}, sessions: { total: 0, auto_recognized: 0, manual_select: 0 } };
+  const plays = d.plays || { total: 0, byPlatform: {}, bySource: {}, engagement: { active: 0, passive: 0 }, sessions: { total: 0, auto_recognized: 0, manual_select: 0 } };
   const bugs  = d.bugs   || [];
   const totalPlatform = (plays.byPlatform.ios || 0) + (plays.byPlatform.web || 0) || 1;
   const totalSessions = plays.sessions.total || 1;
+  const eng = plays.engagement || { active: 0, passive: 0 };
+  const totalEng = (eng.active || 0) + (eng.passive || 0) || 1;
   c.innerHTML = `
     <button class="back-btn" onclick="openUsers()">← Back to users</button>
 
@@ -399,6 +401,27 @@ function renderUser(d) {
             <div class="split-pct">${pct(plays.byPlatform.web || 0, totalPlatform)}%</div>
             <div class="split-bar"><div class="split-bar-fill" style="width:${pct(plays.byPlatform.web || 0, totalPlatform)}%"></div></div>
           </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="section">
+      <div class="section-title">Engagement</div>
+      <div style="color:var(--muted);font-size:12px;margin-bottom:10px">
+        Active = chose this track (identify / shazam / turntable jump). Passive = turntable rolled to it (auto-advance).
+      </div>
+      <div class="split-row">
+        <div class="split-item">
+          <div class="split-label">Active plays</div>
+          <div class="split-value">${fmt(eng.active)}</div>
+          <div class="split-pct">${pct(eng.active, totalEng)}%</div>
+          <div class="split-bar"><div class="split-bar-fill" style="width:${pct(eng.active, totalEng)}%"></div></div>
+        </div>
+        <div class="split-item">
+          <div class="split-label">Passive plays</div>
+          <div class="split-value">${fmt(eng.passive)}</div>
+          <div class="split-pct">${pct(eng.passive, totalEng)}%</div>
+          <div class="split-bar"><div class="split-bar-fill" style="width:${pct(eng.passive, totalEng)}%"></div></div>
         </div>
       </div>
     </div>

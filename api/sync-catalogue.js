@@ -384,11 +384,17 @@ async function getUserDetail(userId) {
   // Plays breakdowns
   const byPlatform = { ios: 0, web: 0, other: 0 };
   const bySource   = { recognition: 0, shazam: 0, auto_advance: 0, turntable_jump: 0, other: 0 };
+  // Engagement: active = user chose this track (recognized / shazamed / jumped),
+  // passive = turntable just rolled to it (auto_advance).
+  const ACTIVE_SOURCES = new Set(["recognition", "shazam", "turntable_jump"]);
+  let active = 0, passive = 0;
   for (const e of eventRows) {
     const p = e.platform || "other";
     byPlatform[p === "ios" || p === "web" ? p : "other"]++;
     const s = e.source || "other";
     bySource[s in bySource ? s : "other"]++;
+    if (s === "auto_advance") passive++;
+    else if (ACTIVE_SOURCES.has(s)) active++;
   }
 
   // Session-start mix: for each session_id, look at the FIRST event (events
@@ -420,6 +426,7 @@ async function getUserDetail(userId) {
       total:       eventRows.length,
       byPlatform,
       bySource,
+      engagement: { active, passive },
       sessions: {
         total:           seenSession.size,
         auto_recognized: autoStarts,
