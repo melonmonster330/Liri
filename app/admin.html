@@ -82,6 +82,35 @@
   .bug-detail.open { display: block; }
   .bug-detail strong { color: rgba(255,255,255,0.9); font-size: 13px; display: block; margin-bottom: 6px; }
   .bug-detail pre { font-size: 11px; color: var(--muted); white-space: pre-wrap; word-break: break-all; margin-top: 8px; }
+
+  /* ── Drill-in ── */
+  .clickable { cursor: pointer; transition: border-color 0.15s, transform 0.15s; }
+  .clickable:hover { border-color: rgba(212,168,70,0.4); transform: translateY(-1px); }
+  .back-btn { background: var(--surface); border: 1px solid var(--border); color: rgba(255,255,255,0.7); border-radius: 8px; padding: 6px 14px; font-size: 12px; cursor: pointer; font-family: inherit; margin-bottom: 16px; }
+  .back-btn:hover { color: #fff; }
+
+  .album-row { display: flex; align-items: center; gap: 12px; padding: 10px 0; border-bottom: 1px solid var(--border); cursor: pointer; }
+  .album-row:last-child { border-bottom: none; }
+  .album-row:hover { background: rgba(255,255,255,0.02); }
+  .album-art { width: 44px; height: 44px; border-radius: 6px; background: var(--dim); object-fit: cover; flex-shrink: 0; }
+  .album-info { flex: 1; min-width: 0; }
+  .album-name { font-size: 13px; color: rgba(255,255,255,0.85); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .album-artist { font-size: 11px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .album-stats { display: flex; gap: 14px; flex-shrink: 0; }
+  .album-stat { text-align: right; }
+  .album-stat-val { font-size: 14px; font-weight: 700; color: var(--gold); }
+  .album-stat-lbl { font-size: 10px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.04em; }
+
+  .track-row { display: flex; align-items: center; gap: 12px; padding: 8px 0; border-bottom: 1px solid var(--border); font-size: 13px; }
+  .track-row:last-child { border-bottom: none; }
+  .track-num { width: 28px; color: var(--muted); font-size: 12px; flex-shrink: 0; }
+  .track-name { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .track-plays { color: var(--gold); font-size: 12px; flex-shrink: 0; width: 60px; text-align: right; }
+  .track-flag { font-size: 10px; flex-shrink: 0; width: 90px; text-align: right; color: #e07070; }
+  .track-flag.ok { color: rgba(120,200,120,0.6); }
+
+  .search-input { background: var(--surface); border: 1px solid var(--border); color: #fff; border-radius: 8px; padding: 8px 12px; font-size: 13px; width: 100%; outline: none; font-family: inherit; margin-bottom: 14px; }
+  .search-input:focus { border-color: rgba(212,168,70,0.4); }
 </style>
 </head>
 <body>
@@ -146,10 +175,10 @@ function render(d) {
         <div class="card-value">${fmt(users.premium)}</div>
         <div class="card-sub">${pct(users.premium, users.total)}% of users</div>
       </div>
-      <div class="card">
+      <div class="card clickable" onclick="openAlbums()">
         <div class="card-label">Avg Albums / User</div>
         <div class="card-value">${library.avgAlbums}</div>
-        <div class="card-sub">${fmt(library.totalAlbums)} total in libraries</div>
+        <div class="card-sub">${fmt(library.totalAlbums)} total in libraries · view →</div>
       </div>
     </div>
 
@@ -269,6 +298,115 @@ function esc(s) { return (s || "").replace(/&/g,"&amp;").replace(/</g,"&lt;").re
 function toggleBug(i) {
   const el = document.getElementById("bug-" + i);
   if (el) el.classList.toggle("open");
+}
+
+// ── Drill-in: albums list → album detail ─────────────────────────────────────
+let albumsCache = null;
+
+async function openAlbums() {
+  const c = document.getElementById("content");
+  c.innerHTML = `<div class="loading">Loading albums…</div>`;
+  const r = await fetch(API + "?action=albums", { headers: { "x-admin-password": pw } });
+  if (!r.ok) { c.innerHTML = `<div class="loading">Error loading albums</div>`; return; }
+  const d = await r.json();
+  albumsCache = d.albums || [];
+  renderAlbums(albumsCache);
+}
+
+function renderAlbums(albums) {
+  const c = document.getElementById("content");
+  c.innerHTML = `
+    <button class="back-btn" onclick="load()">← Back to dashboard</button>
+    <div class="section">
+      <div class="section-title">User-added albums (${albums.length})</div>
+      <input class="search-input" id="album-search" placeholder="Search by album or artist…" oninput="filterAlbums(this.value)">
+      <div id="album-list">
+        ${albums.length === 0 ? '<div style="color:var(--muted);font-size:13px">No albums yet</div>' :
+          albums.map(a => `
+            <div class="album-row" onclick="openAlbum(${a.itunes_collection_id})">
+              <img class="album-art" src="${esc(a.artwork_url || '')}" onerror="this.style.visibility='hidden'">
+              <div class="album-info">
+                <div class="album-name">${esc(a.album_name || '(untitled)')}</div>
+                <div class="album-artist">${esc(a.artist_name || '')}${a.release_year ? ' · ' + a.release_year : ''}</div>
+              </div>
+              <div class="album-stats">
+                <div class="album-stat">
+                  <div class="album-stat-val">${fmt(a.plays)}</div>
+                  <div class="album-stat-lbl">plays</div>
+                </div>
+                <div class="album-stat">
+                  <div class="album-stat-val">${fmt(a.added_by)}</div>
+                  <div class="album-stat-lbl">added</div>
+                </div>
+              </div>
+            </div>
+          `).join("")}
+      </div>
+    </div>
+  `;
+}
+
+function filterAlbums(q) {
+  if (!albumsCache) return;
+  const s = q.trim().toLowerCase();
+  const filtered = s
+    ? albumsCache.filter(a =>
+        (a.album_name || "").toLowerCase().includes(s) ||
+        (a.artist_name || "").toLowerCase().includes(s))
+    : albumsCache;
+  const list = document.getElementById("album-list");
+  if (!list) return;
+  list.innerHTML = filtered.map(a => `
+    <div class="album-row" onclick="openAlbum(${a.itunes_collection_id})">
+      <img class="album-art" src="${esc(a.artwork_url || '')}" onerror="this.style.visibility='hidden'">
+      <div class="album-info">
+        <div class="album-name">${esc(a.album_name || '(untitled)')}</div>
+        <div class="album-artist">${esc(a.artist_name || '')}${a.release_year ? ' · ' + a.release_year : ''}</div>
+      </div>
+      <div class="album-stats">
+        <div class="album-stat"><div class="album-stat-val">${fmt(a.plays)}</div><div class="album-stat-lbl">plays</div></div>
+        <div class="album-stat"><div class="album-stat-val">${fmt(a.added_by)}</div><div class="album-stat-lbl">added</div></div>
+      </div>
+    </div>`).join("");
+}
+
+async function openAlbum(id) {
+  const c = document.getElementById("content");
+  c.innerHTML = `<div class="loading">Loading tracks…</div>`;
+  const r = await fetch(API + "?action=album&id=" + id, { headers: { "x-admin-password": pw } });
+  if (!r.ok) { c.innerHTML = `<div class="loading">Error loading album</div>`; return; }
+  const d = await r.json();
+  renderAlbum(d);
+}
+
+function renderAlbum(d) {
+  const c = document.getElementById("content");
+  const a = d.album || {};
+  const tracks = d.tracks || [];
+  const missingCount = tracks.filter(t => !t.has_lyrics).length;
+  c.innerHTML = `
+    <button class="back-btn" onclick="openAlbums()">← Back to albums</button>
+    <div class="section">
+      <div style="display:flex;gap:14px;align-items:center;margin-bottom:18px">
+        <img src="${esc(a.artwork_url || '')}" style="width:80px;height:80px;border-radius:10px;background:var(--dim);object-fit:cover" onerror="this.style.visibility='hidden'">
+        <div>
+          <div style="font-size:18px;font-weight:700">${esc(a.album_name || '')}</div>
+          <div style="font-size:13px;color:var(--muted);margin-top:2px">${esc(a.artist_name || '')}${a.release_year ? ' · ' + a.release_year : ''}</div>
+          <div style="font-size:11px;color:var(--muted);margin-top:6px">
+            ${tracks.length} track${tracks.length === 1 ? '' : 's'} · ${missingCount} missing lyrics
+          </div>
+        </div>
+      </div>
+      ${tracks.length === 0 ? '<div style="color:var(--muted);font-size:13px">No track data</div>' :
+        tracks.map(t => `
+          <div class="track-row">
+            <div class="track-num">${t.disc_number > 1 ? t.disc_number + '-' : ''}${t.track_number || ''}</div>
+            <div class="track-name">${esc(t.track_name || '')}</div>
+            <div class="track-plays">${fmt(t.plays)} plays</div>
+            <div class="track-flag ${t.has_lyrics ? 'ok' : ''}">${t.has_lyrics ? '✓ lyrics' : '✗ missing'}</div>
+          </div>`).join("")}
+    </div>
+  `;
 }
 
 function showLogin(err) {

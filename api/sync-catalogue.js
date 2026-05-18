@@ -25,6 +25,16 @@ function safeCompare(a, b) {
   return crypto.timingSafeEqual(ab, bb);
 }
 
+// Mask PII: "helen@gmail.com" → "hel***@gmail.com"
+function maskEmail(email) {
+  if (!email) return null;
+  const s = String(email);
+  const at = s.indexOf("@");
+  if (at < 0) return s.length > 3 ? s.slice(0, 3) + "***" : "***";
+  const local = s.slice(0, at), domain = s.slice(at);
+  return (local.length >= 3 ? local.slice(0, 3) : local) + "***" + domain;
+}
+
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
 function httpsGet(url) {
@@ -198,7 +208,7 @@ async function getAdminStats() {
   const recentSignups = allUsers
     .sort((a, b) => b.created_at.localeCompare(a.created_at))
     .slice(0, 8)
-    .map(u => ({ email: u.email, created_at: u.created_at }));
+    .map(u => ({ email: maskEmail(u.email), created_at: u.created_at }));
 
   // Library — exact total from count header, unique users from fetched rows
   const totalAlbums   = parseInt(totalLibResp.headers?.["content-range"]?.split("/")[1] || "0", 10);
@@ -241,7 +251,7 @@ async function getAdminStats() {
   const topUsers = Object.entries(userPlayCounts)
     .sort((a, b) => b[1] - a[1])
     .slice(0, 10)
-    .map(([uid, count]) => ({ email: emailById[uid] || uid.slice(0, 8) + "…", count }));
+    .map(([uid, count]) => ({ email: maskEmail(emailById[uid]) || uid.slice(0, 8) + "…", count }));
 
   // Subscriptions
   const subs        = Array.isArray(subsResp.body) ? subsResp.body : [];
@@ -251,7 +261,8 @@ async function getAdminStats() {
   const catalogueTotal = parseInt(releasesResp.headers?.["content-range"]?.split("/")[1] || "0", 10);
   const totalFlips     = parseInt(flipsResp.headers?.["content-range"]?.split("/")[1] || "0", 10);
 
-  const bugReports = Array.isArray(bugsResp.body) ? bugsResp.body : [];
+  const bugReports = (Array.isArray(bugsResp.body) ? bugsResp.body : [])
+    .map(b => ({ ...b, user_email: maskEmail(b.user_email) }));
 
   return {
     users:    { total: totalUsers, new7d: newUsers7d, new30d: newUsers30d, premium: premiumUsers, recentSignups },
@@ -265,10 +276,97 @@ async function getAdminStats() {
   };
 }
 
+// Paginate any sb GET path (Supabase caps at 1000/req).
+async function sbGetAll(pathBase) {
+  const out = []; let from = 0; const step = 1000;
+  while (true) {
+    const sep = pathBase.includes("?") ? "&" : "?";
+    const { body } = await sbGet(`${pathBase}${sep}offset=${from}&limit=${step}`);
+    if (!Array.isArray(body) || body.length === 0) break;
+    out.push(...body);
+    if (body.length < step) break;
+    from += step;
+  }
+  return out;
+}
+
+// ── Albums drill-in: list of albums users have actually added ────────────────
+async function getAlbumsList() {
+  const [catRows, libRows, eventRows] = await Promise.all([
+    sbGetAll("catalogue?select=itunes_collection_id,album_name,artist_name,artwork_url,release_year,track_count"),
+    sbGetAll("user_library?select=itunes_collection_id"),
+    sbGetAll("listening_events?select=itunes_collection_id&itunes_collection_id=not.is.null"),
+  ]);
+
+  // count library adds per album
+  const libCount = {};
+  for (const r of libRows) libCount[r.itunes_collection_id] = (libCount[r.itunes_collection_id] || 0) + 1;
+
+  // count plays per album (lifetime)
+  const playCount = {};
+  for (const r of eventRows) playCount[r.itunes_collection_id] = (playCount[r.itunes_collection_id] || 0) + 1;
+
+  return {
+    albums: catRows.map(c => ({
+      itunes_collection_id: c.itunes_collection_id,
+      album_name:    c.album_name,
+      artist_name:   c.artist_name,
+      artwork_url:   c.artwork_url,
+      release_year:  c.release_year,
+      track_count:   c.track_count,
+      added_by:      libCount[c.itunes_collection_id] || 0,
+      plays:         playCount[c.itunes_collection_id] || 0,
+    })).sort((a, b) => b.plays - a.plays || b.added_by - a.added_by),
+  };
+}
+
+// ── Album drill-in: tracks + per-track play counts + missing-lyrics flag ─────
+async function getAlbumDetail(collectionId) {
+  // First fetch album metadata, tracks, and events in parallel.
+  const [catRow, trackRows, eventRows] = await Promise.all([
+    sbGet(`catalogue?itunes_collection_id=eq.${collectionId}&select=album_name,artist_name,artwork_url,release_year,track_count&limit=1`),
+    sbGetAll(`album_tracks?itunes_collection_id=eq.${collectionId}&select=itunes_track_id,track_name,track_number,disc_number,duration_ms`),
+    sbGetAll(`listening_events?itunes_collection_id=eq.${collectionId}&select=itunes_track_id,track_title`),
+  ]);
+
+  // Then look up lyrics for the track IDs we actually have.
+  const tids = trackRows.map(t => t.itunes_track_id).filter(x => x != null);
+  const lyricRows = tids.length
+    ? await sbGetAll(`track_lyrics?itunes_track_id=in.(${tids.join(",")})&select=itunes_track_id`)
+    : [];
+
+  const haveLyrics = new Set(lyricRows.map(r => r.itunes_track_id));
+  const playByTid  = {};
+  const playByTitle = {};
+  for (const e of eventRows) {
+    if (e.itunes_track_id != null) {
+      playByTid[e.itunes_track_id] = (playByTid[e.itunes_track_id] || 0) + 1;
+    } else if (e.track_title) {
+      const k = e.track_title.toLowerCase();
+      playByTitle[k] = (playByTitle[k] || 0) + 1;
+    }
+  }
+
+  const album = (catRow.body && catRow.body[0]) || null;
+  const tracks = trackRows
+    .sort((a, b) => (a.disc_number || 1) - (b.disc_number || 1) || (a.track_number || 0) - (b.track_number || 0))
+    .map(t => ({
+      itunes_track_id: t.itunes_track_id,
+      track_name:      t.track_name,
+      track_number:    t.track_number,
+      disc_number:     t.disc_number,
+      duration_ms:     t.duration_ms,
+      has_lyrics:      haveLyrics.has(t.itunes_track_id),
+      plays:           playByTid[t.itunes_track_id] || playByTitle[(t.track_name || "").toLowerCase()] || 0,
+    }));
+
+  return { album, tracks };
+}
+
 // ── Main handler ──────────────────────────────────────────────────────────────
 
 module.exports = async (req, res) => {
-  // ── GET: admin dashboard stats ─────────────────────────────────────────────
+  // ── GET: admin dashboard stats + drill-in queries ──────────────────────────
   if (req.method === "GET") {
     const adminPw  = process.env.ADMIN_PASSWORD;
     const provided = req.headers["x-admin-password"];
@@ -276,8 +374,22 @@ module.exports = async (req, res) => {
       return res.status(401).json({ error: "Unauthorized" });
     }
     try {
-      const stats = await getAdminStats();
+      // Tiny query router so all admin reads share the same auth gate.
+      const url    = new URL(req.url || "/", "http://x");
+      const action = url.searchParams.get("action");
+
       res.setHeader("Cache-Control", "no-store");
+
+      if (action === "albums") {
+        return res.status(200).json(await getAlbumsList());
+      }
+      if (action === "album") {
+        const id = parseInt(url.searchParams.get("id") || "0", 10);
+        if (!id) return res.status(400).json({ error: "id required" });
+        return res.status(200).json(await getAlbumDetail(id));
+      }
+
+      const stats = await getAdminStats();
       return res.status(200).json(stats);
     } catch (e) {
       return res.status(500).json({ error: e.message });
