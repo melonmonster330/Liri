@@ -68,6 +68,8 @@
       const [autoPostVis, setAutoPostVis] = useState("off");
 
       const [usernameErr, setUsernameErr] = useState("");
+      const [usernameStatus, setUsernameStatus] = useState("idle"); // idle | checking | available | taken | invalid | same
+      const [originalUsername, setOriginalUsername] = useState("");
       const [saving, setSaving]           = useState(false);
       const [savedAt, setSavedAt]         = useState(0);
 
@@ -88,6 +90,7 @@
         if (error) console.error(error);
         if (data) {
           setUsername(data.username || "");
+          setOriginalUsername(data.username || "");
           setDisplayName(data.display_name || "");
           setBio(data.bio || "");
           setPrivacy(data.privacy || "private");
@@ -98,11 +101,41 @@
 
       useEffect(() => { if (user) loadProfile(user.id); }, [user, loadProfile]);
 
+      // ── Live username availability check ──
+      useEffect(() => {
+        const u = username.trim().toLowerCase();
+        if (!u) { setUsernameStatus("idle"); return; }
+        if (u === originalUsername) { setUsernameStatus("same"); return; }
+        if (!USERNAME_RE.test(u)) { setUsernameStatus("invalid"); return; }
+
+        setUsernameStatus("checking");
+        let cancelled = false;
+        const timer = setTimeout(async () => {
+          const { data, error } = await sb
+            .from("profiles")
+            .select("id")
+            .eq("username", u)
+            .maybeSingle();
+          if (cancelled) return;
+          if (error) { setUsernameStatus("idle"); return; }
+          setUsernameStatus(data ? "taken" : "available");
+        }, 350);
+        return () => { cancelled = true; clearTimeout(timer); };
+      }, [username, originalUsername]);
+
       const save = async () => {
         setUsernameErr("");
         const u = username.trim().toLowerCase();
         if (!USERNAME_RE.test(u)) {
           setUsernameErr("Username must be 3–20 characters, lowercase letters, numbers, or underscore.");
+          return;
+        }
+        if (usernameStatus === "taken") {
+          setUsernameErr("That username is taken. Try another.");
+          return;
+        }
+        if (usernameStatus === "checking") {
+          setUsernameErr("Hold on a sec — still checking that username.");
           return;
         }
         setSaving(true);
@@ -155,8 +188,21 @@
 
             <div>
               <div style={label}>Username</div>
-              <input value={username} onChange={e => setUsername(e.target.value.toLowerCase())} placeholder="your_handle" maxLength={20} style={inp} autoCapitalize="none" autoCorrect="off" spellCheck={false} />
-              {usernameErr ? <div style={err}>{usernameErr}</div> : <div style={help}>3–20 characters. Lowercase letters, numbers, and underscore. This is your @ on Liri.</div>}
+              <div style={{ position: "relative" }}>
+                <input value={username} onChange={e => setUsername(e.target.value.toLowerCase())} placeholder="your_handle" maxLength={20} style={{ ...inp, paddingRight: 44 }} autoCapitalize="none" autoCorrect="off" spellCheck={false} />
+                <div style={{ position: "absolute", right: 14, top: "50%", transform: "translateY(-50%)", display: "flex", alignItems: "center" }}>
+                  {usernameStatus === "checking" && <Spinner size={16} />}
+                  {usernameStatus === "available" && <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="rgba(120,220,150,0.9)" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><polyline points="20 6 9 17 4 12"/></svg>}
+                  {(usernameStatus === "taken" || usernameStatus === "invalid") && <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#e8a0a8" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>}
+                </div>
+              </div>
+              {usernameErr
+                ? <div style={err}>{usernameErr}</div>
+                : usernameStatus === "available" ? <div style={{ ...help, color: "rgba(120,220,150,0.9)" }}>@{username.trim()} is available.</div>
+                : usernameStatus === "taken"     ? <div style={err}>That username is taken. Try another.</div>
+                : usernameStatus === "invalid"   ? <div style={err}>3–20 characters. Lowercase letters, numbers, and underscore only.</div>
+                : <div style={help}>3–20 characters. Lowercase letters, numbers, and underscore. This is your @ on Liri.</div>
+              }
             </div>
 
             <div>
