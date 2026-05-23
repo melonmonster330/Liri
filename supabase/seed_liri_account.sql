@@ -22,11 +22,8 @@
 
 DO $$
 DECLARE
-  liri_id uuid := '00000000-0000-0000-0000-00000000l1r1';
+  liri_id uuid := '00000000-0000-0000-0000-000000000001'::uuid;
 BEGIN
-  -- can't put non-hex chars in uuid literal; build it deterministic
-  liri_id := '00000000-0000-0000-0000-000000000001'::uuid;
-
   IF NOT EXISTS (SELECT 1 FROM auth.users WHERE id = liri_id) THEN
     INSERT INTO auth.users (
       instance_id, id, aud, role,
