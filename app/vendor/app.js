@@ -5362,7 +5362,7 @@ Move closer to your speakers and try again.`);
         flexDirection: "column",
         alignItems: "center",
         justifyContent: "center",
-        padding: "24px 32px",
+        padding: "8px 32px 96px",
         textAlign: "center"
       }
     }, mode === "idle" && /* @__PURE__ */ React.createElement("div", {
