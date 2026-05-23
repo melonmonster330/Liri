@@ -6138,4 +6138,9 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
     }
   }, "Maybe later")))));
 }
-ReactDOM.createRoot(document.getElementById("root")).render(/*#__PURE__*/React.createElement(Liri, null));
+ReactDOM.createRoot(document.getElementById("root")).render(
+  /*#__PURE__*/React.createElement(React.Fragment, null,
+    /*#__PURE__*/React.createElement(Liri, null),
+    window.TabBar ? /*#__PURE__*/React.createElement(window.TabBar, { current: "listen" }) : null
+  )
+);
