@@ -1,0 +1,101 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+  <title>Explore — Liri</title>
+  <link rel="icon" type="image/png" href="/favicon.png" />
+  <link rel="apple-touch-icon" href="/favicon.png" />
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    html, body { height: 100%; width: 100%; overflow-x: hidden; }
+    body { background: #080810; color: #f0e6d3; font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Display', 'Helvetica Neue', sans-serif; }
+    #root { min-height: 100vh; max-width: 100vw; overflow-x: hidden; }
+    input { outline: none; font-family: inherit; }
+    input:focus { border-color: rgba(212,168,70,0.6) !important; }
+    ::-webkit-scrollbar { display: none; }
+    button, a, [role="button"] { -webkit-tap-highlight-color: transparent; cursor: pointer; }
+    button:active, a:active, [role="button"]:active { opacity: 0.65; transform: scale(0.97); transition: opacity 0s, transform 0s; }
+    @keyframes spin { to { transform: rotate(360deg); } }
+  </style>
+  <script>document.addEventListener('touchstart', function(){}, {passive: true});</script>
+</head>
+<body>
+  <div id="root"></div>
+
+  <script src="vendor/react.min.js"></script>
+  <script src="vendor/react-dom.min.js"></script>
+  <script src="vendor/babel.min.js"></script>
+  <script src="vendor/tabbar.js"></script>
+
+  <script type="text/babel">
+    const APP_VERSION = "1.1.7";
+
+    function App() {
+      const [query, setQuery] = React.useState("");
+
+      return (
+        <div style={{ minHeight: "100vh", paddingBottom: 100 }}>
+          <div style={{ padding: "max(64px, calc(env(safe-area-inset-top) + 20px)) 24px 0" }}>
+            <div style={{ fontSize: 28, fontWeight: 700, letterSpacing: "-0.5px", marginBottom: 6 }}>Explore</div>
+            <div style={{ fontSize: 14, color: "rgba(255,255,255,0.3)", marginBottom: 20 }}>
+              Find people. See what's spinning right now.
+            </div>
+
+            <div style={{ position: "relative", marginBottom: 24 }}>
+              <input
+                value={query}
+                onChange={e => setQuery(e.target.value)}
+                placeholder="Search by username…"
+                autoCapitalize="none"
+                autoCorrect="off"
+                spellCheck={false}
+                style={{
+                  width: "100%", background: "rgba(255,255,255,0.05)",
+                  border: "1px solid rgba(255,255,255,0.1)", color: "#f0e6d3",
+                  padding: "14px 16px 14px 44px", borderRadius: 50, fontSize: 15,
+                  fontFamily: "inherit",
+                }}
+              />
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="rgba(255,255,255,0.35)" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"
+                style={{ position: "absolute", left: 16, top: "50%", transform: "translateY(-50%)" }}>
+                <circle cx="11" cy="11" r="7"/><line x1="21" y1="21" x2="16.5" y2="16.5"/>
+              </svg>
+            </div>
+          </div>
+
+          <div style={{
+            padding: "40px 32px",
+            display: "flex", flexDirection: "column",
+            alignItems: "center", justifyContent: "center",
+            textAlign: "center",
+            color: "rgba(255,255,255,0.4)",
+          }}>
+            <div style={{
+              width: 64, height: 64, borderRadius: "50%",
+              background: "rgba(212,168,70,0.08)",
+              border: "1px solid rgba(212,168,70,0.2)",
+              display: "flex", alignItems: "center", justifyContent: "center",
+              marginBottom: 20,
+            }}>
+              <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="#d4a846" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <circle cx="11" cy="11" r="7"/><line x1="21" y1="21" x2="16.5" y2="16.5"/>
+              </svg>
+            </div>
+            <div style={{ fontSize: 17, fontWeight: 700, color: "#f0e6d3", marginBottom: 8 }}>Explore is coming soon</div>
+            <div style={{ fontSize: 14, lineHeight: 1.6, maxWidth: 280 }}>
+              User search and a popular-posts feed will land once the social graph is in place.
+            </div>
+          </div>
+
+          <div style={{ textAlign:"center", padding:"40px 0 16px", fontSize:"11px", color:"rgba(255,255,255,0.1)" }}>Liri v{APP_VERSION}</div>
+
+          <TabBar current="explore" />
+        </div>
+      );
+    }
+
+    ReactDOM.createRoot(document.getElementById("root")).render(<App />);
+  </script>
+</body>
+</html>

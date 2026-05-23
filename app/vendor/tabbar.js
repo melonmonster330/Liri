@@ -32,6 +32,10 @@
     feed: () => h("svg", { width: 22, height: 22, viewBox: "0 0 24 24", fill: "none", stroke: "currentColor", strokeWidth: 2, strokeLinecap: "round", strokeLinejoin: "round" },
       h("path", { d: "M4 6h16M4 12h16M4 18h10" })
     ),
+    explore: () => h("svg", { width: 22, height: 22, viewBox: "0 0 24 24", fill: "none", stroke: "currentColor", strokeWidth: 2, strokeLinecap: "round", strokeLinejoin: "round" },
+      h("circle", { cx: 11, cy: 11, r: 7 }),
+      h("line", { x1: 21, y1: 21, x2: 16.5, y2: 16.5 })
+    ),
     profile: () => h("svg", { width: 22, height: 22, viewBox: "0 0 24 24", fill: "none", stroke: "currentColor", strokeWidth: 2, strokeLinecap: "round", strokeLinejoin: "round" },
       h("circle", { cx: 12, cy: 8, r: 4 }),
       h("path", { d: "M4 21v-1a6 6 0 0 1 6-6h4a6 6 0 0 1 6 6v1" })
@@ -64,6 +68,7 @@
       { key: "listen",  label: "Listen",  href: listenHref(),          icon: Icon.listen },
       { key: "library", label: "Records", href: "/app/library.html",   icon: Icon.library },
       { key: "feed",    label: "Feed",    href: "/app/feed.html",      icon: Icon.feed },
+      { key: "explore", label: "Explore", href: "/app/explore.html",   icon: Icon.explore },
       { key: "profile", label: "You",     href: "/app/profile.html",   icon: Icon.profile },
     ];
 
