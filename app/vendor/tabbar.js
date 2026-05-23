@@ -1,8 +1,25 @@
 // Liri shared bottom tab bar.
 // Usage in any page that loads React + this script:
 //   <TabBar current="library" />   (current: "listen" | "library" | "feed" | "profile")
+// Hides itself automatically when the user is signed out.
 (function () {
   const h = React.createElement;
+
+  function checkSignedIn() {
+    try {
+      for (let i = 0; i < localStorage.length; i++) {
+        const key = localStorage.key(i);
+        if (key && key.startsWith("sb-") && key.endsWith("-auth-token")) {
+          const v = JSON.parse(localStorage.getItem(key));
+          if (v && v.access_token) {
+            if (v.expires_at && v.expires_at * 1000 < Date.now()) return false;
+            return true;
+          }
+        }
+      }
+    } catch (e) { /* ignore */ }
+    return false;
+  }
 
   const Icon = {
     listen: (a) => h("svg", { width: 22, height: 22, viewBox: "0 0 24 24", fill: "none", stroke: "currentColor", strokeWidth: 2, strokeLinecap: "round", strokeLinejoin: "round" },
@@ -27,6 +44,22 @@
 
   window.TabBar = function TabBar(props) {
     const current = (props && props.current) || "";
+
+    const [signedIn, setSignedIn] = React.useState(checkSignedIn());
+    React.useEffect(() => {
+      const tick = () => setSignedIn(checkSignedIn());
+      const id = setInterval(tick, 1000);
+      window.addEventListener("storage", tick);
+      window.addEventListener("focus", tick);
+      return () => {
+        clearInterval(id);
+        window.removeEventListener("storage", tick);
+        window.removeEventListener("focus", tick);
+      };
+    }, []);
+
+    if (!signedIn) return null;
+
     const tabs = [
       { key: "listen",  label: "Listen",  href: listenHref(),          icon: Icon.listen },
       { key: "library", label: "Records", href: "/app/library.html",   icon: Icon.library },
