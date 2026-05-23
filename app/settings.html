@@ -65,7 +65,7 @@
       const [displayName, setDisplayName] = useState("");
       const [bio, setBio]                 = useState("");
       const [privacy, setPrivacy]         = useState("private");
-      const [autoPost, setAutoPost]       = useState(false);
+      const [autoPostVis, setAutoPostVis] = useState("off");
 
       const [usernameErr, setUsernameErr] = useState("");
       const [saving, setSaving]           = useState(false);
@@ -91,7 +91,7 @@
           setDisplayName(data.display_name || "");
           setBio(data.bio || "");
           setPrivacy(data.privacy || "private");
-          setAutoPost(!!data.auto_post_plays);
+          setAutoPostVis(data.auto_post_visibility || "off");
         }
         setLoading(false);
       }, []);
@@ -111,7 +111,7 @@
           display_name: displayName.trim() || null,
           bio: bio.trim() || null,
           privacy,
-          auto_post_plays: autoPost,
+          auto_post_visibility: autoPostVis,
         }).eq("id", user.id);
         setSaving(false);
         if (error) {
@@ -196,22 +196,26 @@
 
             <div>
               <div style={label}>Auto-share what you spin</div>
-              <button onClick={() => setAutoPost(!autoPost)}
-                style={{
-                  width: "100%", textAlign: "left", padding: "14px 16px", borderRadius: 12,
-                  border: autoPost ? "1px solid rgba(212,168,70,0.6)" : "1px solid rgba(255,255,255,0.1)",
-                  background: autoPost ? "rgba(212,168,70,0.08)" : "rgba(255,255,255,0.03)",
-                  color: "#f0e6d3", fontFamily: "inherit",
-                  display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12,
-                }}>
-                <div>
-                  <div style={{ fontSize: 14, fontWeight: 700, marginBottom: 3 }}>{autoPost ? "On" : "Off"}</div>
-                  <div style={{ fontSize: 12, color: "rgba(255,255,255,0.45)" }}>Posts an album to your feed automatically when you finish listening.</div>
-                </div>
-                <div style={{ width: 42, height: 26, borderRadius: 13, background: autoPost ? "#d4a846" : "rgba(255,255,255,0.15)", position: "relative", flexShrink: 0, transition: "background 0.2s" }}>
-                  <div style={{ position: "absolute", top: 3, left: autoPost ? 19 : 3, width: 20, height: 20, borderRadius: "50%", background: "#fff", transition: "left 0.2s" }} />
-                </div>
-              </button>
+              <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                {[
+                  { value: "off",     title: "Off",          desc: "Don't auto-post anything." },
+                  { value: "private", title: "Private",      desc: "Auto-post but only you can see it." },
+                  { value: "friends", title: "Friends only", desc: "Auto-post to mutual follows." },
+                  { value: "public",  title: "Public",       desc: "Auto-post for anyone to see." },
+                ].map(opt => (
+                  <button key={opt.value} onClick={() => setAutoPostVis(opt.value)}
+                    style={{
+                      textAlign: "left", padding: "14px 16px", borderRadius: 12,
+                      border: autoPostVis === opt.value ? "1px solid rgba(212,168,70,0.6)" : "1px solid rgba(255,255,255,0.1)",
+                      background: autoPostVis === opt.value ? "rgba(212,168,70,0.08)" : "rgba(255,255,255,0.03)",
+                      color: "#f0e6d3", fontFamily: "inherit",
+                    }}>
+                    <div style={{ fontSize: 14, fontWeight: 700, marginBottom: 3 }}>{opt.title}</div>
+                    <div style={{ fontSize: 12, color: "rgba(255,255,255,0.45)" }}>{opt.desc}</div>
+                  </button>
+                ))}
+              </div>
+              <div style={help}>When you finish listening to an album, Liri can post it to your feed automatically.</div>
             </div>
 
             <button onClick={save} disabled={saving}
