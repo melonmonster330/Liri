@@ -2594,10 +2594,11 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
         display: "flex",
         flexDirection: "column",
         alignItems: "center",
-        justifyContent: "center",
+        justifyContent: "flex-start",
         minHeight: "100vh",
-        padding: "max(60px,calc(env(safe-area-inset-top)+40px)) 32px max(120px,calc(env(safe-area-inset-bottom)+100px))",
-        textAlign: "center"
+        padding: "max(80px,calc(env(safe-area-inset-top)+56px)) 32px max(90px,calc(env(safe-area-inset-bottom)+80px))",
+        textAlign: "center",
+        gap: "24px"
       }
     }, /*#__PURE__*/React.createElement(Vinyl, {
       size: 130,
