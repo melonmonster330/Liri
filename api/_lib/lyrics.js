@@ -78,41 +78,128 @@ async function lrclibGetOnce(params) {
   return data?.statusCode === 404 ? null : data;
 }
 
-async function lrclibSearch(trackName, artistName, albumName) {
+async function lrclibSearchAll(trackName, artistName) {
   const params = new URLSearchParams({ track_name: trackName, artist_name: artistName });
   const data = await getJson("lrclib.net", `/api/search?${params}`,
     { "Lrclib-Client": "Liri/1.0 (https://getliri.com)" });
-  if (!Array.isArray(data) || data.length === 0) return null;
-  const wantAlbum = (albumName || "").toLowerCase();
-  const byAlbum = data.find(x => (x.albumName || "").toLowerCase() === wantAlbum);
-  const synced  = data.find(x => x.syncedLyrics);
-  return byAlbum || synced || data[0];
+  return Array.isArray(data) ? data : [];
 }
 
+// Look up the iTunes Search API for an accurate track duration. Discogs vinyl
+// entries often omit per-track durations or are off by a few seconds, which
+// caused the duration-strict LRClib fetch to 404 → fall through to a non-
+// matched synced version → ~every song drifts. iTunes is reliable, so we use
+// it as a secondary source for the LRClib duration constraint.
+async function fetchItunesDuration(trackName, artistName, albumName) {
+  const term = `${artistName} ${trackName}`.trim();
+  if (!term) return null;
+  const path = `/search?term=${encodeURIComponent(term)}&entity=song&limit=15&media=music`;
+  const data = await getJson("itunes.apple.com", path);
+  const results = data?.results || [];
+  if (!results.length) return null;
+  const norm = (s) => (s || "").toLowerCase().replace(/[^a-z0-9]/g, "");
+  const wantAlbum  = norm(albumName);
+  const wantTrack  = norm(trackName);
+  const wantArtist = norm(artistName);
+  // STRICT artist match required — falling back to results[0] gives a totally
+  // different artist's song (e.g. "Change of Heart" by Tom Petty when asked
+  // for The 1975's "A Change of Heart"), which then pollutes the duration
+  // check and causes the correct synced lyrics to be rejected.
+  const byArtist = results.filter(r => norm(r.artistName) === wantArtist);
+  if (byArtist.length === 0) return null;
+  const pick =
+    byArtist.find(r => norm(r.collectionName) === wantAlbum && norm(r.trackName) === wantTrack)
+    || byArtist.find(r => norm(r.trackName) === wantTrack)
+    || byArtist[0];
+  return pick?.trackTimeMillis ? pick.trackTimeMillis / 1000 : null;
+}
+
+// LRClib /api/get is strict (±2s). Allow a hair more on our side when scanning
+// search results, since cross-master differences are usually under ~3s.
+const LRC_DURATION_TOLERANCE_S = 3;
+
 async function fetchLrclib(trackName, artistName, albumName, durationSec) {
-  if (durationSec) {
+  // ── Build candidate durations ────────────────────────────────────────────
+  // Try whatever the caller passed (Discogs-parsed) first, then iTunes as a
+  // secondary. iTunes is fetched lazily — only if the first try misses.
+  const candidates = [];
+  if (durationSec && durationSec > 0) candidates.push(Math.round(durationSec));
+
+  for (const d of candidates) {
     const p = new URLSearchParams({
       track_name: trackName, artist_name: artistName, album_name: albumName,
-      duration: String(Math.round(durationSec)),
+      duration: String(d),
     });
     const hit = await lrclibGetOnce(p);
     if (hit?.syncedLyrics || hit?.plainLyrics) return packLrclib(hit);
   }
+
+  const itunesDur = await fetchItunesDuration(trackName, artistName, albumName);
+  if (itunesDur && Math.round(itunesDur) !== candidates[0]) {
+    const p = new URLSearchParams({
+      track_name: trackName, artist_name: artistName, album_name: albumName,
+      duration: String(Math.round(itunesDur)),
+    });
+    const hit = await lrclibGetOnce(p);
+    if (hit?.syncedLyrics || hit?.plainLyrics) return packLrclib(hit);
+  }
+
+  // ── No duration-matched hit. Be careful: a non-matched synced version
+  // causes linear compounding drift across every song, which is much worse
+  // than no timing at all. Rules from here on:
+  //   • If we have a reference duration, only accept synced lyrics whose own
+  //     duration is within tolerance. Otherwise downgrade to plain.
+  //   • If we have NO reference (iTunes lookup also missed — rare), accept
+  //     synced from a same-album match (normalised). It's the best heuristic
+  //     we have; better than throwing away timing entirely.
+  const refDur = itunesDur || durationSec || 0;
+  const okDur  = (d) => !refDur || !d || Math.abs(d - refDur) <= LRC_DURATION_TOLERANCE_S;
+  const norm   = (s) => (s || "").toLowerCase().replace(/[^a-z0-9]/g, "");
+  const wantAlbumN = norm(albumName);
+  const sameAlbum  = (x) => wantAlbumN && norm(x.albumName) === wantAlbumN;
+
   const p2 = new URLSearchParams({
     track_name: trackName, artist_name: artistName, album_name: albumName,
   });
   const hit = await lrclibGetOnce(p2);
-  if (hit?.syncedLyrics || hit?.plainLyrics) return packLrclib(hit);
-  const hit2 = await lrclibSearch(trackName, artistName, albumName);
-  if (hit2?.syncedLyrics || hit2?.plainLyrics) return packLrclib(hit2);
+  if (hit) {
+    if (hit.syncedLyrics && okDur(hit.duration)) return packLrclib(hit);
+    if (hit.syncedLyrics && !refDur)              return packLrclib(hit);
+    if (hit.syncedLyrics || hit.plainLyrics) {
+      return { lrc: null, plain: hit.plainLyrics || lrcToPlain(hit.syncedLyrics), source: "lrclib-plain" };
+    }
+  }
+
+  // ── Search: scan ALL variants for the best synced one we can justify.
+  const results = await lrclibSearchAll(trackName, artistName);
+  if (results.length > 0) {
+    if (refDur) {
+      // Prefer duration-matched AND same-album; else any duration-matched.
+      const both = results.find(x => x.syncedLyrics && sameAlbum(x) && okDur(x.duration));
+      if (both) return packLrclib(both);
+      const byDur = results.find(x => x.syncedLyrics && okDur(x.duration));
+      if (byDur) return packLrclib(byDur);
+    } else {
+      // No reference duration — same-album synced is our best heuristic.
+      const byAlbum = results.find(x => x.syncedLyrics && sameAlbum(x));
+      if (byAlbum) return packLrclib(byAlbum);
+    }
+    // Last resort: plain only. Prefer same-album, else any.
+    const pick = results.find(sameAlbum) || results[0];
+    if (pick.plainLyrics || pick.syncedLyrics) {
+      return { lrc: null, plain: pick.plainLyrics || lrcToPlain(pick.syncedLyrics), source: "lrclib-plain" };
+    }
+  }
+
   return null;
 }
 
 function packLrclib(hit) {
   return {
-    lrc:    hit.syncedLyrics || null,
-    plain:  hit.plainLyrics || lrcToPlain(hit.syncedLyrics),
-    source: "lrclib",
+    lrc:        hit.syncedLyrics || null,
+    plain:      hit.plainLyrics || lrcToPlain(hit.syncedLyrics),
+    source:     "lrclib",
+    duration_s: hit.duration || null, // remembered so callers can verify match
   };
 }
 
