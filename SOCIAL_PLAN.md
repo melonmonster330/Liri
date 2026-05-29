@@ -168,3 +168,4 @@ play_history  -- may already exist; check before adding
 ## Change log
 
 - 2026-05-22 — Initial plan. MVP scope locked: follows (Instagram-style), posts (manual + auto), likes, profile pages with 3 privacy tiers, default private. Comments / PiP / live presence deferred.
+- 2026-05-29 — **Lyric-quote posts promoted from Deferred → MVP** (the Liri-unique, shareable hook; also a premium feature per MONETIZATION.md). Posts + likes schema landed (`20260529_posts_likes.sql`): `posts` (kind album/track/lyric, per-post visibility, denormalized display fields, optional lyric timestamp window for a future audio clip) + `likes` (with denormalized `like_count` trigger) + `can_see_post()` RLS helper. Next: client compose flow (album/track/lyric share), feed render, like button. Monetization strategy captured in MONETIZATION.md (subscription primary, feed ads at scale, no audio ads).
