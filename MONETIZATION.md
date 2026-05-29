@@ -38,10 +38,18 @@ defensible — but ads only pay real money at meaningful DAU (CPMs are low).
 - Build only after the social layer has real daily usage. Premature ads kill
   the growth that makes ads worth anything.
 
-### 3. Audio ads between songs — AVOID
-Injecting an audio ad into someone's vinyl listening ritual shatters exactly
-the mood they came for. Fast path to feeling cheap and bleeding retention.
-Spotify can do it at utility scale; a boutique vinyl app cannot. **Not planned.**
+### 3. Flip / side-change visual ads — OK, sparingly
+A **silent image pop-up card at the LP flip or side change** (never mid-song,
+never audio). The flip is already a natural pause in the ritual — turning the
+record — so a tasteful visual card there reads as natural, not invasive.
+- Free tier only; **premium = no flip ads**.
+- Keep frequency low (not every flip) and the card dismissible/minimal so it
+  matches the brand. One clean sponsored image, not a banner farm.
+
+### 4. Audio ads between songs — AVOID
+Injecting an *audio* ad into the listening ritual shatters exactly the mood
+people came for. Fast path to feeling cheap and bleeding retention. Spotify can
+do it at utility scale; a boutique vinyl app cannot. **Not planned.**
 
 ---
 
