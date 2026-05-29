@@ -107,16 +107,24 @@ async function fetchItunesDuration(trackName, artistName, albumName) {
   // check and causes the correct synced lyrics to be rejected.
   const byArtist = results.filter(r => norm(r.artistName) === wantArtist);
   if (byArtist.length === 0) return null;
+  // Require a TRACK-NAME match too. Falling back to byArtist[0] returns an
+  // unrelated song by the same artist (e.g. "She Lays Down" → "I Like America
+  // & America Likes Me", 207s), whose duration then makes the correct synced
+  // lyrics look like a gross mismatch. No track match → no reference duration.
   const pick =
     byArtist.find(r => norm(r.collectionName) === wantAlbum && norm(r.trackName) === wantTrack)
     || byArtist.find(r => norm(r.trackName) === wantTrack)
-    || byArtist[0];
+    || null;
   return pick?.trackTimeMillis ? pick.trackTimeMillis / 1000 : null;
 }
 
 // LRClib /api/get is strict (±2s). Allow a hair more on our side when scanning
 // search results, since cross-master differences are usually under ~3s.
 const LRC_DURATION_TOLERANCE_S = 3;
+// A synced version more than this far from the reference is a fundamentally
+// different recording (live / remix / edit), not a remaster — so it overrides
+// even an album-name match. Within this window we trust the album match.
+const LRC_GROSS_MISMATCH_S = 30;
 
 async function fetchLrclib(trackName, artistName, albumName, durationSec) {
   // ── Build candidate durations ────────────────────────────────────────────
@@ -144,53 +152,77 @@ async function fetchLrclib(trackName, artistName, albumName, durationSec) {
     if (hit?.syncedLyrics || hit?.plainLyrics) return packLrclib(hit);
   }
 
-  // ── No duration-matched hit. Be careful: a non-matched synced version
-  // causes linear compounding drift across every song, which is much worse
-  // than no timing at all. Rules from here on:
-  //   • If we have a reference duration, only accept synced lyrics whose own
-  //     duration is within tolerance. Otherwise downgrade to plain.
-  //   • If we have NO reference (iTunes lookup also missed — rare), accept
-  //     synced from a same-album match (normalised). It's the best heuristic
-  //     we have; better than throwing away timing entirely.
+  // ── No duration-matched hit. We now have to *choose* among LRClib's many
+  // variants. The original folklore drift bug came from picking a synced
+  // version whose duration was WILDLY off (live cuts / remixes / sped-up
+  // edits — 20s..348s spread). But an external reference duration is itself
+  // unreliable: iTunes is missing many tracks per-album (artists like The
+  // 1975 reshuffle their catalogue), and Discogs vinyl durations are often a
+  // few seconds off the streaming master. Gating synced lyrics on a strict
+  // ±3s match to that reference threw away perfectly-good synced versions
+  // ("She Lays Down" → downgraded to plain even though LRClib has 6 correct
+  // synced versions clustered at 237–241s).
+  //
+  // New strategy — trust the signals that actually separate right from wrong:
+  //   1. ALBUM-NAME MATCH (normalised) is the strongest signal — it filters
+  //      out covers / live albums / remixes. We trust an album-matched synced
+  //      version even if it disagrees with the external reference duration.
+  //   2. Among album-matched synced versions, use the external reference (if
+  //      any) just to *disambiguate* (pick the closest); otherwise fall back
+  //      to the CLUSTER CONSENSUS (median duration), which rejects lone
+  //      outliers without needing an external reference at all.
+  //   3. Only a GROSS duration mismatch (> 30s) overrides an album match —
+  //      that indicates a fundamentally different recording, not a remaster.
   const refDur = itunesDur || durationSec || 0;
-  const okDur  = (d) => !refDur || !d || Math.abs(d - refDur) <= LRC_DURATION_TOLERANCE_S;
-  const norm   = (s) => (s || "").toLowerCase().replace(/[^a-z0-9]/g, "");
+  const okDur     = (d) => !refDur || !d || Math.abs(d - refDur) <= LRC_DURATION_TOLERANCE_S;
+  const grossOk   = (d) => !refDur || !d || Math.abs(d - refDur) <= LRC_GROSS_MISMATCH_S;
+  const norm      = (s) => (s || "").toLowerCase().replace(/[^a-z0-9]/g, "");
   const wantAlbumN = norm(albumName);
   const sameAlbum  = (x) => wantAlbumN && norm(x.albumName) === wantAlbumN;
+  const median = (nums) => {
+    const s = nums.filter(Boolean).sort((a, b) => a - b);
+    return s.length ? s[Math.floor(s.length / 2)] : 0;
+  };
+  // Pick the best synced entry: closest to the reference duration if we have
+  // one, else closest to the cluster's median (consensus) duration.
+  const pickSynced = (list) => {
+    const synced = list.filter(x => x.syncedLyrics);
+    if (!synced.length) return null;
+    const target = refDur || median(synced.map(x => x.duration));
+    if (!target) return synced[0];
+    return synced.reduce((best, x) =>
+      Math.abs((x.duration || 0) - target) < Math.abs((best.duration || 0) - target) ? x : best);
+  };
 
+  // Gather the canonical /api/get match (album-constrained) plus all search
+  // variants, and choose from the combined pool.
   const p2 = new URLSearchParams({
     track_name: trackName, artist_name: artistName, album_name: albumName,
   });
-  const hit = await lrclibGetOnce(p2);
-  if (hit) {
-    if (hit.syncedLyrics && okDur(hit.duration)) return packLrclib(hit);
-    if (hit.syncedLyrics && !refDur)              return packLrclib(hit);
-    if (hit.syncedLyrics || hit.plainLyrics) {
-      return { lrc: null, plain: hit.plainLyrics || lrcToPlain(hit.syncedLyrics), source: "lrclib-plain" };
-    }
-  }
-
-  // ── Search: scan ALL variants for the best synced one we can justify.
+  const got = await lrclibGetOnce(p2);
   const results = await lrclibSearchAll(trackName, artistName);
-  if (results.length > 0) {
-    if (refDur) {
-      // Prefer duration-matched AND same-album; else any duration-matched.
-      const both = results.find(x => x.syncedLyrics && sameAlbum(x) && okDur(x.duration));
-      if (both) return packLrclib(both);
-      const byDur = results.find(x => x.syncedLyrics && okDur(x.duration));
-      if (byDur) return packLrclib(byDur);
-    } else {
-      // No reference duration — same-album synced is our best heuristic.
-      const byAlbum = results.find(x => x.syncedLyrics && sameAlbum(x));
-      if (byAlbum) return packLrclib(byAlbum);
-    }
-    // Last resort: plain only. Prefer same-album, else any.
-    const pick = results.find(sameAlbum) || results[0];
-    if (pick.plainLyrics || pick.syncedLyrics) {
-      return { lrc: null, plain: pick.plainLyrics || lrcToPlain(pick.syncedLyrics), source: "lrclib-plain" };
-    }
+  const all = got ? [got, ...results] : results;
+  if (all.length === 0) return null;
+
+  // 1. Best same-album synced version — trusted unless it's a gross mismatch.
+  const albumPick = pickSynced(all.filter(sameAlbum));
+  if (albumPick && grossOk(albumPick.duration)) return packLrclib(albumPick);
+
+  // 2. No trustworthy same-album synced. If we have a reference duration,
+  //    accept any synced within strict tolerance (covers albums whose name
+  //    LRClib spells differently than we store).
+  if (refDur) {
+    const byDur = pickSynced(all.filter(x => okDur(x.duration)));
+    if (byDur) return packLrclib(byDur);
   }
 
+  // 3. Last resort: plain only. Prefer same-album, then the canonical get.
+  const plainPick = all.find(x => sameAlbum(x) && (x.plainLyrics || x.syncedLyrics))
+                 || (got && (got.plainLyrics || got.syncedLyrics) ? got : null)
+                 || all.find(x => x.plainLyrics || x.syncedLyrics);
+  if (plainPick) {
+    return { lrc: null, plain: plainPick.plainLyrics || lrcToPlain(plainPick.syncedLyrics), source: "lrclib-plain" };
+  }
   return null;
 }
 
