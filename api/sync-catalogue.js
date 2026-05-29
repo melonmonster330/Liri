@@ -1,13 +1,16 @@
-// Liri — Monthly Catalogue Sync (Vercel Cron)
+// Liri — Weekly Catalogue Sync (Vercel Cron)
 //
-// Searches iTunes for a broad set of vinyl-friendly genres and upserts
-// results into the `catalogue` table. Designed to run monthly via Vercel cron.
+// Two passes, both upserting lightweight rows into the `catalogue` table:
+//   1. Genre sweep — searches iTunes for a broad set of vinyl-friendly genres.
+//   2. New releases — pulls Apple's "Top Albums" RSS feed so freshly released
+//      music (most new music drops on Fridays) surfaces in the browse grid
+//      without waiting weeks for it to climb a genre search.
 //
 // Only stores lightweight data (name, artist, artwork, genre, year) —
 // full track/lyrics/side data is fetched separately when a user adds an album.
 //
 // Triggered by Vercel cron — see vercel.json:
-//   { "path": "/api/sync-catalogue", "schedule": "0 3 1 * *" }  ← 3am on the 1st of each month
+//   { "path": "/api/sync-catalogue", "schedule": "0 3 * * 5" }  ← 3am every Friday
 //
 // Can also be triggered manually by hitting the endpoint with the secret header:
 //   curl -H "x-cron-secret: YOUR_SECRET" https://getliri.com/api/sync-catalogue
@@ -37,9 +40,15 @@ function maskEmail(email) {
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
-function httpsGet(url) {
+function httpsGet(url, redirects = 3) {
   return new Promise((resolve, reject) => {
     const req = https.get(url, (res) => {
+      // Follow redirects — Apple's RSS feed host 301s to a CDN.
+      if (res.statusCode >= 300 && res.statusCode < 400 && res.headers.location && redirects > 0) {
+        res.resume();
+        const next = new URL(res.headers.location, url).toString();
+        return resolve(httpsGet(next, redirects - 1));
+      }
       const chunks = [];
       res.on("data", c => chunks.push(c));
       res.on("end", () => {
@@ -48,7 +57,7 @@ function httpsGet(url) {
       });
     });
     req.on("error", reject);
-    req.setTimeout(10000, () => { req.destroy(); reject(new Error("iTunes timeout")); });
+    req.setTimeout(10000, () => { req.destroy(); reject(new Error("request timeout")); });
   });
 }
 
@@ -113,6 +122,36 @@ function albumToRow(album) {
     genre:         album.primaryGenreName || null,
     release_year:  album.releaseDate ? new Date(album.releaseDate).getFullYear() : null,
     track_count:   album.trackCount || null,
+    last_synced_at: new Date().toISOString(),
+  };
+}
+
+// ── New releases (Apple RSS) ───────────────────────────────────────────────────
+// Apple's "Top Albums" feed is refreshed constantly and surfaces brand-new
+// releases right away. The feed `id` IS the iTunes collection id, so rows line
+// up with the genre-sweep rows. Note: feed host 301s — httpsGet follows it.
+async function fetchNewReleases(limit = 100) {
+  const url = `https://rss.applemarketingtools.com/api/v2/us/music/most-played/${limit}/albums.json`;
+  try {
+    const data = await httpsGet(url);
+    return data?.feed?.results || [];
+  } catch {
+    return [];
+  }
+}
+
+function rssAlbumToRow(a) {
+  // Prefer a real genre over the catch-all "Music" entry.
+  const genre = (a.genres || []).find(g => g.name && g.name !== "Music")?.name
+             || a.genres?.[0]?.name || null;
+  return {
+    itunes_collection_id: parseInt(a.id, 10),
+    album_name:    a.name,
+    artist_name:   a.artistName,
+    artwork_url:   (a.artworkUrl100 || "").replace("100x100bb", "600x600bb"),
+    genre,
+    release_year:  a.releaseDate ? new Date(a.releaseDate).getFullYear() : null,
+    track_count:   null,
     last_synced_at: new Date().toISOString(),
   };
 }
@@ -587,8 +626,8 @@ module.exports = async (req, res) => {
     return res.status(401).json({ error: "Unauthorized" });
   }
 
-  console.log("[sync-catalogue] Starting monthly sync...");
-  const stats = { terms: 0, found: 0, upserted: 0, errors: [] };
+  console.log("[sync-catalogue] Starting weekly sync...");
+  const stats = { terms: 0, found: 0, upserted: 0, newReleases: 0, errors: [] };
 
   for (const term of SEARCH_TERMS) {
     try {
@@ -608,6 +647,21 @@ module.exports = async (req, res) => {
       console.error(`[sync-catalogue] Error for term "${term}":`, e.message);
       stats.errors.push({ term, error: e.message });
     }
+  }
+
+  // ── New releases pass ───────────────────────────────────────────────────────
+  try {
+    const fresh = await fetchNewReleases(100);
+    const rows = fresh
+      .map(rssAlbumToRow)
+      .filter(r => Number.isFinite(r.itunes_collection_id) && r.album_name);
+    if (rows.length > 0) {
+      await sbUpsertBatch(rows);
+      stats.newReleases = rows.length;
+    }
+  } catch (e) {
+    console.error("[sync-catalogue] new-releases pass failed:", e.message);
+    stats.errors.push({ stage: "new-releases", error: e.message });
   }
 
   console.log("[sync-catalogue] Done:", stats);
