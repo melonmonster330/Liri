@@ -215,7 +215,7 @@ function Liri() {
   const nudgeMenuTimerRef = useRef(null);
 
   // ── Onboarding ──
-  const [showOnboarding, setShowOnboarding] = useState(() => !localStorage.getItem("liri_onboarding_done"));
+  const [showOnboarding, setShowOnboarding] = useState(false); // shown after login/signup (see effect below)
   const [onboardingStep, setOnboardingStep] = useState(0);
   const ONBOARDING_STEPS = 6;
   const [coachStep, setCoachStep] = useState(0); // 0 none · 1 highlight Listen · 2 highlight Feed
@@ -223,9 +223,16 @@ function Liri() {
     localStorage.setItem("liri_onboarding_done", "true");
     setShowOnboarding(false);
   };
-  // Skip onboarding for returning users — if auth resolves with a logged-in user, they've seen it
+  // Show onboarding AFTER login/signup — once per device, the first time a
+  // signed-in user lands without the done flag. Hidden again on sign-out.
   useEffect(() => {
-    if (user) dismissOnboarding();
+    if (user && !localStorage.getItem("liri_onboarding_done")) {
+      setCoachStep(0);
+      setOnboardingStep(0);
+      setShowOnboarding(true);
+    } else if (!user) {
+      setShowOnboarding(false);
+    }
   }, [user]);
 
   // ── Analytics: persistent anonymous session ID ──

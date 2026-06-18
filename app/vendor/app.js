@@ -474,7 +474,7 @@
     const [notifyDenied, setNotifyDenied] = useState2(false);
     const [nudgeMenu, setNudgeMenu] = useState2(null);
     const nudgeMenuTimerRef = useRef2(null);
-    const [showOnboarding, setShowOnboarding] = useState2(() => !localStorage.getItem("liri_onboarding_done"));
+    const [showOnboarding, setShowOnboarding] = useState2(false);
     const [onboardingStep, setOnboardingStep] = useState2(0);
     const ONBOARDING_STEPS = 6;
     const [coachStep, setCoachStep] = useState2(0);
@@ -483,7 +483,13 @@
       setShowOnboarding(false);
     };
     useEffect3(() => {
-      if (user) dismissOnboarding();
+      if (user && !localStorage.getItem("liri_onboarding_done")) {
+        setCoachStep(0);
+        setOnboardingStep(0);
+        setShowOnboarding(true);
+      } else if (!user) {
+        setShowOnboarding(false);
+      }
     }, [user]);
     const sessionId = React.useMemo(() => {
       let sid = localStorage.getItem("liri_session_id");
