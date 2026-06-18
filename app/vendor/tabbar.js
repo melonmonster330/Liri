@@ -64,6 +64,9 @@
 
     if (!signedIn) return null;
 
+    // On the iOS app, show icons only (no labels) for a cleaner native feel.
+    const iconsOnly = !!window.Capacitor;
+
     const tabs = [
       { key: "listen",  label: "Listen",  href: listenHref(),          icon: Icon.listen },
       { key: "library", label: "My Records", href: "/app/library.html",   icon: Icon.library },
@@ -99,7 +102,7 @@
               display: "flex", flexDirection: "column",
               alignItems: "center", justifyContent: "center",
               gap: 3,
-              padding: "10px 0 10px",
+              padding: iconsOnly ? "14px 0" : "10px 0 10px",
               color: active ? "#d4a846" : "rgba(240,230,211,0.45)",
               textDecoration: "none",
               fontFamily: "inherit",
@@ -107,7 +110,7 @@
             },
           },
           t.icon(active),
-          h("div", { style: { fontSize: 10, fontWeight: 700, letterSpacing: 0.4 } }, t.label)
+          iconsOnly ? null : h("div", { style: { fontSize: 10, fontWeight: 700, letterSpacing: 0.4 } }, t.label)
         );
       })
     );
