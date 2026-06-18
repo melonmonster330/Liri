@@ -357,7 +357,11 @@
         };
         const { error: err } = await sb.from("posts").insert(payload);
         setPosting(false);
-        if (err) { setError("Couldn't post — try again."); return; }
+        if (err) {
+          console.error("[new-post] insert failed:", err, "payload:", payload);
+          setError(err.message || err.details || err.hint || "Couldn't post — try again.");
+          return;
+        }
         onPosted();
         onClose();
       };
