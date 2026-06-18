@@ -514,6 +514,8 @@
     const lastRecordingRef = useRef2(null);
     const recognitionWonRef = useRef2(false);
     const lastRawMatchRef = useRef2(null);
+    const autoPostVisRef = useRef2("off");
+    const autoPostedAlbumsRef = useRef2(/* @__PURE__ */ new Set());
     const [audioLevel, setAudioLevel] = useState2(0);
     const [lastSong, setLastSong] = useState2(null);
     const [hoverNudge, setHoverNudge] = useState2(null);
@@ -731,6 +733,14 @@
     };
     const fetchUsage = async () => {
     };
+    const fetchAutoPostPref = async (u) => {
+      if (!u) return;
+      try {
+        const { data } = await sb.from("profiles").select("auto_post_visibility").eq("id", u.id).maybeSingle();
+        autoPostVisRef.current = data?.auto_post_visibility || "off";
+      } catch (e) {
+      }
+    };
     const fetchHistory = async (u) => {
       if (!u) return;
       setHistoryLoading(true);
@@ -777,6 +787,31 @@
         console.error("logListeningEvent failed:", e.message);
       }
     };
+    const maybeAutoPostPlay = async ({ userId, collectionId, album, artist, artwork: artwork2 }) => {
+      try {
+        const vis = autoPostVisRef.current;
+        if (!userId || vis === "off") return;
+        if (!collectionId) return;
+        const key = String(collectionId);
+        if (autoPostedAlbumsRef.current.has(key)) return;
+        autoPostedAlbumsRef.current.add(key);
+        const since = new Date(Date.now() - 12 * 60 * 60 * 1e3).toISOString();
+        const { data: recent } = await sb.from("posts").select("id").eq("author_id", userId).eq("collection_id", Number(collectionId)).eq("source", "auto").gte("created_at", since).limit(1);
+        if (recent && recent.length) return;
+        await sb.from("posts").insert({
+          author_id: userId,
+          kind: "album",
+          source: "auto",
+          visibility: vis,
+          collection_id: Number(collectionId),
+          album_name: album || null,
+          artist_name: artist || null,
+          artwork_url: artwork2 || null
+        });
+      } catch (e) {
+        console.error("maybeAutoPostPlay failed:", e.message);
+      }
+    };
     const logFlipEvent = async (params) => {
       try {
         await sb.from("flip_events").insert({
@@ -807,6 +842,7 @@
         if (u) {
           fetchUsage(u);
           fetchHistory(u);
+          fetchAutoPostPref(u);
           fetch(`${window.Capacitor ? "https://www.getliri.com" : ""}/api/subscription-status`, { headers: { "Authorization": `Bearer ${session.access_token}` } }).then((r) => r.ok ? r.json() : null).then((d) => {
             if (d?.tier) {
               setUserTier(d.tier);
@@ -835,6 +871,7 @@
         if (u) {
           fetchUsage(u);
           fetchHistory(u);
+          fetchAutoPostPref(u);
           fetch(`${window.Capacitor ? "https://www.getliri.com" : ""}/api/subscription-status`, { headers: { "Authorization": `Bearer ${s.access_token}` } }).then((r) => r.ok ? r.json() : null).then((d) => {
             if (d?.tier) setUserTier(d.tier);
           }).catch(() => {
@@ -1467,6 +1504,7 @@
           durationSecs: duration,
           acrScore
         });
+        maybeAutoPostPlay({ userId: user?.id, collectionId, album: song.album, artist, artwork: song.artwork });
         if (!collectionId || tracks.length === 0) return;
         const dbRelease = await fetchVinylRelease(collectionId);
         if (dbRelease?.vinyl_tracks?.length > 0) {
@@ -1722,6 +1760,7 @@ Move closer to your speakers and try again.`);
         saveToHistory(user, song);
         fetchHistory(user);
         logListeningEvent({ userId: user?.id, title: track.trackName, artist: track.artistName || ta?.artist_name || "", album: ta?.album_name || "", artwork: ta?.artwork_url || null, itunesTrackId: track.trackId, collectionId: ta?.itunes_collection_id || track.collectionId, vinylReleaseId: null, vinylModeOn: true, source: "shazam", offsetSecs, durationSecs: track.trackTimeMillis ? track.trackTimeMillis / 1e3 : null });
+        maybeAutoPostPlay({ userId: user?.id, collectionId: ta?.itunes_collection_id || track.collectionId, album: ta?.album_name || "", artist: track.artistName || ta?.artist_name || "", artwork: ta?.artwork_url || null });
         const at = turntableTracksRef.current;
         setAlbumTracks(at);
         setAlbumCollectionId(ta?.itunes_collection_id ? String(ta.itunes_collection_id) : null);
@@ -2381,6 +2420,7 @@ Move closer to your speakers and try again.`);
           source: "turntable_jump",
           durationSecs: duration
         });
+        maybeAutoPostPlay({ userId: user?.id, collectionId: ta.itunes_collection_id, album: song.album, artist: song.artist, artwork: song.artwork });
       } else {
         setDetectedSong(null);
         setIdentifiedBy(null);

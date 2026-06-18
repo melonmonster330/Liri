@@ -265,6 +265,8 @@ function Liri() {
   const lastRecordingRef = useRef(null); // stores last recorded blob for debug download
   const recognitionWonRef = useRef(false); // true once recognition wins — prevents double-set
   const lastRawMatchRef = useRef(null); // { title, artist, identified_by } — raw match at recognition time
+  const autoPostVisRef = useRef("off"); // user's auto_post_visibility: off|private|friends|public
+  const autoPostedAlbumsRef = useRef(new Set()); // collection_ids auto-posted this app session (dedup)
   const [audioLevel, setAudioLevel] = useState(0); // 0–1 live mic amplitude (chunk-size proxy)
   const [lastSong, setLastSong] = useState(null);
   const [hoverNudge, setHoverNudge] = useState(null); // null | "left" | "right"
@@ -517,6 +519,16 @@ function Liri() {
   // ── Usage fetch — removed (no API costs at listen time, no free limit) ──
   const fetchUsage = async () => {};
 
+  // ── Load the user's auto-post preference (off|private|friends|public) ──
+  const fetchAutoPostPref = async u => {
+    if (!u) return;
+    try {
+      const { data } = await sb.from("profiles")
+        .select("auto_post_visibility").eq("id", u.id).maybeSingle();
+      autoPostVisRef.current = data?.auto_post_visibility || "off";
+    } catch (e) { /* default stays "off" */ }
+  };
+
   // ── History fetch ──
   const fetchHistory = async u => {
     if (!u) return;
@@ -571,6 +583,45 @@ function Liri() {
     }
   };
 
+  // ── Social: auto-post the record you're spinning (if the user opted in) ──
+  // Posts ONE album post per record per listening session — never per track —
+  // so auto-advancing through a side doesn't spam the feed. Cross-session spam
+  // is guarded by a 12h DB check. Never throws; social must not break playback.
+  const maybeAutoPostPlay = async ({ userId, collectionId, album, artist, artwork }) => {
+    try {
+      const vis = autoPostVisRef.current;
+      if (!userId || vis === "off") return;
+      if (!collectionId) return;
+      const key = String(collectionId);
+      if (autoPostedAlbumsRef.current.has(key)) return; // already posted this session
+      autoPostedAlbumsRef.current.add(key);
+
+      // Cross-session dedup: skip if we auto-posted this album in the last 12h.
+      const since = new Date(Date.now() - 12 * 60 * 60 * 1000).toISOString();
+      const { data: recent } = await sb.from("posts")
+        .select("id")
+        .eq("author_id", userId)
+        .eq("collection_id", Number(collectionId))
+        .eq("source", "auto")
+        .gte("created_at", since)
+        .limit(1);
+      if (recent && recent.length) return;
+
+      await sb.from("posts").insert({
+        author_id: userId,
+        kind: "album",
+        source: "auto",
+        visibility: vis,
+        collection_id: Number(collectionId),
+        album_name: album || null,
+        artist_name: artist || null,
+        artwork_url: artwork || null,
+      });
+    } catch (e) {
+      console.error("maybeAutoPostPlay failed:", e.message);
+    }
+  };
+
   // ── Analytics: log a vinyl side flip to flip_events ──
   const logFlipEvent = async params => {
     try {
@@ -604,6 +655,7 @@ function Liri() {
       if (u) {
         fetchUsage(u);
         fetchHistory(u);
+        fetchAutoPostPref(u);
         fetch(`${window.Capacitor ? "https://www.getliri.com" : ""}/api/subscription-status`, { headers: { "Authorization": `Bearer ${session.access_token}` } })
           .then(r => r.ok ? r.json() : null).then(d => { if (d?.tier) { setUserTier(d.tier); setAlbumCount(d.albumCount || 0); } }).catch(() => {});
         syncAppleSubscription(session.access_token);
@@ -627,6 +679,7 @@ function Liri() {
       if (u) {
         fetchUsage(u);
         fetchHistory(u);
+        fetchAutoPostPref(u);
         fetch(`${window.Capacitor ? "https://www.getliri.com" : ""}/api/subscription-status`, { headers: { "Authorization": `Bearer ${s.access_token}` } })
           .then(r => r.ok ? r.json() : null).then(d => { if (d?.tier) setUserTier(d.tier); }).catch(() => {});
       }
@@ -1354,6 +1407,7 @@ function Liri() {
         durationSecs: duration,
         acrScore
       });
+      maybeAutoPostPlay({ userId: user?.id, collectionId, album: song.album, artist, artwork: song.artwork });
       if (!collectionId || tracks.length === 0) return;
       const dbRelease = await fetchVinylRelease(collectionId);
       if (dbRelease?.vinyl_tracks?.length > 0) {
@@ -1682,6 +1736,7 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
       saveToHistory(user, song);
       fetchHistory(user);
       logListeningEvent({ userId: user?.id, title: track.trackName, artist: track.artistName || ta?.artist_name || "", album: ta?.album_name || "", artwork: ta?.artwork_url || null, itunesTrackId: track.trackId, collectionId: ta?.itunes_collection_id || track.collectionId, vinylReleaseId: null, vinylModeOn: true, source: "shazam", offsetSecs, durationSecs: track.trackTimeMillis ? track.trackTimeMillis / 1000 : null });
+      maybeAutoPostPlay({ userId: user?.id, collectionId: ta?.itunes_collection_id || track.collectionId, album: ta?.album_name || "", artist: track.artistName || ta?.artist_name || "", artwork: ta?.artwork_url || null });
       const at = turntableTracksRef.current;
       setAlbumTracks(at);
       setAlbumCollectionId(ta?.itunes_collection_id ? String(ta.itunes_collection_id) : null);
@@ -2486,6 +2541,7 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
         source: "turntable_jump",
         durationSecs: duration
       });
+      maybeAutoPostPlay({ userId: user?.id, collectionId: ta.itunes_collection_id, album: song.album, artist: song.artist, artwork: song.artwork });
     } else {
       // ── Non-turntable: must re-listen to find position ──
       setDetectedSong(null);
