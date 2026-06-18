@@ -4606,6 +4606,9 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
       opacity: !bugText.trim() || bugSending ? 0.5 : 1
     }
   }, bugSent ? "✓ Sent!" : bugSending ? "Sending…" : "Send report"))), /*#__PURE__*/React.createElement("button", {
+    onClick: () => { setShowSettings(false); setCoachStep(0); setOnboardingStep(0); setShowOnboarding(true); },
+    style: { width: "100%", background: "rgba(212,168,70,0.08)", border: "1px solid rgba(212,168,70,0.2)", color: "rgba(212,168,70,0.85)", borderRadius: "14px", padding: "14px", fontSize: "14px", fontWeight: "600", cursor: "pointer", fontFamily: "inherit", marginBottom: "8px" }
+  }, "How Liri works"), /*#__PURE__*/React.createElement("button", {
     onClick: () => { setShowSettings(false); setShowChangePw(true); setChangePwError(null); setChangePwNew(""); setChangePwConfirm(""); setChangePwDone(false); },
     style: { width: "100%", background: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.08)", color: "rgba(255,255,255,0.4)", borderRadius: "14px", padding: "14px", fontSize: "14px", cursor: "pointer", fontFamily: "inherit", marginBottom: "8px" }
   }, "Change Password"), /*#__PURE__*/React.createElement("button", {

@@ -4528,6 +4528,15 @@ Move closer to your speakers and try again.`);
       /* @__PURE__ */ React.createElement("button", {
         onClick: () => {
           setShowSettings(false);
+          setCoachStep(0);
+          setOnboardingStep(0);
+          setShowOnboarding(true);
+        },
+        style: { width: "100%", background: "rgba(212,168,70,0.08)", border: "1px solid rgba(212,168,70,0.2)", color: "rgba(212,168,70,0.85)", borderRadius: "14px", padding: "14px", fontSize: "14px", fontWeight: "600", cursor: "pointer", fontFamily: "inherit", marginBottom: "8px" }
+      }, "How Liri works"),
+      /* @__PURE__ */ React.createElement("button", {
+        onClick: () => {
+          setShowSettings(false);
           setShowChangePw(true);
           setChangePwError(null);
           setChangePwNew("");
