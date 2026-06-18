@@ -66,7 +66,7 @@
 
     const tabs = [
       { key: "listen",  label: "Listen",  href: listenHref(),          icon: Icon.listen },
-      { key: "library", label: "Records", href: "/app/library.html",   icon: Icon.library },
+      { key: "library", label: "My Records", href: "/app/library.html",   icon: Icon.library },
       { key: "feed",    label: "Feed",    href: "/app/feed.html",      icon: Icon.feed },
       { key: "explore", label: "Explore", href: "/app/explore.html",   icon: Icon.explore },
       { key: "profile", label: "You",     href: "/app/profile.html",   icon: Icon.profile },
