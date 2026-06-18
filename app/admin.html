@@ -133,6 +133,14 @@
       <button class="refresh-btn" id="refresh-btn">Refresh</button>
     </div>
   </div>
+  <div id="liri-update" style="background:rgba(212,168,70,0.06);border:1px solid rgba(212,168,70,0.2);border-radius:12px;padding:16px;margin-bottom:20px">
+    <div style="font-size:13px;font-weight:700;color:#d4a846;letter-spacing:0.5px;margin-bottom:10px">📣 Post a Liri update to the feed</div>
+    <textarea id="lu-text" rows="3" placeholder="What's new in this release… (posts as @liri to everyone's feed)" style="width:100%;background:rgba(0,0,0,0.25);border:1px solid rgba(255,255,255,0.12);border-radius:8px;color:#f0e6d3;padding:12px;font-size:14px;font-family:inherit;resize:vertical;box-sizing:border-box"></textarea>
+    <div style="display:flex;align-items:center;gap:12px;margin-top:10px">
+      <button id="lu-post" style="background:linear-gradient(135deg,#d4a846,#c9807a);color:#080810;border:none;border-radius:50px;padding:10px 22px;font-size:13px;font-weight:700;cursor:pointer;font-family:inherit">Publish to feed</button>
+      <span id="lu-status" style="font-size:13px;color:rgba(255,255,255,0.5)"></span>
+    </div>
+  </div>
   <div id="content"><div class="loading">Loading…</div></div>
 </div>
 
@@ -150,6 +158,22 @@ function timeAgo(iso) {
   if (hrs > 0)   return `${hrs}h ago`;
   return `${mins}m ago`;
 }
+
+document.addEventListener("click", async (ev) => {
+  if (ev.target && ev.target.id === "lu-post") {
+    const ta = document.getElementById("lu-text");
+    const status = document.getElementById("lu-status");
+    const text = ta.value.trim();
+    if (!text) { status.textContent = "Write something first."; return; }
+    if (!confirm("Publish this update to everyone's feed (as @liri)?")) return;
+    status.textContent = "Posting…";
+    try {
+      const r = await fetch(API, { method: "POST", headers: { "x-admin-password": pw, "Content-Type": "application/json" }, body: JSON.stringify({ action: "post-update", text }) });
+      if (r.ok) { status.textContent = "✓ Posted to the feed"; ta.value = ""; }
+      else { const e = await r.json().catch(() => ({})); status.textContent = "✗ " + (e.error || ("HTTP " + r.status)); }
+    } catch (e) { status.textContent = "✗ " + e.message; }
+  }
+});
 
 async function load() {
   const r = await fetch(API, { headers: { "x-admin-password": pw } });

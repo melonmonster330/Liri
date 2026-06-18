@@ -92,6 +92,21 @@ function sbUpsertBatch(rows) {
   });
 }
 
+// Generic service-role insert (used by the admin "post Liri update" action).
+function sbInsert(table, row) {
+  const url = process.env.SUPABASE_URL;
+  const key = process.env.SUPABASE_SERVICE_ROLE_KEY;
+  const hostname = url.replace(/^https?:\/\//, "");
+  const bodyStr  = JSON.stringify(row);
+  return new Promise((resolve) => {
+    const req = https.request({ hostname, path: `/rest/v1/${table}`, method: "POST",
+      headers: { "apikey": key, "Authorization": `Bearer ${key}`, "Content-Type": "application/json", "Prefer": "return=minimal", "Content-Length": Buffer.byteLength(bodyStr) }
+    }, (res) => { res.on("data", () => {}); res.on("end", () => resolve({ status: res.statusCode })); });
+    req.on("error", () => resolve({ status: 0 }));
+    req.write(bodyStr); req.end();
+  });
+}
+
 // ── iTunes search ─────────────────────────────────────────────────────────────
 // We search a set of terms that surface popular vinyl albums.
 // iTunes doesn't have a "vinyl" filter so we search by genre + popularity.
@@ -615,6 +630,33 @@ module.exports = async (req, res) => {
     } catch (e) {
       return res.status(500).json({ error: e.message });
     }
+  }
+
+  // ── POST (admin): publish a Liri update announcement to the feed ──────────
+  if (req.headers["x-admin-password"]) {
+    const adminPw = process.env.ADMIN_PASSWORD;
+    if (!adminPw || !safeCompare(adminPw, req.headers["x-admin-password"])) {
+      return res.status(401).json({ error: "Unauthorized" });
+    }
+    let body = req.body;
+    if (typeof body === "string") { try { body = JSON.parse(body); } catch { body = {}; } }
+    if (body?.action === "post-update") {
+      const text = (body.text || "").trim();
+      if (!text) return res.status(400).json({ error: "text required" });
+      // Resolve the official Liri account (username='liri', else is_official).
+      let { body: profs } = await sbGet("profiles?username=eq.liri&select=id&limit=1");
+      let liriId = Array.isArray(profs) && profs[0] && profs[0].id;
+      if (!liriId) {
+        const { body: off } = await sbGet("profiles?is_official=eq.true&select=id&limit=1");
+        liriId = Array.isArray(off) && off[0] && off[0].id;
+      }
+      if (!liriId) return res.status(404).json({ error: "Liri account not found" });
+      const { status } = await sbInsert("posts", { author_id: liriId, kind: "update", source: "auto", visibility: "public", caption: text });
+      return (status >= 200 && status < 300)
+        ? res.status(200).json({ success: true })
+        : res.status(500).json({ error: "insert failed (" + status + ")" });
+    }
+    return res.status(400).json({ error: "unknown action" });
   }
 
   // ── POST: cron sync (existing behaviour) ──────────────────────────────────

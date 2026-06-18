@@ -200,7 +200,14 @@
       const visLabel = { public: null, friends: "Friends", private: "Only me" }[post.visibility];
 
       let body;
-      if (post.kind === "lyric") {
+      if (post.kind === "update") {
+        body = (
+          <div style={{ background: "linear-gradient(135deg,rgba(212,168,70,0.12),rgba(201,128,122,0.08))", border: "1px solid rgba(212,168,70,0.25)", borderRadius: 12, padding: "16px 18px" }}>
+            <div style={{ fontSize: 10, letterSpacing: 1.5, textTransform: "uppercase", color: "rgba(212,168,70,0.8)", fontWeight: 700, marginBottom: 8 }}>What's new</div>
+            <div style={{ fontSize: 15, lineHeight: 1.6, color: "#f7efe0", whiteSpace: "pre-wrap" }}>{post.caption}</div>
+          </div>
+        );
+      } else if (post.kind === "lyric") {
         body = (
           <div style={{ background: "linear-gradient(135deg,rgba(212,168,70,0.10),rgba(201,128,122,0.08))", border: "1px solid rgba(212,168,70,0.2)", borderRadius: 12, padding: "20px 18px", marginBottom: post.caption ? 12 : 0 }}>
             <LyricKaraoke text={post.lyric_text} />
@@ -239,7 +246,7 @@
             )}
           </div>
           {body}
-          {post.caption && <div style={{ fontSize: 14, lineHeight: 1.5, color: "rgba(240,230,211,0.85)", marginBottom: 12, marginTop: 12 }}>{post.caption}</div>}
+          {post.caption && post.kind !== "update" && <div style={{ fontSize: 14, lineHeight: 1.5, color: "rgba(240,230,211,0.85)", marginBottom: 12, marginTop: 12 }}>{post.caption}</div>}
           <div style={{ borderTop: "1px solid rgba(255,255,255,0.06)", paddingTop: 10, marginTop: 4 }}>
             <LikeButton liked={post._likedByMe} count={post.like_count} onToggle={() => onToggleLike(post)} />
           </div>
