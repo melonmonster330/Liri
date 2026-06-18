@@ -338,7 +338,7 @@
     throw new Error("Supabase not loaded");
   }
   var sb = supabase.createClient("https://xjdjpaxgymgbvcwmvorc.supabase.co", "sb_publishable_C-NBnfg0ltAoUi46XQTUjA_ozjZW_Nd");
-  var APP_VERSION = "1.1.6";
+  var APP_VERSION = "1.1.7";
   var IS_IOS = !!window.Capacitor;
   var TRANSCRIBE_PROXY = window.Capacitor ? "https://www.getliri.com/api/transcribe" : "/api/transcribe";
   var ITUNES_PROXY = window.Capacitor ? "https://www.getliri.com/api/itunes-lookup" : "/api/itunes-lookup";
@@ -2499,10 +2499,11 @@ Move closer to your speakers and try again.`);
           display: "flex",
           flexDirection: "column",
           alignItems: "center",
-          justifyContent: "center",
+          justifyContent: "flex-start",
           minHeight: "100vh",
-          padding: "max(60px,calc(env(safe-area-inset-top)+40px)) 32px max(120px,calc(env(safe-area-inset-bottom)+100px))",
-          textAlign: "center"
+          padding: "max(80px,calc(env(safe-area-inset-top)+56px)) 32px max(90px,calc(env(safe-area-inset-bottom)+80px))",
+          textAlign: "center",
+          gap: "24px"
         }
       }, /* @__PURE__ */ React.createElement(Vinyl, {
         size: 130,
@@ -5375,7 +5376,7 @@ Move closer to your speakers and try again.`);
         flexDirection: "column",
         alignItems: "center",
         justifyContent: "center",
-        padding: "24px 32px",
+        padding: "8px 32px 96px",
         textAlign: "center"
       }
     }, mode === "idle" && /* @__PURE__ */ React.createElement("div", {
@@ -6171,5 +6172,12 @@ Move closer to your speakers and try again.`);
       }, "Maybe later")
     ))));
   }
-  ReactDOM.createRoot(document.getElementById("root")).render(/* @__PURE__ */ React.createElement(Liri, null));
+  ReactDOM.createRoot(document.getElementById("root")).render(
+    /* @__PURE__ */ React.createElement(
+      React.Fragment,
+      null,
+      /* @__PURE__ */ React.createElement(Liri, null),
+      window.TabBar ? /* @__PURE__ */ React.createElement(window.TabBar, { current: "listen" }) : null
+    )
+  );
 })();

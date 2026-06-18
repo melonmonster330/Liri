@@ -30,11 +30,12 @@
   <script src="vendor/react-dom.min.js"></script>
   <script src="vendor/babel.min.js"></script>
   <script src="vendor/supabase.min.js"></script>
+  <script src="vendor/tabbar.js"></script>
 
   <script type="text/babel">
     const { useState, useEffect, useRef, useCallback } = React;
 
-    const APP_VERSION = "1.1.6";
+    const APP_VERSION = "1.1.7";
 
     // On iOS Capacitor relative URLs don't resolve — route all API calls through the live domain.
     const API_BASE = window.Capacitor ? "https://www.getliri.com" : "";
@@ -939,7 +940,7 @@
       const inLibraryIds = new Set(library.map(a => String(a.itunes_collection_id)));
 
       return (
-        <div style={{ minHeight: "100vh", paddingBottom: 80 }}>
+        <div style={{ minHeight: "100vh", paddingBottom: 100 }}>
 
           {/* ── Checkout success banner ── */}
           {checkoutSuccess && (
@@ -1288,6 +1289,7 @@
             </>
           )}
 
+          <TabBar current="library" />
         </div>
       );
     }

@@ -1,0 +1,248 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+  <title>Explore — Liri</title>
+  <link rel="icon" type="image/png" href="/favicon.png" />
+  <link rel="apple-touch-icon" href="/favicon.png" />
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    html, body { height: 100%; width: 100%; overflow-x: hidden; }
+    body { background: #080810; color: #f0e6d3; font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Display', 'Helvetica Neue', sans-serif; }
+    #root { min-height: 100vh; max-width: 100vw; overflow-x: hidden; }
+    input { outline: none; font-family: inherit; }
+    input:focus { border-color: rgba(212,168,70,0.6) !important; }
+    ::-webkit-scrollbar { display: none; }
+    button, a, [role="button"] { -webkit-tap-highlight-color: transparent; cursor: pointer; }
+    button:active, a:active, [role="button"]:active { opacity: 0.65; transform: scale(0.97); transition: opacity 0s, transform 0s; }
+    @keyframes spin { to { transform: rotate(360deg); } }
+  </style>
+  <script>document.addEventListener('touchstart', function(){}, {passive: true});</script>
+</head>
+<body>
+  <div id="root"></div>
+
+  <script src="vendor/react.min.js"></script>
+  <script src="vendor/react-dom.min.js"></script>
+  <script src="vendor/babel.min.js"></script>
+  <script src="vendor/supabase.min.js"></script>
+  <script src="vendor/tabbar.js"></script>
+
+  <script type="text/babel">
+    const { useState, useEffect, useCallback } = React;
+
+    const APP_VERSION = "1.1.7";
+
+    const sb = supabase.createClient(
+      "https://xjdjpaxgymgbvcwmvorc.supabase.co",
+      "sb_publishable_C-NBnfg0ltAoUi46XQTUjA_ozjZW_Nd"
+    );
+
+    function Spinner({ size = 22 }) {
+      return <div style={{ width: size, height: size, border: "2px solid rgba(255,255,255,0.15)", borderTopColor: "#f0e6d3", borderRadius: "50%", animation: "spin 0.8s linear infinite" }} />;
+    }
+
+    function OfficialBadge() {
+      return (
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="#d4a846" aria-label="Official">
+          <path d="M12 1.6l2.4 2.6 3.5-.4.4 3.5 2.6 2.4-2.6 2.4.4 3.5-3.5.4-2.4 2.6-2.4-2.6-3.5.4-.4-3.5L2 12l2.6-2.4-.4-3.5 3.5.4z" stroke="#d4a846" strokeWidth="0.5"/>
+          <polyline points="8 12 11 15 16 9" fill="none" stroke="#080810" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"/>
+        </svg>
+      );
+    }
+
+    function FollowButton({ me, target, follow, onChange }) {
+      // follow = my outgoing follow row (or null)
+      const [working, setWorking] = useState(false);
+      if (!me || me.id === target.id) return null;
+
+      const onClick = async () => {
+        if (working) return;
+        setWorking(true);
+        if (follow) {
+          // Unfollow / cancel request
+          await sb.from("follows").delete()
+            .eq("follower_id", me.id).eq("followed_id", target.id);
+        } else {
+          const status = target.privacy === "public" ? "accepted" : "pending";
+          await sb.from("follows").insert({ follower_id: me.id, followed_id: target.id, status });
+        }
+        setWorking(false);
+        onChange && onChange();
+      };
+
+      let label = "Follow";
+      let primary = true;
+      if (follow?.status === "pending")  { label = "Requested";  primary = false; }
+      if (follow?.status === "accepted") { label = "Following";  primary = false; }
+
+      return (
+        <button onClick={onClick} disabled={working}
+          style={{
+            border: primary ? "none" : "1px solid rgba(255,255,255,0.12)",
+            background: primary ? "linear-gradient(135deg,#d4a846,#c9807a)" : "rgba(255,255,255,0.06)",
+            color: primary ? "#080810" : "rgba(240,230,211,0.85)",
+            borderRadius: 50, padding: "8px 16px", fontSize: 13, fontWeight: 700,
+            fontFamily: "inherit", opacity: working ? 0.6 : 1, minWidth: 92,
+          }}>
+          {working ? "…" : label}
+        </button>
+      );
+    }
+
+    function UserRow({ me, profile, follow, onChange }) {
+      const initials = (profile.display_name || profile.username || "?").trim().slice(0, 2).toUpperCase();
+      return (
+        <div style={{ display: "flex", alignItems: "center", gap: 12, padding: "10px 0" }}>
+          <a href={"/app/profile.html?u=" + encodeURIComponent(profile.username)}
+            style={{ display: "flex", alignItems: "center", gap: 12, flex: 1, textDecoration: "none", color: "inherit", minWidth: 0 }}>
+            <div style={{
+              width: 44, height: 44, borderRadius: "50%",
+              background: "linear-gradient(135deg, #d4a846, #c9807a)",
+              color: "#080810", fontSize: 14, fontWeight: 800,
+              display: "flex", alignItems: "center", justifyContent: "center",
+              flexShrink: 0,
+            }}>{initials}</div>
+            <div style={{ minWidth: 0, flex: 1 }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
+                <div style={{ fontSize: 14, fontWeight: 700, color: "#f0e6d3", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                  {profile.display_name || profile.username}
+                </div>
+                {profile.is_official && <OfficialBadge />}
+              </div>
+              <div style={{ fontSize: 12, color: "rgba(255,255,255,0.4)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>@{profile.username}</div>
+            </div>
+          </a>
+          <FollowButton me={me} target={profile} follow={follow} onChange={onChange} />
+        </div>
+      );
+    }
+
+    function App() {
+      const [user, setUser] = useState(null);
+      const [authLoading, setAuthLoading] = useState(true);
+      const [query, setQuery] = useState("");
+      const [results, setResults] = useState([]);
+      const [searching, setSearching] = useState(false);
+      const [myFollows, setMyFollows] = useState({}); // followed_id → row
+
+      useEffect(() => {
+        sb.auth.getSession().then(({ data: { session } }) => {
+          setUser(session?.user ?? null);
+          setAuthLoading(false);
+        });
+        const { data: sub } = sb.auth.onAuthStateChange((_e, s) => setUser(s?.user ?? null));
+        return () => sub?.subscription?.unsubscribe?.();
+      }, []);
+
+      const loadMyFollows = useCallback(async () => {
+        if (!user) return;
+        const { data } = await sb.from("follows").select("*").eq("follower_id", user.id);
+        const map = {};
+        (data || []).forEach(r => { map[r.followed_id] = r; });
+        setMyFollows(map);
+      }, [user]);
+
+      useEffect(() => { loadMyFollows(); }, [loadMyFollows]);
+
+      // ── Search ──
+      useEffect(() => {
+        const q = query.trim().toLowerCase();
+        if (!q) { setResults([]); return; }
+        setSearching(true);
+        let cancelled = false;
+        const t = setTimeout(async () => {
+          const { data } = await sb
+            .from("profiles")
+            .select("id, username, display_name, bio, privacy, is_official")
+            .or(`username.ilike.%${q}%,display_name.ilike.%${q}%`)
+            .order("is_official", { ascending: false })
+            .order("username", { ascending: true })
+            .limit(20);
+          if (cancelled) return;
+          setResults((data || []).filter(p => !user || p.id !== user.id));
+          setSearching(false);
+        }, 250);
+        return () => { cancelled = true; clearTimeout(t); };
+      }, [query, user]);
+
+      if (authLoading) return <div style={{ minHeight:"100vh", display:"flex", alignItems:"center", justifyContent:"center" }}><Spinner size={36} /></div>;
+
+      if (!user) return (
+        <div style={{ minHeight:"100vh", display:"flex", flexDirection:"column", alignItems:"center", justifyContent:"center", padding:"40px 24px", textAlign:"center" }}>
+          <div style={{ fontSize: 22, fontWeight: 700, marginBottom: 12 }}>Sign in to explore</div>
+          <a href="/app" style={{ background:"linear-gradient(135deg,#d4a846,#c9807a)", color:"#080810", borderRadius: 50, padding:"14px 32px", fontSize: 14, fontWeight: 700, textDecoration:"none", marginTop: 16 }}>
+            Sign in to Liri →
+          </a>
+        </div>
+      );
+
+      return (
+        <div style={{ minHeight: "100vh", paddingBottom: 100 }}>
+          <div style={{ padding: "max(64px, calc(env(safe-area-inset-top) + 20px)) 24px 0" }}>
+            <div style={{ fontSize: 28, fontWeight: 700, letterSpacing: "-0.5px", marginBottom: 6 }}>Explore</div>
+            <div style={{ fontSize: 14, color: "rgba(255,255,255,0.3)", marginBottom: 20 }}>
+              Find people. See what's spinning right now.
+            </div>
+
+            <div style={{ position: "relative", marginBottom: 20 }}>
+              <input
+                value={query}
+                onChange={e => setQuery(e.target.value)}
+                placeholder="Search by username or name…"
+                autoCapitalize="none"
+                autoCorrect="off"
+                spellCheck={false}
+                style={{
+                  width: "100%", background: "rgba(255,255,255,0.05)",
+                  border: "1px solid rgba(255,255,255,0.1)", color: "#f0e6d3",
+                  padding: "14px 16px 14px 44px", borderRadius: 50, fontSize: 15,
+                  fontFamily: "inherit",
+                }}
+              />
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="rgba(255,255,255,0.35)" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"
+                style={{ position: "absolute", left: 16, top: "50%", transform: "translateY(-50%)" }}>
+                <circle cx="11" cy="11" r="7"/><line x1="21" y1="21" x2="16.5" y2="16.5"/>
+              </svg>
+            </div>
+          </div>
+
+          <div style={{ padding: "0 24px" }}>
+            {query.trim() === "" ? (
+              <div style={{
+                padding: "60px 16px", textAlign: "center", color: "rgba(255,255,255,0.4)",
+              }}>
+                <div style={{ fontSize: 15, fontWeight: 700, color: "#f0e6d3", marginBottom: 6 }}>Find people on Liri</div>
+                <div style={{ fontSize: 13, lineHeight: 1.6, maxWidth: 280, margin: "0 auto" }}>
+                  Search by username or display name. Public profiles show up here; private ones stay hidden.
+                </div>
+              </div>
+            ) : searching ? (
+              <div style={{ display: "flex", justifyContent: "center", padding: 40 }}><Spinner size={24} /></div>
+            ) : results.length === 0 ? (
+              <div style={{ textAlign: "center", padding: 40, color: "rgba(255,255,255,0.4)", fontSize: 14 }}>
+                No one matches "{query.trim()}" yet.
+              </div>
+            ) : (
+              <div style={{ display: "flex", flexDirection: "column", divider: "1px" }}>
+                {results.map(p => (
+                  <UserRow key={p.id} me={user} profile={p}
+                    follow={myFollows[p.id] || null}
+                    onChange={loadMyFollows} />
+                ))}
+              </div>
+            )}
+          </div>
+
+          <div style={{ textAlign:"center", padding:"40px 0 16px", fontSize:"11px", color:"rgba(255,255,255,0.1)" }}>Liri v{APP_VERSION}</div>
+
+          <TabBar current="explore" />
+        </div>
+      );
+    }
+
+    ReactDOM.createRoot(document.getElementById("root")).render(<App />);
+  </script>
+</body>
+</html>

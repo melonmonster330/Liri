@@ -1,0 +1,333 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+  <title>Feed — Liri</title>
+  <link rel="icon" type="image/png" href="/favicon.png" />
+  <link rel="apple-touch-icon" href="/favicon.png" />
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    html, body { height: 100%; width: 100%; overflow-x: hidden; }
+    body { background: #080810; color: #f0e6d3; font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Display', 'Helvetica Neue', sans-serif; }
+    #root { min-height: 100vh; max-width: 100vw; overflow-x: hidden; }
+    ::-webkit-scrollbar { display: none; }
+    button, a, [role="button"] { -webkit-tap-highlight-color: transparent; cursor: pointer; }
+    button:active, a:active, [role="button"]:active { opacity: 0.65; transform: scale(0.97); transition: opacity 0s, transform 0s; }
+    @keyframes spin { to { transform: rotate(360deg); } }
+    @keyframes pop { 0% { transform: scale(1); } 40% { transform: scale(1.35); } 100% { transform: scale(1); } }
+  </style>
+  <script>document.addEventListener('touchstart', function(){}, {passive: true});</script>
+</head>
+<body>
+  <div id="root"></div>
+
+  <script src="vendor/react.min.js"></script>
+  <script src="vendor/react-dom.min.js"></script>
+  <script src="vendor/babel.min.js"></script>
+  <script src="vendor/supabase.min.js"></script>
+  <script src="vendor/tabbar.js"></script>
+
+  <script type="text/babel">
+    const { useState, useEffect, useCallback } = React;
+
+    const APP_VERSION = "1.1.7";
+
+    const sb = supabase.createClient(
+      "https://xjdjpaxgymgbvcwmvorc.supabase.co",
+      "sb_publishable_C-NBnfg0ltAoUi46XQTUjA_ozjZW_Nd"
+    );
+
+    function Spinner({ size = 22 }) {
+      return <div style={{ width: size, height: size, border: "2px solid rgba(255,255,255,0.15)", borderTopColor: "#f0e6d3", borderRadius: "50%", animation: "spin 0.8s linear infinite" }} />;
+    }
+
+    // ── helpers ──────────────────────────────────────────────────────────────
+    function timeAgo(ts) {
+      const s = Math.max(1, Math.floor((Date.now() - new Date(ts).getTime()) / 1000));
+      if (s < 60)     return "just now";
+      const m = Math.floor(s / 60);  if (m < 60) return m + "m";
+      const h = Math.floor(m / 60);  if (h < 24) return h + "h";
+      const d = Math.floor(h / 24);  if (d < 7)  return d + "d";
+      const w = Math.floor(d / 7);   if (w < 5)  return w + "w";
+      return new Date(ts).toLocaleDateString(undefined, { month: "short", day: "numeric" });
+    }
+
+    function initialsOf(p) {
+      return (p?.display_name || p?.username || "?").trim().slice(0, 2).toUpperCase();
+    }
+
+    function Avatar({ profile, size = 40 }) {
+      if (profile?.avatar_url) {
+        return <img src={profile.avatar_url} alt="" style={{ width: size, height: size, borderRadius: "50%", objectFit: "cover" }} />;
+      }
+      return (
+        <div style={{
+          width: size, height: size, borderRadius: "50%",
+          background: "linear-gradient(135deg, #d4a846, #c9807a)",
+          color: "#080810", fontSize: size * 0.36, fontWeight: 800, letterSpacing: -0.5,
+          display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0,
+        }}>{initialsOf(profile)}</div>
+      );
+    }
+
+    function OfficialBadge({ size = 15 }) {
+      return (
+        <svg width={size} height={size} viewBox="0 0 24 24" fill="#d4a846" aria-label="Official" title="Official">
+          <path d="M12 1.6l2.4 2.6 3.5-.4.4 3.5 2.6 2.4-2.6 2.4.4 3.5-3.5.4-2.4 2.6-2.4-2.6-3.5.4-.4-3.5L2 12l2.6-2.4-.4-3.5 3.5.4z" stroke="#d4a846" strokeWidth="0.5"/>
+          <polyline points="8 12 11 15 16 9" fill="none" stroke="#080810" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"/>
+        </svg>
+      );
+    }
+
+    function Artwork({ url, size = 56 }) {
+      return (
+        <div style={{ width: size, height: size, borderRadius: 8, overflow: "hidden", flexShrink: 0, background: "rgba(255,255,255,0.05)", border: "1px solid rgba(255,255,255,0.08)" }}>
+          {url
+            ? <img src={url} alt="" style={{ width: "100%", height: "100%", objectFit: "cover" }} />
+            : <div style={{ width: "100%", height: "100%", display: "flex", alignItems: "center", justifyContent: "center", color: "rgba(255,255,255,0.2)" }}>
+                <svg width={size*0.42} height={size*0.42} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="2.5" fill="currentColor"/></svg>
+              </div>}
+        </div>
+      );
+    }
+
+    function LikeButton({ liked, count, onToggle }) {
+      const [bursting, setBursting] = useState(false);
+      const click = () => {
+        if (!liked) { setBursting(true); setTimeout(() => setBursting(false), 350); }
+        onToggle();
+      };
+      return (
+        <button onClick={click} aria-label={liked ? "Unlike" : "Like"}
+          style={{ display: "inline-flex", alignItems: "center", gap: 6, background: "none", border: "none", color: liked ? "#c9807a" : "rgba(240,230,211,0.5)", fontFamily: "inherit", fontSize: 13, fontWeight: 700, padding: "4px 0" }}>
+          <svg width="20" height="20" viewBox="0 0 24 24" fill={liked ? "#c9807a" : "none"} stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"
+            style={{ animation: bursting ? "pop 0.35s ease" : "none" }}>
+            <path d="M20.8 4.6a5.5 5.5 0 0 0-7.8 0L12 5.6l-1-1a5.5 5.5 0 0 0-7.8 7.8l1 1L12 21l7.8-7.6 1-1a5.5 5.5 0 0 0 0-7.8z"/>
+          </svg>
+          {count > 0 ? count : ""}
+        </button>
+      );
+    }
+
+    function AuthorHeader({ author, post }) {
+      const isAuto = post.source === "auto";
+      const verb = isAuto ? "spun" : (post.kind === "lyric" ? "quoted" : "shared");
+      const href = author?.username ? `/app/profile.html?u=${encodeURIComponent(author.username)}` : null;
+      const Name = (
+        <span style={{ display: "inline-flex", alignItems: "center", gap: 4 }}>
+          <strong style={{ color: "#f0e6d3", fontWeight: 700 }}>{author?.display_name || author?.username || "Someone"}</strong>
+          {author?.is_official && <OfficialBadge size={14} />}
+        </span>
+      );
+      return (
+        <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 12 }}>
+          {href ? <a href={href}><Avatar profile={author} /></a> : <Avatar profile={author} />}
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <div style={{ fontSize: 14, lineHeight: 1.3 }}>
+              {href ? <a href={href} style={{ textDecoration: "none", color: "inherit" }}>{Name}</a> : Name}
+              <span style={{ color: "rgba(255,255,255,0.4)" }}> {verb}</span>
+            </div>
+            <div style={{ fontSize: 12, color: "rgba(255,255,255,0.35)", display: "flex", alignItems: "center", gap: 6 }}>
+              {isAuto && (
+                <span style={{ display: "inline-flex", alignItems: "center", gap: 3 }}>
+                  <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="2.5" fill="currentColor"/></svg>
+                  spinning
+                </span>
+              )}
+              {isAuto && <span>·</span>}
+              <span>{timeAgo(post.created_at)}</span>
+            </div>
+          </div>
+        </div>
+      );
+    }
+
+    function PostCard({ post, author, onToggleLike }) {
+      const card = {
+        background: "rgba(255,255,255,0.03)",
+        border: "1px solid rgba(255,255,255,0.07)",
+        borderRadius: 16,
+        padding: 16,
+        margin: "0 16px 14px",
+      };
+
+      let body;
+      if (post.kind === "lyric") {
+        body = (
+          <div style={{
+            background: "linear-gradient(135deg, rgba(212,168,70,0.10), rgba(201,128,122,0.08))",
+            border: "1px solid rgba(212,168,70,0.2)",
+            borderRadius: 12, padding: "20px 18px", marginBottom: post.caption ? 12 : 0,
+          }}>
+            <div style={{ fontSize: 19, lineHeight: 1.5, fontWeight: 600, fontStyle: "italic", color: "#f7efe0", whiteSpace: "pre-wrap" }}>
+              “{post.lyric_text}”
+            </div>
+            <div style={{ marginTop: 12, display: "flex", alignItems: "center", gap: 8 }}>
+              <Artwork url={post.artwork_url} size={32} />
+              <div style={{ fontSize: 12, color: "rgba(255,255,255,0.55)", minWidth: 0 }}>
+                <div style={{ fontWeight: 700, color: "rgba(240,230,211,0.9)", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{post.track_name}</div>
+                <div style={{ whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{post.artist_name}</div>
+              </div>
+            </div>
+          </div>
+        );
+      } else {
+        const title = post.kind === "track" ? post.track_name : post.album_name;
+        const sub   = post.kind === "track" ? `${post.artist_name}${post.album_name ? " · " + post.album_name : ""}` : post.artist_name;
+        body = (
+          <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: post.caption ? 12 : 0 }}>
+            <Artwork url={post.artwork_url} size={56} />
+            <div style={{ minWidth: 0 }}>
+              <div style={{ fontSize: 15, fontWeight: 700, color: "#f0e6d3", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{title}</div>
+              <div style={{ fontSize: 13, color: "rgba(255,255,255,0.5)", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{sub}</div>
+            </div>
+          </div>
+        );
+      }
+
+      return (
+        <div style={card}>
+          <AuthorHeader author={author} post={post} />
+          {body}
+          {post.caption && (
+            <div style={{ fontSize: 14, lineHeight: 1.5, color: "rgba(240,230,211,0.85)", marginBottom: 12 }}>{post.caption}</div>
+          )}
+          <div style={{ borderTop: "1px solid rgba(255,255,255,0.06)", paddingTop: 10, marginTop: 4 }}>
+            <LikeButton liked={post._likedByMe} count={post.like_count} onToggle={() => onToggleLike(post)} />
+          </div>
+        </div>
+      );
+    }
+
+    function EmptyState({ following }) {
+      return (
+        <div style={{ padding: "60px 32px", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", textAlign: "center", color: "rgba(255,255,255,0.4)" }}>
+          <div style={{ width: 64, height: 64, borderRadius: "50%", background: "rgba(212,168,70,0.08)", border: "1px solid rgba(212,168,70,0.2)", display: "flex", alignItems: "center", justifyContent: "center", marginBottom: 20 }}>
+            <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="#d4a846" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M4 6h16M4 12h16M4 18h10"/></svg>
+          </div>
+          <div style={{ fontSize: 17, fontWeight: 700, color: "#f0e6d3", marginBottom: 8 }}>
+            {following ? "Nothing spinning yet" : "Your feed is quiet"}
+          </div>
+          <div style={{ fontSize: 14, lineHeight: 1.6, maxWidth: 280, marginBottom: 20 }}>
+            {following
+              ? "The people you follow haven't posted yet. Share what you're spinning to get things going."
+              : "Follow friends to see what they're spinning, and share your own records and favorite lyrics."}
+          </div>
+          <a href="/app/explore.html" style={{ background: "linear-gradient(135deg,#d4a846,#c9807a)", color: "#080810", borderRadius: 50, padding: "12px 24px", fontSize: 14, fontWeight: 700, textDecoration: "none" }}>
+            Find people to follow →
+          </a>
+        </div>
+      );
+    }
+
+    function App() {
+      const [user, setUser]               = useState(null);
+      const [authLoading, setAuthLoading] = useState(true);
+      const [loading, setLoading]         = useState(true);
+      const [posts, setPosts]             = useState([]);
+      const [authors, setAuthors]         = useState({});
+      const [following, setFollowing]     = useState(false);
+
+      useEffect(() => {
+        sb.auth.getSession().then(({ data: { session } }) => {
+          setUser(session?.user ?? null);
+          setAuthLoading(false);
+        });
+        const { data: sub } = sb.auth.onAuthStateChange((_e, s) => setUser(s?.user ?? null));
+        return () => sub?.subscription?.unsubscribe?.();
+      }, []);
+
+      const loadFeed = useCallback(async () => {
+        if (!user) return;
+        setLoading(true);
+
+        // Who to show: me + accepted follows + official accounts.
+        const [{ data: follows }, { data: officials }] = await Promise.all([
+          sb.from("follows").select("followed_id").eq("follower_id", user.id).eq("status", "accepted"),
+          sb.from("profiles").select("id").eq("is_official", true),
+        ]);
+        const followedIds = (follows || []).map(f => f.followed_id);
+        setFollowing(followedIds.length > 0);
+        const authorIds = [...new Set([user.id, ...followedIds, ...(officials || []).map(o => o.id)])];
+
+        // Posts (RLS trims any we're not allowed to see). Newest first.
+        const { data: rows, error } = await sb.from("posts")
+          .select("*")
+          .in("author_id", authorIds)
+          .order("created_at", { ascending: false })
+          .limit(100);
+        if (error) console.error(error);
+        const list = rows || [];
+
+        // Author profiles + my likes, in parallel.
+        const ids = [...new Set(list.map(p => p.author_id))];
+        const postIds = list.map(p => p.id);
+        const [{ data: profs }, { data: myLikes }] = await Promise.all([
+          ids.length ? sb.from("profiles").select("id,username,display_name,avatar_url,is_official").in("id", ids) : Promise.resolve({ data: [] }),
+          postIds.length ? sb.from("likes").select("post_id").eq("user_id", user.id).in("post_id", postIds) : Promise.resolve({ data: [] }),
+        ]);
+        const likedSet = new Set((myLikes || []).map(l => l.post_id));
+        setAuthors(Object.fromEntries((profs || []).map(p => [p.id, p])));
+        setPosts(list.map(p => ({ ...p, _likedByMe: likedSet.has(p.id) })));
+        setLoading(false);
+      }, [user]);
+
+      useEffect(() => { loadFeed(); }, [loadFeed]);
+
+      const toggleLike = useCallback(async (post) => {
+        const liked = post._likedByMe;
+        // Optimistic update.
+        setPosts(prev => prev.map(p => p.id === post.id
+          ? { ...p, _likedByMe: !liked, like_count: Math.max(0, p.like_count + (liked ? -1 : 1)) }
+          : p));
+        let res;
+        if (liked) res = await sb.from("likes").delete().eq("post_id", post.id).eq("user_id", user.id);
+        else       res = await sb.from("likes").insert({ post_id: post.id, user_id: user.id });
+        if (res?.error) {
+          // Roll back on failure.
+          setPosts(prev => prev.map(p => p.id === post.id
+            ? { ...p, _likedByMe: liked, like_count: Math.max(0, p.like_count + (liked ? 1 : -1)) }
+            : p));
+        }
+      }, [user]);
+
+      if (authLoading) return <div style={{ minHeight:"100vh", display:"flex", alignItems:"center", justifyContent:"center" }}><Spinner size={36} /></div>;
+
+      if (!user) return (
+        <div style={{ minHeight:"100vh", display:"flex", flexDirection:"column", alignItems:"center", justifyContent:"center", padding:"40px 24px", textAlign:"center" }}>
+          <div style={{ fontSize: 22, fontWeight: 700, marginBottom: 12 }}>Sign in to see your feed</div>
+          <a href="/app" style={{ background:"linear-gradient(135deg,#d4a846,#c9807a)", color:"#080810", borderRadius: 50, padding:"14px 32px", fontSize: 14, fontWeight: 700, textDecoration:"none", marginTop: 16 }}>
+            Sign in to Liri →
+          </a>
+        </div>
+      );
+
+      return (
+        <div style={{ minHeight: "100vh", paddingBottom: 100 }}>
+          <div style={{ padding: "max(64px, calc(env(safe-area-inset-top) + 20px)) 24px 0" }}>
+            <div style={{ fontSize: 28, fontWeight: 700, letterSpacing: "-0.5px", marginBottom: 6 }}>Feed</div>
+            <div style={{ fontSize: 14, color: "rgba(255,255,255,0.3)", marginBottom: 24 }}>
+              What your friends are spinning.
+            </div>
+          </div>
+
+          {loading ? (
+            <div style={{ display: "flex", justifyContent: "center", padding: "60px 0" }}><Spinner size={32} /></div>
+          ) : posts.length === 0 ? (
+            <EmptyState following={following} />
+          ) : (
+            posts.map(p => <PostCard key={p.id} post={p} author={authors[p.author_id]} onToggleLike={toggleLike} />)
+          )}
+
+          <div style={{ textAlign:"center", padding:"40px 0 16px", fontSize:"11px", color:"rgba(255,255,255,0.1)" }}>Liri v{APP_VERSION}</div>
+
+          <TabBar current="feed" />
+        </div>
+      );
+    }
+
+    ReactDOM.createRoot(document.getElementById("root")).render(<App />);
+  </script>
+</body>
+</html>
