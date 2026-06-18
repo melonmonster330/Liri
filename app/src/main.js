@@ -1913,6 +1913,9 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
     }
     setMode("syncing");
     setCurrentIndex(initIdx);
+    // A new sync is always live playback — clear any stale pause state so the
+    // pause toggle stays consistent after skipping a track while paused.
+    setIsPaused(false);
     clearInterval(syncIntervalRef.current);
     syncIntervalRef.current = setInterval(() => {
       const t = initialPosRef.current + (Date.now() - syncStartRef.current) / 1000;
@@ -1937,6 +1940,7 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
       // Resume: restart sync from current position
       initialPosRef.current = playbackTime;
       syncStartRef.current = Date.now();
+      clearInterval(syncIntervalRef.current); // never leak a second interval
       syncIntervalRef.current = setInterval(() => {
         const t = initialPosRef.current + (Date.now() - syncStartRef.current) / 1000;
         setPlaybackTime(t);

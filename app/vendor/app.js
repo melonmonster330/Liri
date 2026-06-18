@@ -1880,6 +1880,7 @@ Move closer to your speakers and try again.`);
       }
       setMode("syncing");
       setCurrentIndex(initIdx);
+      setIsPaused(false);
       clearInterval(syncIntervalRef.current);
       syncIntervalRef.current = setInterval(() => {
         const t = initialPosRef.current + (Date.now() - syncStartRef.current) / 1e3;
@@ -1902,6 +1903,7 @@ Move closer to your speakers and try again.`);
       if (isPaused) {
         initialPosRef.current = playbackTime;
         syncStartRef.current = Date.now();
+        clearInterval(syncIntervalRef.current);
         syncIntervalRef.current = setInterval(() => {
           const t = initialPosRef.current + (Date.now() - syncStartRef.current) / 1e3;
           setPlaybackTime(t);
