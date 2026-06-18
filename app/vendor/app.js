@@ -513,6 +513,7 @@
     const attemptLogRef = useRef2([]);
     const lastRecordingRef = useRef2(null);
     const recognitionWonRef = useRef2(false);
+    const lastRawMatchRef = useRef2(null);
     const [audioLevel, setAudioLevel] = useState2(0);
     const [lastSong, setLastSong] = useState2(null);
     const [hoverNudge, setHoverNudge] = useState2(null);
@@ -1434,6 +1435,7 @@
       };
       setDetectedSong(song);
       setIdentifiedBy("acr");
+      lastRawMatchRef.current = { title, artist, identified_by: "acr" };
       setSongDuration(duration);
       await loadLyrics(title, artist);
       setMode("confirmed");
@@ -1580,6 +1582,7 @@
     };
     const logButtonEvent = async (buttonName) => {
       try {
+        const raw = lastRawMatchRef.current;
         await sb.from("button_events").insert({
           user_id: user?.id || null,
           session_id: sessionId,
@@ -1588,7 +1591,10 @@
           artist_name: detectedSong?.artist || null,
           album_name: detectedSong?.album || null,
           itunes_collection_id: albumCollectionIdRef?.current ? Number(albumCollectionIdRef.current) : null,
-          platform: window.Capacitor ? "ios" : "web"
+          platform: window.Capacitor ? "ios" : "web",
+          identified_by: raw?.identified_by || null,
+          raw_match_title: raw?.title || null,
+          raw_match_artist: raw?.artist || null
         });
       } catch (e) {
       }
@@ -1732,10 +1738,15 @@ Move closer to your speakers and try again.`);
         }
         const { title, artist, offset, matchTime } = result;
         console.log("[shazam] match:", title, "by", artist, "offset:", Number(offset).toFixed(1) + "s");
+        lastRawMatchRef.current = { title, artist, identified_by: "shazam" };
         const elapsed = (Date.now() - matchTime) / 1e3;
         const adjustedOffset = Math.max(0, offset + elapsed);
         const norm = normText;
-        const matchedTrack = tracks.find((t) => norm(t.trackName) === norm(title)) || tracks.find((t) => norm(title).includes(norm(t.trackName)) && norm(t.trackName).length > 3) || tracks.find((t) => norm(t.trackName).includes(norm(title)) && norm(title).length > 3);
+        const fuzzyIncludes = (a, b) => {
+          const [longer, shorter] = a.length >= b.length ? [a, b] : [b, a];
+          return longer.includes(shorter) && shorter.length / longer.length >= 0.6;
+        };
+        const matchedTrack = tracks.find((t) => norm(t.trackName) === norm(title)) || tracks.find((t) => fuzzyIncludes(norm(title), norm(t.trackName)) && norm(t.trackName).length > 3) || tracks.find((t) => fuzzyIncludes(norm(t.trackName), norm(title)) && norm(title).length > 3);
         if (!matchedTrack) {
           console.log("[shazam] matched title not in album:", title, "\u2014 showing track list");
           clearInterval(pulseId);
@@ -3389,7 +3400,10 @@ Move closer to your speakers and try again.`);
         color: "rgba(255,255,255,0.2)"
       }
     }, c.role))))), /* @__PURE__ */ React.createElement("button", {
-      onClick: dismissOnboarding,
+      onClick: () => {
+        dismissOnboarding();
+        window.location.href = window.Capacitor ? "/library.html" : "/library";
+      },
       style: {
         background: "linear-gradient(135deg, #d4a846, #c9807a)",
         color: "#080810",
@@ -3403,7 +3417,7 @@ Move closer to your speakers and try again.`);
         letterSpacing: "1px",
         boxShadow: "0 8px 32px rgba(212,168,70,0.3)"
       }
-    }, "Start listening \u2192"), /* @__PURE__ */ React.createElement("div", {
+    }, "Add your first record \u2192"), /* @__PURE__ */ React.createElement("div", {
       style: {
         marginTop: "14px"
       }
@@ -5176,7 +5190,7 @@ Move closer to your speakers and try again.`);
       onClick: () => {
         logButtonEvent("wrong_song");
         reset();
-        setTimeout(() => startListening(false), 150);
+        setShowTrackList(true);
       },
       style: {
         background: "rgba(255,255,255,0.04)",

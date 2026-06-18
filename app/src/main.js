@@ -264,6 +264,7 @@ function Liri() {
   const attemptLogRef = useRef([]); // collects per-attempt debug info for the error screen
   const lastRecordingRef = useRef(null); // stores last recorded blob for debug download
   const recognitionWonRef = useRef(false); // true once recognition wins — prevents double-set
+  const lastRawMatchRef = useRef(null); // { title, artist, identified_by } — raw match at recognition time
   const [audioLevel, setAudioLevel] = useState(0); // 0–1 live mic amplitude (chunk-size proxy)
   const [lastSong, setLastSong] = useState(null);
   const [hoverNudge, setHoverNudge] = useState(null); // null | "left" | "right"
@@ -1319,6 +1320,7 @@ function Liri() {
     };
     setDetectedSong(song);
     setIdentifiedBy("acr");
+    lastRawMatchRef.current = { title, artist, identified_by: "acr" };
     setSongDuration(duration);
     await loadLyrics(title, artist);
     setMode("confirmed"); // triggers startSync immediately after lyrics are ready
@@ -1521,6 +1523,7 @@ function Liri() {
   // ── Analytics: log a button tap (resync / wrong_song) to button_events ──
   const logButtonEvent = async (buttonName) => {
     try {
+      const raw = lastRawMatchRef.current;
       await sb.from("button_events").insert({
         user_id: user?.id || null,
         session_id: sessionId,
@@ -1530,6 +1533,9 @@ function Liri() {
         album_name: detectedSong?.album || null,
         itunes_collection_id: albumCollectionIdRef?.current ? Number(albumCollectionIdRef.current) : null,
         platform: window.Capacitor ? "ios" : "web",
+        identified_by: raw?.identified_by || null,
+        raw_match_title: raw?.title || null,
+        raw_match_artist: raw?.artist || null,
       });
     } catch (e) { /* silently ignore — table may not exist yet */ }
   };
@@ -1698,6 +1704,7 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
 
       const { title, artist, offset, matchTime } = result;
       console.log("[shazam] match:", title, "by", artist, "offset:", Number(offset).toFixed(1) + "s");
+      lastRawMatchRef.current = { title, artist, identified_by: "shazam" };
 
       // Adjust offset for time elapsed between Shazam capturing and JS receiving result
       const elapsed = (Date.now() - matchTime) / 1000;
@@ -1707,11 +1714,17 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
       // Strip ALL non-alphanumeric chars so curly vs straight apostrophes (' vs '),
       // dashes, parens, etc. don't break the lookup — Shazam/Apple Music titles use
       // curly punctuation, library titles may differ.
+      // Fuzzy includes only fires when the shorter string is ≥60% the length of the
+      // longer one — prevents "Hell" from matching "Hell Hath No Fury".
       const norm = normText;
+      const fuzzyIncludes = (a, b) => {
+        const [longer, shorter] = a.length >= b.length ? [a, b] : [b, a];
+        return longer.includes(shorter) && shorter.length / longer.length >= 0.6;
+      };
       const matchedTrack =
         tracks.find(t => norm(t.trackName) === norm(title)) ||
-        tracks.find(t => norm(title).includes(norm(t.trackName)) && norm(t.trackName).length > 3) ||
-        tracks.find(t => norm(t.trackName).includes(norm(title)) && norm(title).length > 3);
+        tracks.find(t => fuzzyIncludes(norm(title), norm(t.trackName)) && norm(t.trackName).length > 3) ||
+        tracks.find(t => fuzzyIncludes(norm(t.trackName), norm(title)) && norm(title).length > 3);
 
       if (!matchedTrack) {
         console.log("[shazam] matched title not in album:", title, "— showing track list");
@@ -3499,7 +3512,7 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
       color: "rgba(255,255,255,0.2)"
     }
   }, c.role))))), /*#__PURE__*/React.createElement("button", {
-    onClick: dismissOnboarding,
+    onClick: () => { dismissOnboarding(); window.location.href = window.Capacitor ? "/library.html" : "/library"; },
     style: {
       background: "linear-gradient(135deg, #d4a846, #c9807a)",
       color: "#080810",
@@ -3513,7 +3526,7 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
       letterSpacing: "1px",
       boxShadow: "0 8px 32px rgba(212,168,70,0.3)"
     }
-  }, "Start listening \u2192"), /*#__PURE__*/React.createElement("div", {
+  }, "Add your first record \u2192"), /*#__PURE__*/React.createElement("div", {
     style: {
       marginTop: "14px"
     }
@@ -5197,7 +5210,7 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
     onClick: () => {
       logButtonEvent("wrong_song");
       reset();
-      setTimeout(() => startListening(false), 150);
+      setShowTrackList(true);
     },
     style: {
       background: "rgba(255,255,255,0.04)",
