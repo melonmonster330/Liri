@@ -5436,7 +5436,8 @@ Move closer to your speakers and try again.`);
                 { style: { width: "20px", flexShrink: 0, fontSize: "12px", color: isCur ? "#d4a846" : "rgba(255,255,255,0.3)", textAlign: "center" } },
                 isCur ? "\u25B6" : isPast ? "\u2713" : String(i + 1)
               ),
-              /* @__PURE__ */ React.createElement("div", { style: { fontSize: "14px", fontWeight: isCur ? "700" : "500", color: isCur ? "#f0e6d3" : isPast ? "rgba(255,255,255,0.35)" : "rgba(240,230,211,0.8)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" } }, nameOf(t))
+              /* @__PURE__ */ React.createElement("div", { style: { flex: 1, minWidth: 0, fontSize: "14px", fontWeight: isCur ? "700" : "500", color: isCur ? "#f0e6d3" : isPast ? "rgba(255,255,255,0.35)" : "rgba(240,230,211,0.8)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" } }, nameOf(t)),
+              t.trackTimeMillis ? /* @__PURE__ */ React.createElement("div", { style: { flexShrink: 0, fontSize: "12px", color: "rgba(255,255,255,0.3)", fontVariantNumeric: "tabular-nums" } }, formatTime(t.trackTimeMillis / 1e3)) : null
             );
           }))
         ))
