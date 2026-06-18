@@ -401,6 +401,7 @@
     const [changePwDone, setChangePwDone] = useState2(false);
     const [showHistory, setShowHistory] = useState2(false);
     const [showTrackList, setShowTrackList] = useState2(false);
+    const [showNowPlayingList, setShowNowPlayingList] = useState2(false);
     const [collapsedSides, setCollapsedSides] = useState2(/* @__PURE__ */ new Set());
     const toggleSideCollapse = (side) => setCollapsedSides((prev) => {
       const n = new Set(prev);
@@ -5350,6 +5351,96 @@ Move closer to your speakers and try again.`);
           flexShrink: 0
         }
       }, "\u2192"));
+    })(), (() => {
+      const hasTT = turntableAlbum && turntableTracksRef.current.length > 0 && turntableMatchedIdxRef.current >= 0;
+      const tIdx = hasTT ? turntableMatchedIdxRef.current : currentTrackIndex;
+      const tTracks = hasTT ? turntableTracksRef.current : albumTracks;
+      if (tTracks.length === 0 || tIdx < 0) return null;
+      const remaining = tTracks.length - tIdx - 1;
+      const nameOf = (t) => t?.trackName || t?.title || "";
+      const jumpTo = (i) => {
+        hasTT ? jumpToTrackIdx(i) : jumpToTrack(i);
+        setShowNowPlayingList(false);
+      };
+      return /* @__PURE__ */ React.createElement(
+        React.Fragment,
+        null,
+        /* @__PURE__ */ React.createElement("button", {
+          onClick: () => setShowNowPlayingList((v) => !v),
+          style: {
+            display: "block",
+            margin: "8px auto 0",
+            background: "rgba(255,255,255,0.05)",
+            border: "1px solid rgba(255,255,255,0.1)",
+            color: "rgba(255,255,255,0.45)",
+            borderRadius: "50px",
+            padding: "6px 16px",
+            fontSize: "11px",
+            fontWeight: "600",
+            letterSpacing: "0.5px",
+            cursor: "pointer",
+            fontFamily: "inherit"
+          }
+        }, `\u2630  Track ${tIdx + 1} of ${tTracks.length}`),
+        showNowPlayingList && /* @__PURE__ */ React.createElement("div", {
+          onClick: () => setShowNowPlayingList(false),
+          style: { position: "fixed", inset: 0, zIndex: 600, background: "rgba(8,8,16,0.75)", backdropFilter: "blur(6px)", display: "flex", flexDirection: "column", justifyContent: "flex-end" }
+        }, /* @__PURE__ */ React.createElement(
+          "div",
+          {
+            onClick: (e) => e.stopPropagation(),
+            style: { background: "#0e0e1a", borderRadius: "20px 20px 0 0", border: "1px solid rgba(255,255,255,0.09)", maxHeight: "80vh", display: "flex", flexDirection: "column", paddingBottom: "max(24px, calc(env(safe-area-inset-bottom) + 12px))" }
+          },
+          /* @__PURE__ */ React.createElement(
+            "div",
+            {
+              style: { padding: "18px 20px 12px", borderBottom: "1px solid rgba(255,255,255,0.06)" }
+            },
+            /* @__PURE__ */ React.createElement(
+              "div",
+              { style: { display: "flex", justifyContent: "space-between", alignItems: "center" } },
+              /* @__PURE__ */ React.createElement("div", { style: { fontSize: "16px", fontWeight: "700", color: "#f0e6d3" } }, turntableAlbum?.album_name || "This record"),
+              /* @__PURE__ */ React.createElement("button", { onClick: () => setShowNowPlayingList(false), style: { background: "rgba(255,255,255,0.07)", border: "none", color: "rgba(255,255,255,0.6)", borderRadius: "50%", width: "30px", height: "30px", fontSize: "17px", cursor: "pointer", fontFamily: "inherit" } }, "\xD7")
+            ),
+            /* @__PURE__ */ React.createElement(
+              "div",
+              { style: { fontSize: "12px", color: "rgba(212,168,70,0.85)", marginTop: "4px" } },
+              `${tIdx + 1} of ${tTracks.length} played \xB7 ${remaining} left on the record`
+            )
+          ),
+          /* @__PURE__ */ React.createElement("div", {
+            style: { overflowY: "auto", padding: "8px 0" }
+          }, tTracks.map((t, i) => {
+            const isCur = i === tIdx, isPast = i < tIdx;
+            return /* @__PURE__ */ React.createElement(
+              "button",
+              {
+                key: i,
+                onClick: () => jumpTo(i),
+                style: {
+                  display: "flex",
+                  alignItems: "center",
+                  gap: "12px",
+                  width: "100%",
+                  textAlign: "left",
+                  background: isCur ? "rgba(212,168,70,0.12)" : "none",
+                  border: "none",
+                  borderLeft: isCur ? "3px solid #d4a846" : "3px solid transparent",
+                  padding: "11px 18px",
+                  cursor: "pointer",
+                  fontFamily: "inherit"
+                }
+              },
+              /* @__PURE__ */ React.createElement(
+                "div",
+                { style: { width: "20px", flexShrink: 0, fontSize: "12px", color: isCur ? "#d4a846" : "rgba(255,255,255,0.3)", textAlign: "center" } },
+                isCur ? "\u25B6" : isPast ? "\u2713" : String(i + 1)
+              ),
+              /* @__PURE__ */ React.createElement("div", { style: { fontSize: "14px", fontWeight: isCur ? "700" : "500", color: isCur ? "#f0e6d3" : isPast ? "rgba(255,255,255,0.35)" : "rgba(240,230,211,0.8)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" } }, nameOf(t))
+            );
+          }))
+        ))
+      );
     })(), /* @__PURE__ */ React.createElement("div", {
       style: {
         textAlign: "center",
