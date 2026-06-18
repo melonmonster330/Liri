@@ -2241,6 +2241,7 @@ Move closer to your speakers and try again.`);
       autoAdvanceFiredRef.current = false;
       autoRetryCountRef.current = 0;
       saveToHistory(user, song);
+      maybeAutoPostPlay({ userId: user?.id, collectionId: ta?.itunes_collection_id, album: song.album, artist: song.artist, artwork: song.artwork });
       setShowTrackList(false);
       setMode("confirmed");
     };

@@ -2352,6 +2352,9 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
     autoAdvanceFiredRef.current = false;
     autoRetryCountRef.current = 0;
     saveToHistory(user, song);
+    // Picking a record off the shelf (the main web flow) counts as spinning it —
+    // auto-post the album. Dedup (per-session + 12h) is handled inside.
+    maybeAutoPostPlay({ userId: user?.id, collectionId: ta?.itunes_collection_id, album: song.album, artist: song.artist, artwork: song.artwork });
     setShowTrackList(false);
     setMode("confirmed");
   };
