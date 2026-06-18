@@ -476,7 +476,8 @@
     const nudgeMenuTimerRef = useRef2(null);
     const [showOnboarding, setShowOnboarding] = useState2(() => !localStorage.getItem("liri_onboarding_done"));
     const [onboardingStep, setOnboardingStep] = useState2(0);
-    const ONBOARDING_STEPS = 5;
+    const ONBOARDING_STEPS = 6;
+    const [coachStep, setCoachStep] = useState2(0);
     const dismissOnboarding = () => {
       localStorage.setItem("liri_onboarding_done", "true");
       setShowOnboarding(false);
@@ -3378,6 +3379,78 @@ Move closer to your speakers and try again.`);
     }, "Next \u2192"))), onboardingStep === 4 && /* @__PURE__ */ React.createElement("div", {
       style: {
         textAlign: "center",
+        animation: "fade-up 0.4s ease both"
+      }
+    }, /* @__PURE__ */ React.createElement("div", {
+      style: {
+        fontSize: "72px",
+        marginBottom: "24px",
+        color: "#d4a846",
+        filter: "drop-shadow(0 0 20px rgba(212,168,70,0.4))"
+      }
+    }, /* @__PURE__ */ React.createElement("svg", { width: "1em", height: "1em", viewBox: "0 0 24 24", fill: "none", stroke: "currentColor", strokeWidth: "1.8", strokeLinecap: "round", strokeLinejoin: "round" }, /* @__PURE__ */ React.createElement("path", { d: "M4 6h16M4 12h16M4 18h10" }))), /* @__PURE__ */ React.createElement("div", {
+      style: {
+        fontSize: "26px",
+        fontWeight: "700",
+        color: "#f0e6d3",
+        marginBottom: "16px"
+      }
+    }, "Share the spin"), /* @__PURE__ */ React.createElement("p", {
+      style: {
+        fontSize: "15px",
+        color: "rgba(255,255,255,0.5)",
+        lineHeight: "1.9",
+        maxWidth: "290px",
+        margin: "0 auto 28px"
+      }
+    }, "Liri has a ", /* @__PURE__ */ React.createElement("strong", { style: { color: "#d4a846" } }, "Feed"), ". Follow friends to see what they're spinning, share the record on your turntable, and post the lyric lines that hit hardest."), /* @__PURE__ */ React.createElement("div", {
+      style: {
+        background: "rgba(212,168,70,0.07)",
+        border: "1px solid rgba(212,168,70,0.15)",
+        borderRadius: "14px",
+        padding: "12px 16px",
+        maxWidth: "280px",
+        margin: "0 auto 40px",
+        fontSize: "13px",
+        color: "rgba(255,255,255,0.4)",
+        lineHeight: "1.7",
+        textAlign: "left"
+      }
+    }, "\u2726 Turn on auto-share in Settings and the record you play posts itself \u2014 you choose who sees it."), /* @__PURE__ */ React.createElement("div", {
+      style: {
+        display: "flex",
+        gap: "16px",
+        justifyContent: "center",
+        alignItems: "center"
+      }
+    }, /* @__PURE__ */ React.createElement("button", {
+      onClick: () => setOnboardingStep(3),
+      style: {
+        background: "none",
+        border: "1px solid rgba(255,255,255,0.1)",
+        color: "rgba(255,255,255,0.3)",
+        borderRadius: "50px",
+        padding: "12px 24px",
+        fontSize: "13px",
+        cursor: "pointer",
+        fontFamily: "inherit"
+      }
+    }, "\u2190 Back"), /* @__PURE__ */ React.createElement("button", {
+      onClick: () => setOnboardingStep(5),
+      style: {
+        background: "linear-gradient(135deg, #d4a846, #c9807a)",
+        color: "#080810",
+        border: "none",
+        borderRadius: "50px",
+        padding: "14px 36px",
+        fontSize: "14px",
+        fontWeight: "700",
+        cursor: "pointer",
+        fontFamily: "inherit"
+      }
+    }, "Next \u2192"))), onboardingStep === 5 && /* @__PURE__ */ React.createElement("div", {
+      style: {
+        textAlign: "center",
         animation: "fade-up 0.4s ease both",
         maxWidth: "320px",
         margin: "0 auto"
@@ -3479,7 +3552,7 @@ Move closer to your speakers and try again.`);
     }, c.role))))), /* @__PURE__ */ React.createElement("button", {
       onClick: () => {
         dismissOnboarding();
-        window.location.href = window.Capacitor ? "/library.html" : "/library";
+        setCoachStep(1);
       },
       style: {
         background: "linear-gradient(135deg, #d4a846, #c9807a)",
@@ -3494,12 +3567,12 @@ Move closer to your speakers and try again.`);
         letterSpacing: "1px",
         boxShadow: "0 8px 32px rgba(212,168,70,0.3)"
       }
-    }, "Add your first record \u2192"), /* @__PURE__ */ React.createElement("div", {
+    }, "Show me around \u2192"), /* @__PURE__ */ React.createElement("div", {
       style: {
         marginTop: "14px"
       }
     }, /* @__PURE__ */ React.createElement("button", {
-      onClick: () => setOnboardingStep(3),
+      onClick: () => setOnboardingStep(4),
       style: {
         background: "none",
         border: "none",
@@ -3531,7 +3604,50 @@ Move closer to your speakers and try again.`);
         transition: "all 0.3s ease",
         cursor: "pointer"
       }
-    })))), showAlbumPicker && /* @__PURE__ */ React.createElement("div", {
+    })))), coachStep > 0 && (() => {
+      const sel = coachStep === 1 ? "#liri-listen-cta" : 'a[href="/app/feed.html"]';
+      const el = typeof document !== "undefined" ? document.querySelector(sel) : null;
+      const r = el ? el.getBoundingClientRect() : null;
+      const isLast = coachStep === 2;
+      const advance = () => {
+        if (isLast) {
+          setCoachStep(0);
+          window.location.href = window.Capacitor ? "/library.html" : "/library";
+        } else {
+          setCoachStep(2);
+        }
+      };
+      const copy = coachStep === 1 ? { title: "Tap Listen", body: "Put a record on, then hit Listen \u2014 Liri finds your place and scrolls the lyrics in time.", cta: "Next \u2192" } : { title: "Your Feed", body: "See what friends are spinning, share your own records, and post the lyric lines that hit. It lives right here.", cta: "Add your first record \u2192" };
+      const tipTop = r ? Math.max(20, r.top - 168) : null;
+      return /* @__PURE__ */ React.createElement(
+        "div",
+        {
+          onClick: advance,
+          style: { position: "fixed", inset: 0, zIndex: 700, cursor: "pointer" }
+        },
+        r ? /* @__PURE__ */ React.createElement("div", {
+          style: { position: "fixed", left: r.left - 8, top: r.top - 8, width: r.width + 16, height: r.height + 16, borderRadius: "16px", border: "2px solid #d4a846", boxShadow: "0 0 0 9999px rgba(8,8,16,0.82)", pointerEvents: "none", transition: "all 0.25s ease" }
+        }) : /* @__PURE__ */ React.createElement("div", { style: { position: "fixed", inset: 0, background: "rgba(8,8,16,0.82)" } }),
+        /* @__PURE__ */ React.createElement(
+          "div",
+          {
+            style: { position: "fixed", left: "50%", transform: "translateX(-50%)", top: tipTop != null ? tipTop : "auto", bottom: tipTop != null ? "auto" : "120px", width: "min(320px, calc(100vw - 48px))", background: "#13131f", border: "1px solid rgba(212,168,70,0.3)", borderRadius: "18px", padding: "20px", textAlign: "center", boxShadow: "0 12px 40px rgba(0,0,0,0.5)" }
+          },
+          /* @__PURE__ */ React.createElement("div", { style: { fontSize: "10px", letterSpacing: "2px", textTransform: "uppercase", color: "rgba(212,168,70,0.6)", marginBottom: "8px" } }, `${coachStep} of 2`),
+          /* @__PURE__ */ React.createElement("div", { style: { fontSize: "19px", fontWeight: "700", color: "#f0e6d3", marginBottom: "8px" } }, copy.title),
+          /* @__PURE__ */ React.createElement("p", { style: { fontSize: "14px", color: "rgba(255,255,255,0.55)", lineHeight: "1.6", marginBottom: "18px" } }, copy.body),
+          /* @__PURE__ */ React.createElement("button", { onClick: advance, style: { background: "linear-gradient(135deg,#d4a846,#c9807a)", color: "#080810", border: "none", borderRadius: "50px", padding: "12px 28px", fontSize: "14px", fontWeight: "700", fontFamily: "inherit", cursor: "pointer" } }, copy.cta),
+          /* @__PURE__ */ React.createElement(
+            "div",
+            { style: { marginTop: "10px" } },
+            /* @__PURE__ */ React.createElement("button", { onClick: (e) => {
+              e.stopPropagation();
+              setCoachStep(0);
+            }, style: { background: "none", border: "none", color: "rgba(255,255,255,0.3)", fontSize: "12px", fontFamily: "inherit", cursor: "pointer" } }, "Skip")
+          )
+        )
+      );
+    })(), showAlbumPicker && /* @__PURE__ */ React.createElement("div", {
       onClick: () => setShowAlbumPicker(false),
       style: {
         position: "fixed",
@@ -5721,6 +5837,7 @@ Move closer to your speakers and try again.`);
         }
       }, "Tap to choose a record from your library")))
     )), /* @__PURE__ */ React.createElement("button", {
+      id: "liri-listen-cta",
       onClick: () => !turntableTracksLoading && startListening(false),
       style: {
         background: turntableTracksLoading ? "rgba(255,255,255,0.08)" : "linear-gradient(135deg, #d4a846, #c9807a)",
