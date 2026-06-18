@@ -194,6 +194,21 @@
 
     // ── New Post Sheet ──────────────────────────────────────────────────────
 
+    // Parse a track_lyrics row into display lines. Prefers timestamped LRC
+    // (strips the [mm:ss.xx] tags), falls back to plain text. Drops blanks.
+    function parseLyricLines(row) {
+      if (!row) return [];
+      if (row.lrc_raw) {
+        const re = /\[(\d{2}):(\d{2})[.:]\d{2,3}\](.*)/;
+        const out = row.lrc_raw.split("\n").map(l => {
+          const m = l.match(re);
+          return m ? m[3].trim() : null;
+        }).filter(t => t && t.length);
+        if (out.length) return out;
+      }
+      return (row.lyrics_plain || "").split("\n").map(s => s.trim()).filter(Boolean);
+    }
+
     function NewPostSheet({ user, onClose, onPosted }) {
       const [step, setStep]           = useState("type");    // type → album → track → lyric → compose
       const [kind, setKind]           = useState(null);      // "album" | "track" | "lyric"
@@ -201,11 +216,20 @@
       const [tracks, setTracks]       = useState([]);
       const [selectedAlbum, setSelectedAlbum] = useState(null);
       const [selectedTrack, setSelectedTrack] = useState(null);
-      const [lyricText, setLyricText] = useState("");
       const [caption, setCaption]     = useState("");
       const [visibility, setVisibility] = useState("public");
       const [posting, setPosting]     = useState(false);
       const [error, setError]         = useState(null);
+      // Lyric selection: real lyrics for the chosen track + a tap-to-pick range.
+      const [lyricLines, setLyricLines]   = useState([]);
+      const [lyricLoading, setLyricLoading] = useState(false);
+      const [selAnchor, setSelAnchor]     = useState(null); // first tapped line index
+      const [selHead, setSelHead]         = useState(null); // last tapped line index
+
+      const selRange = (selAnchor != null && selHead != null)
+        ? [Math.min(selAnchor, selHead), Math.max(selAnchor, selHead)] : null;
+      const selectedLyric = selRange
+        ? lyricLines.slice(selRange[0], selRange[1] + 1).join("\n") : "";
 
       // Load library on mount
       useEffect(() => {
@@ -231,10 +255,25 @@
         setStep("track");
       };
 
-      const pickTrack = (track) => {
+      const pickTrack = async (track) => {
         setSelectedTrack(track);
-        if (kind === "lyric") { setStep("lyric"); return; }
-        setStep("compose");
+        if (kind !== "lyric") { setStep("compose"); return; }
+        // Load the real lyrics for this track so the user can select a range.
+        setStep("lyric");
+        setLyricLoading(true);
+        setLyricLines([]); setSelAnchor(null); setSelHead(null);
+        const { data } = await sb.from("track_lyrics")
+          .select("lrc_raw,lyrics_plain")
+          .eq("itunes_track_id", Number(track.itunes_track_id))
+          .maybeSingle();
+        setLyricLines(parseLyricLines(data));
+        setLyricLoading(false);
+      };
+
+      // Tap a line: first tap sets the anchor, next tap extends the range.
+      const tapLine = (i) => {
+        if (selAnchor == null) { setSelAnchor(i); setSelHead(i); }
+        else { setSelHead(i); }
       };
 
       const submit = async () => {
@@ -251,7 +290,7 @@
           artwork_url:   selectedAlbum?.artwork_url || null,
           track_id:      selectedTrack ? Number(selectedTrack.itunes_track_id) : null,
           track_name:    selectedTrack?.track_name || null,
-          lyric_text:    kind === "lyric" ? lyricText.trim() : null,
+          lyric_text:    kind === "lyric" ? selectedLyric.trim() : null,
           caption:       caption.trim() || null,
         };
         const { error: err } = await sb.from("posts").insert(payload);
@@ -367,23 +406,55 @@
                   ))
               )}
 
-              {/* Step 4: lyric input */}
+              {/* Step 4: select lyrics from the real song */}
               {step === "lyric" && (
                 <>
-                  <div style={{ fontSize: 13, color: "rgba(255,255,255,0.4)", marginBottom: 10 }}>
+                  <div style={{ fontSize: 13, color: "rgba(255,255,255,0.4)", marginBottom: 6 }}>
                     From <strong style={{ color: "#f0e6d3" }}>{selectedTrack?.track_name}</strong> · {selectedAlbum?.artist_name}
                   </div>
-                  <textarea
-                    autoFocus
-                    placeholder="Paste or type the lyric…"
-                    value={lyricText}
-                    onChange={e => setLyricText(e.target.value)}
-                    style={{ width: "100%", minHeight: 120, background: "rgba(255,255,255,0.05)", border: "1px solid rgba(255,255,255,0.12)", borderRadius: 12, padding: "14px 16px", fontSize: 16, fontStyle: "italic", color: "#f0e6d3", fontFamily: "inherit", resize: "none", outline: "none" }}
-                  />
-                  <button onClick={() => setStep("compose")} disabled={!lyricText.trim()}
-                    style={{ width: "100%", marginTop: 14, background: "linear-gradient(135deg,#d4a846,#c9807a)", color: "#080810", border: "none", borderRadius: 50, padding: "14px", fontSize: 15, fontWeight: 700, fontFamily: "inherit", opacity: lyricText.trim() ? 1 : 0.4 }}>
-                    Next →
-                  </button>
+                  <div style={{ fontSize: 12, color: "rgba(212,168,70,0.8)", marginBottom: 12 }}>
+                    {selRange ? `${selRange[1] - selRange[0] + 1} line${selRange[1] !== selRange[0] ? "s" : ""} selected — tap another line to extend`
+                              : "Tap the first line, then the last line to select as much as you want."}
+                  </div>
+
+                  {lyricLoading ? (
+                    <div style={{ display: "flex", justifyContent: "center", padding: "40px 0" }}><Spinner /></div>
+                  ) : lyricLines.length === 0 ? (
+                    <div style={{ textAlign: "center", padding: "32px 0", color: "rgba(255,255,255,0.4)", fontSize: 13 }}>
+                      No lyrics on file for this track yet.
+                    </div>
+                  ) : (
+                    <div style={{ maxHeight: "46vh", overflowY: "auto", borderRadius: 12, background: "rgba(0,0,0,0.2)", border: "1px solid rgba(255,255,255,0.06)", padding: "6px 0" }}>
+                      {lyricLines.map((line, i) => {
+                        const inSel = selRange && i >= selRange[0] && i <= selRange[1];
+                        return (
+                          <div key={i} onClick={() => tapLine(i)}
+                            style={{
+                              padding: "9px 16px", fontSize: 15, lineHeight: 1.4, cursor: "pointer",
+                              fontStyle: "italic",
+                              color: inSel ? "#080810" : "rgba(240,230,211,0.85)",
+                              background: inSel ? "linear-gradient(135deg,rgba(212,168,70,0.95),rgba(201,128,122,0.95))" : "transparent",
+                              fontWeight: inSel ? 700 : 500,
+                            }}>
+                            {line}
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
+
+                  <div style={{ display: "flex", gap: 10, marginTop: 14 }}>
+                    {selRange && (
+                      <button onClick={() => { setSelAnchor(null); setSelHead(null); }}
+                        style={{ flexShrink: 0, background: "rgba(255,255,255,0.06)", color: "rgba(240,230,211,0.7)", border: "1px solid rgba(255,255,255,0.12)", borderRadius: 50, padding: "14px 18px", fontSize: 14, fontWeight: 700, fontFamily: "inherit" }}>
+                        Clear
+                      </button>
+                    )}
+                    <button onClick={() => setStep("compose")} disabled={!selRange}
+                      style={{ flex: 1, background: "linear-gradient(135deg,#d4a846,#c9807a)", color: "#080810", border: "none", borderRadius: 50, padding: "14px", fontSize: 15, fontWeight: 700, fontFamily: "inherit", opacity: selRange ? 1 : 0.4 }}>
+                      Next →
+                    </button>
+                  </div>
                 </>
               )}
 
@@ -394,7 +465,7 @@
                   <div style={{ background: "rgba(255,255,255,0.03)", border: "1px solid rgba(255,255,255,0.07)", borderRadius: 12, padding: 14, marginBottom: 18, display: "flex", alignItems: "center", gap: 12 }}>
                     {selectedAlbum?.artwork_url && <img src={selectedAlbum.artwork_url} alt="" style={{ width: 44, height: 44, borderRadius: 6, objectFit: "cover", flexShrink: 0 }} />}
                     <div style={{ minWidth: 0 }}>
-                      {kind === "lyric" && <div style={{ fontSize: 13, fontStyle: "italic", color: "rgba(212,168,70,0.9)", marginBottom: 2, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>"{lyricText}"</div>}
+                      {kind === "lyric" && <div style={{ fontSize: 13, fontStyle: "italic", color: "rgba(212,168,70,0.9)", marginBottom: 4, whiteSpace: "pre-wrap" }}>"{selectedLyric}"</div>}
                       <div style={{ fontSize: 13, fontWeight: 700, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
                         {kind === "album" ? selectedAlbum?.album_name : selectedTrack?.track_name}
                       </div>
