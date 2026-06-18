@@ -412,6 +412,7 @@
     const [authMode, setAuthMode] = useState2("signin");
     const [authEmail, setAuthEmail] = useState2("");
     const [authPassword, setAuthPassword] = useState2("");
+    const [showPw, setShowPw] = useState2(false);
     const [authConfirmPw, setAuthConfirmPw] = useState2("");
     const [authName, setAuthName] = useState2("");
     const [authError, setAuthError] = useState2(null);
@@ -1045,7 +1046,14 @@
           setAuthSheet(null);
         }
       } catch (e) {
-        setAuthError(e.message);
+        const m = (e?.message || "").toLowerCase();
+        if (m.includes("invalid login") || m.includes("invalid credentials")) {
+          setAuthError("That email or password doesn't look right. Try again, or reset your password below.");
+        } else if (m.includes("email not confirmed")) {
+          setAuthError("Please confirm your email first \u2014 check your inbox for the verification link.");
+        } else {
+          setAuthError(e?.message || "Something went wrong. Please try again.");
+        }
       } finally {
         setAuthWorking(false);
       }
@@ -1197,23 +1205,6 @@
             }
           }
           console.log("[turntable] lrcRows:", (lrcRows || []).length, "cache entries:", Object.keys(cache).length, "tracks:", trackRows.length);
-          const missingTracks = trackRows.filter((t) => t.itunes_track_id && !cache[String(t.itunes_track_id)]);
-          if (missingTracks.length > 0) {
-            await Promise.all(missingTracks.map(async (t) => {
-              try {
-                const p = new URLSearchParams({ track_name: t.track_name, artist_name: t.artist_name || artistName, album_name: albumName });
-                if (t.duration_ms) p.set("duration", String(Math.round(t.duration_ms / 1e3)));
-                const r = await fetch(`https://lrclib.net/api/get?${p}`, { headers: { "Lrclib-Client": "Liri/1.1 (https://getliri.com)" } });
-                if (!r.ok) return;
-                const d = await r.json();
-                if (d?.syncedLyrics || d?.plainLyrics) {
-                  cache[String(t.itunes_track_id)] = { lrc_raw: d.syncedLyrics || null, words_json: null, lyrics_plain: d.plainLyrics || null };
-                  console.log("[turntable] fetched missing lyrics for:", t.track_name);
-                }
-              } catch {
-              }
-            }));
-          }
           turntableLyricsCacheRef.current = cache;
           setTurntableTracksProgress({ percent: 90, stage: "Loading side data\u2026" });
           vinylSidesRef.current = [];
@@ -1230,11 +1221,7 @@
             }
             if (sorted.length >= trackRows.length) vinylSidesRef.current = sorted;
           }
-          let dbRelease = await fetchVinylRelease(collectionId);
-          if (!dbRelease?.vinyl_tracks?.length && !vinylSidesRef.current.length) {
-            await autoPopulateVinylSides(collectionId, albumName, artistName);
-            dbRelease = await fetchVinylRelease(collectionId);
-          }
+          const dbRelease = await fetchVinylRelease(collectionId);
           if (dbRelease?.vinyl_tracks?.length > 0) {
             setVinylDbRelease(dbRelease);
             vinylDbReleaseRef.current = dbRelease;
@@ -1242,6 +1229,40 @@
             setVinylDbRelease(null);
             vinylDbReleaseRef.current = null;
           }
+          setTurntableTracksLoading(false);
+          setTurntableTracksProgress({ percent: 100, stage: "" });
+          const missingTracks = trackRows.filter((t) => t.itunes_track_id && !cache[String(t.itunes_track_id)]);
+          (async () => {
+            if (missingTracks.length > 0) {
+              await Promise.all(missingTracks.map(async (t) => {
+                try {
+                  const p = new URLSearchParams({ track_name: t.track_name, artist_name: t.artist_name || artistName, album_name: albumName });
+                  if (t.duration_ms) p.set("duration", String(Math.round(t.duration_ms / 1e3)));
+                  const ac = new AbortController();
+                  const to = setTimeout(() => ac.abort(), 6e3);
+                  const r = await fetch(`https://lrclib.net/api/get?${p}`, { headers: { "Lrclib-Client": "Liri/1.1 (https://getliri.com)" }, signal: ac.signal }).finally(() => clearTimeout(to));
+                  if (!r.ok) return;
+                  const d = await r.json();
+                  if (d?.syncedLyrics || d?.plainLyrics) {
+                    cache[String(t.itunes_track_id)] = { lrc_raw: d.syncedLyrics || null, words_json: null, lyrics_plain: d.plainLyrics || null };
+                  }
+                } catch {
+                }
+              }));
+            }
+            if (!vinylDbReleaseRef.current?.vinyl_tracks?.length && !vinylSidesRef.current.length) {
+              try {
+                await autoPopulateVinylSides(collectionId, albumName, artistName);
+                const retry = await fetchVinylRelease(collectionId);
+                if (retry?.vinyl_tracks?.length > 0) {
+                  setVinylDbRelease(retry);
+                  vinylDbReleaseRef.current = retry;
+                }
+              } catch {
+              }
+            }
+          })();
+          return;
         } else {
           console.warn("[turntable] no tracks found for:", collectionId);
         }
@@ -2890,14 +2911,25 @@ Move closer to your speakers and try again.`);
           onKeyDown: (e) => e.key === "Enter" && handleAuth(),
           style: inp,
           autoFocus: true
-        }), /* @__PURE__ */ React.createElement("input", {
-          type: "password",
+        }), /* @__PURE__ */ React.createElement("div", {
+          style: { position: "relative" }
+        }, /* @__PURE__ */ React.createElement("input", {
+          type: showPw ? "text" : "password",
           placeholder: "Password",
           value: authPassword,
           onChange: (e) => setAuthPassword(e.target.value),
           onKeyDown: (e) => e.key === "Enter" && handleAuth(),
-          style: inp
-        })), authError && /* @__PURE__ */ React.createElement("div", {
+          style: { ...inp, paddingRight: "48px" }
+        }), /* @__PURE__ */ React.createElement(
+          "button",
+          {
+            type: "button",
+            onClick: () => setShowPw((v) => !v),
+            "aria-label": showPw ? "Hide password" : "Show password",
+            style: { position: "absolute", right: "6px", top: "50%", transform: "translateY(-50%)", background: "none", border: "none", color: "rgba(255,255,255,0.4)", cursor: "pointer", padding: "10px", display: "flex", alignItems: "center", fontFamily: "inherit" }
+          },
+          showPw ? /* @__PURE__ */ React.createElement("svg", { width: "20", height: "20", viewBox: "0 0 24 24", fill: "none", stroke: "currentColor", strokeWidth: "2", strokeLinecap: "round", strokeLinejoin: "round" }, /* @__PURE__ */ React.createElement("path", { d: "M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24" }), /* @__PURE__ */ React.createElement("line", { x1: "1", y1: "1", x2: "23", y2: "23" })) : /* @__PURE__ */ React.createElement("svg", { width: "20", height: "20", viewBox: "0 0 24 24", fill: "none", stroke: "currentColor", strokeWidth: "2", strokeLinecap: "round", strokeLinejoin: "round" }, /* @__PURE__ */ React.createElement("path", { d: "M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z" }), /* @__PURE__ */ React.createElement("circle", { cx: "12", cy: "12", r: "3" }))
+        ))), authError && /* @__PURE__ */ React.createElement("div", {
           style: {
             fontSize: "13px",
             color: authError.includes("reset") || authError.includes("sent") ? "#6aaa8a" : "#e8a0a8",
@@ -2948,16 +2980,16 @@ Move closer to your speakers and try again.`);
           style: {
             background: "none",
             border: "none",
-            color: "rgba(255,255,255,0.18)",
+            color: "rgba(212,168,70,0.75)",
             cursor: "pointer",
-            fontSize: "12px",
+            fontSize: "13px",
+            fontWeight: "600",
             fontFamily: "inherit",
             padding: "12px 16px",
-            margin: "-12px -16px",
-            minHeight: "44px",
-            minWidth: "44px"
+            margin: "-6px auto -12px",
+            minHeight: "44px"
           }
-        }, "Forgot password?")))
+        }, "Forgot your password?")))
       ))));
     }
     const isSyncing = mode === "syncing";
