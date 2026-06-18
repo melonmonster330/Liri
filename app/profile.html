@@ -209,9 +209,14 @@
 
       // Load library on mount
       useEffect(() => {
-        sb.from("user_library").select("itunes_collection_id,album_name,artist_name,artwork_url")
-          .eq("user_id", user.id).order("album_name")
-          .then(({ data }) => setLibrary(data || []));
+        sb.from("user_library").select("*, catalogue(album_name, artist_name, artwork_url, itunes_collection_id)")
+          .eq("user_id", user.id).order("added_at", { ascending: false })
+          .then(({ data }) => setLibrary((data || []).map(r => ({
+            itunes_collection_id: r.catalogue?.itunes_collection_id || r.itunes_collection_id,
+            album_name: r.catalogue?.album_name || r.album_name,
+            artist_name: r.catalogue?.artist_name || r.artist_name,
+            artwork_url: r.catalogue?.artwork_url || r.artwork_url,
+          }))));
       }, [user.id]);
 
       // Load tracks when album selected for track/lyric kinds
