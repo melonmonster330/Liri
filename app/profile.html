@@ -15,6 +15,8 @@
     button, a, [role="button"] { -webkit-tap-highlight-color: transparent; cursor: pointer; }
     button:active, a:active, [role="button"]:active { opacity: 0.65; transform: scale(0.97); transition: opacity 0s, transform 0s; }
     @keyframes spin { to { transform: rotate(360deg); } }
+    @keyframes pop { 0% { transform: scale(1); } 40% { transform: scale(1.35); } 100% { transform: scale(1); } }
+    @keyframes slide-up { from { transform: translateY(100%); } to { transform: translateY(0); } }
   </style>
   <script>document.addEventListener('touchstart', function(){}, {passive: true});</script>
 </head>
@@ -28,7 +30,7 @@
   <script src="vendor/tabbar.js"></script>
 
   <script type="text/babel">
-    const { useState, useEffect, useCallback } = React;
+    const { useState, useEffect, useCallback, useRef } = React;
 
     const APP_VERSION = "1.1.7";
 
@@ -61,6 +63,15 @@
       );
     }
 
+    function timeAgo(ts) {
+      const s = Math.max(1, Math.floor((Date.now() - new Date(ts).getTime()) / 1000));
+      if (s < 60) return "just now";
+      const m = Math.floor(s / 60); if (m < 60) return m + "m";
+      const h = Math.floor(m / 60); if (h < 24) return h + "h";
+      const d = Math.floor(h / 24); if (d < 7)  return d + "d";
+      return new Date(ts).toLocaleDateString(undefined, { month: "short", day: "numeric" });
+    }
+
     const VISIBILITY_FILTERS = [
       { key: "all",     label: "All" },
       { key: "public",  label: "Public" },
@@ -88,8 +99,8 @@
 
       let label = "Follow";
       let primary = true;
-      if (follow?.status === "pending")  { label = "Requested";  primary = false; }
-      if (follow?.status === "accepted") { label = "Following";  primary = false; }
+      if (follow?.status === "pending")  { label = "Requested"; primary = false; }
+      if (follow?.status === "accepted") { label = "Following"; primary = false; }
 
       return (
         <button onClick={onClick} disabled={working}
@@ -105,16 +116,340 @@
       );
     }
 
+    // ── Post card (same as feed.html) ───────────────────────────────────────
+
+    function LikeButton({ liked, count, onToggle }) {
+      const [bursting, setBursting] = useState(false);
+      const click = () => {
+        if (!liked) { setBursting(true); setTimeout(() => setBursting(false), 350); }
+        onToggle();
+      };
+      return (
+        <button onClick={click} aria-label={liked ? "Unlike" : "Like"}
+          style={{ display: "inline-flex", alignItems: "center", gap: 6, background: "none", border: "none", color: liked ? "#c9807a" : "rgba(240,230,211,0.5)", fontFamily: "inherit", fontSize: 13, fontWeight: 700, padding: "4px 0" }}>
+          <svg width="20" height="20" viewBox="0 0 24 24" fill={liked ? "#c9807a" : "none"} stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"
+            style={{ animation: bursting ? "pop 0.35s ease" : "none" }}>
+            <path d="M20.8 4.6a5.5 5.5 0 0 0-7.8 0L12 5.6l-1-1a5.5 5.5 0 0 0-7.8 7.8l1 1L12 21l7.8-7.6 1-1a5.5 5.5 0 0 0 0-7.8z"/>
+          </svg>
+          {count > 0 ? count : ""}
+        </button>
+      );
+    }
+
+    function PostCard({ post, onToggleLike, onDelete, isOwn }) {
+      const card = {
+        background: "rgba(255,255,255,0.03)",
+        border: "1px solid rgba(255,255,255,0.07)",
+        borderRadius: 16, padding: 16, margin: "0 16px 14px",
+      };
+      const visLabel = { public: null, friends: "Friends", private: "Only me" }[post.visibility];
+
+      let body;
+      if (post.kind === "lyric") {
+        body = (
+          <div style={{ background: "linear-gradient(135deg,rgba(212,168,70,0.10),rgba(201,128,122,0.08))", border: "1px solid rgba(212,168,70,0.2)", borderRadius: 12, padding: "20px 18px", marginBottom: post.caption ? 12 : 0 }}>
+            <div style={{ fontSize: 19, lineHeight: 1.5, fontWeight: 600, fontStyle: "italic", color: "#f7efe0", whiteSpace: "pre-wrap" }}>"{post.lyric_text}"</div>
+            <div style={{ marginTop: 12, display: "flex", alignItems: "center", gap: 8 }}>
+              {post.artwork_url && <img src={post.artwork_url} alt="" style={{ width: 32, height: 32, borderRadius: 4, objectFit: "cover", flexShrink: 0 }} />}
+              <div style={{ fontSize: 12, color: "rgba(255,255,255,0.55)", minWidth: 0 }}>
+                <div style={{ fontWeight: 700, color: "rgba(240,230,211,0.9)", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{post.track_name}</div>
+                <div style={{ whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{post.artist_name}</div>
+              </div>
+            </div>
+          </div>
+        );
+      } else {
+        const title = post.kind === "track" ? post.track_name : post.album_name;
+        const sub   = post.kind === "track" ? `${post.artist_name}${post.album_name ? " · " + post.album_name : ""}` : post.artist_name;
+        body = (
+          <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: post.caption ? 12 : 0 }}>
+            {post.artwork_url && <img src={post.artwork_url} alt="" style={{ width: 56, height: 56, borderRadius: 8, objectFit: "cover", flexShrink: 0 }} />}
+            <div style={{ minWidth: 0 }}>
+              <div style={{ fontSize: 15, fontWeight: 700, color: "#f0e6d3", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{title}</div>
+              <div style={{ fontSize: 13, color: "rgba(255,255,255,0.5)", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{sub}</div>
+            </div>
+          </div>
+        );
+      }
+
+      return (
+        <div style={card}>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 12 }}>
+            <div style={{ fontSize: 12, color: "rgba(255,255,255,0.35)", display: "flex", gap: 6, alignItems: "center" }}>
+              <span>{timeAgo(post.created_at)}</span>
+              {visLabel && <><span>·</span><span>{visLabel}</span></>}
+            </div>
+            {isOwn && (
+              <button onClick={() => onDelete(post)} style={{ background: "none", border: "none", color: "rgba(255,255,255,0.2)", fontFamily: "inherit", fontSize: 18, lineHeight: 1, padding: "0 4px" }}>×</button>
+            )}
+          </div>
+          {body}
+          {post.caption && <div style={{ fontSize: 14, lineHeight: 1.5, color: "rgba(240,230,211,0.85)", marginBottom: 12, marginTop: 12 }}>{post.caption}</div>}
+          <div style={{ borderTop: "1px solid rgba(255,255,255,0.06)", paddingTop: 10, marginTop: 4 }}>
+            <LikeButton liked={post._likedByMe} count={post.like_count} onToggle={() => onToggleLike(post)} />
+          </div>
+        </div>
+      );
+    }
+
+    // ── New Post Sheet ──────────────────────────────────────────────────────
+
+    function NewPostSheet({ user, onClose, onPosted }) {
+      const [step, setStep]           = useState("type");    // type → album → track → lyric → compose
+      const [kind, setKind]           = useState(null);      // "album" | "track" | "lyric"
+      const [library, setLibrary]     = useState(null);      // user's albums
+      const [tracks, setTracks]       = useState([]);
+      const [selectedAlbum, setSelectedAlbum] = useState(null);
+      const [selectedTrack, setSelectedTrack] = useState(null);
+      const [lyricText, setLyricText] = useState("");
+      const [caption, setCaption]     = useState("");
+      const [visibility, setVisibility] = useState("public");
+      const [posting, setPosting]     = useState(false);
+      const [error, setError]         = useState(null);
+
+      // Load library on mount
+      useEffect(() => {
+        sb.from("user_library").select("itunes_collection_id,album_name,artist_name,artwork_url")
+          .eq("user_id", user.id).order("album_name")
+          .then(({ data }) => setLibrary(data || []));
+      }, [user.id]);
+
+      // Load tracks when album selected for track/lyric kinds
+      const pickAlbum = async (album) => {
+        setSelectedAlbum(album);
+        if (kind === "album") { setStep("compose"); return; }
+        const { data } = await sb.from("album_tracks")
+          .select("itunes_track_id,track_name,track_number,disc_number")
+          .eq("itunes_collection_id", album.itunes_collection_id)
+          .order("disc_number").order("track_number");
+        setTracks(data || []);
+        setStep("track");
+      };
+
+      const pickTrack = (track) => {
+        setSelectedTrack(track);
+        if (kind === "lyric") { setStep("lyric"); return; }
+        setStep("compose");
+      };
+
+      const submit = async () => {
+        setError(null);
+        setPosting(true);
+        const payload = {
+          author_id:    user.id,
+          kind,
+          source:       "manual",
+          visibility,
+          collection_id: selectedAlbum ? Number(selectedAlbum.itunes_collection_id) : null,
+          album_name:    selectedAlbum?.album_name || null,
+          artist_name:   selectedAlbum?.artist_name || null,
+          artwork_url:   selectedAlbum?.artwork_url || null,
+          track_id:      selectedTrack ? Number(selectedTrack.itunes_track_id) : null,
+          track_name:    selectedTrack?.track_name || null,
+          lyric_text:    kind === "lyric" ? lyricText.trim() : null,
+          caption:       caption.trim() || null,
+        };
+        const { error: err } = await sb.from("posts").insert(payload);
+        setPosting(false);
+        if (err) { setError("Couldn't post — try again."); return; }
+        onPosted();
+        onClose();
+      };
+
+      const sheetStyle = {
+        position: "fixed", inset: 0, zIndex: 1000,
+        display: "flex", flexDirection: "column", justifyContent: "flex-end",
+      };
+      const backdropStyle = {
+        position: "absolute", inset: 0, background: "rgba(0,0,0,0.6)", backdropFilter: "blur(4px)",
+      };
+      const panelStyle = {
+        position: "relative", background: "#0e0e1a",
+        borderRadius: "20px 20px 0 0",
+        border: "1px solid rgba(255,255,255,0.09)",
+        maxHeight: "88vh", overflowY: "auto",
+        animation: "slide-up 0.28s ease",
+        paddingBottom: "max(32px, calc(env(safe-area-inset-bottom) + 16px))",
+      };
+      const headerStyle = {
+        display: "flex", alignItems: "center", justifyContent: "space-between",
+        padding: "20px 20px 0",
+      };
+      const titleStyle = { fontSize: 17, fontWeight: 700 };
+      const closeBtn = {
+        background: "rgba(255,255,255,0.07)", border: "none", color: "rgba(255,255,255,0.6)",
+        borderRadius: "50%", width: 32, height: 32, fontFamily: "inherit", fontSize: 18,
+        display: "flex", alignItems: "center", justifyContent: "center",
+      };
+
+      const KindCard = ({ k, icon, label, desc }) => (
+        <button onClick={() => { setKind(k); setStep("album"); }}
+          style={{ display: "flex", alignItems: "center", gap: 14, width: "100%", background: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.08)", borderRadius: 14, padding: "16px 18px", fontFamily: "inherit", color: "#f0e6d3", textAlign: "left", marginBottom: 10 }}>
+          <div style={{ fontSize: 28, flexShrink: 0 }}>{icon}</div>
+          <div>
+            <div style={{ fontSize: 15, fontWeight: 700 }}>{label}</div>
+            <div style={{ fontSize: 13, color: "rgba(255,255,255,0.45)", marginTop: 2 }}>{desc}</div>
+          </div>
+        </button>
+      );
+
+      const backLabel = { album: "type", track: "album", lyric: "track", compose: kind === "album" ? "album" : kind === "track" ? "track" : "lyric" };
+
+      return (
+        <div style={sheetStyle}>
+          <div style={backdropStyle} onClick={onClose} />
+          <div style={panelStyle}>
+            <div style={headerStyle}>
+              <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                {step !== "type" && (
+                  <button onClick={() => setStep(backLabel[step])} style={{ background: "none", border: "none", color: "rgba(255,255,255,0.5)", fontFamily: "inherit", fontSize: 14, padding: 0 }}>← Back</button>
+                )}
+                <div style={titleStyle}>
+                  {step === "type"    && "New post"}
+                  {step === "album"   && "Pick an album"}
+                  {step === "track"   && "Pick a track"}
+                  {step === "lyric"   && "Quote a lyric"}
+                  {step === "compose" && "Finish your post"}
+                </div>
+              </div>
+              <button onClick={onClose} style={closeBtn}>×</button>
+            </div>
+
+            <div style={{ padding: "20px 20px 0" }}>
+
+              {/* Step 1: post type */}
+              {step === "type" && (
+                <>
+                  <KindCard k="album"  icon="💿" label="Album"  desc="Share a record you're spinning" />
+                  <KindCard k="track"  icon="🎵" label="Track"  desc="Highlight a specific song" />
+                  <KindCard k="lyric"  icon="✦"  label="Lyric"  desc="Quote a line that hit different" />
+                </>
+              )}
+
+              {/* Step 2: album picker */}
+              {step === "album" && (
+                library === null ? (
+                  <div style={{ display: "flex", justifyContent: "center", padding: "40px 0" }}><Spinner /></div>
+                ) : library.length === 0 ? (
+                  <div style={{ textAlign: "center", padding: "40px 0", color: "rgba(255,255,255,0.4)" }}>
+                    <div style={{ marginBottom: 8 }}>No records in your library yet.</div>
+                    <a href="/app/library.html" style={{ color: "#d4a846" }}>Add some →</a>
+                  </div>
+                ) : library.map(album => (
+                  <button key={album.itunes_collection_id} onClick={() => pickAlbum(album)}
+                    style={{ display: "flex", alignItems: "center", gap: 12, width: "100%", background: "none", border: "none", borderBottom: "1px solid rgba(255,255,255,0.05)", padding: "12px 0", fontFamily: "inherit", color: "#f0e6d3", textAlign: "left" }}>
+                    {album.artwork_url
+                      ? <img src={album.artwork_url} alt="" style={{ width: 48, height: 48, borderRadius: 6, objectFit: "cover", flexShrink: 0 }} />
+                      : <div style={{ width: 48, height: 48, borderRadius: 6, background: "rgba(255,255,255,0.08)", flexShrink: 0 }} />}
+                    <div style={{ minWidth: 0 }}>
+                      <div style={{ fontSize: 14, fontWeight: 700, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{album.album_name}</div>
+                      <div style={{ fontSize: 12, color: "rgba(255,255,255,0.45)", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{album.artist_name}</div>
+                    </div>
+                  </button>
+                ))
+              )}
+
+              {/* Step 3: track picker */}
+              {step === "track" && (
+                tracks.length === 0
+                  ? <div style={{ display: "flex", justifyContent: "center", padding: "40px 0" }}><Spinner /></div>
+                  : tracks.map(t => (
+                    <button key={t.itunes_track_id} onClick={() => pickTrack(t)}
+                      style={{ display: "flex", alignItems: "center", gap: 12, width: "100%", background: "none", border: "none", borderBottom: "1px solid rgba(255,255,255,0.05)", padding: "12px 0", fontFamily: "inherit", color: "#f0e6d3", textAlign: "left" }}>
+                      <div style={{ fontSize: 12, color: "rgba(255,255,255,0.3)", width: 24, textAlign: "right", flexShrink: 0 }}>{t.track_number}</div>
+                      <div style={{ fontSize: 14, fontWeight: 600 }}>{t.track_name}</div>
+                    </button>
+                  ))
+              )}
+
+              {/* Step 4: lyric input */}
+              {step === "lyric" && (
+                <>
+                  <div style={{ fontSize: 13, color: "rgba(255,255,255,0.4)", marginBottom: 10 }}>
+                    From <strong style={{ color: "#f0e6d3" }}>{selectedTrack?.track_name}</strong> · {selectedAlbum?.artist_name}
+                  </div>
+                  <textarea
+                    autoFocus
+                    placeholder="Paste or type the lyric…"
+                    value={lyricText}
+                    onChange={e => setLyricText(e.target.value)}
+                    style={{ width: "100%", minHeight: 120, background: "rgba(255,255,255,0.05)", border: "1px solid rgba(255,255,255,0.12)", borderRadius: 12, padding: "14px 16px", fontSize: 16, fontStyle: "italic", color: "#f0e6d3", fontFamily: "inherit", resize: "none", outline: "none" }}
+                  />
+                  <button onClick={() => setStep("compose")} disabled={!lyricText.trim()}
+                    style={{ width: "100%", marginTop: 14, background: "linear-gradient(135deg,#d4a846,#c9807a)", color: "#080810", border: "none", borderRadius: 50, padding: "14px", fontSize: 15, fontWeight: 700, fontFamily: "inherit", opacity: lyricText.trim() ? 1 : 0.4 }}>
+                    Next →
+                  </button>
+                </>
+              )}
+
+              {/* Step 5: caption + visibility + post */}
+              {step === "compose" && (
+                <>
+                  {/* Preview */}
+                  <div style={{ background: "rgba(255,255,255,0.03)", border: "1px solid rgba(255,255,255,0.07)", borderRadius: 12, padding: 14, marginBottom: 18, display: "flex", alignItems: "center", gap: 12 }}>
+                    {selectedAlbum?.artwork_url && <img src={selectedAlbum.artwork_url} alt="" style={{ width: 44, height: 44, borderRadius: 6, objectFit: "cover", flexShrink: 0 }} />}
+                    <div style={{ minWidth: 0 }}>
+                      {kind === "lyric" && <div style={{ fontSize: 13, fontStyle: "italic", color: "rgba(212,168,70,0.9)", marginBottom: 2, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>"{lyricText}"</div>}
+                      <div style={{ fontSize: 13, fontWeight: 700, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+                        {kind === "album" ? selectedAlbum?.album_name : selectedTrack?.track_name}
+                      </div>
+                      <div style={{ fontSize: 12, color: "rgba(255,255,255,0.45)" }}>{selectedAlbum?.artist_name}</div>
+                    </div>
+                  </div>
+
+                  {/* Caption */}
+                  <textarea
+                    placeholder="Add a caption… (optional)"
+                    value={caption}
+                    onChange={e => setCaption(e.target.value)}
+                    style={{ width: "100%", minHeight: 80, background: "rgba(255,255,255,0.05)", border: "1px solid rgba(255,255,255,0.12)", borderRadius: 12, padding: "14px 16px", fontSize: 15, color: "#f0e6d3", fontFamily: "inherit", resize: "none", outline: "none", marginBottom: 16 }}
+                  />
+
+                  {/* Visibility */}
+                  <div style={{ marginBottom: 20 }}>
+                    <div style={{ fontSize: 12, color: "rgba(255,255,255,0.4)", letterSpacing: 0.5, textTransform: "uppercase", marginBottom: 10 }}>Who can see this</div>
+                    <div style={{ display: "flex", gap: 8 }}>
+                      {[["public","Public"],["friends","Friends"],["private","Only me"]].map(([v, l]) => (
+                        <button key={v} onClick={() => setVisibility(v)}
+                          style={{ flex: 1, padding: "9px 6px", borderRadius: 50, fontSize: 12, fontWeight: 700, fontFamily: "inherit",
+                            background: visibility === v ? "rgba(212,168,70,0.15)" : "rgba(255,255,255,0.04)",
+                            border: visibility === v ? "1px solid rgba(212,168,70,0.5)" : "1px solid rgba(255,255,255,0.1)",
+                            color: visibility === v ? "#d4a846" : "rgba(240,230,211,0.6)" }}>
+                          {l}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+
+                  {error && <div style={{ fontSize: 13, color: "#c9807a", marginBottom: 12 }}>{error}</div>}
+
+                  <button onClick={submit} disabled={posting}
+                    style={{ width: "100%", background: "linear-gradient(135deg,#d4a846,#c9807a)", color: "#080810", border: "none", borderRadius: 50, padding: "16px", fontSize: 15, fontWeight: 700, fontFamily: "inherit", opacity: posting ? 0.6 : 1 }}>
+                    {posting ? "Posting…" : "Post"}
+                  </button>
+                </>
+              )}
+            </div>
+          </div>
+        </div>
+      );
+    }
+
+    // ── App ─────────────────────────────────────────────────────────────────
+
     function App() {
       const [user, setUser]               = useState(null);
       const [authLoading, setAuthLoading] = useState(true);
       const [profile, setProfile]         = useState(null);
       const [loading, setLoading]         = useState(true);
       const [filter, setFilter]           = useState("all");
-      const [follow, setFollow]           = useState(null); // my outgoing follow on this profile (null when own profile)
+      const [follow, setFollow]           = useState(null);
       const [counts, setCounts]           = useState({ posts: 0, followers: 0, following: 0 });
+      const [posts, setPosts]             = useState([]);
+      const [postsLoading, setPostsLoading] = useState(false);
+      const [myLikedIds, setMyLikedIds]   = useState(new Set());
+      const [showNewPost, setShowNewPost] = useState(false);
 
-      // Are we looking at someone else's profile?
       const requestedUsername = (new URLSearchParams(window.location.search).get("u") || "").trim().toLowerCase();
       const viewingOther = profile && user && profile.id !== user.id;
 
@@ -123,9 +458,7 @@
           setUser(session?.user ?? null);
           setAuthLoading(false);
         });
-        const { data: sub } = sb.auth.onAuthStateChange((_e, s) => {
-          setUser(s?.user ?? null);
-        });
+        const { data: sub } = sb.auth.onAuthStateChange((_e, s) => setUser(s?.user ?? null));
         return () => sub?.subscription?.unsubscribe?.();
       }, []);
 
@@ -143,24 +476,16 @@
 
       useEffect(() => { loadProfile(); }, [loadProfile]);
 
-      // Load follow state + counts whenever the loaded profile changes.
       const loadFollowAndCounts = useCallback(async () => {
         if (!profile || !user) return;
-        // Counts: followers (people who follow profile.id with status='accepted')
-        // and following (profile.id follows others with status='accepted').
-        const [{ count: followersCount }, { count: followingCount }] = await Promise.all([
-          sb.from("follows").select("*", { count: "exact", head: true })
-            .eq("followed_id", profile.id).eq("status", "accepted"),
-          sb.from("follows").select("*", { count: "exact", head: true })
-            .eq("follower_id", profile.id).eq("status", "accepted"),
+        const [{ count: followersCount }, { count: followingCount }, { count: postsCount }] = await Promise.all([
+          sb.from("follows").select("*", { count: "exact", head: true }).eq("followed_id", profile.id).eq("status", "accepted"),
+          sb.from("follows").select("*", { count: "exact", head: true }).eq("follower_id", profile.id).eq("status", "accepted"),
+          sb.from("posts").select("*", { count: "exact", head: true }).eq("author_id", profile.id),
         ]);
-        setCounts({ posts: 0, followers: followersCount || 0, following: followingCount || 0 });
-
+        setCounts({ posts: postsCount || 0, followers: followersCount || 0, following: followingCount || 0 });
         if (profile.id !== user.id) {
-          const { data: f } = await sb.from("follows")
-            .select("*")
-            .eq("follower_id", user.id).eq("followed_id", profile.id)
-            .maybeSingle();
+          const { data: f } = await sb.from("follows").select("*").eq("follower_id", user.id).eq("followed_id", profile.id).maybeSingle();
           setFollow(f || null);
         } else {
           setFollow(null);
@@ -168,6 +493,42 @@
       }, [profile, user]);
 
       useEffect(() => { loadFollowAndCounts(); }, [loadFollowAndCounts]);
+
+      const loadPosts = useCallback(async () => {
+        if (!profile || !user) return;
+        setPostsLoading(true);
+        let query = sb.from("posts").select("*").eq("author_id", profile.id).order("created_at", { ascending: false }).limit(50);
+        if (filter !== "all") query = query.eq("visibility", filter);
+        const { data: rows } = await query;
+        const list = rows || [];
+        const postIds = list.map(p => p.id);
+        const { data: myLikes } = postIds.length
+          ? await sb.from("likes").select("post_id").eq("user_id", user.id).in("post_id", postIds)
+          : { data: [] };
+        setMyLikedIds(new Set((myLikes || []).map(l => l.post_id)));
+        setPosts(list.map(p => ({ ...p, _likedByMe: (myLikes || []).some(l => l.post_id === p.id) })));
+        setPostsLoading(false);
+      }, [profile, user, filter]);
+
+      useEffect(() => { loadPosts(); }, [loadPosts]);
+
+      const toggleLike = useCallback(async (post) => {
+        const liked = post._likedByMe;
+        setPosts(prev => prev.map(p => p.id === post.id ? { ...p, _likedByMe: !liked, like_count: Math.max(0, p.like_count + (liked ? -1 : 1)) } : p));
+        let res;
+        if (liked) res = await sb.from("likes").delete().eq("post_id", post.id).eq("user_id", user.id);
+        else       res = await sb.from("likes").insert({ post_id: post.id, user_id: user.id });
+        if (res?.error) {
+          setPosts(prev => prev.map(p => p.id === post.id ? { ...p, _likedByMe: liked, like_count: Math.max(0, p.like_count + (liked ? 1 : -1)) } : p));
+        }
+      }, [user]);
+
+      const deletePost = useCallback(async (post) => {
+        if (!confirm("Delete this post?")) return;
+        await sb.from("posts").delete().eq("id", post.id).eq("author_id", user.id);
+        setPosts(prev => prev.filter(p => p.id !== post.id));
+        setCounts(c => ({ ...c, posts: Math.max(0, c.posts - 1) }));
+      }, [user]);
 
       if (authLoading) return <div style={{ minHeight:"100vh", display:"flex", alignItems:"center", justifyContent:"center" }}><Spinner size={36} /></div>;
 
@@ -215,33 +576,19 @@
 
           {/* Profile header */}
           <div style={{ padding: "20px 24px 0", display: "flex", flexDirection: "column", alignItems: "center", textAlign: "center" }}>
-            <div style={{
-              width: 88, height: 88, borderRadius: "50%",
-              background: "linear-gradient(135deg, #d4a846, #c9807a)",
-              color: "#080810", fontSize: 30, fontWeight: 800, letterSpacing: -0.5,
-              display: "flex", alignItems: "center", justifyContent: "center",
-              marginBottom: 16,
-            }}>
+            <div style={{ width: 88, height: 88, borderRadius: "50%", background: "linear-gradient(135deg, #d4a846, #c9807a)", color: "#080810", fontSize: 30, fontWeight: 800, letterSpacing: -0.5, display: "flex", alignItems: "center", justifyContent: "center", marginBottom: 16 }}>
               {initials}
             </div>
-
             {profile.display_name && (
               <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 6, marginBottom: 2 }}>
                 <div style={{ fontSize: 22, fontWeight: 700 }}>{profile.display_name}</div>
                 {profile.is_official && (
-                  <svg width="18" height="18" viewBox="0 0 24 24" fill="#d4a846" aria-label="Official account" title="Official">
-                    <path d="M12 1.6l2.4 2.6 3.5-.4.4 3.5 2.6 2.4-2.6 2.4.4 3.5-3.5.4-2.4 2.6-2.4-2.6-3.5.4-.4-3.5L2 12l2.6-2.4-.4-3.5 3.5.4z" stroke="#d4a846" strokeWidth="0.5"/>
-                    <polyline points="8 12 11 15 16 9" fill="none" stroke="#080810" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"/>
-                  </svg>
+                  <svg width="18" height="18" viewBox="0 0 24 24" fill="#d4a846"><path d="M12 1.6l2.4 2.6 3.5-.4.4 3.5 2.6 2.4-2.6 2.4.4 3.5-3.5.4-2.4 2.6-2.4-2.6-3.5.4-.4-3.5L2 12l2.6-2.4-.4-3.5 3.5.4z" stroke="#d4a846" strokeWidth="0.5"/><polyline points="8 12 11 15 16 9" fill="none" stroke="#080810" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"/></svg>
                 )}
               </div>
             )}
             <div style={{ fontSize: 14, color: "rgba(255,255,255,0.45)", marginBottom: 10 }}>@{profile.username}</div>
-
-            {profile.bio && (
-              <div style={{ fontSize: 14, color: "rgba(255,255,255,0.7)", lineHeight: 1.5, maxWidth: 320, marginBottom: 12 }}>{profile.bio}</div>
-            )}
-
+            {profile.bio && <div style={{ fontSize: 14, color: "rgba(255,255,255,0.7)", lineHeight: 1.5, maxWidth: 320, marginBottom: 12 }}>{profile.bio}</div>}
             <PrivacyBadge value={profile.privacy} />
           </div>
 
@@ -258,23 +605,13 @@
               <FollowButton me={user} target={profile} follow={follow} onChange={loadFollowAndCounts} />
             ) : (
               <>
-                <button
-                  onClick={() => alert("New post — coming next. We'll wire this up when the posts table lands.")}
-                  style={{
-                    background: "linear-gradient(135deg,#d4a846,#c9807a)", color: "#080810",
-                    border: "none", borderRadius: 50, padding: "8px 16px", fontSize: 13, fontWeight: 700,
-                    fontFamily: "inherit", display: "inline-flex", alignItems: "center", gap: 6,
-                  }}>
+                <button onClick={() => setShowNewPost(true)}
+                  style={{ background: "linear-gradient(135deg,#d4a846,#c9807a)", color: "#080810", border: "none", borderRadius: 50, padding: "8px 16px", fontSize: 13, fontWeight: 700, fontFamily: "inherit", display: "inline-flex", alignItems: "center", gap: 6 }}>
                   <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
                   New post
                 </button>
                 <a href="/app/settings.html"
-                  style={{
-                    background: "rgba(255,255,255,0.06)", color: "rgba(240,230,211,0.8)",
-                    border: "1px solid rgba(255,255,255,0.12)", borderRadius: 50,
-                    padding: "8px 16px", fontSize: 13, fontWeight: 700,
-                    textDecoration: "none", display: "inline-flex", alignItems: "center",
-                  }}>
+                  style={{ background: "rgba(255,255,255,0.06)", color: "rgba(240,230,211,0.8)", border: "1px solid rgba(255,255,255,0.12)", borderRadius: 50, padding: "8px 16px", fontSize: 13, fontWeight: 700, textDecoration: "none", display: "inline-flex", alignItems: "center" }}>
                   Edit profile
                 </a>
               </>
@@ -283,36 +620,44 @@
 
           {/* Visibility filter chips — own profile only */}
           {!viewingOther && (
-          <div style={{ padding: "24px 24px 0", display: "flex", gap: 8, overflowX: "auto" }}>
-            {VISIBILITY_FILTERS.map(f => {
-              const active = filter === f.key;
-              return (
-                <button key={f.key} onClick={() => setFilter(f.key)}
-                  style={{
-                    padding: "8px 14px", borderRadius: 50, fontSize: 12, fontWeight: 700, letterSpacing: 0.3,
-                    border: active ? "1px solid rgba(212,168,70,0.6)" : "1px solid rgba(255,255,255,0.12)",
-                    background: active ? "rgba(212,168,70,0.12)" : "rgba(255,255,255,0.03)",
-                    color: active ? "#d4a846" : "rgba(240,230,211,0.7)",
-                    fontFamily: "inherit", whiteSpace: "nowrap",
-                  }}>
-                  {f.label}
-                </button>
-              );
-            })}
-          </div>
+            <div style={{ padding: "24px 24px 0", display: "flex", gap: 8, overflowX: "auto" }}>
+              {VISIBILITY_FILTERS.map(f => {
+                const active = filter === f.key;
+                return (
+                  <button key={f.key} onClick={() => setFilter(f.key)}
+                    style={{ padding: "8px 14px", borderRadius: 50, fontSize: 12, fontWeight: 700, letterSpacing: 0.3, border: active ? "1px solid rgba(212,168,70,0.6)" : "1px solid rgba(255,255,255,0.12)", background: active ? "rgba(212,168,70,0.12)" : "rgba(255,255,255,0.03)", color: active ? "#d4a846" : "rgba(240,230,211,0.7)", fontFamily: "inherit", whiteSpace: "nowrap" }}>
+                    {f.label}
+                  </button>
+                );
+              })}
+            </div>
           )}
 
-          {/* Posts (empty for now) */}
-          <div style={{ padding: "40px 32px 0", textAlign: "center", color: "rgba(255,255,255,0.4)" }}>
-            <div style={{ fontSize: 15, fontWeight: 700, color: "#f0e6d3", marginBottom: 6 }}>No posts yet</div>
-            <div style={{ fontSize: 13, lineHeight: 1.6, maxWidth: 260, margin: "0 auto" }}>
-              Share a record you're spinning and it'll show up here. {filter !== "all" && (<span>Filter: <strong style={{ color: "rgba(212,168,70,0.9)" }}>{filter}</strong>.</span>)}
-            </div>
+          {/* Posts */}
+          <div style={{ paddingTop: 20 }}>
+            {postsLoading ? (
+              <div style={{ display: "flex", justifyContent: "center", padding: "40px 0" }}><Spinner size={28} /></div>
+            ) : posts.length === 0 ? (
+              <div style={{ padding: "40px 32px 0", textAlign: "center", color: "rgba(255,255,255,0.4)" }}>
+                <div style={{ fontSize: 15, fontWeight: 700, color: "#f0e6d3", marginBottom: 6 }}>No posts yet</div>
+                <div style={{ fontSize: 13, lineHeight: 1.6, maxWidth: 260, margin: "0 auto" }}>
+                  {viewingOther ? "Nothing shared yet." : "Tap "New post" to share what you're spinning."}
+                </div>
+              </div>
+            ) : (
+              posts.map(p => (
+                <PostCard key={p.id} post={p} onToggleLike={toggleLike} onDelete={deletePost} isOwn={!viewingOther} />
+              ))
+            )}
           </div>
 
           <div style={{ textAlign:"center", padding:"60px 0 16px", fontSize:"11px", color:"rgba(255,255,255,0.1)" }}>Liri v{APP_VERSION}</div>
 
           <TabBar current="profile" />
+
+          {showNewPost && (
+            <NewPostSheet user={user} onClose={() => setShowNewPost(false)} onPosted={() => { loadPosts(); loadFollowAndCounts(); }} />
+          )}
         </div>
       );
     }
