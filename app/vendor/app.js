@@ -1933,6 +1933,91 @@ Move closer to your speakers and try again.`);
         setCurrentIndex(idx);
       }, 80);
     }, []);
+    const nowPlayingSnapshotRef = useRef2(null);
+    useEffect3(() => {
+      if (mode === "syncing" || mode === "confirmed") {
+        nowPlayingSnapshotRef.current = {
+          detectedSong,
+          lyrics,
+          songDuration,
+          currentTrackIndex,
+          albumCollectionId,
+          identifiedBy,
+          syncRate,
+          turntableMatchedIdx: turntableMatchedIdxRef.current
+        };
+        try {
+          const t = syncStartRef.current != null ? initialPosRef.current + (Date.now() - syncStartRef.current) / 1e3 * syncRateRef.current : initialPosRef.current;
+          localStorage.setItem("liri_nowplaying", JSON.stringify({
+            ...nowPlayingSnapshotRef.current,
+            playbackTime: Math.max(0, t),
+            savedAt: Date.now()
+          }));
+        } catch {
+        }
+      } else {
+        nowPlayingSnapshotRef.current = null;
+        if (mode === "idle" || mode === "listening") {
+          try {
+            localStorage.removeItem("liri_nowplaying");
+          } catch {
+          }
+        }
+      }
+    }, [mode, detectedSong, lyrics, songDuration, currentTrackIndex, albumCollectionId, identifiedBy, syncRate]);
+    useEffect3(() => {
+      const onHide = () => {
+        const snap = nowPlayingSnapshotRef.current;
+        if (!snap || !snap.detectedSong) return;
+        const t = syncStartRef.current != null ? initialPosRef.current + (Date.now() - syncStartRef.current) / 1e3 * syncRateRef.current : initialPosRef.current;
+        const payload = JSON.stringify({ ...snap, playbackTime: Math.max(0, t), savedAt: Date.now() });
+        try {
+          sessionStorage.setItem("liri_nowplaying", payload);
+        } catch {
+        }
+        try {
+          localStorage.setItem("liri_nowplaying", payload);
+        } catch {
+        }
+      };
+      window.addEventListener("pagehide", onHide);
+      return () => window.removeEventListener("pagehide", onHide);
+    }, []);
+    useEffect3(() => {
+      let saved = null;
+      try {
+        saved = JSON.parse(sessionStorage.getItem("liri_nowplaying") || "null");
+        sessionStorage.removeItem("liri_nowplaying");
+      } catch {
+      }
+      if (!saved) {
+        try {
+          saved = JSON.parse(localStorage.getItem("liri_nowplaying") || "null");
+        } catch {
+        }
+      }
+      if (!saved || !saved.detectedSong || Date.now() - saved.savedAt > 60 * 60 * 1e3) return;
+      const elapsed = (Date.now() - saved.savedAt) / 1e3;
+      const restoredPos = Math.max(0, saved.playbackTime + elapsed * (saved.syncRate || 1));
+      setDetectedSong(saved.detectedSong);
+      const lrc = saved.lyrics || [];
+      setLyrics(lrc);
+      lyricsRef.current = lrc;
+      setSongDuration(saved.songDuration ?? null);
+      setCurrentTrackIndex(saved.currentTrackIndex ?? 0);
+      turntableMatchedIdxRef.current = saved.turntableMatchedIdx ?? 0;
+      if (saved.albumCollectionId) {
+        setAlbumCollectionId(saved.albumCollectionId);
+        albumCollectionIdRef.current = saved.albumCollectionId;
+      }
+      if (saved.identifiedBy) setIdentifiedBy(saved.identifiedBy);
+      if (saved.syncRate) {
+        setSyncRate(saved.syncRate);
+        syncRateRef.current = saved.syncRate;
+      }
+      syncCalcRef.current = { startPos: restoredPos, phraseOffset: 0, recStart: Date.now() };
+      setMode("confirmed");
+    }, []);
     const togglePause = () => {
       if (isPaused) {
         initialPosRef.current = playbackTime;
@@ -5329,7 +5414,11 @@ Move closer to your speakers and try again.`);
         transition: "opacity 0.35s",
         pointerEvents: controlsVisible ? "auto" : "none"
       } : {
-        padding: "12px 20px 0",
+        paddingTop: "12px",
+        paddingLeft: "20px",
+        paddingRight: "20px",
+        // Leave room for the fixed tab bar (≈55px) + iOS safe-area home indicator
+        paddingBottom: "calc(env(safe-area-inset-bottom) + 58px)",
         flexShrink: 0
       }
     }, /* @__PURE__ */ React.createElement("div", {
