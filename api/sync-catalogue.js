@@ -576,13 +576,19 @@ async function getAlbumDetail(collectionId) {
   ]);
 
   // Then look up lyrics for the track IDs we actually have.
+  // A row counts as "has lyrics" only if lrc_raw or lyrics_plain is actually
+  // populated — bare rows (e.g. seeded with just source/fetched_at) don't count.
   const tids = trackRows.map(t => t.itunes_track_id).filter(x => x != null);
   const lyricRows = tids.length
-    ? await sbGetAll(`track_lyrics?itunes_track_id=in.(${tids.join(",")})&select=itunes_track_id,source`)
+    ? await sbGetAll(`track_lyrics?itunes_track_id=in.(${tids.join(",")})&select=itunes_track_id,source,lrc_raw,lyrics_plain`)
     : [];
 
   const lyricByTid = new Map(lyricRows.map(r => [r.itunes_track_id, r.source]));
-  const haveLyrics = new Set(lyricRows.map(r => r.itunes_track_id));
+  const haveLyrics = new Set(
+    lyricRows
+      .filter(r => (r.lrc_raw && r.lrc_raw.trim()) || (r.lyrics_plain && r.lyrics_plain.trim()))
+      .map(r => r.itunes_track_id)
+  );
   const sideByTid  = new Map(sideRows.map(r => [r.itunes_track_id, r]));
   const playByTid  = {};
   const playByTitle = {};
