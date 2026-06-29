@@ -1369,7 +1369,7 @@
         userScrollingRef.current = false;
         setUserScrolling(false);
       }
-    }, [mode, detectedSong]);
+    }, [mode]);
     useEffect3(() => {
       if (!window.Capacitor) return;
       if (mode !== "syncing") return;

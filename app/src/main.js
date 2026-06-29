@@ -1231,6 +1231,12 @@ function Liri() {
   }, [mode]);
 
   // ── Auto-start sync after detection ──
+  // Depend only on mode — detectedSong updates (e.g. artwork loading in the background)
+  // must NOT re-trigger startSync, because initialPosRef stays at the original anchor
+  // and a second startSync call would restart the timer from near 0, causing visible drift.
+  // mode and detectedSong are always set together when a real match fires, so there is
+  // no race condition from dropping detectedSong here.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   useEffect(() => {
     if (mode === "confirmed" && detectedSong) {
       startSync();
@@ -1238,7 +1244,7 @@ function Liri() {
       userScrollingRef.current = false;
       setUserScrolling(false);
     }
-  }, [mode, detectedSong]);
+  }, [mode]);
 
   // ── Silence gap detection: auto-advance track when vinyl gap is heard (iOS only) ──
   // Vinyl records have a ~1-2s silent gap between tracks. ShazamPlugin monitors mic
