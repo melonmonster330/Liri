@@ -2189,8 +2189,9 @@ Move closer to your speakers and try again.`);
         setLyrics([]);
         lyricsRef.current = [];
       }
-      initialPosRef.current = Math.max(0, userNudgeRef.current);
-      syncCalcRef.current = { startPos: userNudgeRef.current, phraseOffset: 0, recStart: Date.now() };
+      userNudgeRef.current = 0;
+      initialPosRef.current = 0;
+      syncCalcRef.current = { startPos: 0, phraseOffset: 0, recStart: Date.now() };
       saveToHistory(user, nextSong);
       fetchHistory(user);
       logListeningEvent({
@@ -2243,8 +2244,9 @@ Move closer to your speakers and try again.`);
         setLyrics([]);
         lyricsRef.current = [];
       }
-      initialPosRef.current = Math.max(0, userNudgeRef.current);
-      syncCalcRef.current = { startPos: userNudgeRef.current, phraseOffset: 0, recStart: Date.now() };
+      userNudgeRef.current = 0;
+      initialPosRef.current = 0;
+      syncCalcRef.current = { startPos: 0, phraseOffset: 0, recStart: Date.now() };
       autoAdvanceFiredRef.current = false;
       autoRetryCountRef.current = 0;
       saveToHistory(user, song);
@@ -5420,7 +5422,7 @@ Move closer to your speakers and try again.`);
       const atStart = tIdx <= 0;
       const atEnd = tIdx >= tTracks.length - 1;
       const nextTrackName = !atEnd ? tTracks[tIdx + 1]?.trackName || tTracks[tIdx + 1]?.title || null : null;
-      const goPrev = () => hasTT ? advanceToNextTrack(turntableTracksRef.current, tIdx - 2) : jumpToTrack(Math.max(0, currentTrackIndex - 1));
+      const goPrev = () => hasTT ? jumpToTrackIdx(Math.max(0, tIdx - 1)) : jumpToTrack(Math.max(0, currentTrackIndex - 1));
       const goNext = () => hasTT ? advanceToNextTrack(turntableTracksRef.current, tIdx) : advanceToNextTrack(albumTracksRef.current, currentTrackIndexRef.current);
       return /* @__PURE__ */ React.createElement("div", {
         style: {
