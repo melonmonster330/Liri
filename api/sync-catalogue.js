@@ -119,6 +119,21 @@ function httpsPost(hostname, path, headers, body) {
   });
 }
 
+// Generic service-role DELETE (used by add-vinyl-sides to wipe old rows).
+function sbDelete(path) {
+  const url = process.env.SUPABASE_URL;
+  const key = process.env.SUPABASE_SERVICE_ROLE_KEY;
+  const hostname = url.replace(/^https?:\/\//, "");
+  return new Promise((resolve) => {
+    const req = https.request({
+      hostname, path: `/rest/v1/${path}`, method: "DELETE",
+      headers: { "apikey": key, "Authorization": `Bearer ${key}`, "Content-Type": "application/json" }
+    }, (res) => { res.on("data", () => {}); res.on("end", () => resolve({ status: res.statusCode })); });
+    req.on("error", () => resolve({ status: 0 }));
+    req.end();
+  });
+}
+
 // Generic service-role insert (used by the admin "post Liri update" action).
 function sbInsert(table, row) {
   const url = process.env.SUPABASE_URL;
@@ -242,11 +257,11 @@ function sbAdminGet(path) {
   });
 }
 
-async function getAdminStats() {
-  const now = new Date();
-  const d7  = new Date(now - 7  * 86400000).toISOString();
-  const d30 = new Date(now - 30 * 86400000).toISOString();
-  const d1  = new Date(now - 1  * 86400000).toISOString();
+async function getAdminStats(days = 3) {
+  const now   = new Date();
+  const dWin  = days > 0 ? new Date(now - days * 86400000).toISOString() : null;
+  const d7    = new Date(now - 7  * 86400000).toISOString();
+  const d30   = new Date(now - 30 * 86400000).toISOString();
 
   // Paginate auth admin API — 1000 per page, loop until exhausted
   const allUsers = [];
@@ -260,8 +275,8 @@ async function getAdminStats() {
   // Parallel: exact-count queries for totals + data queries for breakdowns
   const [
     totalPlaysResp,
+    playsWinResp,
     plays7dResp,
-    plays1dResp,
     totalLibResp,
     eventsResp,
     libResp,
@@ -272,8 +287,8 @@ async function getAdminStats() {
     bugsBacklogResp,
   ] = await Promise.all([
     sbGet("listening_events?select=id&limit=1",                                  { "Prefer": "count=exact" }),
-    sbGet(`listening_events?select=id&listened_at=gte.${d7}&limit=1`,            { "Prefer": "count=exact" }),
-    sbGet(`listening_events?select=id&listened_at=gte.${d1}&limit=1`,            { "Prefer": "count=exact" }),
+    sbGet(`listening_events?select=id${dWin ? `&listened_at=gte.${dWin}` : ""}&limit=1`, { "Prefer": "count=exact" }),
+    sbGet(`listening_events?select=id&listened_at=gte.${d7}&limit=1`,                  { "Prefer": "count=exact" }),
     sbGet("user_vinyl_library?select=id&limit=1",                                { "Prefer": "count=exact" }),
     sbGet("listening_events?select=user_id,platform,source,album_name,artist_name,listened_at&order=listened_at.desc&limit=5000"),
     sbGet("user_vinyl_library?select=user_id&limit=20000"),
@@ -303,19 +318,20 @@ async function getAdminStats() {
   const avgAlbums     = uniqueLibUsers > 0 ? (totalAlbums / uniqueLibUsers).toFixed(1) : 0;
 
   // Plays — exact counts from count=exact headers
-  const totalPlays = parseInt(totalPlaysResp.headers?.["content-range"]?.split("/")[1] || "0", 10);
-  const plays7d    = parseInt(plays7dResp.headers?.["content-range"]?.split("/")[1] || "0", 10);
-  const plays1d    = parseInt(plays1dResp.headers?.["content-range"]?.split("/")[1] || "0", 10);
+  const totalPlays  = parseInt(totalPlaysResp.headers?.["content-range"]?.split("/")[1] || "0", 10);
+  const playsWindow = parseInt(playsWinResp.headers?.["content-range"]?.split("/")[1] || "0", 10);
+  const plays7d     = parseInt(plays7dResp.headers?.["content-range"]?.split("/")[1] || "0", 10);
 
-  // Platform / source split from recent-events sample (last 5000)
-  const events     = Array.isArray(eventsResp.body) ? eventsResp.body : [];
+  // Platform / source split from recent-events sample (filtered to selected window)
+  const allEvents  = Array.isArray(eventsResp.body) ? eventsResp.body : [];
+  const events     = dWin ? allEvents.filter(e => e.listened_at >= dWin) : allEvents;
   const webPlays   = events.filter(e => e.platform === "web").length;
   const iosPlays   = events.filter(e => e.platform === "ios").length;
   const recogPlays = events.filter(e => e.source === "recognition").length;
   const autoPlays  = events.filter(e => e.source === "auto_advance").length;
 
-  // Top albums (last 30d from sample)
-  const recentEvents = events.filter(e => e.listened_at > d30);
+  // Top albums — filtered to selected window
+  const recentEvents = dWin ? allEvents.filter(e => e.listened_at >= dWin) : allEvents;
   const albumCounts  = {};
   for (const e of recentEvents) {
     if (!e.album_name) continue;
@@ -353,7 +369,8 @@ async function getAdminStats() {
   return {
     users:    { total: totalUsers, new7d: newUsers7d, new30d: newUsers30d, premium: premiumUsers, recentSignups },
     library:  { totalAlbums, uniqueUsers: uniqueLibUsers, avgAlbums },
-    plays:    { total: totalPlays, last7d: plays7d, last24h: plays1d, web: webPlays, ios: iosPlays, recognition: recogPlays, autoAdvance: autoPlays },
+    plays:    { total: totalPlays, window: playsWindow, last7d: plays7d, web: webPlays, ios: iosPlays, recognition: recogPlays, autoAdvance: autoPlays },
+    days,
     topAlbums,
     topUsers,
     bugReports,
@@ -639,6 +656,15 @@ module.exports = async (req, res) => {
         if (!id) return res.status(400).json({ error: "id required" });
         return res.status(200).json(await getUserDetail(id));
       }
+      if (action === "album-tracks") {
+        const id = parseInt(url.searchParams.get("id") || "0", 10);
+        if (!id) return res.status(400).json({ error: "id required" });
+        const tracks = await sbGetAll(
+          `album_tracks?itunes_collection_id=eq.${id}&select=itunes_track_id,track_name,track_number,disc_number&order=disc_number.asc,track_number.asc`
+        );
+        return res.status(200).json({ tracks });
+      }
+
       if (action === "missing-lyrics") {
         // All album_tracks that have no lrc_raw in track_lyrics
         const { body: rows } = await sbGet(
@@ -675,7 +701,8 @@ module.exports = async (req, res) => {
         return res.status(200).json({ bugs: rows });
       }
 
-      const stats = await getAdminStats();
+      const daysParam = parseInt(url.searchParams.get("days") || "3", 10);
+      const stats = await getAdminStats(isNaN(daysParam) || daysParam <= 0 ? 0 : daysParam);
       return res.status(200).json(stats);
     } catch (e) {
       return res.status(500).json({ error: e.message });
@@ -719,6 +746,44 @@ module.exports = async (req, res) => {
       } catch (e) {
         return res.status(500).json({ error: e.message || "Internal error" });
       }
+    }
+
+    if (body?.action === "add-vinyl-sides") {
+      const { collectionId, sides } = body;
+      if (!collectionId || !Array.isArray(sides) || sides.length === 0) {
+        return res.status(400).json({ error: "collectionId and sides[] required" });
+      }
+      for (const s of sides) {
+        if (!s.letter || !s.count || s.count < 1) {
+          return res.status(400).json({ error: "each side needs letter (string) and count (number)" });
+        }
+      }
+      const trackRows = await sbGetAll(
+        `album_tracks?itunes_collection_id=eq.${collectionId}&select=itunes_track_id,track_name,track_number,disc_number&order=disc_number.asc,track_number.asc`
+      );
+      if (!trackRows.length) {
+        return res.status(404).json({ error: "no tracks found for this collection" });
+      }
+      const rows = [];
+      let trackIdx = 0;
+      for (const { letter, count } of sides) {
+        const sideLetter = letter.toUpperCase();
+        for (let ti = 0; ti < count && trackIdx < trackRows.length; ti++, trackIdx++) {
+          const t = trackRows[trackIdx];
+          rows.push({
+            itunes_collection_id: collectionId,
+            itunes_track_id:      t.itunes_track_id,
+            side:                 sideLetter,
+            position:             `${sideLetter}${ti + 1}`,
+            side_track_number:    ti + 1,
+          });
+        }
+      }
+      await sbDelete(`vinyl_sides?itunes_collection_id=eq.${collectionId}`);
+      const { status } = await sbInsert("vinyl_sides", rows);
+      return (status >= 200 && status < 300)
+        ? res.status(200).json({ ok: true, inserted: rows.length })
+        : res.status(500).json({ error: `vinyl_sides insert failed (${status})` });
     }
 
     if (body?.action === "post-update") {

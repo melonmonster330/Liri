@@ -25,6 +25,12 @@
 
 import { normText } from "./text.js";
 
+// Returns true when at least one real source has side data for this album.
+// When this returns false, getSideGroups() is using the last-resort A/B split.
+export function hasSideData(vinylSides, dbTracks) {
+  return !!(vinylSides?.length || dbTracks?.length);
+}
+
 // Returns the side letter for a single track index, walking the priority chain.
 export function getSideForIndex(idx, track, vinylSides, dbTracks) {
   // 1. vinyl_sides (positional)
