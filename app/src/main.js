@@ -49,7 +49,7 @@ styleEl.textContent = `
       @keyframes slide-right { from { transform: translateX(100%); } to { transform: translateX(0); } }
       @keyframes pulse    { 0%, 100% { opacity: 1; } 50% { opacity: 0.35; } }
       .safe-top { padding-top: max(96px, calc(env(safe-area-inset-top) + 52px)) !important; }
-      .safe-bottom { padding-bottom: max(48px, calc(env(safe-area-inset-bottom) + 28px)) !important; }
+      .safe-bottom { padding-bottom: max(72px, calc(env(safe-area-inset-bottom) + 64px)) !important; }
     `;
 document.head.appendChild(styleEl);
 function Liri() {
@@ -1977,6 +1977,92 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
       setCurrentIndex(idx);
     }, 80);
   }, []);
+
+  // ── Now-playing state persistence across tab navigation ──────────────────
+  // The tab bar uses regular <a href> links, which do a full page reload and
+  // destroy all React state. We save whatever is currently playing to
+  // sessionStorage before the page unloads, then restore it on the way back.
+  //
+  // A ref captures the latest snapshot each time key state changes, so the
+  // pagehide handler always gets fresh values without stale closure issues.
+  const nowPlayingSnapshotRef = useRef(null);
+  useEffect(() => {
+    if (mode === "syncing" || mode === "confirmed") {
+      nowPlayingSnapshotRef.current = {
+        detectedSong, lyrics, songDuration,
+        currentTrackIndex, albumCollectionId, identifiedBy, syncRate,
+        turntableMatchedIdx: turntableMatchedIdxRef.current,
+      };
+      // Also persist to localStorage continuously so a page refresh never loses state
+      try {
+        const t = syncStartRef.current != null
+          ? initialPosRef.current + (Date.now() - syncStartRef.current) / 1000 * syncRateRef.current
+          : initialPosRef.current;
+        localStorage.setItem("liri_nowplaying", JSON.stringify({
+          ...nowPlayingSnapshotRef.current,
+          playbackTime: Math.max(0, t),
+          savedAt: Date.now(),
+        }));
+      } catch {}
+    } else {
+      nowPlayingSnapshotRef.current = null;
+      // Clear persisted state when user explicitly leaves playing mode
+      if (mode === "idle" || mode === "listening") {
+        try { localStorage.removeItem("liri_nowplaying"); } catch {}
+      }
+    }
+  }, [mode, detectedSong, lyrics, songDuration, currentTrackIndex, albumCollectionId, identifiedBy, syncRate]);
+
+  // Save on navigation away (belt-and-suspenders alongside localStorage)
+  useEffect(() => {
+    const onHide = () => {
+      const snap = nowPlayingSnapshotRef.current;
+      if (!snap || !snap.detectedSong) return;
+      const t = syncStartRef.current != null
+        ? initialPosRef.current + (Date.now() - syncStartRef.current) / 1000 * syncRateRef.current
+        : initialPosRef.current;
+      const payload = JSON.stringify({ ...snap, playbackTime: Math.max(0, t), savedAt: Date.now() });
+      try { sessionStorage.setItem("liri_nowplaying", payload); } catch {}
+      try { localStorage.setItem("liri_nowplaying", payload); } catch {}
+    };
+    window.addEventListener("pagehide", onHide);
+    return () => window.removeEventListener("pagehide", onHide);
+  }, []);
+
+  // Restore on mount — check sessionStorage first (tab nav), then localStorage (refresh)
+  useEffect(() => {
+    let saved = null;
+    try {
+      saved = JSON.parse(sessionStorage.getItem("liri_nowplaying") || "null");
+      sessionStorage.removeItem("liri_nowplaying");
+    } catch {}
+    if (!saved) {
+      try {
+        saved = JSON.parse(localStorage.getItem("liri_nowplaying") || "null");
+        // don't remove from localStorage here — leave it so rapid re-refreshes also work
+      } catch {}
+    }
+    if (!saved || !saved.detectedSong || Date.now() - saved.savedAt > 60 * 60 * 1000) return; // 1hr window
+    // Compute how far the record has advanced while we were on the other page
+    const elapsed = (Date.now() - saved.savedAt) / 1000;
+    const restoredPos = Math.max(0, saved.playbackTime + elapsed * (saved.syncRate || 1.0));
+    // Restore content state
+    setDetectedSong(saved.detectedSong);
+    const lrc = saved.lyrics || [];
+    setLyrics(lrc);
+    lyricsRef.current = lrc;
+    setSongDuration(saved.songDuration ?? null);
+    setCurrentTrackIndex(saved.currentTrackIndex ?? 0);
+    turntableMatchedIdxRef.current = saved.turntableMatchedIdx ?? 0;
+    if (saved.albumCollectionId) { setAlbumCollectionId(saved.albumCollectionId); albumCollectionIdRef.current = saved.albumCollectionId; }
+    if (saved.identifiedBy) setIdentifiedBy(saved.identifiedBy);
+    if (saved.syncRate) { setSyncRate(saved.syncRate); syncRateRef.current = saved.syncRate; }
+    // Prime the timing so startSync (triggered by setMode below) lands at the right position
+    syncCalcRef.current = { startPos: restoredPos, phraseOffset: 0, recStart: Date.now() };
+    // Trigger startSync via the mode effect
+    setMode("confirmed");
+  }, []);
+
   const togglePause = () => {
     if (isPaused) {
       // Resume: restart sync from current position
@@ -5358,7 +5444,6 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
       pointerEvents: "none"
     }
   })), /*#__PURE__*/React.createElement("div", {
-    className: "safe-bottom",
     style: isLandscape ? {
       padding: "12px 20px max(12px, calc(env(safe-area-inset-bottom) + 8px))",
       position: "fixed",
@@ -5373,7 +5458,11 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
       transition: "opacity 0.35s",
       pointerEvents: controlsVisible ? "auto" : "none"
     } : {
-      padding: "12px 20px 0",
+      paddingTop: "12px",
+      paddingLeft: "20px",
+      paddingRight: "20px",
+      // Leave room for the fixed tab bar (≈55px) + iOS safe-area home indicator
+      paddingBottom: "calc(env(safe-area-inset-bottom) + 58px)",
       flexShrink: 0
     }
   }, /*#__PURE__*/React.createElement("div", {
