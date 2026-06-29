@@ -20,7 +20,7 @@ if (typeof supabase === 'undefined') {
   throw new Error('Supabase not loaded');
 }
 const sb = supabase.createClient("https://xjdjpaxgymgbvcwmvorc.supabase.co", "sb_publishable_C-NBnfg0ltAoUi46XQTUjA_ozjZW_Nd");
-const APP_VERSION = "1.1.7";
+const APP_VERSION = "1.1.8";
 const IS_IOS = !!window.Capacitor; // set once at load time — used for App Store compliance checks
 const TRANSCRIBE_PROXY = window.Capacitor ? "https://www.getliri.com/api/transcribe"    : "/api/transcribe";
 const ITUNES_PROXY   = window.Capacitor ? "https://www.getliri.com/api/itunes-lookup"   : "/api/itunes-lookup";
@@ -2097,9 +2097,18 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
   };
 
   // ── Sync settings helpers ──
+  // Re-anchor on rate change: freeze the current playback position into
+  // initialPosRef and reset syncStartRef, so the new rate applies to FUTURE
+  // elapsed time only (no position jump, but the change in speed is felt
+  // immediately going forward).
   const adjustRate = delta => {
     setSyncRate(r => {
       const next = Math.round(Math.max(0.8, Math.min(1.2, r + delta)) * 1000) / 1000;
+      if (syncStartRef.current != null) {
+        const t = initialPosRef.current + (Date.now() - syncStartRef.current) / 1000 * syncRateRef.current;
+        initialPosRef.current = t;
+        syncStartRef.current = Date.now();
+      }
       syncRateRef.current = next;
       return next;
     });
@@ -5374,43 +5383,61 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
     const effectiveIndex = pastLastLyric
       ? lyrics.length - 1 + creditLines.reduce((best, cl, ci) => playbackTime >= cl.time ? ci + 1 : best, 0)
       : currentIndex;
-    // visibleLines controls how far out lines are still readable.
-    // As visibleLines grows, scale the current-line font down a bit so more fit.
+    // visibleLines controls how many lines are visible around current.
+    // As visibleLines grows: current font shrinks (so more fit), the
+    // "center highlight zone" expands (more lines stay bright white), and
+    // lines outside the visible window are clipped entirely.
     const vl = visibleLines;
-    const curFontBase = Math.max(20, 32 - Math.max(0, vl - 5) * 1.2);
-    const near1Font   = Math.max(14, 20 - Math.max(0, vl - 5) * 0.5);
-    const nearFont    = Math.max(12, 16 - Math.max(0, vl - 5) * 0.3);
-    const farFont     = Math.max(11, 13 - Math.max(0, vl - 5) * 0.15);
-    // Opacity gradient extends proportionally with visibleLines
-    const aheadBase  = isLandscape ? 0.55 : 0.32;
-    const behindBase = isLandscape ? 0.38 : 0.22;
+    // Current-line font shrinks as we widen the window
+    const curFontBase = Math.max(16, 34 - Math.max(0, vl - 3) * 1.6);
+    // How many lines on each side of current stay at "highlighted" brightness.
+    // vl=3 → 0 (just current), vl=15 → 4 lines each side highlighted
+    const highlightRadius = Math.max(0, Math.floor((vl - 3) / 3));
+    const highlightFont   = Math.max(14, curFontBase * 0.78);
+    const nearFont        = Math.max(12, curFontBase * 0.55);
+    const farFont         = Math.max(11, curFontBase * 0.45);
     return allLines.map((line, i) => {
       const dist = i - effectiveIndex;
       const adist = Math.abs(dist);
       const cur = dist === 0;
-      const near = adist <= vl;
       const isCredit = !!line.isCredit;
-      // Opacity falls off over visibleLines steps; floor stays readable
-      const aheadOpacity  = Math.max(isLandscape ? 0.12 : 0.06, aheadBase  - adist * (aheadBase  / (vl + 1)));
-      const behindOpacity = Math.max(isLandscape ? 0.08 : 0.04, behindBase - adist * (behindBase / (vl + 1)));
+      const inHighlightZone = adist <= highlightRadius;
+      const inVisibleWindow = adist <= vl;
+      // Hide lines outside the visible window entirely (credits always show)
+      if (!inVisibleWindow && !isCredit) return null;
+      // Opacity: highlight zone stays bright, then fades over remaining window
+      let opacity;
+      if (inHighlightZone) {
+        opacity = 1;
+      } else {
+        const fadeDist = adist - highlightRadius;
+        const fadeRange = Math.max(1, vl - highlightRadius);
+        opacity = Math.max(0.15, 1 - (fadeDist / fadeRange) * 0.85);
+        if (dist < 0) opacity *= 0.75; // past lines slightly more faded
+      }
+      const fontSize = isCredit
+        ? (cur ? "15px" : adist <= 1 ? "13px" : "11px")
+        : (cur
+            ? (isLandscape ? curFontBase * 1.1 + "px" : curFontBase + "px")
+            : inHighlightZone
+              ? (isLandscape ? highlightFont * 1.1 + "px" : highlightFont + "px")
+              : adist <= vl / 2
+                ? (isLandscape ? nearFont * 1.1 + "px" : nearFont + "px")
+                : (isLandscape ? farFont * 1.1 + "px" : farFont + "px"));
       return /*#__PURE__*/React.createElement("div", {
         key: i,
         ref: cur ? currentLineRef : i === lyrics.length ? creditsRef : null,
         onClick: () => cur ? refollow() : (!isCredit && seekToLine(i)),
         style: {
           textAlign: "center",
-          padding: near ? "6px 0" : "3px 0",
-          fontSize: isCredit
-            ? (cur ? "15px" : adist <= 1 ? "13px" : "11px")
-            : (cur ? (isLandscape ? curFontBase * 1.1 + "px" : curFontBase + "px") : adist === 1 ? (isLandscape ? near1Font * 1.1 + "px" : near1Font + "px") : near ? (isLandscape ? nearFont * 1.1 + "px" : nearFont + "px") : (isLandscape ? farFont * 1.1 + "px" : farFont + "px")),
-          fontWeight: cur && !isCredit ? "700" : "400",
-          color: cur
-            ? (isCredit ? "rgba(255,255,255,0.55)" : "#ffffff")
-            : dist > 0
-              ? `rgba(255,255,255,${aheadOpacity})`
-              : `rgba(255,255,255,${behindOpacity})`,
+          padding: inHighlightZone ? "6px 0" : "3px 0",
+          fontSize,
+          fontWeight: (cur || inHighlightZone) && !isCredit ? "700" : "400",
+          color: isCredit
+            ? `rgba(255,255,255,${cur ? 0.55 : opacity * 0.6})`
+            : `rgba(255,255,255,${opacity})`,
           lineHeight: "1.4",
-          transition: near ? transition : "none",
+          transition: inVisibleWindow ? transition : "none",
           textShadow: cur && !isCredit ? "0 0 60px rgba(212,168,70,0.4), 0 2px 20px rgba(0,0,0,0.8)" : "none",
           cursor: isCredit ? "default" : "pointer",
           letterSpacing: isCredit ? "0.2px" : "normal",
@@ -5678,14 +5705,14 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
       ),
       /*#__PURE__*/React.createElement("div", { style: { display: "flex", alignItems: "center", gap: "8px" } },
         /*#__PURE__*/React.createElement("button", {
-          onClick: () => adjustRate(-0.005),
+          onClick: () => adjustRate(-0.02),
           style: { flex: 1, background: "rgba(255,255,255,0.07)", border: "1px solid rgba(255,255,255,0.12)", color: "rgba(255,255,255,0.8)", borderRadius: "10px", padding: "8px", cursor: "pointer", fontSize: "16px", fontFamily: "inherit" }
         }, "−"),
         /*#__PURE__*/React.createElement("span", { style: { color: "white", fontSize: "13px", fontWeight: "700", width: "52px", textAlign: "center" } },
-          syncRate.toFixed(3) + "×"
+          syncRate.toFixed(2) + "×"
         ),
         /*#__PURE__*/React.createElement("button", {
-          onClick: () => adjustRate(0.005),
+          onClick: () => adjustRate(0.02),
           style: { flex: 1, background: "rgba(255,255,255,0.07)", border: "1px solid rgba(255,255,255,0.12)", color: "rgba(255,255,255,0.8)", borderRadius: "10px", padding: "8px", cursor: "pointer", fontSize: "16px", fontFamily: "inherit" }
         }, "+"),
         syncRate !== 1.0 && /*#__PURE__*/React.createElement("button", {
@@ -5694,7 +5721,7 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
         }, "reset")
       ),
       /*#__PURE__*/React.createElement("p", { style: { color: "rgba(255,255,255,0.25)", fontSize: "11px", margin: "8px 0 0", textAlign: "center" } },
-        "Each tap adjusts speed by 0.5%. Try −1% if lyrics run ahead."
+        "Each tap adjusts speed by 2%. Try − if lyrics run ahead."
       )
     ),
     // Visible lines slider
@@ -5812,12 +5839,12 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
       /*#__PURE__*/React.createElement("button", {
         onClick: () => setShowNowPlayingList(v => !v),
         style: {
-          display: "block", margin: "8px auto 0", background: "rgba(255,255,255,0.05)",
-          border: "1px solid rgba(255,255,255,0.1)", color: "rgba(255,255,255,0.45)",
-          borderRadius: "50px", padding: "6px 16px", fontSize: "11px", fontWeight: "600",
+          display: "block", margin: "10px auto 4px", background: "rgba(212,168,70,0.12)",
+          border: "1px solid rgba(212,168,70,0.35)", color: "rgba(212,168,70,0.95)",
+          borderRadius: "50px", padding: "8px 18px", fontSize: "12px", fontWeight: "700",
           letterSpacing: "0.5px", cursor: "pointer", fontFamily: "inherit"
         }
-      }, `\u2630  Track ${tIdx + 1} of ${tTracks.length}`),
+      }, `\u2630  Track ${tIdx + 1} of ${tTracks.length} \u2022 Tap to jump`),
       showNowPlayingList && /*#__PURE__*/React.createElement("div", {
         onClick: () => setShowNowPlayingList(false),
         style: { position: "fixed", inset: 0, zIndex: 600, background: "rgba(8,8,16,0.75)", backdropFilter: "blur(6px)", display: "flex", flexDirection: "column", justifyContent: "flex-end" }
@@ -6216,7 +6243,7 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
   }, turntableAlbum ? (window.Capacitor ? (showTrackList ? "Can't find it automatically" : "Finding your place…") : "Pick a track to start") : listenAttempt > MAX_ATTEMPTS ? "Matching by lyrics…" : "Listening…"),
 
   /* ── Manual track picker with side grouping ── */
-  turntableAlbum && (showTrackList || !window.Capacitor) && turntableTracksRef.current.length > 0 && (() => {
+  turntableAlbum && turntableTracksRef.current.length > 0 && (() => {
     const allTracks = turntableTracksRef.current;
     const groups = getSideGroups(allTracks, vinylSidesRef.current, vinylDbRelease?.vinyl_tracks);
     const isWeb = !window.Capacitor;
