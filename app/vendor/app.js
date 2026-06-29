@@ -354,7 +354,7 @@
       @keyframes slide-right { from { transform: translateX(100%); } to { transform: translateX(0); } }
       @keyframes pulse    { 0%, 100% { opacity: 1; } 50% { opacity: 0.35; } }
       .safe-top { padding-top: max(96px, calc(env(safe-area-inset-top) + 52px)) !important; }
-      .safe-bottom { padding-bottom: max(48px, calc(env(safe-area-inset-bottom) + 28px)) !important; }
+      .safe-bottom { padding-bottom: max(72px, calc(env(safe-area-inset-bottom) + 64px)) !important; }
     `;
   document.head.appendChild(styleEl);
   function Liri() {
