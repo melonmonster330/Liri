@@ -20,7 +20,7 @@ if (typeof supabase === 'undefined') {
   throw new Error('Supabase not loaded');
 }
 const sb = supabase.createClient("https://xjdjpaxgymgbvcwmvorc.supabase.co", "sb_publishable_C-NBnfg0ltAoUi46XQTUjA_ozjZW_Nd");
-const APP_VERSION = "1.1.8";
+const APP_VERSION = "1.1.9";
 const IS_IOS = !!window.Capacitor; // set once at load time — used for App Store compliance checks
 const TRANSCRIBE_PROXY = window.Capacitor ? "https://www.getliri.com/api/transcribe"    : "/api/transcribe";
 const ITUNES_PROXY   = window.Capacitor ? "https://www.getliri.com/api/itunes-lookup"   : "/api/itunes-lookup";
@@ -5383,61 +5383,41 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
     const effectiveIndex = pastLastLyric
       ? lyrics.length - 1 + creditLines.reduce((best, cl, ci) => playbackTime >= cl.time ? ci + 1 : best, 0)
       : currentIndex;
-    // visibleLines controls how many lines are visible around current.
-    // As visibleLines grows: current font shrinks (so more fit), the
-    // "center highlight zone" expands (more lines stay bright white), and
-    // lines outside the visible window are clipped entirely.
-    const vl = visibleLines;
-    // Current-line font shrinks as we widen the window
-    const curFontBase = Math.max(16, 34 - Math.max(0, vl - 3) * 1.6);
-    // How many lines on each side of current stay at "highlighted" brightness.
-    // vl=3 → 0 (just current), vl=15 → 4 lines each side highlighted
-    const highlightRadius = Math.max(0, Math.floor((vl - 3) / 3));
-    const highlightFont   = Math.max(14, curFontBase * 0.78);
-    const nearFont        = Math.max(12, curFontBase * 0.55);
-    const farFont         = Math.max(11, curFontBase * 0.45);
+    // Render every line so the whole song is scrollable. Lines near the
+    // current one are brighter/larger; far lines fade out but stay readable.
+    const NEAR = 4;
+    const curFontBase = 30;
+    const near1Font   = 18;
+    const nearFont    = 15;
+    const farFont     = 12;
+    const aheadBase  = isLandscape ? 0.55 : 0.32;
+    const behindBase = isLandscape ? 0.38 : 0.22;
     return allLines.map((line, i) => {
       const dist = i - effectiveIndex;
       const adist = Math.abs(dist);
       const cur = dist === 0;
+      const near = adist <= NEAR;
       const isCredit = !!line.isCredit;
-      const inHighlightZone = adist <= highlightRadius;
-      const inVisibleWindow = adist <= vl;
-      // Hide lines outside the visible window entirely (credits always show)
-      if (!inVisibleWindow && !isCredit) return null;
-      // Opacity: highlight zone stays bright, then fades over remaining window
-      let opacity;
-      if (inHighlightZone) {
-        opacity = 1;
-      } else {
-        const fadeDist = adist - highlightRadius;
-        const fadeRange = Math.max(1, vl - highlightRadius);
-        opacity = Math.max(0.15, 1 - (fadeDist / fadeRange) * 0.85);
-        if (dist < 0) opacity *= 0.75; // past lines slightly more faded
-      }
-      const fontSize = isCredit
-        ? (cur ? "15px" : adist <= 1 ? "13px" : "11px")
-        : (cur
-            ? (isLandscape ? curFontBase * 1.1 + "px" : curFontBase + "px")
-            : inHighlightZone
-              ? (isLandscape ? highlightFont * 1.1 + "px" : highlightFont + "px")
-              : adist <= vl / 2
-                ? (isLandscape ? nearFont * 1.1 + "px" : nearFont + "px")
-                : (isLandscape ? farFont * 1.1 + "px" : farFont + "px"));
+      const aheadOpacity  = Math.max(isLandscape ? 0.12 : 0.06, aheadBase  - adist * (aheadBase  / (NEAR + 1)));
+      const behindOpacity = Math.max(isLandscape ? 0.08 : 0.04, behindBase - adist * (behindBase / (NEAR + 1)));
       return /*#__PURE__*/React.createElement("div", {
         key: i,
         ref: cur ? currentLineRef : i === lyrics.length ? creditsRef : null,
         onClick: () => cur ? refollow() : (!isCredit && seekToLine(i)),
         style: {
           textAlign: "center",
-          padding: inHighlightZone ? "6px 0" : "3px 0",
-          fontSize,
-          fontWeight: (cur || inHighlightZone) && !isCredit ? "700" : "400",
-          color: isCredit
-            ? `rgba(255,255,255,${cur ? 0.55 : opacity * 0.6})`
-            : `rgba(255,255,255,${opacity})`,
+          padding: near ? "6px 0" : "3px 0",
+          fontSize: isCredit
+            ? (cur ? "15px" : adist <= 1 ? "13px" : "11px")
+            : (cur ? (isLandscape ? curFontBase * 1.1 + "px" : curFontBase + "px") : adist === 1 ? (isLandscape ? near1Font * 1.1 + "px" : near1Font + "px") : near ? (isLandscape ? nearFont * 1.1 + "px" : nearFont + "px") : (isLandscape ? farFont * 1.1 + "px" : farFont + "px")),
+          fontWeight: cur && !isCredit ? "700" : "400",
+          color: cur
+            ? (isCredit ? "rgba(255,255,255,0.55)" : "#ffffff")
+            : dist > 0
+              ? `rgba(255,255,255,${aheadOpacity})`
+              : `rgba(255,255,255,${behindOpacity})`,
           lineHeight: "1.4",
-          transition: inVisibleWindow ? transition : "none",
+          transition: near ? transition : "none",
           textShadow: cur && !isCredit ? "0 0 60px rgba(212,168,70,0.4), 0 2px 20px rgba(0,0,0,0.8)" : "none",
           cursor: isCredit ? "default" : "pointer",
           letterSpacing: isCredit ? "0.2px" : "normal",
@@ -5656,19 +5636,7 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
       cursor: "pointer",
       fontFamily: "inherit"
     }
-  }, "Wrong song?"), /*#__PURE__*/React.createElement("button", {
-    onClick: () => setShowSyncSettings(v => !v),
-    style: {
-      background: showSyncSettings ? "rgba(212,168,70,0.12)" : "rgba(255,255,255,0.04)",
-      border: showSyncSettings ? "1px solid rgba(212,168,70,0.3)" : "1px solid rgba(255,255,255,0.09)",
-      color: showSyncSettings ? "rgba(212,168,70,0.8)" : "rgba(255,255,255,0.35)",
-      borderRadius: "50px",
-      padding: isLandscape ? "7px 14px" : "10px 16px",
-      fontSize: isLandscape ? "13px" : "14px",
-      cursor: "pointer",
-      fontFamily: "inherit"
-    }
-  }, "⚙️")), showSyncSettings && /*#__PURE__*/React.createElement("div", {
+  }, "Wrong song?")), false && /*#__PURE__*/React.createElement("div", {
     style: {
       position: "fixed",
       bottom: isLandscape ? "20px" : "170px",
