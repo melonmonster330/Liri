@@ -814,7 +814,7 @@ async function submitLrc(tid, trackName, artistName, albumName, durationMs) {
   msg.textContent = "";
 
   try {
-    const r = await fetch("/api/submit-lyrics", {
+    const r = await fetch("/api/sync-catalogue", {
       method: "POST",
       headers: { "Content-Type": "application/json", "x-admin-password": pw },
       body: JSON.stringify({

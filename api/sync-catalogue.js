@@ -92,6 +92,33 @@ function sbUpsertBatch(rows) {
   });
 }
 
+// ── lrclib PoW solver ─────────────────────────────────────────────────────────
+// find nonce where SHA256(`${prefix}:${nonce}`) < target (BigInt compare)
+function solveChallenge(prefix, target) {
+  const targetBig = BigInt("0x" + target);
+  let nonce = 0;
+  while (true) {
+    const hash = crypto.createHash("sha256").update(`${prefix}:${nonce}`).digest("hex");
+    if (BigInt("0x" + hash) < targetBig) return nonce;
+    if (++nonce > 10000000) throw new Error("PoW took too long");
+  }
+}
+
+function httpsPost(hostname, path, headers, body) {
+  const bodyStr = typeof body === "string" ? body : JSON.stringify(body);
+  return new Promise((resolve, reject) => {
+    const req = https.request({ hostname, path, method: "POST", headers: { ...headers, "Content-Length": Buffer.byteLength(bodyStr) } }, (res) => {
+      const chunks = [];
+      res.on("data", c => chunks.push(c));
+      res.on("end", () => resolve({ status: res.statusCode, raw: Buffer.concat(chunks).toString() }));
+    });
+    req.on("error", reject);
+    req.setTimeout(30000, () => { req.destroy(); reject(new Error("timeout")); });
+    req.write(bodyStr);
+    req.end();
+  });
+}
+
 // Generic service-role insert (used by the admin "post Liri update" action).
 function sbInsert(table, row) {
   const url = process.env.SUPABASE_URL;
@@ -663,6 +690,37 @@ module.exports = async (req, res) => {
     }
     let body = req.body;
     if (typeof body === "string") { try { body = JSON.parse(body); } catch { body = {}; } }
+    if (body?.action === "submit-lyrics") {
+      const { trackName, artistName, albumName, duration, syncedLyrics, plainLyrics } = body;
+      if (!trackName || !artistName || !albumName || !duration) {
+        return res.status(400).json({ error: "trackName, artistName, albumName, duration required" });
+      }
+      if (!syncedLyrics && !plainLyrics) {
+        return res.status(400).json({ error: "Provide syncedLyrics or plainLyrics (or both)" });
+      }
+      try {
+        const challengeRes = await httpsPost("lrclib.net", "/api/request-challenge",
+          { "Content-Type": "application/json", "Lrclib-Client": "Liri/1.0 (https://getliri.com)" }, "{}");
+        const challenge = JSON.parse(challengeRes.raw);
+        if (!challenge.prefix || !challenge.target) {
+          return res.status(502).json({ error: "Failed to get PoW challenge from lrclib" });
+        }
+        const nonce = solveChallenge(challenge.prefix, challenge.target);
+        const publishRes = await httpsPost("lrclib.net", "/api/publish",
+          { "Content-Type": "application/json", "X-Publish-Token": `${challenge.prefix}:${nonce}`, "Lrclib-Client": "Liri/1.0 (https://getliri.com)" },
+          { trackName, artistName, albumName, duration: Number(duration), ...(syncedLyrics ? { syncedLyrics } : {}), ...(plainLyrics ? { plainLyrics } : {}) }
+        );
+        if (publishRes.status === 201 || publishRes.status === 200) {
+          return res.status(200).json({ ok: true, message: "Lyrics published to lrclib!" });
+        }
+        let errBody = {};
+        try { errBody = JSON.parse(publishRes.raw); } catch {}
+        return res.status(publishRes.status).json({ error: errBody.message || errBody.error || `lrclib returned ${publishRes.status}` });
+      } catch (e) {
+        return res.status(500).json({ error: e.message || "Internal error" });
+      }
+    }
+
     if (body?.action === "post-update") {
       const text = (body.text || "").trim();
       if (!text) return res.status(400).json({ error: "text required" });
