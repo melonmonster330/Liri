@@ -205,6 +205,18 @@ function Liri() {
   // Positionally indexed — vinylSidesRef.current[i] is the side for turntableTracksRef[i].
   const vinylSidesRef = useRef([]);
 
+  // ── Sync settings (speed rate + visible lines) ──
+  // Rate: multiplier applied to elapsed time in the sync formula. 1.0 = normal speed.
+  // Values >1 make lyrics advance faster (for pressings that run slow relative to digital).
+  // Values <1 slow them down. Saved to localStorage per-album or as a global default.
+  const [syncRate, setSyncRate] = useState(1.0);
+  const syncRateRef = useRef(1.0); // mirror for use inside setInterval (avoids stale closure)
+  const [visibleLines, setVisibleLines] = useState(() => {
+    const v = parseInt(localStorage.getItem("liri_visible_lines"), 10);
+    return isNaN(v) ? 7 : Math.min(15, Math.max(3, v));
+  });
+  const [showSyncSettings, setShowSyncSettings] = useState(false);
+
   // ── Flip notifications ──
   const [flipSound, setFlipSound] = useState(() => localStorage.getItem("liri_flip_sound") !== "false");
   const [flipNotify, setFlipNotify] = useState(() => localStorage.getItem("liri_flip_notify") === "true");
@@ -297,7 +309,20 @@ function Liri() {
     albumCollectionIdRef.current = albumCollectionId;
   }, [albumCollectionId]);
 
+  // Keep syncRateRef in sync so the setInterval closure always reads the latest value
+  useEffect(() => { syncRateRef.current = syncRate; }, [syncRate]);
 
+  // Load saved speed + lines whenever the album changes (per-album overrides global default)
+  useEffect(() => {
+    if (!albumCollectionId) return;
+    try {
+      const albumPrefs = JSON.parse(localStorage.getItem(`liri_sync_prefs_${albumCollectionId}`) || "null");
+      const globalPrefs = JSON.parse(localStorage.getItem("liri_sync_prefs_global") || "null");
+      const prefs = albumPrefs || globalPrefs;
+      if (prefs?.rate != null) { setSyncRate(prefs.rate); syncRateRef.current = prefs.rate; }
+      if (prefs?.lines != null) setVisibleLines(prefs.lines);
+    } catch {}
+  }, [albumCollectionId]);
 
   // ── Per-album side data (localStorage, keyed by iTunes collectionId) ──
   const getAlbumSideData = cid => {
@@ -1231,12 +1256,6 @@ function Liri() {
   }, [mode]);
 
   // ── Auto-start sync after detection ──
-  // Depend only on mode — detectedSong updates (e.g. artwork loading in the background)
-  // must NOT re-trigger startSync, because initialPosRef stays at the original anchor
-  // and a second startSync call would restart the timer from near 0, causing visible drift.
-  // mode and detectedSong are always set together when a real match fires, so there is
-  // no race condition from dropping detectedSong here.
-  // eslint-disable-next-line react-hooks/exhaustive-deps
   useEffect(() => {
     if (mode === "confirmed" && detectedSong) {
       startSync();
@@ -1244,7 +1263,7 @@ function Liri() {
       userScrollingRef.current = false;
       setUserScrolling(false);
     }
-  }, [mode]);
+  }, [mode, detectedSong]);
 
   // ── Silence gap detection: auto-advance track when vinyl gap is heard (iOS only) ──
   // Vinyl records have a ~1-2s silent gap between tracks. ShazamPlugin monitors mic
@@ -1899,6 +1918,7 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
     // Net result: we land at the position in the track that corresponds to "right now",
     // not "when the match callback ran".
     if (syncCalcRef.current) {
+      // New detection data — compute exact position from the deferred timing budget.
       const {
         startPos,
         phraseOffset,
@@ -1906,6 +1926,13 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
       } = syncCalcRef.current;
       syncCalcRef.current = null;
       initialPosRef.current = Math.max(0, startPos - phraseOffset + (Date.now() - recStart) / 1000);
+    } else if (syncStartRef.current !== null) {
+      // Sync is already running and no new timing data is available.
+      // This happens when detectedSong is updated for a non-song reason (e.g. artwork
+      // loading from iTunes a few seconds after detection), which re-triggers this
+      // useEffect. Carry the current running position forward so we don't silently
+      // reset the anchor back to the original startPos and cause the lyrics to lag.
+      initialPosRef.current = Math.max(0, initialPosRef.current + (Date.now() - syncStartRef.current) / 1000);
     }
     // Manual flip: park playbackTime at 0 while the user drops the needle.
     // We start the clock in the "past" so (Date.now() - syncStart)/1000 is
@@ -1933,7 +1960,7 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
     setIsPaused(false);
     clearInterval(syncIntervalRef.current);
     syncIntervalRef.current = setInterval(() => {
-      const t = initialPosRef.current + (Date.now() - syncStartRef.current) / 1000;
+      const t = initialPosRef.current + (Date.now() - syncStartRef.current) / 1000 * syncRateRef.current;
       // Clamp displayed time to 0 during the manual-flip pause window.
       setPlaybackTime(t < 0 ? 0 : t);
       const lrc = lyricsRef.current;
@@ -1957,7 +1984,7 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
       syncStartRef.current = Date.now();
       clearInterval(syncIntervalRef.current); // never leak a second interval
       syncIntervalRef.current = setInterval(() => {
-        const t = initialPosRef.current + (Date.now() - syncStartRef.current) / 1000;
+        const t = initialPosRef.current + (Date.now() - syncStartRef.current) / 1000 * syncRateRef.current;
         setPlaybackTime(t);
         const lrc = lyricsRef.current;
         if (!lrc.length) return;
@@ -1981,6 +2008,25 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
   const nudge = s => {
     userNudgeRef.current += s;
     initialPosRef.current = Math.max(0, initialPosRef.current + s);
+  };
+
+  // ── Sync settings helpers ──
+  const adjustRate = delta => {
+    setSyncRate(r => {
+      const next = Math.round(Math.max(0.8, Math.min(1.2, r + delta)) * 1000) / 1000;
+      syncRateRef.current = next;
+      return next;
+    });
+  };
+  const saveSyncPrefsForAlbum = () => {
+    const prefs = { rate: syncRateRef.current, lines: visibleLines };
+    if (albumCollectionId) localStorage.setItem(`liri_sync_prefs_${albumCollectionId}`, JSON.stringify(prefs));
+    localStorage.setItem("liri_visible_lines", String(visibleLines)); // always persist lines globally
+  };
+  const saveSyncPrefsAsDefault = () => {
+    const prefs = { rate: syncRateRef.current, lines: visibleLines };
+    localStorage.setItem("liri_sync_prefs_global", JSON.stringify(prefs));
+    localStorage.setItem("liri_visible_lines", String(visibleLines));
   };
   const handleNudge = s => {
     nudge(s);
@@ -2185,25 +2231,59 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
       // User told us exactly how many tracks per side
       const ends = [];
       for (let i = tps - 1; i < tracks.length; i += tps) ends.push(i);
-      // Make sure the last track of the album is always included
       if (ends[ends.length - 1] !== tracks.length - 1) ends.push(tracks.length - 1);
       return ends;
     }
     // Short releases (singles, EPs ≤4 tracks) are single-sided — just mark album-end
     if (tracks.length <= 4) return [tracks.length - 1];
-    // Estimate number of sides from total runtime: typical vinyl side = ~20 min
-    const totalMs = tracks.reduce((s, t) => s + (t.trackTimeMillis || 0), 0);
+
     const SIDE_MS = 20 * 60 * 1000;
+
+    // ── Use iTunes discNumber to locate LP-to-LP boundaries first ──
+    // Each disc change = a physical record swap (not just a flip). Within each disc
+    // we then apply the 20-min heuristic to find the A/B midpoint.
+    const discNumbers = tracks.map(t => t.discNumber || 1);
+    const hasMultipleDiscs = new Set(discNumbers).size > 1;
+
+    if (hasMultipleDiscs) {
+      const ends = [];
+      // Walk tracks; whenever disc changes, the previous track ends a side
+      for (let i = 0; i < tracks.length - 1; i++) {
+        if (discNumbers[i] !== discNumbers[i + 1]) {
+          ends.push(i); // LP boundary
+        } else {
+          // Within the same disc, check for a side A/B flip at ~20 min
+          // Find the range of tracks on this disc
+          const discStart = ends.length > 0 ? ends[ends.length - 1] + 1 : 0;
+          const discEnd = (() => { for (let j = i + 1; j < tracks.length; j++) { if (discNumbers[j] !== discNumbers[i]) return j - 1; } return tracks.length - 1; })();
+          const discMs = tracks.slice(discStart, discEnd + 1).reduce((s, t) => s + (t.trackTimeMillis || 0), 0);
+          // Only add an intra-disc flip if the disc is long enough to have two sides
+          if (discMs > SIDE_MS * 1.1) {
+            let cumDisc = 0;
+            for (let j = discStart; j < discEnd; j++) {
+              cumDisc += tracks[j].trackTimeMillis || 0;
+              if (cumDisc >= discMs / 2 && !ends.includes(j)) {
+                ends.push(j);
+                break;
+              }
+            }
+          }
+        }
+      }
+      ends.push(tracks.length - 1);
+      return [...new Set(ends)].sort((a, b) => a - b);
+    }
+
+    // ── Single-disc album: estimate sides from total runtime ──
+    const totalMs = tracks.reduce((s, t) => s + (t.trackTimeMillis || 0), 0);
     const numSides = totalMs > 0 ? Math.max(2, Math.round(totalMs / SIDE_MS)) : 2;
     if (!totalMs) {
-      // No duration data — split evenly by track count
       const perSide = Math.ceil(tracks.length / numSides);
       const ends = [];
       for (let i = perSide - 1; i < tracks.length - 1; i += perSide) ends.push(i);
       ends.push(tracks.length - 1);
       return ends;
     }
-    // Split by cumulative duration, targeting totalMs/numSides per side
     const targetMs = totalMs / numSides;
     const ends = [];
     let cumulative = 0;
@@ -5205,11 +5285,25 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
     const effectiveIndex = pastLastLyric
       ? lyrics.length - 1 + creditLines.reduce((best, cl, ci) => playbackTime >= cl.time ? ci + 1 : best, 0)
       : currentIndex;
+    // visibleLines controls how far out lines are still readable.
+    // As visibleLines grows, scale the current-line font down a bit so more fit.
+    const vl = visibleLines;
+    const curFontBase = Math.max(20, 32 - Math.max(0, vl - 5) * 1.2);
+    const near1Font   = Math.max(14, 20 - Math.max(0, vl - 5) * 0.5);
+    const nearFont    = Math.max(12, 16 - Math.max(0, vl - 5) * 0.3);
+    const farFont     = Math.max(11, 13 - Math.max(0, vl - 5) * 0.15);
+    // Opacity gradient extends proportionally with visibleLines
+    const aheadBase  = isLandscape ? 0.55 : 0.32;
+    const behindBase = isLandscape ? 0.38 : 0.22;
     return allLines.map((line, i) => {
       const dist = i - effectiveIndex;
+      const adist = Math.abs(dist);
       const cur = dist === 0;
-      const near = Math.abs(dist) <= 3;
+      const near = adist <= vl;
       const isCredit = !!line.isCredit;
+      // Opacity falls off over visibleLines steps; floor stays readable
+      const aheadOpacity  = Math.max(isLandscape ? 0.12 : 0.06, aheadBase  - adist * (aheadBase  / (vl + 1)));
+      const behindOpacity = Math.max(isLandscape ? 0.08 : 0.04, behindBase - adist * (behindBase / (vl + 1)));
       return /*#__PURE__*/React.createElement("div", {
         key: i,
         ref: cur ? currentLineRef : i === lyrics.length ? creditsRef : null,
@@ -5218,14 +5312,14 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
           textAlign: "center",
           padding: near ? "6px 0" : "3px 0",
           fontSize: isCredit
-            ? (cur ? "15px" : Math.abs(dist) <= 1 ? "13px" : "11px")
-            : (cur ? (isLandscape ? "36px" : "32px") : Math.abs(dist) <= 1 ? (isLandscape ? "24px" : "20px") : near ? (isLandscape ? "20px" : "16px") : (isLandscape ? "16px" : "13px")),
+            ? (cur ? "15px" : adist <= 1 ? "13px" : "11px")
+            : (cur ? (isLandscape ? curFontBase * 1.1 + "px" : curFontBase + "px") : adist === 1 ? (isLandscape ? near1Font * 1.1 + "px" : near1Font + "px") : near ? (isLandscape ? nearFont * 1.1 + "px" : nearFont + "px") : (isLandscape ? farFont * 1.1 + "px" : farFont + "px")),
           fontWeight: cur && !isCredit ? "700" : "400",
           color: cur
             ? (isCredit ? "rgba(255,255,255,0.55)" : "#ffffff")
             : dist > 0
-              ? `rgba(255,255,255,${Math.max(isLandscape ? 0.18 : 0.07, (isLandscape ? 0.55 : 0.28) - Math.abs(dist) * (isLandscape ? 0.06 : 0.04))})`
-              : `rgba(255,255,255,${Math.max(isLandscape ? 0.12 : 0.05, (isLandscape ? 0.35 : 0.18) - Math.abs(dist) * (isLandscape ? 0.04 : 0.02))})`,
+              ? `rgba(255,255,255,${aheadOpacity})`
+              : `rgba(255,255,255,${behindOpacity})`,
           lineHeight: "1.4",
           transition: near ? transition : "none",
           textShadow: cur && !isCredit ? "0 0 60px rgba(212,168,70,0.4), 0 2px 20px rgba(0,0,0,0.8)" : "none",
@@ -5443,7 +5537,101 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
       cursor: "pointer",
       fontFamily: "inherit"
     }
-  }, "Wrong song?")), (() => {
+  }, "Wrong song?"), /*#__PURE__*/React.createElement("button", {
+    onClick: () => setShowSyncSettings(v => !v),
+    style: {
+      background: showSyncSettings ? "rgba(212,168,70,0.12)" : "rgba(255,255,255,0.04)",
+      border: showSyncSettings ? "1px solid rgba(212,168,70,0.3)" : "1px solid rgba(255,255,255,0.09)",
+      color: showSyncSettings ? "rgba(212,168,70,0.8)" : "rgba(255,255,255,0.35)",
+      borderRadius: "50px",
+      padding: isLandscape ? "7px 14px" : "10px 16px",
+      fontSize: isLandscape ? "13px" : "14px",
+      cursor: "pointer",
+      fontFamily: "inherit"
+    }
+  }, "⚙️")), showSyncSettings && /*#__PURE__*/React.createElement("div", {
+    style: {
+      position: "fixed",
+      bottom: isLandscape ? "20px" : "170px",
+      left: "50%",
+      transform: "translateX(-50%)",
+      zIndex: 200,
+      background: "rgba(10,10,20,0.95)",
+      backdropFilter: "blur(24px)",
+      WebkitBackdropFilter: "blur(24px)",
+      border: "1px solid rgba(255,255,255,0.12)",
+      borderRadius: "18px",
+      padding: "18px 20px 16px",
+      width: "min(320px, 88vw)",
+      boxShadow: "0 8px 40px rgba(0,0,0,0.6)"
+    }
+  },
+    // Header row
+    /*#__PURE__*/React.createElement("div", {
+      style: { display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "16px" }
+    },
+      /*#__PURE__*/React.createElement("span", { style: { color: "rgba(255,255,255,0.6)", fontSize: "11px", letterSpacing: "1.5px", textTransform: "uppercase" } }, "Sync Settings"),
+      /*#__PURE__*/React.createElement("button", {
+        onClick: () => setShowSyncSettings(false),
+        style: { background: "none", border: "none", color: "rgba(255,255,255,0.3)", fontSize: "18px", cursor: "pointer", lineHeight: 1, padding: "0 2px" }
+      }, "×")
+    ),
+    // Speed control
+    /*#__PURE__*/React.createElement("div", { style: { marginBottom: "18px" } },
+      /*#__PURE__*/React.createElement("div", { style: { display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "10px" } },
+        /*#__PURE__*/React.createElement("span", { style: { color: "rgba(255,255,255,0.5)", fontSize: "12px" } }, "Lyric speed"),
+        /*#__PURE__*/React.createElement("span", { style: { color: syncRate === 1.0 ? "rgba(255,255,255,0.35)" : "#d4a846", fontSize: "12px", fontWeight: "600" } },
+          syncRate === 1.0 ? "normal" : (syncRate > 1 ? "+" : "") + ((syncRate - 1) * 100).toFixed(1) + "%"
+        )
+      ),
+      /*#__PURE__*/React.createElement("div", { style: { display: "flex", alignItems: "center", gap: "8px" } },
+        /*#__PURE__*/React.createElement("button", {
+          onClick: () => adjustRate(-0.005),
+          style: { flex: 1, background: "rgba(255,255,255,0.07)", border: "1px solid rgba(255,255,255,0.12)", color: "rgba(255,255,255,0.8)", borderRadius: "10px", padding: "8px", cursor: "pointer", fontSize: "16px", fontFamily: "inherit" }
+        }, "−"),
+        /*#__PURE__*/React.createElement("span", { style: { color: "white", fontSize: "13px", fontWeight: "700", width: "52px", textAlign: "center" } },
+          syncRate.toFixed(3) + "×"
+        ),
+        /*#__PURE__*/React.createElement("button", {
+          onClick: () => adjustRate(0.005),
+          style: { flex: 1, background: "rgba(255,255,255,0.07)", border: "1px solid rgba(255,255,255,0.12)", color: "rgba(255,255,255,0.8)", borderRadius: "10px", padding: "8px", cursor: "pointer", fontSize: "16px", fontFamily: "inherit" }
+        }, "+"),
+        syncRate !== 1.0 && /*#__PURE__*/React.createElement("button", {
+          onClick: () => adjustRate(1.0 - syncRate),
+          style: { background: "none", border: "1px solid rgba(255,255,255,0.1)", color: "rgba(255,255,255,0.3)", borderRadius: "10px", padding: "8px 10px", cursor: "pointer", fontSize: "11px", fontFamily: "inherit" }
+        }, "reset")
+      ),
+      /*#__PURE__*/React.createElement("p", { style: { color: "rgba(255,255,255,0.25)", fontSize: "11px", margin: "8px 0 0", textAlign: "center" } },
+        "Each tap adjusts speed by 0.5%. Try −1% if lyrics run ahead."
+      )
+    ),
+    // Visible lines slider
+    /*#__PURE__*/React.createElement("div", { style: { marginBottom: "16px" } },
+      /*#__PURE__*/React.createElement("div", { style: { display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "8px" } },
+        /*#__PURE__*/React.createElement("span", { style: { color: "rgba(255,255,255,0.5)", fontSize: "12px" } }, "Lines on screen"),
+        /*#__PURE__*/React.createElement("span", { style: { color: "white", fontSize: "12px", fontWeight: "600" } }, visibleLines)
+      ),
+      /*#__PURE__*/React.createElement("input", {
+        type: "range", min: 3, max: 15, value: visibleLines,
+        onChange: e => setVisibleLines(+e.target.value),
+        style: { width: "100%", accentColor: "#d4a846" }
+      }),
+      visibleLines < 5 && /*#__PURE__*/React.createElement("p", { style: { color: "rgba(212,168,70,0.7)", fontSize: "11px", margin: "7px 0 0" } },
+        "⚠️ Fewer lines means less context — we suggest adjusting speed too so you can still follow along."
+      )
+    ),
+    // Save buttons
+    /*#__PURE__*/React.createElement("div", { style: { display: "flex", gap: "8px" } },
+      /*#__PURE__*/React.createElement("button", {
+        onClick: () => { saveSyncPrefsForAlbum(); setShowSyncSettings(false); },
+        style: { flex: 1, background: "rgba(212,168,70,0.1)", border: "1px solid rgba(212,168,70,0.25)", color: "rgba(212,168,70,0.85)", borderRadius: "12px", padding: "9px 8px", cursor: "pointer", fontSize: "11px", fontWeight: "600", fontFamily: "inherit" }
+      }, "Save for this album"),
+      /*#__PURE__*/React.createElement("button", {
+        onClick: () => { saveSyncPrefsAsDefault(); setShowSyncSettings(false); },
+        style: { flex: 1, background: "rgba(255,255,255,0.05)", border: "1px solid rgba(255,255,255,0.1)", color: "rgba(255,255,255,0.5)", borderRadius: "12px", padding: "9px 8px", cursor: "pointer", fontSize: "11px", fontWeight: "600", fontFamily: "inherit" }
+      }, "Save as default")
+    )
+  ), (() => {
     // Prefer library (turntableTracksRef) over iTunes (albumTracks) whenever available
     const hasTT = turntableAlbum && turntableTracksRef.current.length > 0 && turntableMatchedIdxRef.current >= 0;
     const isTT = !vinylMode && hasTT;

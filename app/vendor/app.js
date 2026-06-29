@@ -469,6 +469,13 @@
     const [vinylDbRelease, setVinylDbRelease] = useState2(null);
     const vinylDbReleaseRef = useRef2(null);
     const vinylSidesRef = useRef2([]);
+    const [syncRate, setSyncRate] = useState2(1);
+    const syncRateRef = useRef2(1);
+    const [visibleLines, setVisibleLines] = useState2(() => {
+      const v = parseInt(localStorage.getItem("liri_visible_lines"), 10);
+      return isNaN(v) ? 7 : Math.min(15, Math.max(3, v));
+    });
+    const [showSyncSettings, setShowSyncSettings] = useState2(false);
     const [flipSound, setFlipSound] = useState2(() => localStorage.getItem("liri_flip_sound") !== "false");
     const [flipNotify, setFlipNotify] = useState2(() => localStorage.getItem("liri_flip_notify") === "true");
     const [notifyDenied, setNotifyDenied] = useState2(false);
@@ -542,6 +549,23 @@
     }, [vinylDbRelease]);
     useEffect3(() => {
       albumCollectionIdRef.current = albumCollectionId;
+    }, [albumCollectionId]);
+    useEffect3(() => {
+      syncRateRef.current = syncRate;
+    }, [syncRate]);
+    useEffect3(() => {
+      if (!albumCollectionId) return;
+      try {
+        const albumPrefs = JSON.parse(localStorage.getItem(`liri_sync_prefs_${albumCollectionId}`) || "null");
+        const globalPrefs = JSON.parse(localStorage.getItem("liri_sync_prefs_global") || "null");
+        const prefs = albumPrefs || globalPrefs;
+        if (prefs?.rate != null) {
+          setSyncRate(prefs.rate);
+          syncRateRef.current = prefs.rate;
+        }
+        if (prefs?.lines != null) setVisibleLines(prefs.lines);
+      } catch {
+      }
     }, [albumCollectionId]);
     const getAlbumSideData = (cid) => {
       if (!cid) return null;
@@ -1369,7 +1393,7 @@
         userScrollingRef.current = false;
         setUserScrolling(false);
       }
-    }, [mode]);
+    }, [mode, detectedSong]);
     useEffect3(() => {
       if (!window.Capacitor) return;
       if (mode !== "syncing") return;
@@ -1871,6 +1895,8 @@ Move closer to your speakers and try again.`);
         } = syncCalcRef.current;
         syncCalcRef.current = null;
         initialPosRef.current = Math.max(0, startPos - phraseOffset + (Date.now() - recStart) / 1e3);
+      } else if (syncStartRef.current !== null) {
+        initialPosRef.current = Math.max(0, initialPosRef.current + (Date.now() - syncStartRef.current) / 1e3);
       }
       if (flipStartDelayMsRef.current > 0) {
         initialPosRef.current = -flipStartDelayMsRef.current / 1e3;
@@ -1891,7 +1917,7 @@ Move closer to your speakers and try again.`);
       setIsPaused(false);
       clearInterval(syncIntervalRef.current);
       syncIntervalRef.current = setInterval(() => {
-        const t = initialPosRef.current + (Date.now() - syncStartRef.current) / 1e3;
+        const t = initialPosRef.current + (Date.now() - syncStartRef.current) / 1e3 * syncRateRef.current;
         setPlaybackTime(t < 0 ? 0 : t);
         const lrc = lyricsRef.current;
         if (!lrc.length) return;
@@ -1913,7 +1939,7 @@ Move closer to your speakers and try again.`);
         syncStartRef.current = Date.now();
         clearInterval(syncIntervalRef.current);
         syncIntervalRef.current = setInterval(() => {
-          const t = initialPosRef.current + (Date.now() - syncStartRef.current) / 1e3;
+          const t = initialPosRef.current + (Date.now() - syncStartRef.current) / 1e3 * syncRateRef.current;
           setPlaybackTime(t);
           const lrc = lyricsRef.current;
           if (!lrc.length) return;
@@ -1937,6 +1963,23 @@ Move closer to your speakers and try again.`);
     const nudge = (s) => {
       userNudgeRef.current += s;
       initialPosRef.current = Math.max(0, initialPosRef.current + s);
+    };
+    const adjustRate = (delta) => {
+      setSyncRate((r) => {
+        const next = Math.round(Math.max(0.8, Math.min(1.2, r + delta)) * 1e3) / 1e3;
+        syncRateRef.current = next;
+        return next;
+      });
+    };
+    const saveSyncPrefsForAlbum = () => {
+      const prefs = { rate: syncRateRef.current, lines: visibleLines };
+      if (albumCollectionId) localStorage.setItem(`liri_sync_prefs_${albumCollectionId}`, JSON.stringify(prefs));
+      localStorage.setItem("liri_visible_lines", String(visibleLines));
+    };
+    const saveSyncPrefsAsDefault = () => {
+      const prefs = { rate: syncRateRef.current, lines: visibleLines };
+      localStorage.setItem("liri_sync_prefs_global", JSON.stringify(prefs));
+      localStorage.setItem("liri_visible_lines", String(visibleLines));
     };
     const handleNudge = (s) => {
       nudge(s);
@@ -2104,8 +2147,39 @@ Move closer to your speakers and try again.`);
         return ends2;
       }
       if (tracks.length <= 4) return [tracks.length - 1];
-      const totalMs = tracks.reduce((s, t) => s + (t.trackTimeMillis || 0), 0);
       const SIDE_MS = 20 * 60 * 1e3;
+      const discNumbers = tracks.map((t) => t.discNumber || 1);
+      const hasMultipleDiscs = new Set(discNumbers).size > 1;
+      if (hasMultipleDiscs) {
+        const ends2 = [];
+        for (let i = 0; i < tracks.length - 1; i++) {
+          if (discNumbers[i] !== discNumbers[i + 1]) {
+            ends2.push(i);
+          } else {
+            const discStart = ends2.length > 0 ? ends2[ends2.length - 1] + 1 : 0;
+            const discEnd = (() => {
+              for (let j = i + 1; j < tracks.length; j++) {
+                if (discNumbers[j] !== discNumbers[i]) return j - 1;
+              }
+              return tracks.length - 1;
+            })();
+            const discMs = tracks.slice(discStart, discEnd + 1).reduce((s, t) => s + (t.trackTimeMillis || 0), 0);
+            if (discMs > SIDE_MS * 1.1) {
+              let cumDisc = 0;
+              for (let j = discStart; j < discEnd; j++) {
+                cumDisc += tracks[j].trackTimeMillis || 0;
+                if (cumDisc >= discMs / 2 && !ends2.includes(j)) {
+                  ends2.push(j);
+                  break;
+                }
+              }
+            }
+          }
+        }
+        ends2.push(tracks.length - 1);
+        return [...new Set(ends2)].sort((a, b) => a - b);
+      }
+      const totalMs = tracks.reduce((s, t) => s + (t.trackTimeMillis || 0), 0);
       const numSides = totalMs > 0 ? Math.max(2, Math.round(totalMs / SIDE_MS)) : 2;
       if (!totalMs) {
         const perSide = Math.ceil(tracks.length / numSides);
@@ -5177,11 +5251,21 @@ Move closer to your speakers and try again.`);
       const allLines = [...lyrics, ...creditLines];
       const pastLastLyric = currentIndex >= lyrics.length - 1 && lyrics.length > 0;
       const effectiveIndex = pastLastLyric ? lyrics.length - 1 + creditLines.reduce((best, cl, ci) => playbackTime >= cl.time ? ci + 1 : best, 0) : currentIndex;
+      const vl = visibleLines;
+      const curFontBase = Math.max(20, 32 - Math.max(0, vl - 5) * 1.2);
+      const near1Font = Math.max(14, 20 - Math.max(0, vl - 5) * 0.5);
+      const nearFont = Math.max(12, 16 - Math.max(0, vl - 5) * 0.3);
+      const farFont = Math.max(11, 13 - Math.max(0, vl - 5) * 0.15);
+      const aheadBase = isLandscape ? 0.55 : 0.32;
+      const behindBase = isLandscape ? 0.38 : 0.22;
       return allLines.map((line, i) => {
         const dist = i - effectiveIndex;
+        const adist = Math.abs(dist);
         const cur = dist === 0;
-        const near = Math.abs(dist) <= 3;
+        const near = adist <= vl;
         const isCredit = !!line.isCredit;
+        const aheadOpacity = Math.max(isLandscape ? 0.12 : 0.06, aheadBase - adist * (aheadBase / (vl + 1)));
+        const behindOpacity = Math.max(isLandscape ? 0.08 : 0.04, behindBase - adist * (behindBase / (vl + 1)));
         return /* @__PURE__ */ React.createElement("div", {
           key: i,
           ref: cur ? currentLineRef : i === lyrics.length ? creditsRef : null,
@@ -5189,9 +5273,9 @@ Move closer to your speakers and try again.`);
           style: {
             textAlign: "center",
             padding: near ? "6px 0" : "3px 0",
-            fontSize: isCredit ? cur ? "15px" : Math.abs(dist) <= 1 ? "13px" : "11px" : cur ? isLandscape ? "36px" : "32px" : Math.abs(dist) <= 1 ? isLandscape ? "24px" : "20px" : near ? isLandscape ? "20px" : "16px" : isLandscape ? "16px" : "13px",
+            fontSize: isCredit ? cur ? "15px" : adist <= 1 ? "13px" : "11px" : cur ? isLandscape ? curFontBase * 1.1 + "px" : curFontBase + "px" : adist === 1 ? isLandscape ? near1Font * 1.1 + "px" : near1Font + "px" : near ? isLandscape ? nearFont * 1.1 + "px" : nearFont + "px" : isLandscape ? farFont * 1.1 + "px" : farFont + "px",
             fontWeight: cur && !isCredit ? "700" : "400",
-            color: cur ? isCredit ? "rgba(255,255,255,0.55)" : "#ffffff" : dist > 0 ? `rgba(255,255,255,${Math.max(isLandscape ? 0.18 : 0.07, (isLandscape ? 0.55 : 0.28) - Math.abs(dist) * (isLandscape ? 0.06 : 0.04))})` : `rgba(255,255,255,${Math.max(isLandscape ? 0.12 : 0.05, (isLandscape ? 0.35 : 0.18) - Math.abs(dist) * (isLandscape ? 0.04 : 0.02))})`,
+            color: cur ? isCredit ? "rgba(255,255,255,0.55)" : "#ffffff" : dist > 0 ? `rgba(255,255,255,${aheadOpacity})` : `rgba(255,255,255,${behindOpacity})`,
             lineHeight: "1.4",
             transition: near ? transition : "none",
             textShadow: cur && !isCredit ? "0 0 60px rgba(212,168,70,0.4), 0 2px 20px rgba(0,0,0,0.8)" : "none",
@@ -5412,7 +5496,134 @@ Move closer to your speakers and try again.`);
         cursor: "pointer",
         fontFamily: "inherit"
       }
-    }, "Wrong song?")), (() => {
+    }, "Wrong song?"), /* @__PURE__ */ React.createElement("button", {
+      onClick: () => setShowSyncSettings((v) => !v),
+      style: {
+        background: showSyncSettings ? "rgba(212,168,70,0.12)" : "rgba(255,255,255,0.04)",
+        border: showSyncSettings ? "1px solid rgba(212,168,70,0.3)" : "1px solid rgba(255,255,255,0.09)",
+        color: showSyncSettings ? "rgba(212,168,70,0.8)" : "rgba(255,255,255,0.35)",
+        borderRadius: "50px",
+        padding: isLandscape ? "7px 14px" : "10px 16px",
+        fontSize: isLandscape ? "13px" : "14px",
+        cursor: "pointer",
+        fontFamily: "inherit"
+      }
+    }, "\u2699\uFE0F")), showSyncSettings && /* @__PURE__ */ React.createElement(
+      "div",
+      {
+        style: {
+          position: "fixed",
+          bottom: isLandscape ? "20px" : "170px",
+          left: "50%",
+          transform: "translateX(-50%)",
+          zIndex: 200,
+          background: "rgba(10,10,20,0.95)",
+          backdropFilter: "blur(24px)",
+          WebkitBackdropFilter: "blur(24px)",
+          border: "1px solid rgba(255,255,255,0.12)",
+          borderRadius: "18px",
+          padding: "18px 20px 16px",
+          width: "min(320px, 88vw)",
+          boxShadow: "0 8px 40px rgba(0,0,0,0.6)"
+        }
+      },
+      // Header row
+      /* @__PURE__ */ React.createElement(
+        "div",
+        {
+          style: { display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "16px" }
+        },
+        /* @__PURE__ */ React.createElement("span", { style: { color: "rgba(255,255,255,0.6)", fontSize: "11px", letterSpacing: "1.5px", textTransform: "uppercase" } }, "Sync Settings"),
+        /* @__PURE__ */ React.createElement("button", {
+          onClick: () => setShowSyncSettings(false),
+          style: { background: "none", border: "none", color: "rgba(255,255,255,0.3)", fontSize: "18px", cursor: "pointer", lineHeight: 1, padding: "0 2px" }
+        }, "\xD7")
+      ),
+      // Speed control
+      /* @__PURE__ */ React.createElement(
+        "div",
+        { style: { marginBottom: "18px" } },
+        /* @__PURE__ */ React.createElement(
+          "div",
+          { style: { display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "10px" } },
+          /* @__PURE__ */ React.createElement("span", { style: { color: "rgba(255,255,255,0.5)", fontSize: "12px" } }, "Lyric speed"),
+          /* @__PURE__ */ React.createElement(
+            "span",
+            { style: { color: syncRate === 1 ? "rgba(255,255,255,0.35)" : "#d4a846", fontSize: "12px", fontWeight: "600" } },
+            syncRate === 1 ? "normal" : (syncRate > 1 ? "+" : "") + ((syncRate - 1) * 100).toFixed(1) + "%"
+          )
+        ),
+        /* @__PURE__ */ React.createElement(
+          "div",
+          { style: { display: "flex", alignItems: "center", gap: "8px" } },
+          /* @__PURE__ */ React.createElement("button", {
+            onClick: () => adjustRate(-5e-3),
+            style: { flex: 1, background: "rgba(255,255,255,0.07)", border: "1px solid rgba(255,255,255,0.12)", color: "rgba(255,255,255,0.8)", borderRadius: "10px", padding: "8px", cursor: "pointer", fontSize: "16px", fontFamily: "inherit" }
+          }, "\u2212"),
+          /* @__PURE__ */ React.createElement(
+            "span",
+            { style: { color: "white", fontSize: "13px", fontWeight: "700", width: "52px", textAlign: "center" } },
+            syncRate.toFixed(3) + "\xD7"
+          ),
+          /* @__PURE__ */ React.createElement("button", {
+            onClick: () => adjustRate(5e-3),
+            style: { flex: 1, background: "rgba(255,255,255,0.07)", border: "1px solid rgba(255,255,255,0.12)", color: "rgba(255,255,255,0.8)", borderRadius: "10px", padding: "8px", cursor: "pointer", fontSize: "16px", fontFamily: "inherit" }
+          }, "+"),
+          syncRate !== 1 && /* @__PURE__ */ React.createElement("button", {
+            onClick: () => adjustRate(1 - syncRate),
+            style: { background: "none", border: "1px solid rgba(255,255,255,0.1)", color: "rgba(255,255,255,0.3)", borderRadius: "10px", padding: "8px 10px", cursor: "pointer", fontSize: "11px", fontFamily: "inherit" }
+          }, "reset")
+        ),
+        /* @__PURE__ */ React.createElement(
+          "p",
+          { style: { color: "rgba(255,255,255,0.25)", fontSize: "11px", margin: "8px 0 0", textAlign: "center" } },
+          "Each tap adjusts speed by 0.5%. Try \u22121% if lyrics run ahead."
+        )
+      ),
+      // Visible lines slider
+      /* @__PURE__ */ React.createElement(
+        "div",
+        { style: { marginBottom: "16px" } },
+        /* @__PURE__ */ React.createElement(
+          "div",
+          { style: { display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "8px" } },
+          /* @__PURE__ */ React.createElement("span", { style: { color: "rgba(255,255,255,0.5)", fontSize: "12px" } }, "Lines on screen"),
+          /* @__PURE__ */ React.createElement("span", { style: { color: "white", fontSize: "12px", fontWeight: "600" } }, visibleLines)
+        ),
+        /* @__PURE__ */ React.createElement("input", {
+          type: "range",
+          min: 3,
+          max: 15,
+          value: visibleLines,
+          onChange: (e) => setVisibleLines(+e.target.value),
+          style: { width: "100%", accentColor: "#d4a846" }
+        }),
+        visibleLines < 5 && /* @__PURE__ */ React.createElement(
+          "p",
+          { style: { color: "rgba(212,168,70,0.7)", fontSize: "11px", margin: "7px 0 0" } },
+          "\u26A0\uFE0F Fewer lines means less context \u2014 we suggest adjusting speed too so you can still follow along."
+        )
+      ),
+      // Save buttons
+      /* @__PURE__ */ React.createElement(
+        "div",
+        { style: { display: "flex", gap: "8px" } },
+        /* @__PURE__ */ React.createElement("button", {
+          onClick: () => {
+            saveSyncPrefsForAlbum();
+            setShowSyncSettings(false);
+          },
+          style: { flex: 1, background: "rgba(212,168,70,0.1)", border: "1px solid rgba(212,168,70,0.25)", color: "rgba(212,168,70,0.85)", borderRadius: "12px", padding: "9px 8px", cursor: "pointer", fontSize: "11px", fontWeight: "600", fontFamily: "inherit" }
+        }, "Save for this album"),
+        /* @__PURE__ */ React.createElement("button", {
+          onClick: () => {
+            saveSyncPrefsAsDefault();
+            setShowSyncSettings(false);
+          },
+          style: { flex: 1, background: "rgba(255,255,255,0.05)", border: "1px solid rgba(255,255,255,0.1)", color: "rgba(255,255,255,0.5)", borderRadius: "12px", padding: "9px 8px", cursor: "pointer", fontSize: "11px", fontWeight: "600", fontFamily: "inherit" }
+        }, "Save as default")
+      )
+    ), (() => {
       const hasTT = turntableAlbum && turntableTracksRef.current.length > 0 && turntableMatchedIdxRef.current >= 0;
       const isTT = !vinylMode && hasTT;
       const isVM = vinylMode && (hasTT || albumTracks.length > 0) && currentTrackIndex >= 0;
