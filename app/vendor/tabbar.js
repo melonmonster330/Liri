@@ -42,8 +42,10 @@
     ),
   };
 
-  function listenHref() {
-    return window.Capacitor ? "/index.html" : "/app";
+  // In Capacitor, webDir="app" means the app/ folder is served as "/".
+  // Web paths are /app/library.html etc., but in Capacitor they must be /library.html.
+  function pageHref(webPath) {
+    return window.Capacitor ? webPath.replace(/^\/app/, "") : webPath;
   }
 
   window.TabBar = function TabBar(props) {
@@ -68,11 +70,11 @@
     const iconsOnly = !!window.Capacitor;
 
     const tabs = [
-      { key: "listen",  label: "Listen",  href: listenHref(),          icon: Icon.listen },
-      { key: "library", label: "My Records", href: "/app/library.html",   icon: Icon.library },
-      { key: "feed",    label: "Feed",    href: "/app/feed.html",      icon: Icon.feed },
-      { key: "explore", label: "Explore", href: "/app/explore.html",   icon: Icon.explore },
-      { key: "profile", label: "You",     href: "/app/profile.html",   icon: Icon.profile },
+      { key: "listen",  label: "Listen",     href: pageHref("/app/index.html"),   icon: Icon.listen },
+      { key: "library", label: "My Records", href: pageHref("/app/library.html"), icon: Icon.library },
+      { key: "feed",    label: "Feed",       href: pageHref("/app/feed.html"),    icon: Icon.feed },
+      { key: "explore", label: "Explore",    href: pageHref("/app/explore.html"), icon: Icon.explore },
+      { key: "profile", label: "You",        href: pageHref("/app/profile.html"), icon: Icon.profile },
     ];
 
     return h(

@@ -588,6 +588,12 @@
       const [showSearch, setShowSearch]   = useState(false);
       const [query, setQuery]             = useState("");
       const [results, setResults]         = useState([]);
+      // Auto-open search if navigated here with ?openSearch=1
+      useEffect(() => {
+        if (new URLSearchParams(window.location.search).get("openSearch") === "1") {
+          setShowSearch(true);
+        }
+      }, []);
       const [searching, setSearching]     = useState(false);
       // Queue: [{cid, album, status: "pending"|"adding"|"done"|"error", error?}]
       const [addQueue, setAddQueue]       = useState([]);
@@ -764,6 +770,7 @@
             const res = await fetch(`${API_BASE}/api/add-to-library`, {
               method: "POST",
               headers: { "Content-Type": "application/json", "Authorization": `Bearer ${token}` },
+              keepalive: true,
               body: JSON.stringify(
                 next.album._source === "discogs"
                   ? { discogs_release_id: next.album.collectionId }

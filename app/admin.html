@@ -32,6 +32,9 @@
   .updated { font-size: 12px; color: var(--muted); }
   .refresh-btn { background: var(--surface); border: 1px solid var(--border); color: var(--muted); border-radius: 8px; padding: 6px 14px; font-size: 12px; cursor: pointer; font-family: inherit; }
   .refresh-btn:hover { color: #fff; }
+  .range-pills { display: flex; gap: 6px; margin-bottom: 20px; }
+  .range-pill { background: var(--surface); border: 1px solid var(--border); color: var(--muted); border-radius: 20px; padding: 5px 14px; font-size: 12px; cursor: pointer; font-family: inherit; transition: all 0.15s; }
+  .range-pill.active { background: rgba(212,168,70,0.15); border-color: rgba(212,168,70,0.4); color: var(--gold); }
 
   .grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; margin-bottom: 12px; }
   .grid-2 { grid-template-columns: repeat(2, 1fr); }
@@ -144,6 +147,21 @@
   .lrc-msg { font-size: 12px; font-weight: 600; margin-top: 6px; }
   .lrc-msg.ok  { color: rgba(100,220,130,0.9); }
   .lrc-msg.err { color: #e8a0a8; }
+
+  /* ── Side data form ── */
+  .side-form { background: rgba(255,180,0,0.05); border: 1px solid rgba(255,180,0,0.2); border-radius: 12px; padding: 16px; margin-top: 16px; }
+  .side-form-title { font-size: 12px; color: rgba(255,180,0,0.8); text-transform: uppercase; letter-spacing: 0.06em; margin-bottom: 12px; font-weight: 700; }
+  .side-inputs { display: flex; flex-wrap: wrap; gap: 10px; margin-bottom: 12px; }
+  .side-input-group { display: flex; flex-direction: column; gap: 4px; }
+  .side-input-label { font-size: 10px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.06em; }
+  .side-input { background: var(--surface); border: 1px solid var(--border); color: #fff; border-radius: 8px; padding: 7px 10px; font-size: 14px; font-weight: 700; width: 60px; outline: none; font-family: inherit; text-align: center; }
+  .side-input:focus { border-color: rgba(255,180,0,0.5); }
+  .side-form-btn { background: rgba(255,180,0,0.15); border: 1px solid rgba(255,180,0,0.35); color: rgba(255,180,0,0.9); border-radius: 10px; padding: 9px 18px; font-size: 13px; font-weight: 700; cursor: pointer; font-family: inherit; }
+  .side-form-btn:hover { background: rgba(255,180,0,0.25); }
+  .side-form-btn:disabled { opacity: 0.4; cursor: default; }
+  .side-form-msg { font-size: 12px; font-weight: 600; margin-top: 8px; }
+  .side-form-msg.ok  { color: rgba(100,220,130,0.9); }
+  .side-form-msg.err { color: #e8a0a8; }
 </style>
 </head>
 <body>
@@ -174,6 +192,7 @@
       <span id="lu-status" style="font-size:13px;color:rgba(255,255,255,0.5)"></span>
     </div>
   </div>
+  <div id="range-pills"></div>
   <div id="content"><div class="loading">Loading…</div></div>
 </div>
 
@@ -208,8 +227,31 @@ document.addEventListener("click", async (ev) => {
   }
 });
 
+let activeDays = 3;
+const RANGE_OPTIONS = [
+  { label: "3d",   days: 3   },
+  { label: "7d",   days: 7   },
+  { label: "30d",  days: 30  },
+  { label: "1y",   days: 365 },
+  { label: "All",  days: 0   },
+];
+
+function renderRangePills() {
+  return `<div class="range-pills">${RANGE_OPTIONS.map(o =>
+    `<button class="range-pill${activeDays === o.days ? " active" : ""}" onclick="setRange(${o.days})">${o.label}</button>`
+  ).join("")}</div>`;
+}
+
+async function setRange(days) {
+  activeDays = days;
+  document.getElementById("range-pills").innerHTML = renderRangePills();
+  document.getElementById("content").innerHTML = `<div class="loading">Loading…</div>`;
+  await load();
+}
+
 async function load() {
-  const r = await fetch(API, { headers: { "x-admin-password": pw } });
+  const url = activeDays > 0 ? `${API}?days=${activeDays}` : API + "?days=0";
+  const r = await fetch(url, { headers: { "x-admin-password": pw } });
   if (r.status === 401) { showLogin("Wrong password"); return; }
   if (!r.ok) { document.getElementById("content").innerHTML = `<div class="loading">Error loading stats</div>`; return; }
   const d = await r.json();
@@ -222,7 +264,9 @@ function render(d) {
   const totalPlatform = plays.web + plays.ios || 1;
   const totalSource   = plays.recognition + plays.autoAdvance || 1;
   const topMax = topAlbums[0]?.count || 1;
+  const rangeLabel = activeDays === 0 ? "all time" : activeDays === 1 ? "last 24h" : `last ${activeDays}d`;
 
+  document.getElementById("range-pills").innerHTML = renderRangePills();
   document.getElementById("content").innerHTML = `
     <div class="grid">
       <div class="card card-gold">
@@ -244,14 +288,14 @@ function render(d) {
 
     <div class="grid">
       <div class="card card-gold">
-        <div class="card-label">Total Plays</div>
-        <div class="card-value">${fmt(plays.total)}</div>
-        <div class="card-sub">+${plays.last7d} this week</div>
+        <div class="card-label">Plays (${rangeLabel})</div>
+        <div class="card-value">${fmt(plays.window)}</div>
+        <div class="card-sub">${fmt(plays.total)} all time</div>
       </div>
       <div class="card">
-        <div class="card-label">Plays Today</div>
-        <div class="card-value">${fmt(plays.last24h)}</div>
-        <div class="card-sub">last 24 hours</div>
+        <div class="card-label">Plays (last 7d)</div>
+        <div class="card-value">${fmt(plays.last7d)}</div>
+        <div class="card-sub">rolling 7 days</div>
       </div>
       <div class="card">
         <div class="card-label">Catalogue</div>
@@ -299,7 +343,7 @@ function render(d) {
 
     <div class="grid grid-2">
       <div class="section">
-        <div class="section-title">Top Albums (last 30d)</div>
+        <div class="section-title">Top Albums (${rangeLabel})</div>
         ${topAlbums.length === 0 ? '<div style="color:var(--muted);font-size:13px">No data yet</div>' :
           topAlbums.map(a => `
           <div class="bar-row">
@@ -662,7 +706,7 @@ function renderAlbum(d) {
         tracks.map(t => `
           <div class="track-row">
             <div class="track-num">${t.disc_number > 1 ? t.disc_number + '-' : ''}${t.track_number || ''}</div>
-            <div class="track-side ${t.position ? '' : 'missing'}">${t.position ? esc(t.position) : '— no side'}</div>
+            <div class="track-side ${t.position ? '' : 'missing'}">${t.position ? esc(t.position) : '—'}</div>
             <div class="track-name">${esc(t.track_name || '')}</div>
             <div class="track-plays">${fmt(t.plays)} plays</div>
             <div class="track-flag ${t.has_lyrics ? 'ok' : ''}">
@@ -670,8 +714,67 @@ function renderAlbum(d) {
               ${t.lyrics_source ? `<span class="source">via ${esc(t.lyrics_source)}</span>` : ''}
             </div>
           </div>`).join("")}
+      ${sc.missing > 0 ? `
+      <div class="side-form" id="side-form-${a.itunes_collection_id || ''}">
+        <div class="side-form-title">⚠︎ Add side data (${sc.missing}/${sc.total} tracks missing)</div>
+        <div style="font-size:12px;color:var(--muted);margin-bottom:12px">Enter how many tracks are on each side. Leave a side at 0 to skip it.</div>
+        <div class="side-inputs">
+          <div class="side-input-group"><div class="side-input-label">Side A</div><input class="side-input" id="side-a-${a.itunes_collection_id}" type="number" min="0" value="${Math.ceil(tracks.length / 2)}"></div>
+          <div class="side-input-group"><div class="side-input-label">Side B</div><input class="side-input" id="side-b-${a.itunes_collection_id}" type="number" min="0" value="${Math.floor(tracks.length / 2)}"></div>
+          <div class="side-input-group"><div class="side-input-label">Side C</div><input class="side-input" id="side-c-${a.itunes_collection_id}" type="number" min="0" value="0"></div>
+          <div class="side-input-group"><div class="side-input-label">Side D</div><input class="side-input" id="side-d-${a.itunes_collection_id}" type="number" min="0" value="0"></div>
+        </div>
+        <button class="side-form-btn" onclick="submitSideData(${a.itunes_collection_id}, ${tracks.length})">Save Side Data</button>
+        <div class="side-form-msg" id="side-msg-${a.itunes_collection_id}"></div>
+      </div>` : ''}
     </div>
   `;
+}
+
+async function submitSideData(collectionId, totalTracks) {
+  const msg = document.getElementById("side-msg-" + collectionId);
+  const btn = document.querySelector(`#side-form-${collectionId} .side-form-btn`);
+  const getVal = (id) => parseInt(document.getElementById(id + "-" + collectionId)?.value || "0", 10) || 0;
+  const sides = [
+    { letter: "A", count: getVal("side-a") },
+    { letter: "B", count: getVal("side-b") },
+    { letter: "C", count: getVal("side-c") },
+    { letter: "D", count: getVal("side-d") },
+  ].filter(s => s.count > 0);
+
+  if (!sides.length) { msg.textContent = "Enter at least one side count."; msg.className = "side-form-msg err"; return; }
+  const assigned = sides.reduce((s, x) => s + x.count, 0);
+  if (assigned !== totalTracks) {
+    msg.textContent = `Side totals (${assigned}) must equal track count (${totalTracks}).`;
+    msg.className = "side-form-msg err";
+    return;
+  }
+
+  btn.disabled = true;
+  msg.textContent = "Saving…";
+  msg.className = "side-form-msg";
+  try {
+    const r = await fetch(API, {
+      method: "POST",
+      headers: { "x-admin-password": pw, "Content-Type": "application/json" },
+      body: JSON.stringify({ action: "add-vinyl-sides", collectionId, sides }),
+    });
+    const d = await r.json().catch(() => ({}));
+    if (r.ok && d.ok) {
+      msg.textContent = `✓ Saved ${d.inserted} side assignments`;
+      msg.className = "side-form-msg ok";
+      // Reload the album detail to reflect new side data
+      setTimeout(() => openAlbum(collectionId), 1200);
+    } else {
+      msg.textContent = "✗ " + (d.error || ("HTTP " + r.status));
+      msg.className = "side-form-msg err";
+      btn.disabled = false;
+    }
+  } catch (e) {
+    msg.textContent = "✗ " + e.message;
+    msg.className = "side-form-msg err";
+    btn.disabled = false;
+  }
 }
 
 function showLogin(err) {

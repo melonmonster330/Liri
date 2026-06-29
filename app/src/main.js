@@ -1,6 +1,6 @@
 import { parseLRC, formatTime, timeAgo, normText } from "../base/lib/text.js";
 import { startWhisperChunks } from "../base/lib/whisper.js";
-import { getSideGroups }      from "../base/lib/sides.js";
+import { getSideGroups, hasSideData } from "../base/lib/sides.js";
 import { showFlipPushNotification, showAlbumEndPushNotification, getLocalNotif } from "../base/lib/notifications.js";
 import { Vinyl }          from "../base/components/Vinyl.js";
 import { WaveAnimation }  from "../base/components/WaveAnimation.js";
@@ -4175,13 +4175,13 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
       padding: "20px 0 4px"
     }
   }, /*#__PURE__*/React.createElement("a", {
-    href: window.Capacitor ? "/library.html" : "/library",
+    href: window.Capacitor ? "/library.html?openSearch=1" : "/library?openSearch=1",
     style: {
       fontSize: 12,
-      color: "rgba(255,255,255,0.2)",
+      color: "rgba(255,255,255,0.3)",
       textDecoration: "none"
     }
-  }, "Manage My Records \u2192"))))), showTrackList && !window.Capacitor && /*#__PURE__*/React.createElement("div", {
+  }, "+ Add Record"))))), showTrackList && !window.Capacitor && /*#__PURE__*/React.createElement("div", {
     onClick: () => setShowTrackList(false),
     style: { position: "fixed", inset: 0, zIndex: 201, background: "rgba(0,0,0,0.6)", backdropFilter: "blur(4px)", cursor: "pointer", display: "flex", alignItems: "flex-end", justifyContent: "center" }
   }, /*#__PURE__*/React.createElement("div", {
@@ -4204,7 +4204,10 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
     const _wt = turntableTracksRef.current;
     if (!_wt.length) return null;
     const _groups = getSideGroups(_wt, vinylSidesRef.current, vinylDbRelease?.vinyl_tracks);
-    return _groups.map(({ side, tracks }) => /*#__PURE__*/React.createElement("div", { key: side },
+    const _noSideData = !hasSideData(vinylSidesRef.current, vinylDbRelease?.vinyl_tracks);
+    return [
+      _noSideData && /*#__PURE__*/React.createElement("div", { key: "no-side-notice", style: { fontSize: 11, color: "rgba(255,180,0,0.75)", padding: "7px 12px", background: "rgba(255,180,0,0.07)", borderRadius: 8, border: "1px solid rgba(255,180,0,0.2)", marginBottom: 4 } }, "⚠︎ Side data pending — track grouping is estimated"),
+      ..._groups.map(({ side, tracks }) => /*#__PURE__*/React.createElement("div", { key: side },
       /*#__PURE__*/React.createElement("div", {
         style: { fontSize: "10px", letterSpacing: "2px", textTransform: "uppercase", color: "rgba(212,168,70,0.8)", fontWeight: "700", marginBottom: "10px", paddingBottom: "6px", borderBottom: "1px solid rgba(255,255,255,0.06)" }
       }, "Side ", side),
@@ -4217,7 +4220,7 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
       }, /*#__PURE__*/React.createElement("span", {
         style: { color: "rgba(255,255,255,0.25)", fontSize: "12px", minWidth: "20px", flexShrink: 0 }
       }, i + 1), t.trackName)))
-    ));
+    ))].filter(Boolean);
   })()))), showSettings && /*#__PURE__*/React.createElement("div", {
     onClick: () => setShowSettings(false),
     style: {
@@ -6225,6 +6228,9 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
         onClick: () => setShowTrackList(v => !v),
         style: { fontSize: "11px", letterSpacing: "1.5px", textTransform: "uppercase", color: "rgba(255,255,255,0.35)", marginBottom: "10px", textAlign: "center", width: "100%", background: "none", border: "none", cursor: "pointer", fontFamily: "inherit" }
       }, showTrackList ? "▲ Or jump to a track" : "▼ Or jump to a track"),
+      // Warning when no curated/Discogs side data exists — track grouping is estimated
+      !hasSideData(vinylSidesRef.current, vinylDbRelease?.vinyl_tracks) && (isWeb || showTrackList) &&
+        /*#__PURE__*/React.createElement("div", { style: { fontSize: 11, color: "rgba(255,180,0,0.75)", marginBottom: 10, padding: "6px 11px", background: "rgba(255,180,0,0.07)", borderRadius: 8, border: "1px solid rgba(255,180,0,0.2)" } }, "⚠︎ Side data pending — track order is estimated"),
       (isWeb || showTrackList) && /*#__PURE__*/React.createElement("div", {
         style: { display: "flex", flexDirection: "column", gap: "12px", maxHeight: isWeb ? "60vh" : "45vh", overflowY: "auto", WebkitOverflowScrolling: "touch" }
       }, groups.map(({ side, tracks }) =>
