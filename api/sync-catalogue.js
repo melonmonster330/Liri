@@ -672,11 +672,17 @@ module.exports = async (req, res) => {
       }
 
       if (action === "missing-lyrics") {
-        // All album_tracks that have no lrc_raw in track_lyrics
-        const { body: rows } = await sbGet(
-          `album_tracks?select=itunes_track_id,track_name,artist_name,album_name,itunes_collection_id,duration_ms,disc_number,track_number,track_lyrics!left(lrc_raw)&order=itunes_collection_id.asc,disc_number.asc,track_number.asc`
-        );
-        const missing = (Array.isArray(rows) ? rows : []).filter(t => !t.track_lyrics?.lrc_raw);
+        // All album_tracks that have no lrc_raw in track_lyrics.
+        // Two small queries instead of an embed — the embed pulls the full
+        // lrc_raw text for every track (~1MB) and reliably times out the
+        // 10s sbGet limit on Vercel cold starts.
+        const [tracksResp, withLrcResp] = await Promise.all([
+          sbGetAll(`album_tracks?select=itunes_track_id,track_name,artist_name,album_name,itunes_collection_id,duration_ms,disc_number,track_number&order=itunes_collection_id.asc,disc_number.asc,track_number.asc`),
+          sbGetAll(`track_lyrics?select=itunes_track_id&lrc_raw=not.is.null`),
+        ]);
+        const rows = Array.isArray(tracksResp) ? tracksResp : [];
+        const haveLrc = new Set((Array.isArray(withLrcResp) ? withLrcResp : []).map(r => r.itunes_track_id));
+        const missing = rows.filter(t => !haveLrc.has(t.itunes_track_id));
         // Fetch artwork from catalogue
         const cids = [...new Set(missing.map(t => t.itunes_collection_id))];
         const { body: cat } = cids.length
