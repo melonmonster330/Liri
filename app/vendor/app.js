@@ -5399,7 +5399,6 @@ Move closer to your speakers and try again.`);
         pointerEvents: "none"
       }
     })), /* @__PURE__ */ React.createElement("div", {
-      className: "safe-bottom",
       style: isLandscape ? {
         padding: "12px 20px max(12px, calc(env(safe-area-inset-bottom) + 8px))",
         position: "fixed",

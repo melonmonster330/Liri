@@ -612,6 +612,29 @@ module.exports = async (req, res) => {
         if (!id) return res.status(400).json({ error: "id required" });
         return res.status(200).json(await getUserDetail(id));
       }
+      if (action === "missing-lyrics") {
+        // All album_tracks that have no lrc_raw in track_lyrics
+        const { body: rows } = await sbGet(
+          `album_tracks?select=itunes_track_id,track_name,artist_name,album_name,itunes_collection_id,duration_ms,disc_number,track_number,track_lyrics!left(lrc_raw)&order=itunes_collection_id.asc,disc_number.asc,track_number.asc`
+        );
+        const missing = (Array.isArray(rows) ? rows : []).filter(t => !t.track_lyrics?.lrc_raw);
+        // Fetch artwork from catalogue
+        const cids = [...new Set(missing.map(t => t.itunes_collection_id))];
+        const { body: cat } = cids.length
+          ? await sbGet(`catalogue?itunes_collection_id=in.(${cids.join(",")})&select=itunes_collection_id,album_name,artist_name,artwork_url`)
+          : { body: [] };
+        const catMap = {};
+        (Array.isArray(cat) ? cat : []).forEach(c => { catMap[c.itunes_collection_id] = c; });
+        const enriched = missing.map(t => ({
+          ...t,
+          track_lyrics: undefined,
+          artwork_url:  catMap[t.itunes_collection_id]?.artwork_url || null,
+          album_name:   catMap[t.itunes_collection_id]?.album_name  || t.album_name || "",
+          artist_name:  catMap[t.itunes_collection_id]?.artist_name || t.artist_name || "",
+        }));
+        return res.status(200).json({ tracks: enriched, total: enriched.length });
+      }
+
       if (action === "bugs") {
         const status = (url.searchParams.get("status") || "open").toLowerCase();
         if (!["open", "backlog", "fixed", "wontfix"].includes(status)) {
