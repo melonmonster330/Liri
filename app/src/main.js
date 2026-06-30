@@ -20,7 +20,7 @@ if (typeof supabase === 'undefined') {
   throw new Error('Supabase not loaded');
 }
 const sb = supabase.createClient("https://xjdjpaxgymgbvcwmvorc.supabase.co", "sb_publishable_C-NBnfg0ltAoUi46XQTUjA_ozjZW_Nd");
-const APP_VERSION = "1.2.2";
+const APP_VERSION = "1.2.3";
 const IS_IOS = !!window.Capacitor; // set once at load time — used for App Store compliance checks
 const TRANSCRIBE_PROXY = window.Capacitor ? "https://www.getliri.com/api/transcribe"    : "/api/transcribe";
 const ITUNES_PROXY   = window.Capacitor ? "https://www.getliri.com/api/itunes-lookup"   : "/api/itunes-lookup";
@@ -2455,8 +2455,11 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
     detectedAtRef.current = Date.now();
     setDetectedSong(nextSong);
     setSongDuration(nextDuration);
-    // Load lyrics from wordsDataRef (fetched from track_lyrics at listen start)
-    const nextTrackData = wordsDataRef.current?.[next.trackId];
+    // Load lyrics — prefer turntableLyricsCacheRef (always populated at album
+    // select) over wordsDataRef (only populated during a Shazam listen session,
+    // so empty on web and on any track that wasn't seen by startListeningSpeech).
+    const nextTrackData = turntableLyricsCacheRef.current?.[String(next.trackId)]
+      || wordsDataRef.current?.[next.trackId];
     if (nextTrackData?.lrc_raw) {
       const parsed = parseLRC(nextTrackData.lrc_raw);
       setLyrics(parsed);
@@ -2733,7 +2736,10 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
         album: ta.album_name || "",
         artwork: ta.artwork_url || null
       };
-      const trackData = wordsDataRef.current?.[track.trackId];
+      // Prefer turntableLyricsCacheRef (populated at album select) over
+      // wordsDataRef (only populated during a Shazam session, empty on web).
+      const trackData = turntableLyricsCacheRef.current?.[String(track.trackId)]
+        || wordsDataRef.current?.[track.trackId];
       const lrc = trackData?.lrc_raw;
       const lyrics = lrc ? parseLRC(lrc) : (trackData?.lyrics_plain ? trackData.lyrics_plain.split("\n").filter(l => l.trim()).map((text, i) => ({ time: i * 4, text })) : []);
       const duration = track.trackTimeMillis ? track.trackTimeMillis / 1000 : null;

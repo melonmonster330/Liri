@@ -341,7 +341,7 @@
     throw new Error("Supabase not loaded");
   }
   var sb = supabase.createClient("https://xjdjpaxgymgbvcwmvorc.supabase.co", "sb_publishable_C-NBnfg0ltAoUi46XQTUjA_ozjZW_Nd");
-  var APP_VERSION = "1.2.2";
+  var APP_VERSION = "1.2.3";
   var IS_IOS = !!window.Capacitor;
   var TRANSCRIBE_PROXY = window.Capacitor ? "https://www.getliri.com/api/transcribe" : "/api/transcribe";
   var ITUNES_PROXY = window.Capacitor ? "https://www.getliri.com/api/itunes-lookup" : "/api/itunes-lookup";
@@ -2343,7 +2343,7 @@ Move closer to your speakers and try again.`);
       detectedAtRef.current = Date.now();
       setDetectedSong(nextSong);
       setSongDuration(nextDuration);
-      const nextTrackData = wordsDataRef.current?.[next.trackId];
+      const nextTrackData = turntableLyricsCacheRef.current?.[String(next.trackId)] || wordsDataRef.current?.[next.trackId];
       if (nextTrackData?.lrc_raw) {
         const parsed = parseLRC(nextTrackData.lrc_raw);
         setLyrics(parsed);
@@ -2591,7 +2591,7 @@ Move closer to your speakers and try again.`);
           album: ta.album_name || "",
           artwork: ta.artwork_url || null
         };
-        const trackData = wordsDataRef.current?.[track.trackId];
+        const trackData = turntableLyricsCacheRef.current?.[String(track.trackId)] || wordsDataRef.current?.[track.trackId];
         const lrc = trackData?.lrc_raw;
         const lyrics2 = lrc ? parseLRC(lrc) : trackData?.lyrics_plain ? trackData.lyrics_plain.split("\n").filter((l) => l.trim()).map((text, i) => ({ time: i * 4, text })) : [];
         const duration = track.trackTimeMillis ? track.trackTimeMillis / 1e3 : null;
