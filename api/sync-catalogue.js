@@ -676,14 +676,16 @@ module.exports = async (req, res) => {
         // Two small queries instead of an embed — the embed pulls the full
         // lrc_raw text for every track (~1MB) and reliably times out the
         // 10s sbGet limit on Vercel cold starts.
+        // NOTE: album_tracks has no album_name column — album name comes from
+        // the catalogue join below, not the tracks table.
         const [tracksResp, withLrcResp] = await Promise.all([
-          sbGetAll(`album_tracks?select=itunes_track_id,track_name,artist_name,album_name,itunes_collection_id,duration_ms,disc_number,track_number&order=itunes_collection_id.asc,disc_number.asc,track_number.asc`),
+          sbGetAll(`album_tracks?select=itunes_track_id,track_name,artist_name,itunes_collection_id,duration_ms,disc_number,track_number&order=itunes_collection_id.asc,disc_number.asc,track_number.asc`),
           sbGetAll(`track_lyrics?select=itunes_track_id&lrc_raw=not.is.null`),
         ]);
         const rows = Array.isArray(tracksResp) ? tracksResp : [];
         const haveLrc = new Set((Array.isArray(withLrcResp) ? withLrcResp : []).map(r => r.itunes_track_id));
         const missing = rows.filter(t => !haveLrc.has(t.itunes_track_id));
-        // Fetch artwork from catalogue
+        // Fetch artwork + album name from catalogue
         const cids = [...new Set(missing.map(t => t.itunes_collection_id))];
         const { body: cat } = cids.length
           ? await sbGet(`catalogue?itunes_collection_id=in.(${cids.join(",")})&select=itunes_collection_id,album_name,artist_name,artwork_url`)
@@ -692,12 +694,43 @@ module.exports = async (req, res) => {
         (Array.isArray(cat) ? cat : []).forEach(c => { catMap[c.itunes_collection_id] = c; });
         const enriched = missing.map(t => ({
           ...t,
-          track_lyrics: undefined,
           artwork_url:  catMap[t.itunes_collection_id]?.artwork_url || null,
-          album_name:   catMap[t.itunes_collection_id]?.album_name  || t.album_name || "",
+          album_name:   catMap[t.itunes_collection_id]?.album_name  || "",
           artist_name:  catMap[t.itunes_collection_id]?.artist_name || t.artist_name || "",
         }));
         return res.status(200).json({ tracks: enriched, total: enriched.length });
+      }
+
+      if (action === "missing-side-info") {
+        // Albums with one or more tracks that have no vinyl_sides row.
+        const [tracksResp, sidesResp, catResp] = await Promise.all([
+          sbGetAll(`album_tracks?select=itunes_track_id,itunes_collection_id`),
+          sbGetAll(`vinyl_sides?select=itunes_track_id`),
+          sbGetAll(`catalogue?select=itunes_collection_id,album_name,artist_name,artwork_url`),
+        ]);
+        const tracks = Array.isArray(tracksResp) ? tracksResp : [];
+        const haveSide = new Set((Array.isArray(sidesResp) ? sidesResp : []).map(r => r.itunes_track_id));
+        const catMap = {};
+        (Array.isArray(catResp) ? catResp : []).forEach(c => { catMap[c.itunes_collection_id] = c; });
+        const albumStats = {};
+        for (const t of tracks) {
+          const cid = t.itunes_collection_id;
+          if (!albumStats[cid]) albumStats[cid] = { total: 0, missing: 0 };
+          albumStats[cid].total += 1;
+          if (!haveSide.has(t.itunes_track_id)) albumStats[cid].missing += 1;
+        }
+        const albums = Object.entries(albumStats)
+          .filter(([, s]) => s.missing > 0)
+          .map(([cid, s]) => ({
+            itunes_collection_id: Number(cid),
+            album_name:  catMap[cid]?.album_name  || "",
+            artist_name: catMap[cid]?.artist_name || "",
+            artwork_url: catMap[cid]?.artwork_url || null,
+            total: s.total,
+            missing: s.missing,
+          }))
+          .sort((a, b) => b.missing - a.missing);
+        return res.status(200).json({ albums, total: albums.length });
       }
 
       if (action === "bugs") {

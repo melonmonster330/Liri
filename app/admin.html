@@ -181,8 +181,9 @@
       <button class="refresh-btn" id="refresh-btn">Refresh</button>
     </div>
   </div>
-  <div style="margin-bottom:16px">
+  <div style="margin-bottom:16px;display:flex;gap:8px;flex-wrap:wrap">
     <button class="refresh-btn" style="background:rgba(212,168,70,0.08);border-color:rgba(212,168,70,0.2);color:var(--gold);padding:10px 20px;font-size:13px;font-weight:700" onclick="openMissingLyrics()">🎵 Missing Lyrics →</button>
+    <button class="refresh-btn" style="background:rgba(212,168,70,0.08);border-color:rgba(212,168,70,0.2);color:var(--gold);padding:10px 20px;font-size:13px;font-weight:700" onclick="openMissingSideInfo()">💿 Missing Side Info →</button>
   </div>
   <div id="liri-update" style="background:rgba(212,168,70,0.06);border:1px solid rgba(212,168,70,0.2);border-radius:12px;padding:16px;margin-bottom:20px">
     <div style="font-size:13px;font-weight:700;color:#d4a846;letter-spacing:0.5px;margin-bottom:10px">📣 Post a Liri update to the feed</div>
@@ -943,6 +944,44 @@ async function submitLrc(tid, trackName, artistName, albumName, durationMs) {
     msg.className = "lrc-msg err"; msg.textContent = "Network error";
     btn.disabled = false; btn.textContent = "Submit to lrclib";
   }
+}
+
+// ── Missing Side Info ────────────────────────────────────────────────────────
+
+async function openMissingSideInfo() {
+  const c = document.getElementById("content");
+  c.innerHTML = `<div class="loading">Finding albums without side info…</div>`;
+  const r = await fetch(API + "?action=missing-side-info", { headers: { "x-admin-password": pw } });
+  if (!r.ok) { c.innerHTML = `<div class="loading">Error loading missing side info</div>`; return; }
+  const d = await r.json();
+  const albums = d.albums || [];
+
+  if (albums.length === 0) {
+    c.innerHTML = `
+      <button class="back-btn" onclick="load()">← Dashboard</button>
+      <div style="text-align:center;padding:80px 0;color:var(--muted);font-size:16px">💿 Every album has side info!</div>`;
+    return;
+  }
+
+  c.innerHTML = `
+    <button class="back-btn" onclick="load()">← Dashboard</button>
+    <div style="margin-bottom:20px">
+      <div style="font-size:20px;font-weight:700;margin-bottom:6px">Missing Side Info</div>
+      <div style="font-size:13px;color:var(--muted)">${albums.length} album${albums.length!==1?"s":""} with missing side data. Click one to enter side counts.</div>
+    </div>
+    ${albums.map(a => `
+      <div class="album-row" onclick="openAlbum(${a.itunes_collection_id})">
+        <img class="album-art" src="${esc(a.artwork_url || '')}" onerror="this.style.visibility='hidden'">
+        <div class="album-info">
+          <div class="album-name">${esc(a.album_name || '(untitled)')}</div>
+          <div class="album-artist">${esc(a.artist_name || '')}</div>
+        </div>
+        <div class="album-stats">
+          <div class="album-stat"><div class="album-stat-val" style="color:rgba(224,112,112,0.85)">${a.missing}/${a.total}</div><div class="album-stat-lbl">missing</div></div>
+        </div>
+      </div>
+    `).join("")}
+  `;
 }
 </script>
 </body>
