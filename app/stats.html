@@ -31,7 +31,7 @@
   <script type="text/babel">
     const { useState, useEffect } = React;
 
-    const APP_VERSION = "1.2.0";
+    const APP_VERSION = "1.2.1";
 
     const sb = supabase.createClient(
       "https://xjdjpaxgymgbvcwmvorc.supabase.co",
@@ -221,7 +221,7 @@
             </div>
 
             <div style={{ animation:"fade-up 0.4s ease both" }}>
-              <div style={{ fontSize:11, letterSpacing:"2px", textTransform:"uppercase", color:"rgba(255,255,255,0.25)", marginBottom:8 }}>Your listening</div>
+              <div style={{ fontSize:11, letterSpacing:"2px", textTransform:"uppercase", color:"rgba(255,255,255,0.25)", marginBottom:8 }}>Your syncs</div>
               <h1 style={{ fontSize:36, fontWeight:800, letterSpacing:"-1px", lineHeight:1.1, marginBottom:4 }}>Stats</h1>
               <p style={{ fontSize:14, color:"rgba(255,255,255,0.3)", marginTop:6 }}>A snapshot of your vinyl life</p>
             </div>
@@ -243,12 +243,12 @@
               // ── Empty state ──
               <div style={{ textAlign:"center", padding:"60px 0", animation:"fade-up 0.4s ease both" }}>
                 <div style={{ marginBottom:16, opacity:0.3 }}><svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/><line x1="2" y1="20" x2="22" y2="20"/></svg></div>
-                <div style={{ fontSize:18, fontWeight:600, marginBottom:8 }}>No listening data yet</div>
+                <div style={{ fontSize:18, fontWeight:600, marginBottom:8 }}>No sync data yet</div>
                 <div style={{ fontSize:14, color:"rgba(255,255,255,0.3)", marginBottom:32, lineHeight:1.6 }}>
                   Put a record on and tap "Find my place"<br/>to start building your stats
                 </div>
                 <a href="/app" style={{ background:"linear-gradient(135deg,#d4a846,#c9807a)", color:"#080810", borderRadius:50, padding:"14px 28px", fontSize:14, fontWeight:700, textDecoration:"none" }}>
-                  Start listening →
+                  Start syncing →
                 </a>
               </div>
             ) : (
@@ -257,7 +257,7 @@
                 {/* ── Top 4 stat grid ── */}
                 <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:12 }}>
                   <StatCard label="Songs identified" value={data.totalSongs.toLocaleString()} delay={0} accent />
-                  <StatCard label="Time listening" value={fmtTime(data.totalSeconds)} delay={60} />
+                  <StatCard label="Time syncing" value={fmtTime(data.totalSeconds)} delay={60} />
                   <StatCard label="Records owned" value={data.libraryCount} delay={120} />
                   <StatCard label="Side flips" value={data.flipCount} sub="times you flipped your record" delay={180} />
                 </div>
@@ -274,7 +274,7 @@
                     <div><svg width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="#d4a846" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z"/></svg></div>
                     <div>
                       <div style={{ fontSize:28, fontWeight:800, letterSpacing:"-1px", color:"#d4a846" }}>{data.streak} day{data.streak !== 1 ? "s" : ""}</div>
-                      <div style={{ fontSize:12, color:"rgba(255,255,255,0.35)", marginTop:2 }}>listening streak</div>
+                      <div style={{ fontSize:12, color:"rgba(255,255,255,0.35)", marginTop:2 }}>sync streak</div>
                     </div>
                   </div>
                 )}

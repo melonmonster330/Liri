@@ -1,6 +1,6 @@
 // Liri shared bottom tab bar.
 // Usage in any page that loads React + this script:
-//   <TabBar current="library" />   (current: "listen" | "library" | "feed" | "profile")
+//   <TabBar current="library" />   (current: "sync" | "library" | "feed" | "profile")
 // Hides itself automatically when the user is signed out.
 (function () {
   const h = React.createElement;
@@ -70,7 +70,7 @@
     const iconsOnly = !!window.Capacitor;
 
     const tabs = [
-      { key: "listen",  label: "Listen",     href: pageHref("/app/index.html"),   icon: Icon.listen },
+      { key: "sync",    label: "Sync",       href: pageHref("/app/index.html"),   icon: Icon.listen },
       { key: "library", label: "My Records", href: pageHref("/app/library.html"), icon: Icon.library },
       { key: "feed",    label: "Feed",       href: pageHref("/app/feed.html"),    icon: Icon.feed },
       { key: "explore", label: "Explore",    href: pageHref("/app/explore.html"), icon: Icon.explore },

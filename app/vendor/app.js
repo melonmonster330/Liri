@@ -341,7 +341,7 @@
     throw new Error("Supabase not loaded");
   }
   var sb = supabase.createClient("https://xjdjpaxgymgbvcwmvorc.supabase.co", "sb_publishable_C-NBnfg0ltAoUi46XQTUjA_ozjZW_Nd");
-  var APP_VERSION = "1.2.0";
+  var APP_VERSION = "1.2.1";
   var IS_IOS = !!window.Capacitor;
   var TRANSCRIBE_PROXY = window.Capacitor ? "https://www.getliri.com/api/transcribe" : "/api/transcribe";
   var ITUNES_PROXY = window.Capacitor ? "https://www.getliri.com/api/itunes-lookup" : "/api/itunes-lookup";
@@ -3077,7 +3077,7 @@ Move closer to your speakers and try again.`);
             textAlign: "center",
             marginBottom: "24px"
           }
-        }, "Sign in to continue listening"), /* @__PURE__ */ React.createElement("div", {
+        }, "Sign in to continue syncing"), /* @__PURE__ */ React.createElement("div", {
           style: {
             display: "flex",
             flexDirection: "column",
@@ -3311,7 +3311,7 @@ Move closer to your speakers and try again.`);
         maxWidth: "280px",
         margin: "0 auto 48px"
       }
-    }, IS_IOS ? /* @__PURE__ */ React.createElement(React.Fragment, null, "When your record is playing, tap ", /* @__PURE__ */ React.createElement("strong", { style: { color: "#d4a846" } }, "Listen"), ". Liri uses Shazam to find your place in the song and syncs the lyrics in real time.") : "Add your albums to your library, then tap any track to start. Liri syncs the lyrics in real time \u2014 line by line."), /* @__PURE__ */ React.createElement("div", {
+    }, IS_IOS ? /* @__PURE__ */ React.createElement(React.Fragment, null, "When your record is playing, tap ", /* @__PURE__ */ React.createElement("strong", { style: { color: "#d4a846" } }, "Sync Lyrics"), ". Liri uses Shazam to find your place in the song and syncs the lyrics in real time.") : "Add your albums to your library, then tap any track to start. Liri syncs the lyrics in real time \u2014 line by line."), /* @__PURE__ */ React.createElement("div", {
       style: {
         display: "flex",
         gap: "16px",
@@ -3361,7 +3361,7 @@ Move closer to your speakers and try again.`);
         color: "#f0e6d3",
         marginBottom: "16px"
       }
-    }, "Your listening history"), /* @__PURE__ */ React.createElement("p", {
+    }, "Your sync history"), /* @__PURE__ */ React.createElement("p", {
       style: {
         fontSize: "15px",
         color: "rgba(255,255,255,0.5)",
@@ -3507,7 +3507,7 @@ Move closer to your speakers and try again.`);
         maxWidth: "280px",
         margin: "0 auto 32px"
       }
-    }, "Liri automatically listens for the next song as each track ends. No tapping, no fiddling \u2014 just the music."), /* @__PURE__ */ React.createElement("div", {
+    }, "Liri automatically detects the next song as each track ends. No tapping, no fiddling \u2014 just the music."), /* @__PURE__ */ React.createElement("div", {
       style: {
         background: "rgba(212,168,70,0.07)",
         border: "1px solid rgba(212,168,70,0.15)",
@@ -3519,7 +3519,7 @@ Move closer to your speakers and try again.`);
         color: "rgba(255,255,255,0.35)",
         lineHeight: "1.7"
       }
-    }, "\u2726 Listens for the next song \u2014 flip the record when you're ready"), /* @__PURE__ */ React.createElement("div", {
+    }, "\u2726 Detects the next song \u2014 flip the record when you're ready"), /* @__PURE__ */ React.createElement("div", {
       style: {
         display: "flex",
         gap: "16px",
@@ -3792,7 +3792,7 @@ Move closer to your speakers and try again.`);
           setCoachStep(2);
         }
       };
-      const copy = coachStep === 1 ? { title: "Tap Listen", body: "Put a record on, then hit Listen \u2014 Liri finds your place and scrolls the lyrics in time.", cta: "Next \u2192" } : { title: "Your Feed", body: "See what friends are spinning, share your own records, and post the lyric lines that hit. It lives right here.", cta: "Add your first record \u2192" };
+      const copy = coachStep === 1 ? { title: "Tap Sync Lyrics", body: "Put a record on, then hit Sync Lyrics \u2014 Liri finds your place and scrolls the lyrics in time.", cta: "Next \u2192" } : { title: "Your Feed", body: "See what friends are spinning, share your own records, and post the lyric lines that hit. It lives right here.", cta: "Add your first record \u2192" };
       const tipTop = r ? Math.max(20, r.top - 168) : null;
       return /* @__PURE__ */ React.createElement(
         "div",
@@ -4792,7 +4792,7 @@ Move closer to your speakers and try again.`);
         [
           ["Unlimited vinyl library", "Add as many records as you want"],
           ["Lyrics for every track", "Synced line by line as your record plays"],
-          ["Play history & stats", "See everything you've listened to"],
+          ["Play history & stats", "See everything you've synced"],
           ["Flip reminders", "Sound and notification alerts"],
           ["Cancel anytime", "Manage in iOS Settings \u2192 Subscriptions"]
         ].map(
@@ -4889,7 +4889,7 @@ Move closer to your speakers and try again.`);
       style: { fontSize: "18px", fontWeight: "700", color: "#fff", marginBottom: "10px" }
     }, "Delete Account?"), /* @__PURE__ */ React.createElement("div", {
       style: { fontSize: "13px", color: "rgba(255,255,255,0.5)", lineHeight: "1.5", marginBottom: "20px" }
-    }, "This permanently deletes your account, library, and listening history. This cannot be undone."), deleteError && /* @__PURE__ */ React.createElement("div", {
+    }, "This permanently deletes your account, library, and sync history. This cannot be undone."), deleteError && /* @__PURE__ */ React.createElement("div", {
       style: { fontSize: "12px", color: "#e07070", marginBottom: "14px" }
     }, deleteError), /* @__PURE__ */ React.createElement("div", {
       style: { display: "flex", gap: "10px" }
@@ -4965,7 +4965,7 @@ Move closer to your speakers and try again.`);
         padding: "32px 0",
         lineHeight: "1.8"
       }
-    }, "No songs yet.", /* @__PURE__ */ React.createElement("br", null), "Start listening to build your history.") : history.map((item, i) => /* @__PURE__ */ React.createElement("div", {
+    }, "No songs yet.", /* @__PURE__ */ React.createElement("br", null), "Start syncing to build your history.") : history.map((item, i) => /* @__PURE__ */ React.createElement("div", {
       key: item.id,
       style: {
         display: "flex",
@@ -6055,7 +6055,7 @@ Move closer to your speakers and try again.`);
         width: "100%",
         transition: "all 0.2s"
       }
-    }, turntableTracksLoading ? "Loading\u2026" : turntableAlbum ? "Find my place" : "Listen"), !turntableTracksLoading && turntableAlbum && currentTrackIndex >= 0 && getNextSideLetter() && /* @__PURE__ */ React.createElement("button", {
+    }, turntableTracksLoading ? "Loading\u2026" : turntableAlbum ? "Find my place" : "Sync Lyrics"), !turntableTracksLoading && turntableAlbum && currentTrackIndex >= 0 && getNextSideLetter() && /* @__PURE__ */ React.createElement("button", {
       onClick: manualFlipToNextSide,
       style: {
         marginTop: "10px",
@@ -6434,7 +6434,7 @@ Move closer to your speakers and try again.`);
         cursor: "pointer",
         fontFamily: "inherit"
       }
-    }, "\u21BB Listen with Shazam"), lastSong && /* @__PURE__ */ React.createElement("button", {
+    }, "\u21BB Sync with Shazam"), lastSong && /* @__PURE__ */ React.createElement("button", {
       onClick: () => setMode("idle"),
       style: {
         marginTop: "4px",
@@ -6558,7 +6558,7 @@ Move closer to your speakers and try again.`);
         cursor: "pointer",
         fontFamily: "inherit"
       }
-    }, "\u21BB Listen with Shazam"), lastSong && /* @__PURE__ */ React.createElement("button", {
+    }, "\u21BB Sync with Shazam"), lastSong && /* @__PURE__ */ React.createElement("button", {
       onClick: () => setMode("idle"),
       style: {
         marginTop: "4px",
@@ -6664,7 +6664,7 @@ Move closer to your speakers and try again.`);
       React.Fragment,
       null,
       /* @__PURE__ */ React.createElement(Liri, null),
-      window.TabBar ? /* @__PURE__ */ React.createElement(window.TabBar, { current: "listen" }) : null
+      window.TabBar ? /* @__PURE__ */ React.createElement(window.TabBar, { current: "sync" }) : null
     )
   );
 })();
