@@ -3,7 +3,8 @@
   "buildCommand": "npm run build",
   "outputDirectory": ".",
   "crons": [
-    { "path": "/api/sync-catalogue", "schedule": "0 3 * * 5" }
+    { "path": "/api/sync-catalogue", "schedule": "0 3 * * 5" },
+    { "path": "/api/refresh-lyrics?action=lyrics-ready-emails", "schedule": "0 14 * * *" }
   ],
   "redirects": [
     { "source": "/vercel.json",        "destination": "/404", "statusCode": 404 },

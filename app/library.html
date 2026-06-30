@@ -35,7 +35,7 @@
   <script type="text/babel">
     const { useState, useEffect, useRef, useCallback } = React;
 
-    const APP_VERSION = "1.2.1";
+    const APP_VERSION = "1.2.2";
 
     // On iOS Capacitor relative URLs don't resolve — route all API calls through the live domain.
     const API_BASE = window.Capacitor ? "https://www.getliri.com" : "";
@@ -614,6 +614,15 @@
       const IS_IOS = !!window.Capacitor;
 
       // ── Auth ──
+      // Deep-link target from a "lyrics ready" email — /library?sync=NNN.
+      // Captured here so the param survives the auth/library-load round trip;
+      // a useEffect below fires listenTo once the album shows up in the user's
+      // library, then clears the param so a refresh doesn't loop.
+      const [syncCid, setSyncCid] = useState(() => {
+        const v = new URLSearchParams(window.location.search).get("sync");
+        return v && /^\d+$/.test(v) ? v : null;
+      });
+
       useEffect(() => {
         // Handle URL params on load
         const params = new URLSearchParams(window.location.search);
@@ -932,6 +941,18 @@
         }));
         window.location.href = window.Capacitor ? "/index.html" : "/app";
       };
+
+      // ── Auto-sync from /library?sync=NNN (email deep link) ──
+      useEffect(() => {
+        if (!syncCid || !user || libLoading || !library.length) return;
+        const album = library.find(a => String(a.itunes_collection_id) === String(syncCid));
+        // Clear the param either way — bad cid shouldn't retry on every render
+        const url = new URL(window.location.href);
+        url.searchParams.delete("sync");
+        window.history.replaceState({}, "", url.pathname + (url.search || ""));
+        setSyncCid(null);
+        if (album) listenTo(album);
+      }, [syncCid, user, libLoading, library]);
 
       // ── Loading ──
       if (authLoading) return (
