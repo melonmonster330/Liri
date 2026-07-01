@@ -20,7 +20,7 @@ if (typeof supabase === 'undefined') {
   throw new Error('Supabase not loaded');
 }
 const sb = supabase.createClient("https://xjdjpaxgymgbvcwmvorc.supabase.co", "sb_publishable_C-NBnfg0ltAoUi46XQTUjA_ozjZW_Nd");
-const APP_VERSION = "1.2.3";
+const APP_VERSION = "1.2.4";
 const IS_IOS = !!window.Capacitor; // set once at load time — used for App Store compliance checks
 const TRANSCRIBE_PROXY = window.Capacitor ? "https://www.getliri.com/api/transcribe"    : "/api/transcribe";
 const ITUNES_PROXY   = window.Capacitor ? "https://www.getliri.com/api/itunes-lookup"   : "/api/itunes-lookup";
@@ -2692,10 +2692,11 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
     setIsPaused(false);
     setSideEndReason("failed");
     setAlbumCollectionId(null);
-    setVinylDbRelease(null);
-    albumTpsRef.current = 0;
-    vinylDbReleaseRef.current = null;
-    vinylSidesRef.current = [];
+    // Keep vinylDbRelease + vinylSidesRef + albumTpsRef intact — they describe
+    // the currently-selected album (turntableAlbum), not the sync session.
+    // Wiping them here made the post-album-end track picker fall back to the
+    // A/B midpoint split for 2×LP albums (Reputation → sides C/D disappeared).
+    // They're re-populated correctly when turntableAlbum actually changes.
     userNudgeRef.current = 0;
   };
 
@@ -5477,8 +5478,10 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
       paddingTop: "12px",
       paddingLeft: "20px",
       paddingRight: "20px",
-      // Leave room for the fixed tab bar (≈55px) + iOS safe-area home indicator
-      paddingBottom: "calc(env(safe-area-inset-bottom) + 58px)",
+      // Reserve room for the fixed tab bar (~55px content + safe-area) PLUS
+      // the tracklist peek pill (~44px including margin) and the version
+      // footer (~20px) so nothing gets clipped by the tab bar.
+      paddingBottom: "calc(env(safe-area-inset-bottom) + 120px)",
       flexShrink: 0
     }
   }, /*#__PURE__*/React.createElement("div", {

@@ -341,7 +341,7 @@
     throw new Error("Supabase not loaded");
   }
   var sb = supabase.createClient("https://xjdjpaxgymgbvcwmvorc.supabase.co", "sb_publishable_C-NBnfg0ltAoUi46XQTUjA_ozjZW_Nd");
-  var APP_VERSION = "1.2.3";
+  var APP_VERSION = "1.2.4";
   var IS_IOS = !!window.Capacitor;
   var TRANSCRIBE_PROXY = window.Capacitor ? "https://www.getliri.com/api/transcribe" : "/api/transcribe";
   var ITUNES_PROXY = window.Capacitor ? "https://www.getliri.com/api/itunes-lookup" : "/api/itunes-lookup";
@@ -2552,10 +2552,6 @@ Move closer to your speakers and try again.`);
       setIsPaused(false);
       setSideEndReason("failed");
       setAlbumCollectionId(null);
-      setVinylDbRelease(null);
-      albumTpsRef.current = 0;
-      vinylDbReleaseRef.current = null;
-      vinylSidesRef.current = [];
       userNudgeRef.current = 0;
     };
     const jumpToTrack = (idx) => {
@@ -5428,8 +5424,10 @@ Move closer to your speakers and try again.`);
         paddingTop: "12px",
         paddingLeft: "20px",
         paddingRight: "20px",
-        // Leave room for the fixed tab bar (≈55px) + iOS safe-area home indicator
-        paddingBottom: "calc(env(safe-area-inset-bottom) + 58px)",
+        // Reserve room for the fixed tab bar (~55px content + safe-area) PLUS
+        // the tracklist peek pill (~44px including margin) and the version
+        // footer (~20px) so nothing gets clipped by the tab bar.
+        paddingBottom: "calc(env(safe-area-inset-bottom) + 120px)",
         flexShrink: 0
       }
     }, /* @__PURE__ */ React.createElement("div", {
