@@ -271,3 +271,13 @@
   border-color: var(--accent-primary);
   background: var(--bg-surface);
 }
+
+/* ── Nav rail: shift page content over when the desktop rail is visible ──
+   The TabBar component sets  <body data-liri-nav="rail">  from JS. The rule
+   is scoped to the desktop breakpoint so it can't accidentally fire in a
+   mid-transition state where the flag lingers on a narrow viewport. ──── */
+@media (min-width: 900px) {
+  body[data-liri-nav="rail"] {
+    padding-left: var(--nav-rail-width);
+  }
+}
