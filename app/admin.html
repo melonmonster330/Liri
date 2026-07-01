@@ -201,7 +201,11 @@
 
 <script>
 const API = "/api/sync-catalogue";
-let pw = "";
+// Restore pw from sessionStorage so bouncing away from the tab (Chrome memory
+// saver, background purge, F5) doesn't kick you back to the login screen mid-
+// task. sessionStorage clears when the tab is closed, so this doesn't leak
+// past the browser session.
+let pw = sessionStorage.getItem("liri_admin_pw") || "";
 
 function fmt(n) { return n?.toLocaleString() ?? "—"; }
 function pct(a, b) { return b > 0 ? Math.round(a / b * 100) : 0; }
@@ -784,6 +788,9 @@ function showLogin(err) {
   document.getElementById("dash").style.display = "none";
   document.getElementById("login").style.display = "flex";
   document.getElementById("login-err").textContent = err || "";
+  // Drop any stale saved pw so the auto-resume path doesn't keep looping.
+  sessionStorage.removeItem("liri_admin_pw");
+  pw = "";
 }
 
 async function tryLogin() {
@@ -794,11 +801,25 @@ async function tryLogin() {
   document.getElementById("dash").style.display = "block";
   await load();
   document.getElementById("login-btn").textContent = "Enter";
+  // load() calls showLogin() with an error if pw was rejected; only stash
+  // the pw when the login form is truly gone from view.
+  if (document.getElementById("login").style.display === "none") {
+    sessionStorage.setItem("liri_admin_pw", pw);
+  }
 }
 
 document.getElementById("login-btn").addEventListener("click", tryLogin);
 document.getElementById("pw-input").addEventListener("keydown", e => { if (e.key === "Enter") tryLogin(); });
 document.getElementById("refresh-btn").addEventListener("click", load);
+
+// Auto-resume: if we already have a pw from a prior tab load, skip straight
+// to the dashboard. If it turns out to be stale/wrong, load() will fall
+// through to showLogin() and the sessionStorage entry gets cleared there.
+if (pw) {
+  document.getElementById("login").style.display = "none";
+  document.getElementById("dash").style.display = "block";
+  load();
+}
 
 // Auto-refresh every 60s
 setInterval(() => { if (pw) load(); }, 60000);
@@ -924,6 +945,7 @@ async function submitLrc(tid, trackName, artistName, albumName, durationMs) {
       method: "POST",
       headers: { "Content-Type": "application/json", "x-admin-password": pw },
       body: JSON.stringify({
+        action: "submit-lyrics",
         trackName, artistName, albumName,
         duration: Math.round(durationMs / 1000),
         syncedLyrics: lrc,
