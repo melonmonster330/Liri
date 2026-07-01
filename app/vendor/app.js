@@ -341,7 +341,7 @@
     throw new Error("Supabase not loaded");
   }
   var sb = supabase.createClient("https://xjdjpaxgymgbvcwmvorc.supabase.co", "sb_publishable_C-NBnfg0ltAoUi46XQTUjA_ozjZW_Nd");
-  var APP_VERSION = "1.2.5";
+  var APP_VERSION = "1.2.6";
   var IS_IOS = !!window.Capacitor;
   var TRANSCRIBE_PROXY = window.Capacitor ? "https://www.getliri.com/api/transcribe" : "/api/transcribe";
   var ITUNES_PROXY = window.Capacitor ? "https://www.getliri.com/api/itunes-lookup" : "/api/itunes-lookup";
@@ -5689,19 +5689,19 @@ Move closer to your speakers and try again.`);
           onClick: () => setShowNowPlayingList((v) => !v),
           style: {
             display: "block",
-            margin: "10px auto 4px",
-            background: "rgba(212,168,70,0.12)",
-            border: "1px solid rgba(212,168,70,0.35)",
-            color: "rgba(212,168,70,0.95)",
+            margin: "8px auto 4px",
+            background: "rgba(212,168,70,0.1)",
+            border: "1px solid rgba(212,168,70,0.28)",
+            color: "rgba(212,168,70,0.9)",
             borderRadius: "50px",
-            padding: "8px 18px",
-            fontSize: "12px",
+            padding: "5px 12px",
+            fontSize: "10px",
             fontWeight: "700",
-            letterSpacing: "0.5px",
+            letterSpacing: "0.4px",
             cursor: "pointer",
             fontFamily: "inherit"
           }
-        }, `\u2630  Track ${tIdx + 1} of ${tTracks.length} \u2022 Tap to jump`),
+        }, `\u2630  Track ${tIdx + 1} of ${tTracks.length}`),
         showNowPlayingList && /* @__PURE__ */ React.createElement("div", {
           onClick: () => setShowNowPlayingList(false),
           style: { position: "fixed", inset: 0, zIndex: 600, background: "rgba(8,8,16,0.75)", backdropFilter: "blur(6px)", display: "flex", flexDirection: "column", justifyContent: "flex-end" }
