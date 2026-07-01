@@ -6,6 +6,8 @@
   <title>My Records — Liri</title>
   <link rel="icon" type="image/png" href="/favicon.png" />
   <link rel="apple-touch-icon" href="/favicon.png" />
+  <script src="vendor/theme.js"></script>
+  <link rel="stylesheet" href="vendor/theme.css">
   <style>
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
     html, body { height: 100%; width: 100%; overflow-x: hidden; }
@@ -35,7 +37,7 @@
   <script type="text/babel">
     const { useState, useEffect, useRef, useCallback } = React;
 
-    const APP_VERSION = "1.2.6";
+    const APP_VERSION = "1.2.7";
 
     // On iOS Capacitor relative URLs don't resolve — route all API calls through the live domain.
     const API_BASE = window.Capacitor ? "https://www.getliri.com" : "";

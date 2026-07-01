@@ -1,0 +1,273 @@
+/* ============================================================================
+   Liri — MCM Design System
+   Mid-Century Modern: warm, organic, tactile.
+
+   FOUNDATION ONLY. This file defines tokens as CSS variables and a handful of
+   opt-in utility classes (prefixed .mcm-). It does NOT restyle any built-in
+   element (body, h1, button, etc.), so existing pages continue to render
+   unchanged until they are migrated stage-by-stage.
+
+   Contract:
+     - Tokens live on :root and [data-theme="…"].
+     - Set <html data-theme="light|dark|auto"> to switch. See theme.js.
+     - Utilities are opt-in via class names only.
+   ============================================================================ */
+
+@import url('https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400;9..144,500;9..144,600;9..144,700&family=DM+Sans:opsz,wght@9..40,400;9..40,500;9..40,600;9..40,700&display=swap');
+
+/* ── Base tokens (not theme-dependent) ───────────────────────────────────── */
+:root {
+  /* Typography */
+  --font-serif: 'Fraunces', 'Cochin', 'Georgia', 'Times New Roman', serif;
+  --font-sans:  'DM Sans', -apple-system, BlinkMacSystemFont, 'SF Pro Display', 'Helvetica Neue', Arial, sans-serif;
+
+  /* Radii — soft, rounded, MCM */
+  --radius-artwork: 8px;
+  --radius-input:   12px;
+  --radius-card:    16px;
+  --radius-sheet:   20px;
+  --radius-pill:    9999px;
+
+  /* Spacing (4pt grid) */
+  --space-1:  4px;
+  --space-2:  8px;
+  --space-3:  12px;
+  --space-4:  16px;
+  --space-5:  24px;
+  --space-6:  32px;
+  --space-7:  48px;
+  --space-8:  64px;
+
+  /* Layout constants */
+  --feed-max-width:  680px;
+  --nav-rail-width:  240px;
+  --drawer-width:    420px;
+  --desktop-min:     900px;   /* rail vs. bottom-tab breakpoint */
+
+  /* Motion */
+  --ease-out:       cubic-bezier(0.16, 1, 0.3, 1);
+  --ease-in-out:    cubic-bezier(0.65, 0, 0.35, 1);
+  --dur-quick:      160ms;
+  --dur-base:       260ms;
+  --dur-slow:       420ms;
+
+  /* z-index scale */
+  --z-nav:      50;
+  --z-sheet:    80;
+  --z-drawer:   90;
+  --z-modal:    100;
+  --z-toast:    120;
+}
+
+/* ── Light mode (default) ────────────────────────────────────────────────── */
+:root,
+[data-theme="light"] {
+  --bg-main:       #F9F6F0;   /* warm cream */
+  --bg-surface:    #FFFFFF;   /* card */
+  --bg-elevated:   #FFFFFF;   /* modal / drawer */
+  --bg-sunken:     #F0EBE1;   /* input rests, chip bg */
+
+  --text-primary:  #2C2523;   /* deep espresso */
+  --text-secondary:#6E625E;   /* warm taupe */
+  --text-muted:    #9A8C87;
+  --text-on-accent:#FFFFFF;
+
+  --accent-primary:       #C86B45;   /* terracotta */
+  --accent-primary-hover: #B65A36;
+  --accent-secondary:     #DCA15A;   /* mustard gold */
+  --accent-secondary-hover:#C88E48;
+
+  --border-subtle: #EAE2D5;
+  --border-strong: #D8CCB8;
+
+  --shadow-card:   0 1px 2px rgba(44, 37, 35, 0.04), 0 4px 12px rgba(44, 37, 35, 0.06);
+  --shadow-pop:    0 4px 16px rgba(44, 37, 35, 0.10), 0 12px 32px rgba(44, 37, 35, 0.08);
+  --shadow-drawer: -8px 0 32px rgba(44, 37, 35, 0.16);
+  --scrim:         rgba(44, 37, 35, 0.32);
+
+  color-scheme: light;
+}
+
+/* ── Dark mode ───────────────────────────────────────────────────────────── */
+[data-theme="dark"] {
+  --bg-main:       #1A1513;   /* dark espresso */
+  --bg-surface:    #251E1C;
+  --bg-elevated:   #2E2624;
+  --bg-sunken:     #14100E;
+
+  --text-primary:  #F4EFEA;   /* cream off-white */
+  --text-secondary:#A69893;
+  --text-muted:    #756762;
+  --text-on-accent:#1A1513;
+
+  --accent-primary:       #E07A5F;   /* warmer terracotta for dark */
+  --accent-primary-hover: #EB8E75;
+  --accent-secondary:     #F2CC8F;   /* softer mustard */
+  --accent-secondary-hover:#F5D9A8;
+
+  --border-subtle: #332A27;
+  --border-strong: #443733;
+
+  --shadow-card:   0 1px 2px rgba(0, 0, 0, 0.24), 0 4px 12px rgba(0, 0, 0, 0.32);
+  --shadow-pop:    0 4px 16px rgba(0, 0, 0, 0.36), 0 12px 32px rgba(0, 0, 0, 0.40);
+  --shadow-drawer: -8px 0 32px rgba(0, 0, 0, 0.50);
+  --scrim:         rgba(0, 0, 0, 0.55);
+
+  color-scheme: dark;
+}
+
+/* ── Auto (follow OS) — applied when [data-theme="auto"] and OS is dark ── */
+@media (prefers-color-scheme: dark) {
+  [data-theme="auto"] {
+    --bg-main:       #1A1513;
+    --bg-surface:    #251E1C;
+    --bg-elevated:   #2E2624;
+    --bg-sunken:     #14100E;
+
+    --text-primary:  #F4EFEA;
+    --text-secondary:#A69893;
+    --text-muted:    #756762;
+    --text-on-accent:#1A1513;
+
+    --accent-primary:       #E07A5F;
+    --accent-primary-hover: #EB8E75;
+    --accent-secondary:     #F2CC8F;
+    --accent-secondary-hover:#F5D9A8;
+
+    --border-subtle: #332A27;
+    --border-strong: #443733;
+
+    --shadow-card:   0 1px 2px rgba(0, 0, 0, 0.24), 0 4px 12px rgba(0, 0, 0, 0.32);
+    --shadow-pop:    0 4px 16px rgba(0, 0, 0, 0.36), 0 12px 32px rgba(0, 0, 0, 0.40);
+    --shadow-drawer: -8px 0 32px rgba(0, 0, 0, 0.50);
+    --scrim:         rgba(0, 0, 0, 0.55);
+
+    color-scheme: dark;
+  }
+}
+
+/* ============================================================================
+   OPT-IN UTILITY CLASSES
+   Nothing here matches built-in elements. Pages must add these classes.
+   ============================================================================ */
+
+/* Typography */
+.mcm-serif    { font-family: var(--font-serif); }
+.mcm-sans     { font-family: var(--font-sans); }
+
+.mcm-h1 {
+  font-family: var(--font-serif);
+  font-weight: 500;
+  font-size: clamp(28px, 4vw, 40px);
+  line-height: 1.15;
+  letter-spacing: -0.015em;
+  color: var(--text-primary);
+}
+.mcm-h2 {
+  font-family: var(--font-serif);
+  font-weight: 500;
+  font-size: clamp(22px, 3vw, 28px);
+  line-height: 1.2;
+  letter-spacing: -0.01em;
+  color: var(--text-primary);
+}
+.mcm-h3 {
+  font-family: var(--font-serif);
+  font-weight: 500;
+  font-size: 20px;
+  line-height: 1.25;
+  color: var(--text-primary);
+}
+.mcm-body {
+  font-family: var(--font-sans);
+  font-size: 15px;
+  line-height: 1.5;
+  color: var(--text-primary);
+}
+.mcm-caption {
+  font-family: var(--font-sans);
+  font-size: 13px;
+  color: var(--text-secondary);
+}
+
+/* Surfaces */
+.mcm-card {
+  background: var(--bg-surface);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-card);
+  box-shadow: var(--shadow-card);
+}
+.mcm-artwork {
+  border-radius: var(--radius-artwork);
+  overflow: hidden;
+  background: var(--bg-sunken);
+}
+
+/* Pills / buttons */
+.mcm-pill {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-2);
+  border-radius: var(--radius-pill);
+  padding: 10px 18px;
+  font-family: var(--font-sans);
+  font-weight: 600;
+  font-size: 14px;
+  line-height: 1;
+  border: 1px solid var(--border-subtle);
+  background: var(--bg-surface);
+  color: var(--text-primary);
+  cursor: pointer;
+  transition: background var(--dur-quick) var(--ease-out),
+              color var(--dur-quick) var(--ease-out),
+              border-color var(--dur-quick) var(--ease-out),
+              transform var(--dur-quick) var(--ease-out);
+  -webkit-tap-highlight-color: transparent;
+}
+.mcm-pill:hover  { border-color: var(--border-strong); }
+.mcm-pill:active { transform: scale(0.97); }
+
+.mcm-pill--primary {
+  background: var(--accent-primary);
+  color: var(--text-on-accent);
+  border-color: transparent;
+}
+.mcm-pill--primary:hover { background: var(--accent-primary-hover); border-color: transparent; }
+
+.mcm-pill--ghost {
+  background: transparent;
+  border-color: var(--border-subtle);
+  color: var(--text-secondary);
+}
+.mcm-pill--ghost:hover { color: var(--text-primary); border-color: var(--border-strong); }
+
+.mcm-pill--sm { padding: 6px 12px; font-size: 12.5px; }
+
+/* Layout helpers */
+.mcm-feed {
+  width: 100%;
+  max-width: var(--feed-max-width);
+  margin-inline: auto;
+  padding-inline: var(--space-4);
+}
+
+/* Inputs */
+.mcm-input {
+  width: 100%;
+  background: var(--bg-sunken);
+  border: 1px solid var(--border-subtle);
+  color: var(--text-primary);
+  padding: 12px 16px;
+  border-radius: var(--radius-input);
+  font-family: var(--font-sans);
+  font-size: 15px;
+  transition: border-color var(--dur-quick) var(--ease-out),
+              background var(--dur-quick) var(--ease-out);
+}
+.mcm-input::placeholder { color: var(--text-muted); }
+.mcm-input:focus {
+  outline: none;
+  border-color: var(--accent-primary);
+  background: var(--bg-surface);
+}
