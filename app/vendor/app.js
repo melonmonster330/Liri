@@ -341,7 +341,7 @@
     throw new Error("Supabase not loaded");
   }
   var sb = supabase.createClient("https://xjdjpaxgymgbvcwmvorc.supabase.co", "sb_publishable_C-NBnfg0ltAoUi46XQTUjA_ozjZW_Nd");
-  var APP_VERSION = "1.2.4";
+  var APP_VERSION = "1.2.5";
   var IS_IOS = !!window.Capacitor;
   var TRANSCRIBE_PROXY = window.Capacitor ? "https://www.getliri.com/api/transcribe" : "/api/transcribe";
   var ITUNES_PROXY = window.Capacitor ? "https://www.getliri.com/api/itunes-lookup" : "/api/itunes-lookup";
@@ -5408,7 +5408,11 @@ Move closer to your speakers and try again.`);
       }
     })), /* @__PURE__ */ React.createElement("div", {
       style: isLandscape ? {
-        padding: "12px 20px max(12px, calc(env(safe-area-inset-bottom) + 8px))",
+        // Landscape: bottom controls is a fixed 270px sidebar at the bottom-left.
+        // paddingBottom needs to clear the tab bar (~55px + safe-area) PLUS the
+        // tracklist peek pill (~44px) + version footer (~20px), otherwise the
+        // pill renders behind the tab bar.
+        padding: "12px 20px calc(env(safe-area-inset-bottom) + 78px)",
         position: "fixed",
         left: 0,
         bottom: 0,
