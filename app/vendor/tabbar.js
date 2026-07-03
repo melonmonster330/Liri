@@ -1,15 +1,7 @@
-// Liri shared nav.
-//   - Mobile (default) + Capacitor (iOS): bottom tab bar.  Byte-identical to
-//     the pre-rail version so native iOS keeps its exact current feel.
-//   - Web at >= 900px viewport: left vertical rail using MCM theme tokens.
-//
+// Liri shared bottom tab bar.
 // Usage in any page that loads React + this script:
-//   <TabBar current="library" />
-//     current: "sync" | "library" | "feed" | "explore" | "profile"
-//
+//   <TabBar current="library" />   (current: "sync" | "library" | "feed" | "profile")
 // Hides itself automatically when the user is signed out.
-// When the desktop rail is visible, sets  <body data-liri-nav="rail">  so
-// theme.css can shift the page content over.
 (function () {
   const h = React.createElement;
 
@@ -51,39 +43,13 @@
   };
 
   // In Capacitor, webDir="app" means the app/ folder is served as "/".
-  // Web paths are /app/library.html etc.; in Capacitor they must be /library.html.
+  // Web paths are /app/library.html etc., but in Capacitor they must be /library.html.
   function pageHref(webPath) {
     return window.Capacitor ? webPath.replace(/^\/app/, "") : webPath;
   }
 
-  // The desktop rail is web-only. iOS native keeps the bottom tab bar at any
-  // width (iPad included) so it matches the platform's expected feel.
-  const DESKTOP_QUERY = "(min-width: 900px)";
-  const supportsRail  = typeof window !== "undefined"
-                        && !window.Capacitor
-                        && !!window.matchMedia;
-
-  function useIsDesktop() {
-    const [isDesktop, setIsDesktop] = React.useState(
-      supportsRail && window.matchMedia(DESKTOP_QUERY).matches
-    );
-    React.useEffect(() => {
-      if (!supportsRail) return;
-      const mq = window.matchMedia(DESKTOP_QUERY);
-      const handler = (e) => setIsDesktop(e.matches);
-      if (mq.addEventListener)      mq.addEventListener("change", handler);
-      else if (mq.addListener)      mq.addListener(handler);
-      return () => {
-        if (mq.removeEventListener) mq.removeEventListener("change", handler);
-        else if (mq.removeListener) mq.removeListener(handler);
-      };
-    }, []);
-    return isDesktop;
-  }
-
   window.TabBar = function TabBar(props) {
-    const current   = (props && props.current) || "";
-    const isDesktop = useIsDesktop();
+    const current = (props && props.current) || "";
 
     const [signedIn, setSignedIn] = React.useState(checkSignedIn());
     React.useEffect(() => {
@@ -98,15 +64,10 @@
       };
     }, []);
 
-    // Toggle the body flag so theme.css shifts page content over for the rail.
-    React.useEffect(() => {
-      const railActive = signedIn && isDesktop;
-      if (railActive) document.body.dataset.liriNav = "rail";
-      else            delete document.body.dataset.liriNav;
-      return () => { delete document.body.dataset.liriNav; };
-    }, [signedIn, isDesktop]);
-
     if (!signedIn) return null;
+
+    // On the iOS app, show icons only (no labels) for a cleaner native feel.
+    const iconsOnly = !!window.Capacitor;
 
     const tabs = [
       { key: "sync",    label: "Sync",       href: pageHref("/app/index.html"),   icon: Icon.listen },
@@ -116,85 +77,6 @@
       { key: "profile", label: "You",        href: pageHref("/app/profile.html"), icon: Icon.profile },
     ];
 
-    return isDesktop ? renderRail(tabs, current) : renderBottomBar(tabs, current);
-  };
-
-  // ── Desktop left rail (web, viewport >= 900px) ──────────────────────────
-  function renderRail(tabs, current) {
-    return h(
-      "nav",
-      {
-        className: "liri-nav-rail",
-        "aria-label": "Primary",
-        style: {
-          position: "fixed",
-          top: 0, bottom: 0, left: 0,
-          width: "var(--nav-rail-width, 240px)",
-          background: "var(--bg-surface, #FFFFFF)",
-          borderRight: "1px solid var(--border-subtle, rgba(0,0,0,0.08))",
-          padding: "28px 14px 20px",
-          display: "flex", flexDirection: "column", gap: 2,
-          zIndex: "var(--z-nav, 50)",
-          fontFamily: "var(--font-sans)",
-        },
-      },
-      h(
-        "a",
-        {
-          key: "wordmark",
-          href: pageHref("/app/index.html"),
-          "aria-label": "Liri home",
-          style: {
-            display: "block",
-            padding: "6px 14px 28px",
-            fontFamily: "var(--font-serif)",
-            fontSize: 28,
-            fontWeight: 500,
-            letterSpacing: "-0.025em",
-            color: "var(--text-primary, #2C2523)",
-            textDecoration: "none",
-          },
-        },
-        "Liri"
-      ),
-      tabs.map((t) => {
-        const active = t.key === current;
-        return h(
-          "a",
-          {
-            key: t.key,
-            href: t.href,
-            "aria-current": active ? "page" : undefined,
-            style: {
-              display: "flex", alignItems: "center", gap: 14,
-              padding: "11px 14px",
-              borderRadius: "var(--radius-pill, 9999px)",
-              textDecoration: "none",
-              color: active
-                ? "var(--text-on-accent, #FFFFFF)"
-                : "var(--text-secondary, #6E625E)",
-              background: active
-                ? "var(--accent-primary, #C86B45)"
-                : "transparent",
-              fontSize: 14.5,
-              fontWeight: active ? 600 : 500,
-              letterSpacing: "-0.005em",
-              transition: "background 160ms cubic-bezier(0.16,1,0.3,1), color 160ms cubic-bezier(0.16,1,0.3,1)",
-              WebkitTapHighlightColor: "transparent",
-            },
-          },
-          t.icon(active),
-          h("span", null, t.label)
-        );
-      })
-    );
-  }
-
-  // ── Mobile bottom tab bar (default + Capacitor) ─────────────────────────
-  //   Byte-identical to the pre-rail version. Do not change without care —
-  //   this is what native iOS renders.
-  function renderBottomBar(tabs, current) {
-    const iconsOnly = !!window.Capacitor;
     return h(
       "nav",
       {
@@ -234,5 +116,5 @@
         );
       })
     );
-  }
+  };
 })();

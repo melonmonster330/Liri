@@ -6,8 +6,6 @@
   <title>Explore — Liri</title>
   <link rel="icon" type="image/png" href="/favicon.png" />
   <link rel="apple-touch-icon" href="/favicon.png" />
-  <script src="vendor/theme.js"></script>
-  <link rel="stylesheet" href="vendor/theme.css">
   <style>
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
     html, body { height: 100%; width: 100%; overflow-x: hidden; }
@@ -34,7 +32,7 @@
   <script type="text/babel">
     const { useState, useEffect, useCallback } = React;
 
-    const APP_VERSION = "1.2.8";
+    const APP_VERSION = "1.2.9";
 
     const sb = supabase.createClient(
       "https://xjdjpaxgymgbvcwmvorc.supabase.co",
