@@ -35,7 +35,7 @@
   <script type="text/babel">
     const { useState, useEffect, useRef, useCallback } = React;
 
-    const APP_VERSION = "1.2.9";
+    const APP_VERSION = "1.3.0";
 
     // On iOS Capacitor relative URLs don't resolve — route all API calls through the live domain.
     const API_BASE = window.Capacitor ? "https://www.getliri.com" : "";
@@ -705,19 +705,45 @@
       // iTunes gives clean canonical artwork and ONE result per album (no
       // pressing sprawl). Vinyl side data is layered on server-side from
       // Discogs at add time — see api/add-to-library.js.
+      // Term search alone misses artists' own studio albums (e.g. "the 1975"
+      // returns tributes/singles but none of the band's LPs), so when the
+      // query matches an artist name we also pull that artist's full album
+      // list via lookup and show those first.
       useEffect(() => {
         clearTimeout(searchTimer.current);
         if (!query.trim() || query.length < 2) { setResults([]); return; }
         searchTimer.current = setTimeout(async () => {
           setSearching(true);
           try {
-            const res = await fetch(
-              `${API_BASE}/api/itunes-lookup?term=${encodeURIComponent(query)}&entity=album&limit=12`
-            ).then(r => r.json());
+            const norm = s => (s || "").toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
+            const nq = norm(query);
+
+            const fetchArtistAlbums = async () => {
+              const a = await fetch(
+                `${API_BASE}/api/itunes-lookup?term=${encodeURIComponent(query)}&entity=musicArtist&limit=3`
+              ).then(r => r.json());
+              const artist = (a.results || []).find(r => {
+                const na = norm(r.artistName);
+                return na && (na === nq || na.includes(nq) || nq.includes(na));
+              });
+              if (!artist) return [];
+              const lu = await fetch(
+                `${API_BASE}/api/itunes-lookup?id=${artist.artistId}&entity=album&limit=100`
+              ).then(r => r.json());
+              return (lu.results || []).filter(r => r.wrapperType === "collection");
+            };
+
+            const [artistAlbums, termRes] = await Promise.all([
+              fetchArtistAlbums().catch(() => []),
+              fetch(
+                `${API_BASE}/api/itunes-lookup?term=${encodeURIComponent(query)}&entity=album&limit=12`
+              ).then(r => r.json()).catch(() => ({ results: [] })),
+            ]);
 
             const seen = new Set();
-            const albums = (res.results || [])
+            const albums = [...artistAlbums, ...(termRes.results || [])]
               .filter(r => r.collectionType === "Album" || r.wrapperType === "collection")
+              .filter(r => !/\s-\sSingle$/i.test(r.collectionName || ""))
               .filter(r => r.collectionId && !seen.has(r.collectionId) && seen.add(r.collectionId))
               .map(r => ({
                 _source:        'itunes',
@@ -731,7 +757,8 @@
                 _label:         null,
                 _catno:         null,
               }))
-              .filter(r => r.collectionName.length > 0);
+              .filter(r => r.collectionName.length > 0)
+              .slice(0, 30);
 
             setResults(albums);
           } catch { setResults([]); }
