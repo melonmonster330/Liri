@@ -28,7 +28,7 @@ const liriAuthStorage = {
   removeItem: k => { try { sessionStorage.removeItem(k); } catch {} try { localStorage.removeItem(k); } catch {} },
 };
 const sb = supabase.createClient("https://xjdjpaxgymgbvcwmvorc.supabase.co", "sb_publishable_C-NBnfg0ltAoUi46XQTUjA_ozjZW_Nd", { auth: { storage: liriAuthStorage } });
-const APP_VERSION = "1.3.2";
+const APP_VERSION = "1.3.3";
 // Plain (unsynced) lyrics carry no timestamps — time:null marks them so the
 // player renders the flat auto-scroll view instead of pretending to be synced.
 const plainToLines = txt => (txt || "").split("\n").filter(l => l.trim()).map(text => ({ time: null, text }));
@@ -96,17 +96,26 @@ function Liri() {
     window.addEventListener("resize", onResize);
     return () => window.removeEventListener("resize", onResize);
   }, []);
-  // ── Landscape player geometry — all dynamic, no fixed breakpoints ──
-  // The bottom-left control rail must never cover the lyrics: the rail shrinks
-  // on narrow windows, and the lyrics center in the space to its right — which
-  // equals true centering on wide/fullscreen windows (so the fullscreen look
-  // is untouched) — scaling their font down when width gets tight.
-  const railW = Math.min(270, Math.max(190, Math.round(winW * 0.26)));
-  const lyricAreaW = Math.min(760, Math.max(260, winW - railW - 48));
-  const lyricAreaLeft = Math.max(railW + 24, Math.round((winW - lyricAreaW) / 2));
-  const lyricFontScale = 1.1 * Math.max(0.72, Math.min(1, lyricAreaW / 640));
   const [controlsVisible, setControlsVisible] = useState(true);
   const controlsHideTimerRef = useRef(null);
+  // ── Landscape player geometry — all dynamic, no fixed breakpoints ──
+  // The left panels (title/side-info on top, control rail on bottom) share the
+  // same width (railW) and must never cover the lyrics. When the menu is up the
+  // lyrics center in the space to the RIGHT of the rail (equal to true centering
+  // on wide/fullscreen windows, so that look is untouched). When the menu fades
+  // away the rail is gone — the lyrics reclaim the FULL width, re-center, and
+  // grow a touch. Everything transitions smoothly with the 0.35s menu fade.
+  const railW = Math.min(270, Math.max(190, Math.round(winW * 0.26)));
+  const menuOpen = isLandscape && controlsVisible;
+  const lyricAreaW = menuOpen
+    ? Math.min(760, Math.max(260, winW - railW - 48))
+    : Math.min(820, winW - 48);
+  const lyricAreaLeft = menuOpen
+    ? Math.max(railW + 24, Math.round((winW - lyricAreaW) / 2))
+    : Math.round((winW - lyricAreaW) / 2);
+  const lyricFontScale = menuOpen
+    ? 1.1 * Math.max(0.72, Math.min(1, lyricAreaW / 640))
+    : 1.25; // menu away → a touch larger
   const [showBugReport, setShowBugReport] = useState(false);
   const [bugText, setBugText] = useState("");
   const [bugSending, setBugSending] = useState(false);
@@ -5158,10 +5167,10 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
   }, user?.email?.[0]?.toUpperCase() || "?")), /*#__PURE__*/React.createElement("div", {
     className: "safe-top",
     style: isLandscape ? {
-      padding: "16px 20px 16px",
+      padding: railW < 240 ? "16px 12px 16px" : "16px 20px 16px",
       display: "flex",
       flexDirection: "column",
-      width: "270px",
+      width: railW + "px",
       flexShrink: 0,
       position: "fixed",
       top: "57px",
@@ -5382,8 +5391,10 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
       height: "100%",
       padding: isLandscape ? (lyricAreaW < 500 ? "4vh 20px 0" : "4vh 40px 0") : "8vh 28px 0",
       width: isLandscape ? lyricAreaW + "px" : undefined,
-      maxWidth: isLandscape ? "760px" : "none",
-      marginLeft: isLandscape ? lyricAreaLeft + "px" : undefined
+      maxWidth: isLandscape ? (menuOpen ? "760px" : "820px") : "none",
+      marginLeft: isLandscape ? lyricAreaLeft + "px" : undefined,
+      // Slide + resize in step with the 0.35s menu fade
+      transition: isLandscape ? "margin-left 0.35s, width 0.35s" : "none"
     },
     onTouchStart: () => {
       userScrollingRef.current = true;
