@@ -896,8 +896,8 @@ async function openMissingLyrics() {
                   placeholder="[00:12.34] First line\n[00:16.00] Second line…"></textarea>
                 <div style="display:flex;align-items:center;gap:12px">
                   <button class="lrc-submit-btn" id="lrc-btn-${tid}"
-                    onclick="submitLrc('${tid}','${esc(t.track_name).replace(/'/g,"\\'")}','${esc(t.artist_name).replace(/'/g,"\\'")}','${esc(t.album_name).replace(/'/g,"\\'")}',${t.duration_ms||0})">
-                    Submit to lrclib
+                    onclick="submitLrc('${tid}','${esc(t.track_name).replace(/'/g,"\\'")}','${esc(t.artist_name).replace(/'/g,"\\'")}','${esc(t.album_name).replace(/'/g,"\\'")}',${t.duration_ms||0},${t.itunes_track_id||0})">
+                    Save to Liri + lrclib
                   </button>
                   <span class="lrc-msg" id="lrc-msg-${tid}"></span>
                 </div>
@@ -924,7 +924,7 @@ function toggleLrcTrack(tid) {
   ch.style.transform = el.classList.contains("open") ? "rotate(90deg)" : "";
 }
 
-async function submitLrc(tid, trackName, artistName, albumName, durationMs) {
+async function submitLrc(tid, trackName, artistName, albumName, durationMs, itunesTrackId) {
   const ta  = document.getElementById("lrc-txt-" + tid);
   const btn = document.getElementById("lrc-btn-" + tid);
   const msg = document.getElementById("lrc-msg-" + tid);
@@ -949,11 +949,12 @@ async function submitLrc(tid, trackName, artistName, albumName, durationMs) {
         trackName, artistName, albumName,
         duration: Math.round(durationMs / 1000),
         syncedLyrics: lrc,
+        itunesTrackId: itunesTrackId || undefined,
       }),
     });
     const json = await r.json().catch(() => ({}));
     if (r.ok) {
-      msg.className = "lrc-msg ok"; msg.textContent = "Published to lrclib ✓";
+      msg.className = "lrc-msg ok"; msg.textContent = json.message || "Saved ✓";
       btn.textContent = "Done ✓";
       // Collapse and dim the track row
       setTimeout(() => {
@@ -962,11 +963,11 @@ async function submitLrc(tid, trackName, artistName, albumName, durationMs) {
       }, 1000);
     } else {
       msg.className = "lrc-msg err"; msg.textContent = json.error || ("Error " + r.status);
-      btn.disabled = false; btn.textContent = "Submit to lrclib";
+      btn.disabled = false; btn.textContent = "Save to Liri + lrclib";
     }
   } catch(e) {
     msg.className = "lrc-msg err"; msg.textContent = "Network error";
-    btn.disabled = false; btn.textContent = "Submit to lrclib";
+    btn.disabled = false; btn.textContent = "Save to Liri + lrclib";
   }
 }
 

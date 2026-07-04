@@ -21,6 +21,7 @@
 
 const https  = require("https");
 const crypto = require("crypto");
+const { parseLrcToWords, lrcToPlain } = require("./_lib/lyrics");
 
 function safeCompare(a, b) {
   const ab = Buffer.from(String(a)), bb = Buffer.from(String(b));
@@ -131,6 +132,21 @@ function sbDelete(path) {
     }, (res) => { res.on("data", () => {}); res.on("end", () => resolve({ status: res.statusCode })); });
     req.on("error", () => resolve({ status: 0 }));
     req.end();
+  });
+}
+
+// Generic service-role upsert — path must include ?on_conflict=<col>.
+function sbUpsert(pathWithConflict, rows) {
+  const url = process.env.SUPABASE_URL;
+  const key = process.env.SUPABASE_SERVICE_ROLE_KEY;
+  const hostname = url.replace(/^https?:\/\//, "");
+  const bodyStr  = JSON.stringify(rows);
+  return new Promise((resolve) => {
+    const req = https.request({ hostname, path: `/rest/v1/${pathWithConflict}`, method: "POST",
+      headers: { "apikey": key, "Authorization": `Bearer ${key}`, "Content-Type": "application/json", "Prefer": "resolution=merge-duplicates,return=minimal", "Content-Length": Buffer.byteLength(bodyStr) }
+    }, (res) => { res.on("data", () => {}); res.on("end", () => resolve({ status: res.statusCode })); });
+    req.on("error", () => resolve({ status: 0 }));
+    req.write(bodyStr); req.end();
   });
 }
 
@@ -768,18 +784,40 @@ module.exports = async (req, res) => {
     let body = req.body;
     if (typeof body === "string") { try { body = JSON.parse(body); } catch { body = {}; } }
     if (body?.action === "submit-lyrics") {
-      const { trackName, artistName, albumName, duration, syncedLyrics, plainLyrics } = body;
+      const { trackName, artistName, albumName, duration, syncedLyrics, plainLyrics, itunesTrackId } = body;
       if (!trackName || !artistName || !albumName || !duration) {
         return res.status(400).json({ error: "trackName, artistName, albumName, duration required" });
       }
       if (!syncedLyrics && !plainLyrics) {
         return res.status(400).json({ error: "Provide syncedLyrics or plainLyrics (or both)" });
       }
+
+      // 1) Save to Liri's own track_lyrics FIRST — this is the table the app
+      //    actually reads (turntable lyrics cache at album select). lrclib is
+      //    the community copy; a publish failure there must not lose the fix.
+      let dbSaved = false;
+      if (itunesTrackId) {
+        const { status } = await sbUpsert("track_lyrics?on_conflict=itunes_track_id", [{
+          itunes_track_id: itunesTrackId,
+          lrc_raw:      syncedLyrics || null,
+          lyrics_plain: plainLyrics || (syncedLyrics ? lrcToPlain(syncedLyrics) : null),
+          words_json:   syncedLyrics ? parseLrcToWords(syncedLyrics) : null,
+          source:       "admin",
+          fetched_at:   new Date().toISOString(),
+        }]);
+        dbSaved = status >= 200 && status < 300;
+        if (!dbSaved) {
+          return res.status(500).json({ error: `track_lyrics upsert failed (${status}) — nothing published` });
+        }
+      }
+
+      // 2) Publish to lrclib (best-effort once the DB save is in).
       try {
         const challengeRes = await httpsPost("lrclib.net", "/api/request-challenge",
           { "Content-Type": "application/json", "Lrclib-Client": "Liri/1.0 (https://getliri.com)" }, "{}");
         const challenge = JSON.parse(challengeRes.raw);
         if (!challenge.prefix || !challenge.target) {
+          if (dbSaved) return res.status(200).json({ ok: true, message: "Saved to Liri ✓ — lrclib publish failed (no PoW challenge)" });
           return res.status(502).json({ error: "Failed to get PoW challenge from lrclib" });
         }
         const nonce = solveChallenge(challenge.prefix, challenge.target);
@@ -788,12 +826,15 @@ module.exports = async (req, res) => {
           { trackName, artistName, albumName, duration: Number(duration), ...(syncedLyrics ? { syncedLyrics } : {}), ...(plainLyrics ? { plainLyrics } : {}) }
         );
         if (publishRes.status === 201 || publishRes.status === 200) {
-          return res.status(200).json({ ok: true, message: "Lyrics published to lrclib!" });
+          return res.status(200).json({ ok: true, message: dbSaved ? "Saved to Liri ✓ · published to lrclib ✓" : "Lyrics published to lrclib!" });
         }
         let errBody = {};
         try { errBody = JSON.parse(publishRes.raw); } catch {}
-        return res.status(publishRes.status).json({ error: errBody.message || errBody.error || `lrclib returned ${publishRes.status}` });
+        const lrclibErr = errBody.message || errBody.error || `lrclib returned ${publishRes.status}`;
+        if (dbSaved) return res.status(200).json({ ok: true, message: `Saved to Liri ✓ — lrclib publish failed: ${lrclibErr}` });
+        return res.status(publishRes.status).json({ error: lrclibErr });
       } catch (e) {
+        if (dbSaved) return res.status(200).json({ ok: true, message: `Saved to Liri ✓ — lrclib publish failed: ${e.message || "error"}` });
         return res.status(500).json({ error: e.message || "Internal error" });
       }
     }

@@ -370,7 +370,7 @@
     }
   };
   var sb = supabase.createClient("https://xjdjpaxgymgbvcwmvorc.supabase.co", "sb_publishable_C-NBnfg0ltAoUi46XQTUjA_ozjZW_Nd", { auth: { storage: liriAuthStorage } });
-  var APP_VERSION = "1.3.1";
+  var APP_VERSION = "1.3.2";
   var plainToLines = (txt) => (txt || "").split("\n").filter((l) => l.trim()).map((text) => ({ time: null, text }));
   var IS_IOS = !!window.Capacitor;
   var TRANSCRIBE_PROXY = window.Capacitor ? "https://www.getliri.com/api/transcribe" : "/api/transcribe";
@@ -411,11 +411,19 @@
       return () => window.removeEventListener("resize", onResize);
     }, []);
     const [isLandscape, setIsLandscape] = useState2(() => window.innerWidth > window.innerHeight && window.innerWidth >= 600);
+    const [winW, setWinW] = useState2(window.innerWidth);
     useEffect3(() => {
-      const onResize = () => setIsLandscape(window.innerWidth > window.innerHeight && window.innerWidth >= 600);
+      const onResize = () => {
+        setIsLandscape(window.innerWidth > window.innerHeight && window.innerWidth >= 600);
+        setWinW(window.innerWidth);
+      };
       window.addEventListener("resize", onResize);
       return () => window.removeEventListener("resize", onResize);
     }, []);
+    const railW = Math.min(270, Math.max(190, Math.round(winW * 0.26)));
+    const lyricAreaW = Math.min(760, Math.max(260, winW - railW - 48));
+    const lyricAreaLeft = Math.max(railW + 24, Math.round((winW - lyricAreaW) / 2));
+    const lyricFontScale = 1.1 * Math.max(0.72, Math.min(1, lyricAreaW / 640));
     const [controlsVisible, setControlsVisible] = useState2(true);
     const controlsHideTimerRef = useRef2(null);
     const [showBugReport, setShowBugReport] = useState2(false);
@@ -5347,10 +5355,10 @@ Move closer to your speakers and try again.`);
       style: {
         overflowY: "auto",
         height: "100%",
-        padding: isLandscape ? "4vh 40px 0" : "8vh 28px 0",
+        padding: isLandscape ? lyricAreaW < 500 ? "4vh 20px 0" : "4vh 40px 0" : "8vh 28px 0",
+        width: isLandscape ? lyricAreaW + "px" : void 0,
         maxWidth: isLandscape ? "760px" : "none",
-        marginLeft: isLandscape ? "auto" : void 0,
-        marginRight: isLandscape ? "auto" : void 0
+        marginLeft: isLandscape ? lyricAreaLeft + "px" : void 0
       },
       onTouchStart: () => {
         userScrollingRef.current = true;
@@ -5371,7 +5379,7 @@ Move closer to your speakers and try again.`);
         style: {
           textAlign: "center",
           padding: "7px 0",
-          fontSize: isLandscape ? "22px" : "20px",
+          fontSize: isLandscape ? Math.round(20 * lyricFontScale) + "px" : "20px",
           fontWeight: "500",
           color: "rgba(255,255,255,0.78)",
           lineHeight: "1.45"
@@ -5422,7 +5430,7 @@ Move closer to your speakers and try again.`);
           style: {
             textAlign: "center",
             padding: near ? "6px 0" : "3px 0",
-            fontSize: isCredit ? cur ? "15px" : adist <= 1 ? "13px" : "11px" : cur ? isLandscape ? curFontBase * 1.1 + "px" : curFontBase + "px" : adist === 1 ? isLandscape ? near1Font * 1.1 + "px" : near1Font + "px" : near ? isLandscape ? nearFont * 1.1 + "px" : nearFont + "px" : isLandscape ? farFont * 1.1 + "px" : farFont + "px",
+            fontSize: isCredit ? cur ? "15px" : adist <= 1 ? "13px" : "11px" : cur ? isLandscape ? Math.round(curFontBase * lyricFontScale) + "px" : curFontBase + "px" : adist === 1 ? isLandscape ? Math.round(near1Font * lyricFontScale) + "px" : near1Font + "px" : near ? isLandscape ? Math.round(nearFont * lyricFontScale) + "px" : nearFont + "px" : isLandscape ? Math.round(farFont * lyricFontScale) + "px" : farFont + "px",
             fontWeight: cur && !isCredit ? "700" : "400",
             color: cur ? isCredit ? "rgba(255,255,255,0.55)" : "#ffffff" : dist > 0 ? `rgba(255,255,255,${aheadOpacity})` : `rgba(255,255,255,${behindOpacity})`,
             lineHeight: "1.4",
@@ -5468,11 +5476,11 @@ Move closer to your speakers and try again.`);
         // paddingBottom needs to clear the tab bar (~55px + safe-area) PLUS the
         // tracklist peek pill (~44px) + version footer (~20px), otherwise the
         // pill renders behind the tab bar.
-        padding: "12px 20px calc(env(safe-area-inset-bottom) + 78px)",
+        padding: railW < 240 ? "10px 12px calc(env(safe-area-inset-bottom) + 78px)" : "12px 20px calc(env(safe-area-inset-bottom) + 78px)",
         position: "fixed",
         left: 0,
         bottom: 0,
-        width: "270px",
+        width: railW + "px",
         background: "rgba(8,8,16,0.97)",
         borderRight: "1px solid rgba(255,255,255,0.06)",
         borderTop: "1px solid rgba(255,255,255,0.05)",
