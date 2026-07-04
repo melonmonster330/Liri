@@ -370,7 +370,7 @@
     }
   };
   var sb = supabase.createClient("https://xjdjpaxgymgbvcwmvorc.supabase.co", "sb_publishable_C-NBnfg0ltAoUi46XQTUjA_ozjZW_Nd", { auth: { storage: liriAuthStorage } });
-  var APP_VERSION = "1.3.6";
+  var APP_VERSION = "1.3.7";
   var plainToLines = (txt) => (txt || "").split("\n").filter((l) => l.trim()).map((text) => ({ time: null, text }));
   var IS_IOS = !!window.Capacitor;
   var TRANSCRIBE_PROXY = window.Capacitor ? "https://www.getliri.com/api/transcribe" : "/api/transcribe";
@@ -423,9 +423,6 @@
     const [controlsVisible, setControlsVisible] = useState2(true);
     const controlsHideTimerRef = useRef2(null);
     const railW = Math.min(270, Math.max(190, Math.round(winW * 0.26)));
-    const railNarrow = railW < 240;
-    const railArtSize = railNarrow ? 44 : 56;
-    const railTitleFont = railNarrow ? 14 : 15;
     const menuOpen = isLandscape && controlsVisible;
     const lyricAreaW = menuOpen ? Math.min(760, Math.max(260, winW - railW - 48)) : Math.min(820, winW - 48);
     const lyricAreaLeft = menuOpen ? Math.max(railW + 24, Math.round((winW - lyricAreaW) / 2)) : Math.round((winW - lyricAreaW) / 2);
@@ -5141,30 +5138,17 @@ Move closer to your speakers and try again.`);
         const si = getSideInfo();
         return si ? /* @__PURE__ */ React.createElement("div", { style: { fontSize: "10px", fontWeight: "700", letterSpacing: "2px", color: "rgba(212,168,70,0.85)", textTransform: "uppercase", flexShrink: 0 } }, si.side ? `Side ${si.side} \xB7 ${si.track}` : `Track ${si.track}`) : null;
       })(),
+      songDuration && /* @__PURE__ */ React.createElement("div", {
+        style: { fontSize: "11px", color: "rgba(255,255,255,0.3)", flexShrink: 0, fontVariantNumeric: "tabular-nums" }
+      }, formatTime(playbackTime) + " / " + formatTime(songDuration)),
       /* @__PURE__ */ React.createElement("button", {
         onClick: () => setShowSettings(!showSettings),
         style: { background: "linear-gradient(135deg,#d4a846,#c9807a)", border: "none", borderRadius: "50%", width: "28px", height: "28px", display: "flex", alignItems: "center", justifyContent: "center", fontSize: "11px", fontWeight: "700", color: "#080810", cursor: "pointer", flexShrink: 0, padding: 0 }
       }, user?.email?.[0]?.toUpperCase() || "?")
-    ), /* @__PURE__ */ React.createElement("div", {
+    ), !isLandscape && /* @__PURE__ */ React.createElement("div", {
       className: "safe-top",
-      style: isLandscape ? {
-        padding: railW < 240 ? "16px 12px 16px" : "16px 20px 16px",
-        display: "flex",
-        flexDirection: "column",
-        width: railW + "px",
-        flexShrink: 0,
-        position: "fixed",
-        top: "57px",
-        left: 0,
-        bottom: "130px",
-        background: "rgba(8,8,16,0.97)",
-        borderRight: "1px solid rgba(255,255,255,0.06)",
-        overflowY: "auto",
-        zIndex: 15,
-        opacity: controlsVisible ? 1 : 0,
-        transition: "opacity 0.35s",
-        pointerEvents: controlsVisible ? "auto" : "none"
-      } : {
+      // Portrait-only header (in landscape the fixed top bar carries this info).
+      style: {
         padding: "0 20px 16px",
         display: "flex",
         alignItems: "center",
@@ -5172,20 +5156,14 @@ Move closer to your speakers and try again.`);
         flexShrink: 0
       }
     }, /* @__PURE__ */ React.createElement("div", {
-      // Now-playing block. Landscape \u2192 stacked column (artwork over a full-width,
-      // wrapping title) so the name/artist stay readable even in a narrow rail; the
-      // 52px top bar already carries a back button in landscape, so the redundant
-      // one is dropped here. Portrait \u2192 the original single-row header.
       style: {
         display: "flex",
-        flexDirection: isLandscape ? "column" : "row",
-        alignItems: isLandscape ? "flex-start" : "center",
+        alignItems: "center",
         gap: "10px",
         flex: 1,
-        minWidth: 0,
-        width: isLandscape ? "100%" : void 0
+        minWidth: 0
       }
-    }, !isLandscape && /* @__PURE__ */ React.createElement("button", {
+    }, /* @__PURE__ */ React.createElement("button", {
       onClick: reset,
       style: {
         background: "none",
@@ -5202,30 +5180,18 @@ Move closer to your speakers and try again.`);
       src: artwork,
       alt: "",
       style: {
-        width: (isLandscape ? railArtSize : 36) + "px",
-        height: (isLandscape ? railArtSize : 36) + "px",
+        width: "36px",
+        height: "36px",
         borderRadius: "8px",
         flexShrink: 0,
         boxShadow: "0 4px 16px rgba(0,0,0,0.5)"
       }
     }), /* @__PURE__ */ React.createElement("div", {
       style: {
-        minWidth: 0,
-        width: isLandscape ? "100%" : void 0
+        minWidth: 0
       }
     }, /* @__PURE__ */ React.createElement("div", {
-      // Title wraps to 2 lines in a narrow landscape rail; single-line ellipsis in
-      // the portrait header row.
-      style: isLandscape ? {
-        fontSize: railTitleFont + "px",
-        fontWeight: "600",
-        color: "#f0e6d3",
-        display: "-webkit-box",
-        WebkitLineClamp: 2,
-        WebkitBoxOrient: "vertical",
-        overflow: "hidden",
-        lineHeight: 1.3
-      } : {
+      style: {
         fontSize: "14px",
         fontWeight: "600",
         color: "#f0e6d3",
@@ -5234,15 +5200,7 @@ Move closer to your speakers and try again.`);
         whiteSpace: "nowrap"
       }
     }, detectedSong?.title), /* @__PURE__ */ React.createElement("div", {
-      style: isLandscape ? {
-        fontSize: "12px",
-        color: "rgba(255,255,255,0.4)",
-        marginTop: "2px",
-        overflow: "hidden",
-        display: "-webkit-box",
-        WebkitLineClamp: 1,
-        WebkitBoxOrient: "vertical"
-      } : {
+      style: {
         fontSize: "12px",
         color: "rgba(255,255,255,0.4)",
         overflow: "hidden",
@@ -5515,18 +5473,23 @@ Move closer to your speakers and try again.`);
       }
     })), /* @__PURE__ */ React.createElement("div", {
       style: isLandscape ? {
-        // Landscape: bottom controls is a fixed 270px sidebar at the bottom-left.
-        // paddingBottom needs to clear the tab bar (~55px + safe-area) PLUS the
-        // tracklist peek pill (~44px) + version footer (~20px), otherwise the
-        // pill renders behind the tab bar.
+        // Landscape: the ONLY left panel now — a full-height controls sidebar from
+        // just below the top bar (52px) to the bottom. Controls are vertically
+        // centered in that space. paddingBottom clears the tab bar (~55px +
+        // safe-area) plus the tracklist peek pill + version footer.
         padding: railW < 240 ? "10px 12px calc(env(safe-area-inset-bottom) + 78px)" : "12px 20px calc(env(safe-area-inset-bottom) + 78px)",
         position: "fixed",
         left: 0,
+        top: "52px",
         bottom: 0,
         width: railW + "px",
+        display: "flex",
+        flexDirection: "column",
+        justifyContent: "safe center",
+        // falls back to top-aligned if controls overflow a short screen
+        overflowY: "auto",
         background: "rgba(8,8,16,0.97)",
         borderRight: "1px solid rgba(255,255,255,0.06)",
-        borderTop: "1px solid rgba(255,255,255,0.05)",
         zIndex: 15,
         opacity: controlsVisible ? 1 : 0,
         transition: "opacity 0.35s",
