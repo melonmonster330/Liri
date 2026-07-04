@@ -678,12 +678,14 @@ module.exports = async (req, res) => {
         // 10s sbGet limit on Vercel cold starts.
         // NOTE: album_tracks has no album_name column — album name comes from
         // the catalogue join below, not the tracks table.
-        const [tracksResp, withLrcResp] = await Promise.all([
+        const [tracksResp, withLrcResp, withPlainResp] = await Promise.all([
           sbGetAll(`album_tracks?select=itunes_track_id,track_name,artist_name,itunes_collection_id,duration_ms,disc_number,track_number&order=itunes_collection_id.asc,disc_number.asc,track_number.asc`),
           sbGetAll(`track_lyrics?select=itunes_track_id&lrc_raw=not.is.null`),
+          sbGetAll(`track_lyrics?select=itunes_track_id&lyrics_plain=not.is.null`),
         ]);
         const rows = Array.isArray(tracksResp) ? tracksResp : [];
         const haveLrc = new Set((Array.isArray(withLrcResp) ? withLrcResp : []).map(r => r.itunes_track_id));
+        const havePlain = new Set((Array.isArray(withPlainResp) ? withPlainResp : []).map(r => r.itunes_track_id));
         const missing = rows.filter(t => !haveLrc.has(t.itunes_track_id));
         // Fetch artwork + album name from catalogue
         const cids = [...new Set(missing.map(t => t.itunes_collection_id))];
@@ -697,6 +699,9 @@ module.exports = async (req, res) => {
           artwork_url:  catMap[t.itunes_collection_id]?.artwork_url || null,
           album_name:   catMap[t.itunes_collection_id]?.album_name  || "",
           artist_name:  catMap[t.itunes_collection_id]?.artist_name || t.artist_name || "",
+          // Plain lyrics exist but no synced timestamps — the app falls back to
+          // the unsynced auto-scroll view for these until an LRC is submitted.
+          has_plain:    havePlain.has(t.itunes_track_id),
         }));
         return res.status(200).json({ tracks: enriched, total: enriched.length });
       }

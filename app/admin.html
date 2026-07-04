@@ -859,11 +859,12 @@ async function openMissingLyrics() {
 
   const fmt_dur = ms => ms ? `${Math.floor(ms/60000)}:${String(Math.floor((ms%60000)/1000)).padStart(2,"0")}` : "";
 
+  const plainOnly = tracks.filter(t => t.has_plain).length;
   c.innerHTML = `
     <button class="back-btn" onclick="load()">← Dashboard</button>
     <div style="margin-bottom:20px">
       <div style="font-size:20px;font-weight:700;margin-bottom:6px">Missing Lyrics</div>
-      <div style="font-size:13px;color:var(--muted)">${tracks.length} track${tracks.length!==1?"s":""} across ${albumOrder.length} album${albumOrder.length!==1?"s":""}. Click a track → find LRC → paste → submit.</div>
+      <div style="font-size:13px;color:var(--muted)">${tracks.length} track${tracks.length!==1?"s":""} across ${albumOrder.length} album${albumOrder.length!==1?"s":""} without synced timestamps${plainOnly ? ` — <span style="color:var(--gold)">${plainOnly} have plain lyrics</span> and show as unsynced auto-scroll in the app` : ""}. Click a track → find LRC → paste → submit.</div>
     </div>
     ${albumOrder.map(cid => {
       const alb = albumMap[cid];
@@ -885,6 +886,7 @@ async function openMissingLyrics() {
             <div class="lrc-track" id="lrc-t-${tid}">
               <div class="lrc-track-row" onclick="toggleLrcTrack('${tid}')">
                 <div class="lrc-track-name">${esc(t.track_name)}</div>
+                ${t.has_plain ? `<span style="flex-shrink:0;font-size:10px;font-weight:700;letter-spacing:0.5px;color:var(--gold);background:rgba(212,168,70,0.12);border:1px solid rgba(212,168,70,0.3);border-radius:8px;padding:2px 8px;margin-right:8px">PLAIN ONLY</span>` : `<span style="flex-shrink:0;font-size:10px;font-weight:700;letter-spacing:0.5px;color:#e07070;background:rgba(224,112,112,0.1);border:1px solid rgba(224,112,112,0.3);border-radius:8px;padding:2px 8px;margin-right:8px">NO LYRICS</span>`}
                 <div class="lrc-track-dur">${fmt_dur(t.duration_ms)}</div>
                 <div class="lrc-chevron" id="lrc-tc-${tid}">›</div>
               </div>

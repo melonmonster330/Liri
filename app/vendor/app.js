@@ -340,8 +340,38 @@
     document.getElementById("root").innerHTML = '<div style="min-height:100vh;background:#080810;display:flex;align-items:center;justify-content:center;font-family:system-ui;color:#e8a0a8;text-align:center;padding:32px">Could not load auth library.<br><small style="color:#333;margin-top:8px;display:block">Check your connection and reload</small></div>';
     throw new Error("Supabase not loaded");
   }
-  var sb = supabase.createClient("https://xjdjpaxgymgbvcwmvorc.supabase.co", "sb_publishable_C-NBnfg0ltAoUi46XQTUjA_ozjZW_Nd");
-  var APP_VERSION = "1.3.0";
+  var liriAuthStorage = {
+    getItem: (k) => {
+      try {
+        return sessionStorage.getItem(k) ?? localStorage.getItem(k);
+      } catch {
+        return null;
+      }
+    },
+    setItem: (k, v) => {
+      try {
+        sessionStorage.setItem(k, v);
+      } catch {
+      }
+      try {
+        localStorage.setItem(k, v);
+      } catch {
+      }
+    },
+    removeItem: (k) => {
+      try {
+        sessionStorage.removeItem(k);
+      } catch {
+      }
+      try {
+        localStorage.removeItem(k);
+      } catch {
+      }
+    }
+  };
+  var sb = supabase.createClient("https://xjdjpaxgymgbvcwmvorc.supabase.co", "sb_publishable_C-NBnfg0ltAoUi46XQTUjA_ozjZW_Nd", { auth: { storage: liriAuthStorage } });
+  var APP_VERSION = "1.3.1";
+  var plainToLines = (txt) => (txt || "").split("\n").filter((l) => l.trim()).map((text) => ({ time: null, text }));
   var IS_IOS = !!window.Capacitor;
   var TRANSCRIBE_PROXY = window.Capacitor ? "https://www.getliri.com/api/transcribe" : "/api/transcribe";
   var ITUNES_PROXY = window.Capacitor ? "https://www.getliri.com/api/itunes-lookup" : "/api/itunes-lookup";
@@ -472,13 +502,11 @@
     const [vinylDbRelease, setVinylDbRelease] = useState2(null);
     const vinylDbReleaseRef = useRef2(null);
     const vinylSidesRef = useRef2([]);
-    const [syncRate, setSyncRate] = useState2(1);
-    const syncRateRef = useRef2(1);
-    const [visibleLines, setVisibleLines] = useState2(() => {
-      const v = parseInt(localStorage.getItem("liri_visible_lines"), 10);
-      return isNaN(v) ? 7 : Math.min(15, Math.max(3, v));
+    const [scrollSpeed, setScrollSpeed] = useState2(() => {
+      const v = parseFloat(localStorage.getItem("liri_scroll_speed"));
+      return isNaN(v) ? 1 : Math.min(4, Math.max(0.25, v));
     });
-    const [showSyncSettings, setShowSyncSettings] = useState2(false);
+    const scrollSpeedRef = useRef2(scrollSpeed);
     const [flipSound, setFlipSound] = useState2(() => localStorage.getItem("liri_flip_sound") !== "false");
     const [flipNotify, setFlipNotify] = useState2(() => localStorage.getItem("liri_flip_notify") === "true");
     const [notifyDenied, setNotifyDenied] = useState2(false);
@@ -554,22 +582,12 @@
       albumCollectionIdRef.current = albumCollectionId;
     }, [albumCollectionId]);
     useEffect3(() => {
-      syncRateRef.current = syncRate;
-    }, [syncRate]);
-    useEffect3(() => {
-      if (!albumCollectionId) return;
+      scrollSpeedRef.current = scrollSpeed;
       try {
-        const albumPrefs = JSON.parse(localStorage.getItem(`liri_sync_prefs_${albumCollectionId}`) || "null");
-        const globalPrefs = JSON.parse(localStorage.getItem("liri_sync_prefs_global") || "null");
-        const prefs = albumPrefs || globalPrefs;
-        if (prefs?.rate != null) {
-          setSyncRate(prefs.rate);
-          syncRateRef.current = prefs.rate;
-        }
-        if (prefs?.lines != null) setVisibleLines(prefs.lines);
+        localStorage.setItem("liri_scroll_speed", String(scrollSpeed));
       } catch {
       }
-    }, [albumCollectionId]);
+    }, [scrollSpeed]);
     const getAlbumSideData = (cid) => {
       if (!cid) return null;
       try {
@@ -1422,13 +1440,39 @@
         Shazam.cancel();
       };
     }, [mode]);
+    const lyricsUnsynced = lyrics.length > 0 && lyrics[0].time == null;
+    const lyricsScrollRef = useRef2(null);
     useEffect3(() => {
-      if (userScrollingRef.current) return;
+      if (userScrollingRef.current || lyricsUnsynced) return;
       if (currentLineRef.current && mode === "syncing") currentLineRef.current.scrollIntoView({
         behavior: "smooth",
         block: "center"
       });
-    }, [currentIndex, mode]);
+    }, [currentIndex, mode, lyricsUnsynced]);
+    useEffect3(() => {
+      if (mode !== "syncing" || !lyricsUnsynced || isPaused) return;
+      const el = lyricsScrollRef.current;
+      if (!el) return;
+      const durGuess = songDuration || lyricsRef.current.length * 4.5 || 180;
+      let pos = el.scrollTop;
+      let last = performance.now();
+      let raf;
+      const tick = (now) => {
+        const dt = Math.min(0.2, (now - last) / 1e3);
+        last = now;
+        if (userScrollingRef.current) {
+          pos = el.scrollTop;
+        } else {
+          const total = Math.max(0, el.scrollHeight - el.clientHeight);
+          const base = total / Math.max(45, durGuess);
+          pos = Math.min(total, pos + base * scrollSpeedRef.current * dt);
+          el.scrollTop = pos;
+        }
+        raf = requestAnimationFrame(tick);
+      };
+      raf = requestAnimationFrame(tick);
+      return () => cancelAnimationFrame(raf);
+    }, [mode, lyricsUnsynced, isPaused, songDuration]);
     const seekToLine = (i) => {
       const targetTime = lyricsRef.current[i]?.time;
       if (targetTime == null) return;
@@ -1442,13 +1486,14 @@
     const refollow = () => {
       userScrollingRef.current = false;
       setUserScrolling(false);
+      if (lyricsRef.current[0]?.time == null) return;
       currentLineRef.current?.scrollIntoView({
         behavior: "smooth",
         block: "center"
       });
     };
     useEffect3(() => {
-      if (mode !== "syncing" || !lyrics.length) return;
+      if (mode !== "syncing" || !lyrics.length || lyricsUnsynced) return;
       const lastTime = lyrics[lyrics.length - 1].time;
       if (playbackTime >= lastTime + 6 && creditsRef.current) creditsRef.current.scrollIntoView({
         behavior: "smooth",
@@ -1666,7 +1711,7 @@
             }
           }
           const startPos = matchWordIdx >= 0 ? match.wordTimings[matchWordIdx].start_ms / 1e3 : 0;
-          const lyrics2 = match.lrc_raw ? parseLRC(match.lrc_raw) : (match.lyrics_plain || "").split("\n").filter((l) => l.trim()).map((text, i) => ({ time: i * 4, text }));
+          const lyrics2 = match.lrc_raw ? parseLRC(match.lrc_raw) : plainToLines(match.lyrics_plain);
           if (logRef) logRef.push(`match: unique run (${len}w) \u2192 "${match.trackName}" at ${startPos.toFixed(1)}s`);
           return { track: match, lyrics: lyrics2, startPos, score: len, phraseWordStart: start, totalWords: heardWords.length };
         }
@@ -1791,7 +1836,7 @@ Move closer to your speakers and try again.`);
         const entry = lrcCache[String(track.trackId)];
         if (!entry) return [];
         if (entry.lrc_raw) return parseLRC(entry.lrc_raw);
-        return (entry.lyrics_plain || "").split("\n").filter((l) => l.trim()).map((text, i) => ({ time: i * 4, text }));
+        return plainToLines(entry.lyrics_plain);
       };
       const commitShazamMatch = (track, offsetSecs) => {
         if (listenSessionRef.current !== session || recognitionWonRef.current) return;
@@ -1877,7 +1922,7 @@ Move closer to your speakers and try again.`);
             return;
           }
           if (data?.lyrics_plain) {
-            const parsed = data.lyrics_plain.split("\n").filter((l) => l.trim()).map((text, i) => ({ time: i * 4, text }));
+            const parsed = plainToLines(data.lyrics_plain);
             setLyrics(parsed);
             lyricsRef.current = parsed;
             return;
@@ -1909,7 +1954,7 @@ Move closer to your speakers and try again.`);
       const lrc0 = lyricsRef.current;
       const t0 = initialPosRef.current;
       let initIdx = -1;
-      if (lrc0.length > 0 && t0 >= lrc0[0].time) {
+      if (lrc0.length > 0 && lrc0[0].time != null && t0 >= lrc0[0].time) {
         for (let i = 0; i < lrc0.length; i++) {
           if (lrc0[i].time <= t0) initIdx = i;
           else break;
@@ -1920,10 +1965,10 @@ Move closer to your speakers and try again.`);
       setIsPaused(false);
       clearInterval(syncIntervalRef.current);
       syncIntervalRef.current = setInterval(() => {
-        const t = initialPosRef.current + (Date.now() - syncStartRef.current) / 1e3 * syncRateRef.current;
+        const t = initialPosRef.current + (Date.now() - syncStartRef.current) / 1e3;
         setPlaybackTime(t < 0 ? 0 : t);
         const lrc = lyricsRef.current;
-        if (!lrc.length) return;
+        if (!lrc.length || lrc[0].time == null) return;
         if (t < lrc[0].time) {
           setCurrentIndex(-1);
           return;
@@ -1946,11 +1991,10 @@ Move closer to your speakers and try again.`);
           currentTrackIndex,
           albumCollectionId,
           identifiedBy,
-          syncRate,
           turntableMatchedIdx: turntableMatchedIdxRef.current
         };
         try {
-          const t = syncStartRef.current != null ? initialPosRef.current + (Date.now() - syncStartRef.current) / 1e3 * syncRateRef.current : initialPosRef.current;
+          const t = syncStartRef.current != null ? initialPosRef.current + (Date.now() - syncStartRef.current) / 1e3 : initialPosRef.current;
           localStorage.setItem("liri_nowplaying", JSON.stringify({
             ...nowPlayingSnapshotRef.current,
             playbackTime: Math.max(0, t),
@@ -1967,12 +2011,12 @@ Move closer to your speakers and try again.`);
           }
         }
       }
-    }, [mode, detectedSong, lyrics, songDuration, currentTrackIndex, albumCollectionId, identifiedBy, syncRate]);
+    }, [mode, detectedSong, lyrics, songDuration, currentTrackIndex, albumCollectionId, identifiedBy]);
     useEffect3(() => {
       const onHide = () => {
         const snap = nowPlayingSnapshotRef.current;
         if (!snap || !snap.detectedSong) return;
-        const t = syncStartRef.current != null ? initialPosRef.current + (Date.now() - syncStartRef.current) / 1e3 * syncRateRef.current : initialPosRef.current;
+        const t = syncStartRef.current != null ? initialPosRef.current + (Date.now() - syncStartRef.current) / 1e3 : initialPosRef.current;
         const payload = JSON.stringify({ ...snap, playbackTime: Math.max(0, t), savedAt: Date.now() });
         try {
           sessionStorage.setItem("liri_nowplaying", payload);
@@ -2001,7 +2045,7 @@ Move closer to your speakers and try again.`);
       }
       if (!saved || !saved.detectedSong || Date.now() - saved.savedAt > 60 * 60 * 1e3) return;
       const elapsed = (Date.now() - saved.savedAt) / 1e3;
-      const restoredPos = Math.max(0, saved.playbackTime + elapsed * (saved.syncRate || 1));
+      const restoredPos = Math.max(0, saved.playbackTime + elapsed);
       setDetectedSong(saved.detectedSong);
       const lrc = saved.lyrics || [];
       setLyrics(lrc);
@@ -2014,10 +2058,6 @@ Move closer to your speakers and try again.`);
         albumCollectionIdRef.current = saved.albumCollectionId;
       }
       if (saved.identifiedBy) setIdentifiedBy(saved.identifiedBy);
-      if (saved.syncRate) {
-        setSyncRate(saved.syncRate);
-        syncRateRef.current = saved.syncRate;
-      }
       syncCalcRef.current = { startPos: restoredPos, phraseOffset: 0, recStart: Date.now() };
       setMode("confirmed");
     }, []);
@@ -2027,10 +2067,10 @@ Move closer to your speakers and try again.`);
         syncStartRef.current = Date.now();
         clearInterval(syncIntervalRef.current);
         syncIntervalRef.current = setInterval(() => {
-          const t = initialPosRef.current + (Date.now() - syncStartRef.current) / 1e3 * syncRateRef.current;
+          const t = initialPosRef.current + (Date.now() - syncStartRef.current) / 1e3;
           setPlaybackTime(t);
           const lrc = lyricsRef.current;
-          if (!lrc.length) return;
+          if (!lrc.length || lrc[0].time == null) return;
           if (t < lrc[0].time) {
             setCurrentIndex(-1);
             return;
@@ -2052,27 +2092,8 @@ Move closer to your speakers and try again.`);
       userNudgeRef.current += s;
       initialPosRef.current = Math.max(0, initialPosRef.current + s);
     };
-    const adjustRate = (delta) => {
-      setSyncRate((r) => {
-        const next = Math.round(Math.max(0.8, Math.min(1.2, r + delta)) * 1e3) / 1e3;
-        if (syncStartRef.current != null) {
-          const t = initialPosRef.current + (Date.now() - syncStartRef.current) / 1e3 * syncRateRef.current;
-          initialPosRef.current = t;
-          syncStartRef.current = Date.now();
-        }
-        syncRateRef.current = next;
-        return next;
-      });
-    };
-    const saveSyncPrefsForAlbum = () => {
-      const prefs = { rate: syncRateRef.current, lines: visibleLines };
-      if (albumCollectionId) localStorage.setItem(`liri_sync_prefs_${albumCollectionId}`, JSON.stringify(prefs));
-      localStorage.setItem("liri_visible_lines", String(visibleLines));
-    };
-    const saveSyncPrefsAsDefault = () => {
-      const prefs = { rate: syncRateRef.current, lines: visibleLines };
-      localStorage.setItem("liri_sync_prefs_global", JSON.stringify(prefs));
-      localStorage.setItem("liri_visible_lines", String(visibleLines));
+    const adjustScrollSpeed = (delta) => {
+      setScrollSpeed((s) => Math.round(Math.min(4, Math.max(0.25, s + delta)) * 100) / 100);
     };
     const handleNudge = (s) => {
       nudge(s);
@@ -2090,14 +2111,25 @@ Move closer to your speakers and try again.`);
       const onKey = (e) => {
         if (mode !== "syncing") return;
         if (e.target.tagName === "INPUT" || e.target.tagName === "TEXTAREA") return;
+        const unsyncedNow = lyricsRef.current.length > 0 && lyricsRef.current[0].time == null;
         if (e.key === "ArrowLeft") {
           e.preventDefault();
-          nudge(-1);
-          showKbToast("\u2190 \u22121s");
+          if (unsyncedNow) {
+            adjustScrollSpeed(-0.25);
+            showKbToast("\u2190 slower");
+          } else {
+            nudge(-1);
+            showKbToast("\u2190 \u22121s");
+          }
         } else if (e.key === "ArrowRight") {
           e.preventDefault();
-          nudge(1);
-          showKbToast("\u2192 +1s");
+          if (unsyncedNow) {
+            adjustScrollSpeed(0.25);
+            showKbToast("\u2192 faster");
+          } else {
+            nudge(1);
+            showKbToast("\u2192 +1s");
+          }
         } else if (e.key === " ") {
           e.preventDefault();
           togglePause();
@@ -2349,7 +2381,7 @@ Move closer to your speakers and try again.`);
         setLyrics(parsed);
         lyricsRef.current = parsed;
       } else if (nextTrackData?.lyrics_plain) {
-        const parsed = nextTrackData.lyrics_plain.split("\n").filter((l) => l.trim()).map((text, i) => ({ time: i * 4, text }));
+        const parsed = plainToLines(nextTrackData.lyrics_plain);
         setLyrics(parsed);
         lyricsRef.current = parsed;
       } else {
@@ -2404,7 +2436,7 @@ Move closer to your speakers and try again.`);
         setLyrics(parsed);
         lyricsRef.current = parsed;
       } else if (lrcEntry?.lyrics_plain) {
-        const parsed = lrcEntry.lyrics_plain.split("\n").filter((l) => l.trim()).map((text, i) => ({ time: i * 4, text }));
+        const parsed = plainToLines(lrcEntry.lyrics_plain);
         setLyrics(parsed);
         lyricsRef.current = parsed;
       } else {
@@ -5311,6 +5343,7 @@ Move closer to your speakers and try again.`);
         color: "rgba(255,255,255,0.7)"
       }
     }, "Resyncing\u2026")), /* @__PURE__ */ React.createElement("div", {
+      ref: lyricsScrollRef,
       style: {
         overflowY: "auto",
         height: "100%",
@@ -5327,7 +5360,30 @@ Move closer to your speakers and try again.`);
         userScrollingRef.current = true;
         setUserScrolling(true);
       }
-    }, lyrics.length > 0 ? /* @__PURE__ */ React.createElement(React.Fragment, null, (() => {
+    }, lyrics.length > 0 ? lyricsUnsynced ? /* @__PURE__ */ React.createElement(
+      React.Fragment,
+      null,
+      /* @__PURE__ */ React.createElement("div", {
+        style: { textAlign: "center", fontSize: "10px", letterSpacing: "2px", textTransform: "uppercase", color: "rgba(212,168,70,0.45)", marginBottom: "22px" }
+      }, "unsynced lyrics \xB7 auto-scroll"),
+      lyrics.map((line, i) => /* @__PURE__ */ React.createElement("div", {
+        key: i,
+        style: {
+          textAlign: "center",
+          padding: "7px 0",
+          fontSize: isLandscape ? "22px" : "20px",
+          fontWeight: "500",
+          color: "rgba(255,255,255,0.78)",
+          lineHeight: "1.45"
+        }
+      }, line.text)),
+      /* @__PURE__ */ React.createElement("div", {
+        style: { textAlign: "center", marginTop: "48px", color: "rgba(255,255,255,0.25)", fontSize: "12px", lineHeight: "2.1" }
+      }, [detectedSong?.title, detectedSong?.artist, detectedSong?.album, "Lyrics via LRCLib"].filter(Boolean).map(
+        (t, i) => /* @__PURE__ */ React.createElement("div", { key: i }, t)
+      )),
+      /* @__PURE__ */ React.createElement("div", { style: { paddingBottom: "30vh" } })
+    ) : /* @__PURE__ */ React.createElement(React.Fragment, null, (() => {
       const curLine = lyrics[currentIndex];
       const nextLine = lyrics[currentIndex + 1];
       const lineDur = curLine && nextLine ? nextLine.time - curLine.time : 3;
@@ -5444,15 +5500,44 @@ Move closer to your speakers and try again.`);
         color: isResyncing ? "#d4a846" : "rgba(255,255,255,0.18)",
         animation: isResyncing ? "pulse 1.2s ease-in-out infinite" : "none"
       }
-    }, isResyncing ? "\u21BB listening for resync\u2026" : "\u2190 early \xB7 behind \u2192"), /* @__PURE__ */ React.createElement("div", {
+    }, isResyncing ? "\u21BB listening for resync\u2026" : lyricsUnsynced ? "unsynced \xB7 adjust scroll speed" : "\u2190 early \xB7 behind \u2192"), /* @__PURE__ */ React.createElement("div", {
       style: {
         display: "flex",
         justifyContent: "center",
+        alignItems: "center",
         flexWrap: "wrap",
         gap: "6px",
         marginBottom: "10px"
       }
-    }, /* @__PURE__ */ React.createElement("div", {
+    }, lyricsUnsynced ? /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement("button", {
+      onClick: () => adjustScrollSpeed(-0.25),
+      style: {
+        background: "rgba(255,255,255,0.07)",
+        border: "1px solid rgba(255,255,255,0.15)",
+        color: "rgba(255,255,255,0.7)",
+        padding: isLandscape ? "7px 28px" : "9px 22px",
+        borderRadius: "20px",
+        cursor: "pointer",
+        fontSize: isLandscape ? "13px" : "14px",
+        fontFamily: "inherit",
+        fontWeight: "600"
+      }
+    }, "\u2212 slower"), /* @__PURE__ */ React.createElement("span", {
+      style: { color: "rgba(255,255,255,0.5)", fontSize: "13px", fontWeight: "600", minWidth: "48px", textAlign: "center" }
+    }, scrollSpeed + "\xD7"), /* @__PURE__ */ React.createElement("button", {
+      onClick: () => adjustScrollSpeed(0.25),
+      style: {
+        background: "rgba(255,255,255,0.07)",
+        border: "1px solid rgba(255,255,255,0.15)",
+        color: "rgba(255,255,255,0.7)",
+        padding: isLandscape ? "7px 28px" : "9px 22px",
+        borderRadius: "20px",
+        cursor: "pointer",
+        fontSize: isLandscape ? "13px" : "14px",
+        fontFamily: "inherit",
+        fontWeight: "600"
+      }
+    }, "+ faster")) : /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement("div", {
       style: {
         position: "relative"
       },
@@ -5530,7 +5615,7 @@ Move closer to your speakers and try again.`);
         animation: "fade-up 0.12s ease",
         boxShadow: "0 4px 16px rgba(0,0,0,0.5)"
       }
-    }, "+0.5s"))), /* @__PURE__ */ React.createElement("div", {
+    }, "+0.5s")))), /* @__PURE__ */ React.createElement("div", {
       style: {
         display: "flex",
         justifyContent: "center",
@@ -5598,7 +5683,7 @@ Move closer to your speakers and try again.`);
         cursor: "pointer",
         fontFamily: "inherit"
       }
-    }, "Wrong song?")), false, (() => {
+    }, "Wrong song?")), (() => {
       const hasTT = turntableAlbum && turntableTracksRef.current.length > 0 && turntableMatchedIdxRef.current >= 0;
       const isTT = !vinylMode && hasTT;
       const isVM = vinylMode && (hasTT || albumTracks.length > 0) && currentTrackIndex >= 0;

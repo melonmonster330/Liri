@@ -19,8 +19,19 @@ if (typeof supabase === 'undefined') {
   document.getElementById('root').innerHTML = '<div style="min-height:100vh;background:#080810;display:flex;align-items:center;justify-content:center;font-family:system-ui;color:#e8a0a8;text-align:center;padding:32px">Could not load auth library.<br><small style="color:#333;margin-top:8px;display:block">Check your connection and reload</small></div>';
   throw new Error('Supabase not loaded');
 }
-const sb = supabase.createClient("https://xjdjpaxgymgbvcwmvorc.supabase.co", "sb_publishable_C-NBnfg0ltAoUi46XQTUjA_ozjZW_Nd");
-const APP_VERSION = "1.3.0";
+// Per-tab auth storage: sessionStorage wins (each browser tab keeps its own
+// account), localStorage is the fallback + write-through so new tabs and app
+// relaunches (iOS clears sessionStorage) still restore the last login.
+const liriAuthStorage = {
+  getItem: k => { try { return sessionStorage.getItem(k) ?? localStorage.getItem(k); } catch { return null; } },
+  setItem: (k, v) => { try { sessionStorage.setItem(k, v); } catch {} try { localStorage.setItem(k, v); } catch {} },
+  removeItem: k => { try { sessionStorage.removeItem(k); } catch {} try { localStorage.removeItem(k); } catch {} },
+};
+const sb = supabase.createClient("https://xjdjpaxgymgbvcwmvorc.supabase.co", "sb_publishable_C-NBnfg0ltAoUi46XQTUjA_ozjZW_Nd", { auth: { storage: liriAuthStorage } });
+const APP_VERSION = "1.3.1";
+// Plain (unsynced) lyrics carry no timestamps — time:null marks them so the
+// player renders the flat auto-scroll view instead of pretending to be synced.
+const plainToLines = txt => (txt || "").split("\n").filter(l => l.trim()).map(text => ({ time: null, text }));
 const IS_IOS = !!window.Capacitor; // set once at load time — used for App Store compliance checks
 const TRANSCRIBE_PROXY = window.Capacitor ? "https://www.getliri.com/api/transcribe"    : "/api/transcribe";
 const ITUNES_PROXY   = window.Capacitor ? "https://www.getliri.com/api/itunes-lookup"   : "/api/itunes-lookup";
@@ -205,17 +216,12 @@ function Liri() {
   // Positionally indexed — vinylSidesRef.current[i] is the side for turntableTracksRef[i].
   const vinylSidesRef = useRef([]);
 
-  // ── Sync settings (speed rate + visible lines) ──
-  // Rate: multiplier applied to elapsed time in the sync formula. 1.0 = normal speed.
-  // Values >1 make lyrics advance faster (for pressings that run slow relative to digital).
-  // Values <1 slow them down. Saved to localStorage per-album or as a global default.
-  const [syncRate, setSyncRate] = useState(1.0);
-  const syncRateRef = useRef(1.0); // mirror for use inside setInterval (avoids stale closure)
-  const [visibleLines, setVisibleLines] = useState(() => {
-    const v = parseInt(localStorage.getItem("liri_visible_lines"), 10);
-    return isNaN(v) ? 7 : Math.min(15, Math.max(3, v));
+  // ── Unsynced-lyrics auto-scroll speed (multiplier on the base scroll rate) ──
+  const [scrollSpeed, setScrollSpeed] = useState(() => {
+    const v = parseFloat(localStorage.getItem("liri_scroll_speed"));
+    return isNaN(v) ? 1.0 : Math.min(4, Math.max(0.25, v));
   });
-  const [showSyncSettings, setShowSyncSettings] = useState(false);
+  const scrollSpeedRef = useRef(scrollSpeed); // mirror for use inside the rAF loop
 
   // ── Flip notifications ──
   const [flipSound, setFlipSound] = useState(() => localStorage.getItem("liri_flip_sound") !== "false");
@@ -309,20 +315,11 @@ function Liri() {
     albumCollectionIdRef.current = albumCollectionId;
   }, [albumCollectionId]);
 
-  // Keep syncRateRef in sync so the setInterval closure always reads the latest value
-  useEffect(() => { syncRateRef.current = syncRate; }, [syncRate]);
-
-  // Load saved speed + lines whenever the album changes (per-album overrides global default)
+  // Keep scrollSpeedRef fresh for the rAF loop + persist across sessions
   useEffect(() => {
-    if (!albumCollectionId) return;
-    try {
-      const albumPrefs = JSON.parse(localStorage.getItem(`liri_sync_prefs_${albumCollectionId}`) || "null");
-      const globalPrefs = JSON.parse(localStorage.getItem("liri_sync_prefs_global") || "null");
-      const prefs = albumPrefs || globalPrefs;
-      if (prefs?.rate != null) { setSyncRate(prefs.rate); syncRateRef.current = prefs.rate; }
-      if (prefs?.lines != null) setVisibleLines(prefs.lines);
-    } catch {}
-  }, [albumCollectionId]);
+    scrollSpeedRef.current = scrollSpeed;
+    try { localStorage.setItem("liri_scroll_speed", String(scrollSpeed)); } catch {}
+  }, [scrollSpeed]);
 
   // ── Per-album side data (localStorage, keyed by iTunes collectionId) ──
   const getAlbumSideData = cid => {
@@ -1298,14 +1295,48 @@ function Liri() {
     };
   }, [mode]);
 
+  // ── Unsynced lyrics: plain text with time:null — flat auto-scroll view ──
+  const lyricsUnsynced = lyrics.length > 0 && lyrics[0].time == null;
+  const lyricsScrollRef = useRef(null); // the lyrics overflow container
+
   // ── Scroll to current lyric (skip if user is manually browsing) ──
   useEffect(() => {
-    if (userScrollingRef.current) return;
+    if (userScrollingRef.current || lyricsUnsynced) return;
     if (currentLineRef.current && mode === "syncing") currentLineRef.current.scrollIntoView({
       behavior: "smooth",
       block: "center"
     });
-  }, [currentIndex, mode]);
+  }, [currentIndex, mode, lyricsUnsynced]);
+
+  // ── Unsynced auto-scroll: glide the flat lyric page at a steady rate ──
+  // Base rate spreads the full scroll height over the track duration (guessing
+  // ~4.5s a line when duration is unknown); scrollSpeed multiplies it. While
+  // the user is manually scrolling we follow their position, so resuming
+  // continues from wherever they left the page.
+  useEffect(() => {
+    if (mode !== "syncing" || !lyricsUnsynced || isPaused) return;
+    const el = lyricsScrollRef.current;
+    if (!el) return;
+    const durGuess = songDuration || lyricsRef.current.length * 4.5 || 180;
+    let pos = el.scrollTop;
+    let last = performance.now();
+    let raf;
+    const tick = now => {
+      const dt = Math.min(0.2, (now - last) / 1000); // clamp jumps after a backgrounded tab wakes up
+      last = now;
+      if (userScrollingRef.current) {
+        pos = el.scrollTop;
+      } else {
+        const total = Math.max(0, el.scrollHeight - el.clientHeight);
+        const base = total / Math.max(45, durGuess); // px per second at 1×
+        pos = Math.min(total, pos + base * scrollSpeedRef.current * dt);
+        el.scrollTop = pos;
+      }
+      raf = requestAnimationFrame(tick);
+    };
+    raf = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(raf);
+  }, [mode, lyricsUnsynced, isPaused, songDuration]);
 
   // ── Tap-to-seek: jump sync to the tapped lyric line ──
   const seekToLine = i => {
@@ -1323,6 +1354,9 @@ function Liri() {
   const refollow = () => {
     userScrollingRef.current = false;
     setUserScrolling(false);
+    // Unsynced view: auto-scroll simply resumes from wherever the user left
+    // the page — there is no "current line" to snap to.
+    if (lyricsRef.current[0]?.time == null) return;
     currentLineRef.current?.scrollIntoView({
       behavior: "smooth",
       block: "center"
@@ -1331,7 +1365,7 @@ function Liri() {
 
   // ── Scroll to credits once song passes the last lyric (outro roll) ──
   useEffect(() => {
-    if (mode !== "syncing" || !lyrics.length) return;
+    if (mode !== "syncing" || !lyrics.length || lyricsUnsynced) return;
     const lastTime = lyrics[lyrics.length - 1].time;
     if (playbackTime >= lastTime + 6 && creditsRef.current) creditsRef.current.scrollIntoView({
       behavior: "smooth",
@@ -1615,7 +1649,7 @@ function Liri() {
         // Build lyrics array for display — prefer timestamped LRC, fall back to plain
         const lyrics = match.lrc_raw
           ? parseLRC(match.lrc_raw)
-          : (match.lyrics_plain || "").split("\n").filter(l => l.trim()).map((text, i) => ({ time: i * 4, text }));
+          : plainToLines(match.lyrics_plain);
 
         if (logRef) logRef.push(`match: unique run (${len}w) → "${match.trackName}" at ${startPos.toFixed(1)}s`);
 
@@ -1768,7 +1802,7 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
       const entry = lrcCache[String(track.trackId)];
       if (!entry) return [];
       if (entry.lrc_raw) return parseLRC(entry.lrc_raw);
-      return (entry.lyrics_plain || "").split("\n").filter(l => l.trim()).map((text, i) => ({ time: i * 4, text }));
+      return plainToLines(entry.lyrics_plain);
     };
 
     // Helper: commit a Shazam match — sets all state and transitions to "confirmed"
@@ -1882,7 +1916,7 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
           return;
         }
         if (data?.lyrics_plain) {
-          const parsed = data.lyrics_plain.split("\n").filter(l => l.trim()).map((text, i) => ({ time: i * 4, text }));
+          const parsed = plainToLines(data.lyrics_plain);
           setLyrics(parsed);
           lyricsRef.current = parsed;
           return;
@@ -1948,7 +1982,7 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
     const lrc0 = lyricsRef.current;
     const t0 = initialPosRef.current;
     let initIdx = -1;
-    if (lrc0.length > 0 && t0 >= lrc0[0].time) {
+    if (lrc0.length > 0 && lrc0[0].time != null && t0 >= lrc0[0].time) {
       for (let i = 0; i < lrc0.length; i++) {
         if (lrc0[i].time <= t0) initIdx = i;else break;
       }
@@ -1960,11 +1994,13 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
     setIsPaused(false);
     clearInterval(syncIntervalRef.current);
     syncIntervalRef.current = setInterval(() => {
-      const t = initialPosRef.current + (Date.now() - syncStartRef.current) / 1000 * syncRateRef.current;
+      const t = initialPosRef.current + (Date.now() - syncStartRef.current) / 1000;
       // Clamp displayed time to 0 during the manual-flip pause window.
       setPlaybackTime(t < 0 ? 0 : t);
       const lrc = lyricsRef.current;
-      if (!lrc.length) return;
+      // Unsynced (plain-text) lyrics have time:null — no line highlighting;
+      // the flat auto-scroll view handles motion instead.
+      if (!lrc.length || lrc[0].time == null) return;
       // Stay at -1 (no highlight) until playback reaches the first lyric timestamp
       if (t < lrc[0].time) {
         setCurrentIndex(-1);
@@ -1990,13 +2026,13 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
     if (mode === "syncing" || mode === "confirmed") {
       nowPlayingSnapshotRef.current = {
         detectedSong, lyrics, songDuration,
-        currentTrackIndex, albumCollectionId, identifiedBy, syncRate,
+        currentTrackIndex, albumCollectionId, identifiedBy,
         turntableMatchedIdx: turntableMatchedIdxRef.current,
       };
       // Also persist to localStorage continuously so a page refresh never loses state
       try {
         const t = syncStartRef.current != null
-          ? initialPosRef.current + (Date.now() - syncStartRef.current) / 1000 * syncRateRef.current
+          ? initialPosRef.current + (Date.now() - syncStartRef.current) / 1000
           : initialPosRef.current;
         localStorage.setItem("liri_nowplaying", JSON.stringify({
           ...nowPlayingSnapshotRef.current,
@@ -2011,7 +2047,7 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
         try { localStorage.removeItem("liri_nowplaying"); } catch {}
       }
     }
-  }, [mode, detectedSong, lyrics, songDuration, currentTrackIndex, albumCollectionId, identifiedBy, syncRate]);
+  }, [mode, detectedSong, lyrics, songDuration, currentTrackIndex, albumCollectionId, identifiedBy]);
 
   // Save on navigation away (belt-and-suspenders alongside localStorage)
   useEffect(() => {
@@ -2019,7 +2055,7 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
       const snap = nowPlayingSnapshotRef.current;
       if (!snap || !snap.detectedSong) return;
       const t = syncStartRef.current != null
-        ? initialPosRef.current + (Date.now() - syncStartRef.current) / 1000 * syncRateRef.current
+        ? initialPosRef.current + (Date.now() - syncStartRef.current) / 1000
         : initialPosRef.current;
       const payload = JSON.stringify({ ...snap, playbackTime: Math.max(0, t), savedAt: Date.now() });
       try { sessionStorage.setItem("liri_nowplaying", payload); } catch {}
@@ -2045,7 +2081,7 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
     if (!saved || !saved.detectedSong || Date.now() - saved.savedAt > 60 * 60 * 1000) return; // 1hr window
     // Compute how far the record has advanced while we were on the other page
     const elapsed = (Date.now() - saved.savedAt) / 1000;
-    const restoredPos = Math.max(0, saved.playbackTime + elapsed * (saved.syncRate || 1.0));
+    const restoredPos = Math.max(0, saved.playbackTime + elapsed);
     // Restore content state
     setDetectedSong(saved.detectedSong);
     const lrc = saved.lyrics || [];
@@ -2056,7 +2092,6 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
     turntableMatchedIdxRef.current = saved.turntableMatchedIdx ?? 0;
     if (saved.albumCollectionId) { setAlbumCollectionId(saved.albumCollectionId); albumCollectionIdRef.current = saved.albumCollectionId; }
     if (saved.identifiedBy) setIdentifiedBy(saved.identifiedBy);
-    if (saved.syncRate) { setSyncRate(saved.syncRate); syncRateRef.current = saved.syncRate; }
     // Prime the timing so startSync (triggered by setMode below) lands at the right position
     syncCalcRef.current = { startPos: restoredPos, phraseOffset: 0, recStart: Date.now() };
     // Trigger startSync via the mode effect
@@ -2070,10 +2105,10 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
       syncStartRef.current = Date.now();
       clearInterval(syncIntervalRef.current); // never leak a second interval
       syncIntervalRef.current = setInterval(() => {
-        const t = initialPosRef.current + (Date.now() - syncStartRef.current) / 1000 * syncRateRef.current;
+        const t = initialPosRef.current + (Date.now() - syncStartRef.current) / 1000;
         setPlaybackTime(t);
         const lrc = lyricsRef.current;
-        if (!lrc.length) return;
+        if (!lrc.length || lrc[0].time == null) return;
         if (t < lrc[0].time) {
           setCurrentIndex(-1);
           return;
@@ -2096,32 +2131,9 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
     initialPosRef.current = Math.max(0, initialPosRef.current + s);
   };
 
-  // ── Sync settings helpers ──
-  // Re-anchor on rate change: freeze the current playback position into
-  // initialPosRef and reset syncStartRef, so the new rate applies to FUTURE
-  // elapsed time only (no position jump, but the change in speed is felt
-  // immediately going forward).
-  const adjustRate = delta => {
-    setSyncRate(r => {
-      const next = Math.round(Math.max(0.8, Math.min(1.2, r + delta)) * 1000) / 1000;
-      if (syncStartRef.current != null) {
-        const t = initialPosRef.current + (Date.now() - syncStartRef.current) / 1000 * syncRateRef.current;
-        initialPosRef.current = t;
-        syncStartRef.current = Date.now();
-      }
-      syncRateRef.current = next;
-      return next;
-    });
-  };
-  const saveSyncPrefsForAlbum = () => {
-    const prefs = { rate: syncRateRef.current, lines: visibleLines };
-    if (albumCollectionId) localStorage.setItem(`liri_sync_prefs_${albumCollectionId}`, JSON.stringify(prefs));
-    localStorage.setItem("liri_visible_lines", String(visibleLines)); // always persist lines globally
-  };
-  const saveSyncPrefsAsDefault = () => {
-    const prefs = { rate: syncRateRef.current, lines: visibleLines };
-    localStorage.setItem("liri_sync_prefs_global", JSON.stringify(prefs));
-    localStorage.setItem("liri_visible_lines", String(visibleLines));
+  // ── Unsynced auto-scroll speed control (replaces the old sync-rate setting) ──
+  const adjustScrollSpeed = delta => {
+    setScrollSpeed(s => Math.round(Math.min(4, Math.max(0.25, s + delta)) * 100) / 100);
   };
   const handleNudge = s => {
     nudge(s);
@@ -2141,14 +2153,15 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
     const onKey = e => {
       if (mode !== "syncing") return;
       if (e.target.tagName === "INPUT" || e.target.tagName === "TEXTAREA") return;
+      const unsyncedNow = lyricsRef.current.length > 0 && lyricsRef.current[0].time == null;
       if (e.key === "ArrowLeft") {
         e.preventDefault();
-        nudge(-1);
-        showKbToast("← −1s");
+        if (unsyncedNow) { adjustScrollSpeed(-0.25); showKbToast("← slower"); }
+        else { nudge(-1); showKbToast("← −1s"); }
       } else if (e.key === "ArrowRight") {
         e.preventDefault();
-        nudge(1);
-        showKbToast("→ +1s");
+        if (unsyncedNow) { adjustScrollSpeed(0.25); showKbToast("→ faster"); }
+        else { nudge(1); showKbToast("→ +1s"); }
       } else if (e.key === " ") {
         e.preventDefault();
         togglePause();
@@ -2465,7 +2478,7 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
       setLyrics(parsed);
       lyricsRef.current = parsed;
     } else if (nextTrackData?.lyrics_plain) {
-      const parsed = nextTrackData.lyrics_plain.split("\n").filter(l => l.trim()).map((text, i) => ({ time: i * 4, text }));
+      const parsed = plainToLines(nextTrackData.lyrics_plain);
       setLyrics(parsed);
       lyricsRef.current = parsed;
     } else {
@@ -2534,7 +2547,7 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
       const parsed = parseLRC(lrcEntry.lrc_raw);
       setLyrics(parsed); lyricsRef.current = parsed;
     } else if (lrcEntry?.lyrics_plain) {
-      const parsed = lrcEntry.lyrics_plain.split("\n").filter(l => l.trim()).map((text, i) => ({ time: i * 4, text }));
+      const parsed = plainToLines(lrcEntry.lyrics_plain);
       setLyrics(parsed); lyricsRef.current = parsed;
     } else {
       setLyrics([]); lyricsRef.current = [];
@@ -5350,6 +5363,7 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
       color: "rgba(255,255,255,0.7)"
     }
   }, "Resyncing\u2026")), /*#__PURE__*/React.createElement("div", {
+    ref: lyricsScrollRef,
     style: {
       overflowY: "auto",
       height: "100%",
@@ -5366,7 +5380,28 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
       userScrollingRef.current = true;
       setUserScrolling(true);
     }
-  }, lyrics.length > 0 ? /*#__PURE__*/React.createElement(React.Fragment, null, (() => {
+  }, lyrics.length > 0 ? (lyricsUnsynced ? /*#__PURE__*/React.createElement(React.Fragment, null,
+    /*#__PURE__*/React.createElement("div", {
+      style: { textAlign: "center", fontSize: "10px", letterSpacing: "2px", textTransform: "uppercase", color: "rgba(212,168,70,0.45)", marginBottom: "22px" }
+    }, "unsynced lyrics \u00b7 auto-scroll"),
+    lyrics.map((line, i) => /*#__PURE__*/React.createElement("div", {
+      key: i,
+      style: {
+        textAlign: "center",
+        padding: "7px 0",
+        fontSize: isLandscape ? "22px" : "20px",
+        fontWeight: "500",
+        color: "rgba(255,255,255,0.78)",
+        lineHeight: "1.45"
+      }
+    }, line.text)),
+    /*#__PURE__*/React.createElement("div", {
+      style: { textAlign: "center", marginTop: "48px", color: "rgba(255,255,255,0.25)", fontSize: "12px", lineHeight: "2.1" }
+    }, [detectedSong?.title, detectedSong?.artist, detectedSong?.album, "Lyrics via LRCLib"].filter(Boolean).map((t, i) =>
+      /*#__PURE__*/React.createElement("div", { key: i }, t)
+    )),
+    /*#__PURE__*/React.createElement("div", { style: { paddingBottom: "30vh" } })
+  ) : /*#__PURE__*/React.createElement(React.Fragment, null, (() => {
     // Adaptive transition: scale with how long the current line lasts.
     // Fast rap/spoken sections have lines <1s apart — a 0.4s transition
     // overlaps and looks sluggish. Cap at 0.4s, floor at 0.1s.
@@ -5433,7 +5468,7 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
         }
       }, line.text);
     });
-  })(), /*#__PURE__*/React.createElement("div", { style: { paddingBottom: "30vh" } })) : /*#__PURE__*/React.createElement("div", {
+  })(), /*#__PURE__*/React.createElement("div", { style: { paddingBottom: "30vh" } }))) : /*#__PURE__*/React.createElement("div", {
     style: {
       textAlign: "center",
       color: "rgba(255,255,255,0.2)",
@@ -5498,15 +5533,44 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
       color: isResyncing ? "#d4a846" : "rgba(255,255,255,0.18)",
       animation: isResyncing ? "pulse 1.2s ease-in-out infinite" : "none"
     }
-  }, isResyncing ? "↻ listening for resync…" : "← early · behind →"), /*#__PURE__*/React.createElement("div", {
+  }, isResyncing ? "↻ listening for resync…" : lyricsUnsynced ? "unsynced · adjust scroll speed" : "← early · behind →"), /*#__PURE__*/React.createElement("div", {
     style: {
       display: "flex",
       justifyContent: "center",
+      alignItems: "center",
       flexWrap: "wrap",
       gap: "6px",
       marginBottom: "10px"
     }
-  }, /*#__PURE__*/React.createElement("div", {
+  }, lyricsUnsynced ? /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("button", {
+    onClick: () => adjustScrollSpeed(-0.25),
+    style: {
+      background: "rgba(255,255,255,0.07)",
+      border: "1px solid rgba(255,255,255,0.15)",
+      color: "rgba(255,255,255,0.7)",
+      padding: isLandscape ? "7px 28px" : "9px 22px",
+      borderRadius: "20px",
+      cursor: "pointer",
+      fontSize: isLandscape ? "13px" : "14px",
+      fontFamily: "inherit",
+      fontWeight: "600"
+    }
+  }, "− slower"), /*#__PURE__*/React.createElement("span", {
+    style: { color: "rgba(255,255,255,0.5)", fontSize: "13px", fontWeight: "600", minWidth: "48px", textAlign: "center" }
+  }, scrollSpeed + "×"), /*#__PURE__*/React.createElement("button", {
+    onClick: () => adjustScrollSpeed(0.25),
+    style: {
+      background: "rgba(255,255,255,0.07)",
+      border: "1px solid rgba(255,255,255,0.15)",
+      color: "rgba(255,255,255,0.7)",
+      padding: isLandscape ? "7px 28px" : "9px 22px",
+      borderRadius: "20px",
+      cursor: "pointer",
+      fontSize: isLandscape ? "13px" : "14px",
+      fontFamily: "inherit",
+      fontWeight: "600"
+    }
+  }, "+ faster")) : /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("div", {
     style: {
       position: "relative"
     },
@@ -5584,7 +5648,7 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
       animation: "fade-up 0.12s ease",
       boxShadow: "0 4px 16px rgba(0,0,0,0.5)"
     }
-  }, "+0.5s"))), /*#__PURE__*/React.createElement("div", {
+  }, "+0.5s")))), /*#__PURE__*/React.createElement("div", {
     style: {
       display: "flex",
       justifyContent: "center",
@@ -5649,89 +5713,7 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
       cursor: "pointer",
       fontFamily: "inherit"
     }
-  }, "Wrong song?")), false && /*#__PURE__*/React.createElement("div", {
-    style: {
-      position: "fixed",
-      bottom: isLandscape ? "20px" : "170px",
-      left: "50%",
-      transform: "translateX(-50%)",
-      zIndex: 200,
-      background: "rgba(10,10,20,0.95)",
-      backdropFilter: "blur(24px)",
-      WebkitBackdropFilter: "blur(24px)",
-      border: "1px solid rgba(255,255,255,0.12)",
-      borderRadius: "18px",
-      padding: "18px 20px 16px",
-      width: "min(320px, 88vw)",
-      boxShadow: "0 8px 40px rgba(0,0,0,0.6)"
-    }
-  },
-    // Header row
-    /*#__PURE__*/React.createElement("div", {
-      style: { display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "16px" }
-    },
-      /*#__PURE__*/React.createElement("span", { style: { color: "rgba(255,255,255,0.6)", fontSize: "11px", letterSpacing: "1.5px", textTransform: "uppercase" } }, "Sync Settings"),
-      /*#__PURE__*/React.createElement("button", {
-        onClick: () => setShowSyncSettings(false),
-        style: { background: "none", border: "none", color: "rgba(255,255,255,0.3)", fontSize: "18px", cursor: "pointer", lineHeight: 1, padding: "0 2px" }
-      }, "×")
-    ),
-    // Speed control
-    /*#__PURE__*/React.createElement("div", { style: { marginBottom: "18px" } },
-      /*#__PURE__*/React.createElement("div", { style: { display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "10px" } },
-        /*#__PURE__*/React.createElement("span", { style: { color: "rgba(255,255,255,0.5)", fontSize: "12px" } }, "Lyric speed"),
-        /*#__PURE__*/React.createElement("span", { style: { color: syncRate === 1.0 ? "rgba(255,255,255,0.35)" : "#d4a846", fontSize: "12px", fontWeight: "600" } },
-          syncRate === 1.0 ? "normal" : (syncRate > 1 ? "+" : "") + ((syncRate - 1) * 100).toFixed(1) + "%"
-        )
-      ),
-      /*#__PURE__*/React.createElement("div", { style: { display: "flex", alignItems: "center", gap: "8px" } },
-        /*#__PURE__*/React.createElement("button", {
-          onClick: () => adjustRate(-0.02),
-          style: { flex: 1, background: "rgba(255,255,255,0.07)", border: "1px solid rgba(255,255,255,0.12)", color: "rgba(255,255,255,0.8)", borderRadius: "10px", padding: "8px", cursor: "pointer", fontSize: "16px", fontFamily: "inherit" }
-        }, "−"),
-        /*#__PURE__*/React.createElement("span", { style: { color: "white", fontSize: "13px", fontWeight: "700", width: "52px", textAlign: "center" } },
-          syncRate.toFixed(2) + "×"
-        ),
-        /*#__PURE__*/React.createElement("button", {
-          onClick: () => adjustRate(0.02),
-          style: { flex: 1, background: "rgba(255,255,255,0.07)", border: "1px solid rgba(255,255,255,0.12)", color: "rgba(255,255,255,0.8)", borderRadius: "10px", padding: "8px", cursor: "pointer", fontSize: "16px", fontFamily: "inherit" }
-        }, "+"),
-        syncRate !== 1.0 && /*#__PURE__*/React.createElement("button", {
-          onClick: () => adjustRate(1.0 - syncRate),
-          style: { background: "none", border: "1px solid rgba(255,255,255,0.1)", color: "rgba(255,255,255,0.3)", borderRadius: "10px", padding: "8px 10px", cursor: "pointer", fontSize: "11px", fontFamily: "inherit" }
-        }, "reset")
-      ),
-      /*#__PURE__*/React.createElement("p", { style: { color: "rgba(255,255,255,0.25)", fontSize: "11px", margin: "8px 0 0", textAlign: "center" } },
-        "Each tap adjusts speed by 2%. Try − if lyrics run ahead."
-      )
-    ),
-    // Visible lines slider
-    /*#__PURE__*/React.createElement("div", { style: { marginBottom: "16px" } },
-      /*#__PURE__*/React.createElement("div", { style: { display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "8px" } },
-        /*#__PURE__*/React.createElement("span", { style: { color: "rgba(255,255,255,0.5)", fontSize: "12px" } }, "Lines on screen"),
-        /*#__PURE__*/React.createElement("span", { style: { color: "white", fontSize: "12px", fontWeight: "600" } }, visibleLines)
-      ),
-      /*#__PURE__*/React.createElement("input", {
-        type: "range", min: 3, max: 15, value: visibleLines,
-        onChange: e => setVisibleLines(+e.target.value),
-        style: { width: "100%", accentColor: "#d4a846" }
-      }),
-      visibleLines < 5 && /*#__PURE__*/React.createElement("p", { style: { color: "rgba(212,168,70,0.7)", fontSize: "11px", margin: "7px 0 0" } },
-        "⚠️ Fewer lines means less context — we suggest adjusting speed too so you can still follow along."
-      )
-    ),
-    // Save buttons
-    /*#__PURE__*/React.createElement("div", { style: { display: "flex", gap: "8px" } },
-      /*#__PURE__*/React.createElement("button", {
-        onClick: () => { saveSyncPrefsForAlbum(); setShowSyncSettings(false); },
-        style: { flex: 1, background: "rgba(212,168,70,0.1)", border: "1px solid rgba(212,168,70,0.25)", color: "rgba(212,168,70,0.85)", borderRadius: "12px", padding: "9px 8px", cursor: "pointer", fontSize: "11px", fontWeight: "600", fontFamily: "inherit" }
-      }, "Save for this album"),
-      /*#__PURE__*/React.createElement("button", {
-        onClick: () => { saveSyncPrefsAsDefault(); setShowSyncSettings(false); },
-        style: { flex: 1, background: "rgba(255,255,255,0.05)", border: "1px solid rgba(255,255,255,0.1)", color: "rgba(255,255,255,0.5)", borderRadius: "12px", padding: "9px 8px", cursor: "pointer", fontSize: "11px", fontWeight: "600", fontFamily: "inherit" }
-      }, "Save as default")
-    )
-  ), (() => {
+  }, "Wrong song?")), (() => {
     // Prefer library (turntableTracksRef) over iTunes (albumTracks) whenever available
     const hasTT = turntableAlbum && turntableTracksRef.current.length > 0 && turntableMatchedIdxRef.current >= 0;
     const isTT = !vinylMode && hasTT;
