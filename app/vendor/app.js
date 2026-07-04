@@ -370,7 +370,7 @@
     }
   };
   var sb = supabase.createClient("https://xjdjpaxgymgbvcwmvorc.supabase.co", "sb_publishable_C-NBnfg0ltAoUi46XQTUjA_ozjZW_Nd", { auth: { storage: liriAuthStorage } });
-  var APP_VERSION = "1.3.5";
+  var APP_VERSION = "1.3.6";
   var plainToLines = (txt) => (txt || "").split("\n").filter((l) => l.trim()).map((text) => ({ time: null, text }));
   var IS_IOS = !!window.Capacitor;
   var TRANSCRIBE_PROXY = window.Capacitor ? "https://www.getliri.com/api/transcribe" : "/api/transcribe";
@@ -1461,6 +1461,17 @@
         block: "center"
       });
     }, [currentIndex, mode, lyricsUnsynced]);
+    useEffect3(() => {
+      if (!isLandscape || mode !== "syncing" || lyricsUnsynced) return;
+      let raf, start;
+      const pin = (ts) => {
+        if (start == null) start = ts;
+        if (!userScrollingRef.current) currentLineRef.current?.scrollIntoView({ block: "center" });
+        if (ts - start < 450) raf = requestAnimationFrame(pin);
+      };
+      raf = requestAnimationFrame(pin);
+      return () => cancelAnimationFrame(raf);
+    }, [controlsVisible, isLandscape, mode, lyricsUnsynced]);
     useEffect3(() => {
       if (mode !== "syncing" || !lyricsUnsynced || isPaused) return;
       const el = lyricsScrollRef.current;

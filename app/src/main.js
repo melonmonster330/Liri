@@ -28,7 +28,7 @@ const liriAuthStorage = {
   removeItem: k => { try { sessionStorage.removeItem(k); } catch {} try { localStorage.removeItem(k); } catch {} },
 };
 const sb = supabase.createClient("https://xjdjpaxgymgbvcwmvorc.supabase.co", "sb_publishable_C-NBnfg0ltAoUi46XQTUjA_ozjZW_Nd", { auth: { storage: liriAuthStorage } });
-const APP_VERSION = "1.3.5";
+const APP_VERSION = "1.3.6";
 // Plain (unsynced) lyrics carry no timestamps — time:null marks them so the
 // player renders the flat auto-scroll view instead of pretending to be synced.
 const plainToLines = txt => (txt || "").split("\n").filter(l => l.trim()).map(text => ({ time: null, text }));
@@ -1336,6 +1336,24 @@ function Liri() {
       block: "center"
     });
   }, [currentIndex, mode, lyricsUnsynced]);
+
+  // ── Keep the current line centered while the menu fades in/out (landscape) ──
+  // Hiding/showing the menu animates the lyrics column's width and font size
+  // over 0.35s, which reflows the lines vertically. Without this the current
+  // line drifts off-screen mid-transition and only snaps back on the next line
+  // change. Pin it to center every frame (instant scroll — no animation to
+  // fight) for the duration of the transition so it stays put throughout.
+  useEffect(() => {
+    if (!isLandscape || mode !== "syncing" || lyricsUnsynced) return;
+    let raf, start;
+    const pin = ts => {
+      if (start == null) start = ts;
+      if (!userScrollingRef.current) currentLineRef.current?.scrollIntoView({ block: "center" });
+      if (ts - start < 450) raf = requestAnimationFrame(pin);
+    };
+    raf = requestAnimationFrame(pin);
+    return () => cancelAnimationFrame(raf);
+  }, [controlsVisible, isLandscape, mode, lyricsUnsynced]);
 
   // ── Unsynced auto-scroll: glide the flat lyric page at a steady rate ──
   // Base rate spreads the full scroll height over the track duration (guessing
