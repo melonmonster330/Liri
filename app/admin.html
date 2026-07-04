@@ -137,9 +137,12 @@
   .lrc-chevron { font-size: 16px; color: var(--muted); flex-shrink: 0; transition: transform 0.2s; }
   .lrc-submit { display: none; padding-bottom: 12px; }
   .lrc-submit.open { display: block; }
-  .lrc-links { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 10px; }
+  .lrc-links { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-bottom: 10px; }
   .lrc-link { font-size: 11px; color: var(--gold); background: rgba(212,168,70,0.08); border: 1px solid rgba(212,168,70,0.2); border-radius: 20px; padding: 4px 10px; text-decoration: none; }
   .lrc-link:hover { background: rgba(212,168,70,0.15); }
+  .lrc-search { font-size: 12px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; color: rgba(255,255,255,0.75); background: rgba(255,255,255,0.05); border: 1px solid rgba(255,255,255,0.12); border-radius: 8px; padding: 4px 10px; cursor: pointer; user-select: all; }
+  .lrc-search:hover { background: rgba(255,255,255,0.09); }
+  .lrc-search.copied { color: var(--gold); border-color: rgba(212,168,70,0.4); }
   .lrc-textarea { width: 100%; background: rgba(0,0,0,0.2); border: 1px solid var(--border); border-radius: 8px; color: #f0e6d3; padding: 10px 12px; font-size: 12px; font-family: ui-monospace, monospace; resize: vertical; box-sizing: border-box; outline: none; }
   .lrc-textarea:focus { border-color: rgba(212,168,70,0.4); }
   .lrc-submit-btn { background: linear-gradient(135deg,#d4a846,#c9807a); color: #080810; border: none; border-radius: 10px; padding: 9px 18px; font-size: 13px; font-weight: 700; cursor: pointer; font-family: inherit; margin-top: 8px; }
@@ -819,8 +822,13 @@ if (pw) {
   load();
 }
 
-// Auto-refresh every 60s
-setInterval(() => { if (pw) load(); }, 60000);
+// Auto-refresh the dashboard every 60s — but only when it's actually showing.
+// If the admin has drilled into a sub-view (missing lyrics, user detail, an
+// album, etc. — all of which render a "← Back to dashboard" button), leave it
+// alone so a refresh doesn't yank them out of what they're doing.
+setInterval(() => {
+  if (pw && !document.querySelector("#content .back-btn")) load();
+}, 60000);
 
 // ── Missing Lyrics ────────────────────────────────────────────────────────────
 
@@ -850,12 +858,14 @@ async function openMissingLyrics() {
     albumMap[cid].tracks.push(t);
   });
 
-  const searchLinks = (name, artist, album) => [
-    { label: "lrclib",    href: `https://lrclib.net/search?q=${encodeURIComponent(name + " " + artist)}` },
-    { label: "Megalobiz", href: `https://www.megalobiz.com/search/all?qry=${encodeURIComponent(artist + " " + name + " lrc")}` },
-    { label: "Syair",     href: `https://www.syair.info/search?q=${encodeURIComponent(artist + " " + name)}` },
-    { label: "Lyricsify", href: `https://www.lyricsify.com/search?q=${encodeURIComponent(artist + " " + name)}` },
-  ].map(l => `<a class="lrc-link" href="${l.href}" target="_blank">${l.label} ↗</a>`).join("");
+  // One link to lrclib's home page + a copy-paste search string (song + artist)
+  // to drop into any search engine when hunting down an LRC.
+  const searchLinks = (name, artist) => {
+    const q = `${name} ${artist}`.trim();
+    const qAttr = esc(q).replace(/"/g, "&quot;");
+    return `<a class="lrc-link" href="https://lrclib.net" target="_blank">lrclib.net ↗</a>`
+         + `<span class="lrc-search" onclick="copySearch(this)" data-q="${qAttr}" title="Click to copy">${esc(q)} ⧉</span>`;
+  };
 
   const fmt_dur = ms => ms ? `${Math.floor(ms/60000)}:${String(Math.floor((ms%60000)/1000)).padStart(2,"0")}` : "";
 
@@ -891,7 +901,7 @@ async function openMissingLyrics() {
                 <div class="lrc-chevron" id="lrc-tc-${tid}">›</div>
               </div>
               <div class="lrc-submit" id="lrc-s-${tid}">
-                <div class="lrc-links">${searchLinks(t.track_name, t.artist_name, t.album_name)}</div>
+                <div class="lrc-links">${searchLinks(t.track_name, t.artist_name)}</div>
                 <textarea class="lrc-textarea" id="lrc-txt-${tid}" rows="6"
                   placeholder="[00:12.34] First line\n[00:16.00] Second line…"></textarea>
                 <div style="display:flex;align-items:center;gap:12px">
@@ -908,6 +918,25 @@ async function openMissingLyrics() {
       </div>`;
     }).join("")}
   `;
+}
+
+// Copy the search string to the clipboard (click-to-copy chip in Missing Lyrics)
+async function copySearch(el) {
+  const text = el.dataset.q || el.textContent.replace(/\s*⧉$/, "");
+  try {
+    await navigator.clipboard.writeText(text);
+    const prev = el.textContent;
+    el.textContent = "copied ✓";
+    el.classList.add("copied");
+    setTimeout(() => { el.textContent = prev; el.classList.remove("copied"); }, 1200);
+  } catch (e) {
+    // Clipboard blocked — select the text so it can be copied manually
+    const range = document.createRange();
+    range.selectNodeContents(el);
+    const sel = getSelection();
+    sel.removeAllRanges();
+    sel.addRange(range);
+  }
 }
 
 function toggleLrcAlbum(cid) {

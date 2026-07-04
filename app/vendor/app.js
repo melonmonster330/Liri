@@ -370,7 +370,7 @@
     }
   };
   var sb = supabase.createClient("https://xjdjpaxgymgbvcwmvorc.supabase.co", "sb_publishable_C-NBnfg0ltAoUi46XQTUjA_ozjZW_Nd", { auth: { storage: liriAuthStorage } });
-  var APP_VERSION = "1.3.7";
+  var APP_VERSION = "1.3.8";
   var plainToLines = (txt) => (txt || "").split("\n").filter((l) => l.trim()).map((text) => ({ time: null, text }));
   var IS_IOS = !!window.Capacitor;
   var TRANSCRIBE_PROXY = window.Capacitor ? "https://www.getliri.com/api/transcribe" : "/api/transcribe";
