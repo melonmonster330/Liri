@@ -289,10 +289,14 @@ async function getAdminStats(days = 3) {
   }
 
   // Parallel: exact-count queries for totals + data queries for breakdowns
+  // A "listen" = an album load (any event whose source isn't auto_advance).
+  // auto_advance rows are the per-track continuations of a side, so they're
+  // excluded from listens and only counted in the separate all-rows songs total.
   const [
     totalPlaysResp,
     playsWinResp,
     plays7dResp,
+    totalSongsResp,
     totalLibResp,
     eventsResp,
     libResp,
@@ -302,9 +306,12 @@ async function getAdminStats(days = 3) {
     bugsResp,
     bugsBacklogResp,
   ] = await Promise.all([
+    // Null-safe "not auto_advance" — legacy rows with a null source still count
+    // as listens (matches stats.html's JS `source !== "auto_advance"`).
+    sbGet("listening_events?select=id&or=(source.is.null,source.neq.auto_advance)&limit=1",                                  { "Prefer": "count=exact" }),
+    sbGet(`listening_events?select=id&or=(source.is.null,source.neq.auto_advance)${dWin ? `&listened_at=gte.${dWin}` : ""}&limit=1`, { "Prefer": "count=exact" }),
+    sbGet(`listening_events?select=id&or=(source.is.null,source.neq.auto_advance)&listened_at=gte.${d7}&limit=1`,                  { "Prefer": "count=exact" }),
     sbGet("listening_events?select=id&limit=1",                                  { "Prefer": "count=exact" }),
-    sbGet(`listening_events?select=id${dWin ? `&listened_at=gte.${dWin}` : ""}&limit=1`, { "Prefer": "count=exact" }),
-    sbGet(`listening_events?select=id&listened_at=gte.${d7}&limit=1`,                  { "Prefer": "count=exact" }),
     sbGet("user_vinyl_library?select=id&limit=1",                                { "Prefer": "count=exact" }),
     sbGet("listening_events?select=user_id,platform,source,album_name,artist_name,listened_at&order=listened_at.desc&limit=5000"),
     sbGet("user_vinyl_library?select=user_id&limit=20000"),
@@ -333,10 +340,11 @@ async function getAdminStats(days = 3) {
   const uniqueLibUsers = new Set(libRows.map(r => r.user_id)).size;
   const avgAlbums     = uniqueLibUsers > 0 ? (totalAlbums / uniqueLibUsers).toFixed(1) : 0;
 
-  // Plays — exact counts from count=exact headers
+  // Listens (album loads) + songs (all rows) — exact counts from count headers
   const totalPlays  = parseInt(totalPlaysResp.headers?.["content-range"]?.split("/")[1] || "0", 10);
   const playsWindow = parseInt(playsWinResp.headers?.["content-range"]?.split("/")[1] || "0", 10);
   const plays7d     = parseInt(plays7dResp.headers?.["content-range"]?.split("/")[1] || "0", 10);
+  const totalSongs  = parseInt(totalSongsResp.headers?.["content-range"]?.split("/")[1] || "0", 10);
 
   // Platform / source split from recent-events sample (filtered to selected window)
   const allEvents  = Array.isArray(eventsResp.body) ? eventsResp.body : [];
@@ -385,7 +393,7 @@ async function getAdminStats(days = 3) {
   return {
     users:    { total: totalUsers, new7d: newUsers7d, new30d: newUsers30d, premium: premiumUsers, recentSignups },
     library:  { totalAlbums, uniqueUsers: uniqueLibUsers, avgAlbums },
-    plays:    { total: totalPlays, window: playsWindow, last7d: plays7d, web: webPlays, ios: iosPlays, recognition: recogPlays, autoAdvance: autoPlays },
+    plays:    { total: totalPlays, window: playsWindow, last7d: plays7d, songsTotal: totalSongs, web: webPlays, ios: iosPlays, recognition: recogPlays, autoAdvance: autoPlays },
     days,
     topAlbums,
     topUsers,

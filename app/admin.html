@@ -293,14 +293,14 @@ function render(d) {
 
     <div class="grid">
       <div class="card card-gold">
-        <div class="card-label">Plays (${rangeLabel})</div>
+        <div class="card-label">Listens (${rangeLabel})</div>
         <div class="card-value">${fmt(plays.window)}</div>
-        <div class="card-sub">${fmt(plays.total)} all time</div>
+        <div class="card-sub">${fmt(plays.total)} all time · ${fmt(plays.songsTotal)} songs</div>
       </div>
       <div class="card">
-        <div class="card-label">Plays (last 7d)</div>
+        <div class="card-label">Listens (last 7d)</div>
         <div class="card-value">${fmt(plays.last7d)}</div>
-        <div class="card-sub">rolling 7 days</div>
+        <div class="card-sub">album loads · rolling 7 days</div>
       </div>
       <div class="card">
         <div class="card-label">Catalogue</div>
