@@ -94,12 +94,16 @@ function sbUpsertBatch(rows) {
 }
 
 // ── lrclib PoW solver ─────────────────────────────────────────────────────────
-// find nonce where SHA256(`${prefix}:${nonce}`) < target (BigInt compare)
+// lrclib hashes the CONCATENATION `prefix + nonce` (no separator) and checks it
+// against the target; the submitted token is formatted `prefix:nonce`. Hashing
+// `prefix:nonce` here (with the colon) is what produced "publish token is
+// incorrect" — the server recomputes SHA256(prefix+nonce) and it fails the
+// difficulty check. Find nonce where SHA256(`${prefix}${nonce}`) < target.
 function solveChallenge(prefix, target) {
   const targetBig = BigInt("0x" + target);
   let nonce = 0;
   while (true) {
-    const hash = crypto.createHash("sha256").update(`${prefix}:${nonce}`).digest("hex");
+    const hash = crypto.createHash("sha256").update(`${prefix}${nonce}`).digest("hex");
     if (BigInt("0x" + hash) < targetBig) return nonce;
     if (++nonce > 10000000) throw new Error("PoW took too long");
   }
