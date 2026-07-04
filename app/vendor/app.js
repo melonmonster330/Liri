@@ -370,7 +370,7 @@
     }
   };
   var sb = supabase.createClient("https://xjdjpaxgymgbvcwmvorc.supabase.co", "sb_publishable_C-NBnfg0ltAoUi46XQTUjA_ozjZW_Nd", { auth: { storage: liriAuthStorage } });
-  var APP_VERSION = "1.3.4";
+  var APP_VERSION = "1.3.5";
   var plainToLines = (txt) => (txt || "").split("\n").filter((l) => l.trim()).map((text) => ({ time: null, text }));
   var IS_IOS = !!window.Capacitor;
   var TRANSCRIBE_PROXY = window.Capacitor ? "https://www.getliri.com/api/transcribe" : "/api/transcribe";
@@ -423,6 +423,9 @@
     const [controlsVisible, setControlsVisible] = useState2(true);
     const controlsHideTimerRef = useRef2(null);
     const railW = Math.min(270, Math.max(190, Math.round(winW * 0.26)));
+    const railNarrow = railW < 240;
+    const railArtSize = railNarrow ? 44 : 56;
+    const railTitleFont = railNarrow ? 14 : 15;
     const menuOpen = isLandscape && controlsVisible;
     const lyricAreaW = menuOpen ? Math.min(760, Math.max(260, winW - railW - 48)) : Math.min(820, winW - 48);
     const lyricAreaLeft = menuOpen ? Math.max(railW + 24, Math.round((winW - lyricAreaW) / 2)) : Math.round((winW - lyricAreaW) / 2);
@@ -5158,14 +5161,20 @@ Move closer to your speakers and try again.`);
         flexShrink: 0
       }
     }, /* @__PURE__ */ React.createElement("div", {
+      // Now-playing block. Landscape \u2192 stacked column (artwork over a full-width,
+      // wrapping title) so the name/artist stay readable even in a narrow rail; the
+      // 52px top bar already carries a back button in landscape, so the redundant
+      // one is dropped here. Portrait \u2192 the original single-row header.
       style: {
         display: "flex",
-        alignItems: "center",
+        flexDirection: isLandscape ? "column" : "row",
+        alignItems: isLandscape ? "flex-start" : "center",
         gap: "10px",
         flex: 1,
-        minWidth: 0
+        minWidth: 0,
+        width: isLandscape ? "100%" : void 0
       }
-    }, /* @__PURE__ */ React.createElement("button", {
+    }, !isLandscape && /* @__PURE__ */ React.createElement("button", {
       onClick: reset,
       style: {
         background: "none",
@@ -5182,18 +5191,30 @@ Move closer to your speakers and try again.`);
       src: artwork,
       alt: "",
       style: {
-        width: "36px",
-        height: "36px",
+        width: (isLandscape ? railArtSize : 36) + "px",
+        height: (isLandscape ? railArtSize : 36) + "px",
         borderRadius: "8px",
         flexShrink: 0,
         boxShadow: "0 4px 16px rgba(0,0,0,0.5)"
       }
     }), /* @__PURE__ */ React.createElement("div", {
       style: {
-        minWidth: 0
+        minWidth: 0,
+        width: isLandscape ? "100%" : void 0
       }
     }, /* @__PURE__ */ React.createElement("div", {
-      style: {
+      // Title wraps to 2 lines in a narrow landscape rail; single-line ellipsis in
+      // the portrait header row.
+      style: isLandscape ? {
+        fontSize: railTitleFont + "px",
+        fontWeight: "600",
+        color: "#f0e6d3",
+        display: "-webkit-box",
+        WebkitLineClamp: 2,
+        WebkitBoxOrient: "vertical",
+        overflow: "hidden",
+        lineHeight: 1.3
+      } : {
         fontSize: "14px",
         fontWeight: "600",
         color: "#f0e6d3",
@@ -5202,7 +5223,15 @@ Move closer to your speakers and try again.`);
         whiteSpace: "nowrap"
       }
     }, detectedSong?.title), /* @__PURE__ */ React.createElement("div", {
-      style: {
+      style: isLandscape ? {
+        fontSize: "12px",
+        color: "rgba(255,255,255,0.4)",
+        marginTop: "2px",
+        overflow: "hidden",
+        display: "-webkit-box",
+        WebkitLineClamp: 1,
+        WebkitBoxOrient: "vertical"
+      } : {
         fontSize: "12px",
         color: "rgba(255,255,255,0.4)",
         overflow: "hidden",

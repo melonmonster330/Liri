@@ -28,7 +28,7 @@ const liriAuthStorage = {
   removeItem: k => { try { sessionStorage.removeItem(k); } catch {} try { localStorage.removeItem(k); } catch {} },
 };
 const sb = supabase.createClient("https://xjdjpaxgymgbvcwmvorc.supabase.co", "sb_publishable_C-NBnfg0ltAoUi46XQTUjA_ozjZW_Nd", { auth: { storage: liriAuthStorage } });
-const APP_VERSION = "1.3.4";
+const APP_VERSION = "1.3.5";
 // Plain (unsynced) lyrics carry no timestamps — time:null marks them so the
 // player renders the flat auto-scroll view instead of pretending to be synced.
 const plainToLines = txt => (txt || "").split("\n").filter(l => l.trim()).map(text => ({ time: null, text }));
@@ -98,14 +98,21 @@ function Liri() {
   }, []);
   const [controlsVisible, setControlsVisible] = useState(true);
   const controlsHideTimerRef = useRef(null);
-  // ── Landscape player geometry — all dynamic, no fixed breakpoints ──
-  // The left panels (title/side-info on top, control rail on bottom) share the
-  // same width (railW) and must never cover the lyrics. When the menu is up the
-  // lyrics center in the space to the RIGHT of the rail (equal to true centering
-  // on wide/fullscreen windows, so that look is untouched). When the menu fades
-  // away the rail is gone — the lyrics reclaim the FULL width, re-center, and
-  // grow a touch. Everything transitions smoothly with the 0.35s menu fade.
+  // ── Landscape player geometry — every dynamic size lives here, in one place ──
+  // Keep all related sizing together so a tweak to one dimension sits next to the
+  // others it interacts with. No fixed breakpoints — everything scales off winW.
+  //
+  // Left rail: the title/side-info panel (top) and the control rail (bottom)
+  //   share width `railW` and must never cover the lyrics.
+  // Lyrics: when the menu is up they center in the space to the RIGHT of the rail
+  //   (equal to true centering on wide/fullscreen windows, so that look is
+  //   untouched). When the menu fades away the rail is gone, so they reclaim the
+  //   FULL width, re-center, and grow a touch. All of it transitions with the
+  //   0.35s menu fade.
   const railW = Math.min(270, Math.max(190, Math.round(winW * 0.26)));
+  const railNarrow = railW < 240;                     // tighten padding + art when cramped
+  const railArtSize = railNarrow ? 44 : 56;           // now-playing artwork in the side panel
+  const railTitleFont = railNarrow ? 14 : 15;         // song title in the side panel
   const menuOpen = isLandscape && controlsVisible;
   const lyricAreaW = menuOpen
     ? Math.min(760, Math.max(260, winW - railW - 48))
@@ -5191,14 +5198,20 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
       flexShrink: 0
     }
   }, /*#__PURE__*/React.createElement("div", {
+    // Now-playing block. Landscape \u2192 stacked column (artwork over a full-width,
+    // wrapping title) so the name/artist stay readable even in a narrow rail; the
+    // 52px top bar already carries a back button in landscape, so the redundant
+    // one is dropped here. Portrait \u2192 the original single-row header.
     style: {
       display: "flex",
-      alignItems: "center",
+      flexDirection: isLandscape ? "column" : "row",
+      alignItems: isLandscape ? "flex-start" : "center",
       gap: "10px",
       flex: 1,
-      minWidth: 0
+      minWidth: 0,
+      width: isLandscape ? "100%" : undefined
     }
-  }, /*#__PURE__*/React.createElement("button", {
+  }, !isLandscape && /*#__PURE__*/React.createElement("button", {
     onClick: reset,
     style: {
       background: "none",
@@ -5215,18 +5228,30 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
     src: artwork,
     alt: "",
     style: {
-      width: "36px",
-      height: "36px",
+      width: (isLandscape ? railArtSize : 36) + "px",
+      height: (isLandscape ? railArtSize : 36) + "px",
       borderRadius: "8px",
       flexShrink: 0,
       boxShadow: "0 4px 16px rgba(0,0,0,0.5)"
     }
   }), /*#__PURE__*/React.createElement("div", {
     style: {
-      minWidth: 0
+      minWidth: 0,
+      width: isLandscape ? "100%" : undefined
     }
   }, /*#__PURE__*/React.createElement("div", {
-    style: {
+    // Title wraps to 2 lines in a narrow landscape rail; single-line ellipsis in
+    // the portrait header row.
+    style: isLandscape ? {
+      fontSize: railTitleFont + "px",
+      fontWeight: "600",
+      color: "#f0e6d3",
+      display: "-webkit-box",
+      WebkitLineClamp: 2,
+      WebkitBoxOrient: "vertical",
+      overflow: "hidden",
+      lineHeight: 1.3
+    } : {
       fontSize: "14px",
       fontWeight: "600",
       color: "#f0e6d3",
@@ -5235,7 +5260,15 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
       whiteSpace: "nowrap"
     }
   }, detectedSong?.title), /*#__PURE__*/React.createElement("div", {
-    style: {
+    style: isLandscape ? {
+      fontSize: "12px",
+      color: "rgba(255,255,255,0.4)",
+      marginTop: "2px",
+      overflow: "hidden",
+      display: "-webkit-box",
+      WebkitLineClamp: 1,
+      WebkitBoxOrient: "vertical"
+    } : {
       fontSize: "12px",
       color: "rgba(255,255,255,0.4)",
       overflow: "hidden",
