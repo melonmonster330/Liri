@@ -385,6 +385,20 @@
     }
   })();
   var IS_IOS = !!window.Capacitor;
+  var tabBarHiddenSignal = {
+    value: false,
+    listeners: /* @__PURE__ */ new Set(),
+    set(v) {
+      if (v !== this.value) {
+        this.value = v;
+        this.listeners.forEach((fn) => fn(v));
+      }
+    },
+    subscribe(fn) {
+      this.listeners.add(fn);
+      return () => this.listeners.delete(fn);
+    }
+  };
   var TRANSCRIBE_PROXY = window.Capacitor ? "https://www.getliri.com/api/transcribe" : "/api/transcribe";
   var ITUNES_PROXY = window.Capacitor ? "https://www.getliri.com/api/itunes-lookup" : "/api/itunes-lookup";
   var styleEl = document.createElement("style");
@@ -432,10 +446,10 @@
       window.addEventListener("resize", onResize);
       return () => window.removeEventListener("resize", onResize);
     }, []);
-    const [controlsVisible2, setControlsVisible] = useState2(true);
+    const [controlsVisible, setControlsVisible] = useState2(true);
     const controlsHideTimerRef = useRef2(null);
     const railW = Math.min(270, Math.max(190, Math.round(winW * 0.26)));
-    const menuOpen = isLandscape && controlsVisible2;
+    const menuOpen = isLandscape && controlsVisible;
     const lyricAreaW = menuOpen ? Math.min(760, Math.max(260, winW - railW - 48)) : Math.min(820, winW - 48);
     const lyricAreaLeft = menuOpen ? Math.max(railW + 24, Math.round((winW - lyricAreaW) / 2)) : Math.round((winW - lyricAreaW) / 2);
     const lyricFontScale = menuOpen ? 1.1 * Math.max(0.72, Math.min(1, lyricAreaW / 640)) : 1.25;
@@ -1500,7 +1514,7 @@
       };
       raf = requestAnimationFrame(pin);
       return () => cancelAnimationFrame(raf);
-    }, [controlsVisible2, isLandscape, mode, lyricsUnsynced]);
+    }, [controlsVisible, isLandscape, mode, lyricsUnsynced]);
     useEffect3(() => {
       if (mode !== "syncing" || !lyricsUnsynced || isPaused) return;
       const el = lyricsScrollRef.current;
@@ -2770,6 +2784,9 @@ Move closer to your speakers and try again.`);
       };
     }, [keepScreenAwake]);
     useEffect3(() => {
+      tabBarHiddenSignal.set(IS_IOS && mode === "syncing" && !controlsVisible);
+    }, [mode, controlsVisible]);
+    useEffect3(() => {
       if (mode === "syncing" && (isLandscape || IS_IOS)) {
         bumpControls();
       } else {
@@ -3289,7 +3306,7 @@ Move closer to your speakers and try again.`);
         }, "Forgot your password?")))
       ))));
     }
-    const isSyncing2 = mode === "syncing";
+    const isSyncing = mode === "syncing";
     const artwork = detectedSong?.artwork;
     return /* @__PURE__ */ React.createElement("div", {
       style: {
@@ -3310,7 +3327,7 @@ Move closer to your speakers and try again.`);
         backgroundPosition: "center",
         filter: "blur(80px) brightness(0.15) saturate(2)",
         transition: "opacity 1s ease",
-        opacity: isSyncing2 ? 1 : 0.4
+        opacity: isSyncing ? 1 : 0.4
       }
     }), /* @__PURE__ */ React.createElement("div", {
       style: {
@@ -5141,7 +5158,7 @@ Move closer to your speakers and try again.`);
         color: "rgba(255,255,255,0.2)",
         flexShrink: 0
       }
-    }, timeAgo(item.listened_at))))))), isSyncing2 && /* @__PURE__ */ React.createElement("div", {
+    }, timeAgo(item.listened_at))))))), isSyncing && /* @__PURE__ */ React.createElement("div", {
       style: {
         position: "fixed",
         inset: 0,
@@ -5224,9 +5241,9 @@ Move closer to your speakers and try again.`);
         alignItems: "center",
         justifyContent: "space-between",
         flexShrink: 0,
-        opacity: IS_IOS && !controlsVisible2 ? 0 : 1,
+        opacity: IS_IOS && !controlsVisible ? 0 : 1,
         transition: "opacity 0.35s",
-        pointerEvents: IS_IOS && !controlsVisible2 ? "none" : "auto"
+        pointerEvents: IS_IOS && !controlsVisible ? "none" : "auto"
       }
     }, /* @__PURE__ */ React.createElement("div", {
       style: {
@@ -5564,9 +5581,9 @@ Move closer to your speakers and try again.`);
         background: "rgba(8,8,16,0.97)",
         borderRight: "1px solid rgba(255,255,255,0.06)",
         zIndex: 15,
-        opacity: controlsVisible2 ? 1 : 0,
+        opacity: controlsVisible ? 1 : 0,
         transition: "opacity 0.35s",
-        pointerEvents: controlsVisible2 ? "auto" : "none"
+        pointerEvents: controlsVisible ? "auto" : "none"
       } : {
         paddingTop: IS_IOS ? "8px" : "12px",
         paddingLeft: "20px",
@@ -5579,9 +5596,9 @@ Move closer to your speakers and try again.`);
         paddingBottom: IS_IOS ? "calc(env(safe-area-inset-bottom) + 98px)" : "calc(env(safe-area-inset-bottom) + 120px)",
         flexShrink: 0,
         // iOS: the whole bottom menu fades away while the phone is idle.
-        opacity: IS_IOS && !controlsVisible2 ? 0 : 1,
+        opacity: IS_IOS && !controlsVisible ? 0 : 1,
         transition: "opacity 0.35s",
-        pointerEvents: IS_IOS && !controlsVisible2 ? "none" : "auto"
+        pointerEvents: IS_IOS && !controlsVisible ? "none" : "auto"
       }
     }, /* @__PURE__ */ React.createElement("div", {
       style: {
@@ -5948,7 +5965,7 @@ Move closer to your speakers and try again.`);
         color: "rgba(255,255,255,0.1)",
         letterSpacing: "1px"
       }
-    }, "v", APP_VERSION))), !isSyncing2 && /* @__PURE__ */ React.createElement("div", {
+    }, "v", APP_VERSION))), !isSyncing && /* @__PURE__ */ React.createElement("div", {
       style: {
         position: "relative",
         zIndex: 10,
@@ -6839,12 +6856,18 @@ Move closer to your speakers and try again.`);
       }, "Maybe later")
     ))));
   }
+  function TabBarHost() {
+    const [hidden, setHidden] = useState2(tabBarHiddenSignal.value);
+    useEffect3(() => tabBarHiddenSignal.subscribe(setHidden), []);
+    if (!window.TabBar) return null;
+    return /* @__PURE__ */ React.createElement(window.TabBar, { current: "sync", hidden });
+  }
   ReactDOM.createRoot(document.getElementById("root")).render(
     /* @__PURE__ */ React.createElement(
       React.Fragment,
       null,
       /* @__PURE__ */ React.createElement(Liri, null),
-      window.TabBar ? /* @__PURE__ */ React.createElement(window.TabBar, { current: "sync", hidden: IS_IOS && isSyncing && !controlsVisible }) : null
+      /* @__PURE__ */ React.createElement(TabBarHost, null)
     )
   );
 })();

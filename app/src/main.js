@@ -42,6 +42,16 @@ const sessionTabId = (() => {
   } catch { return String(Math.random()); }
 })();
 const IS_IOS = !!window.Capacitor; // set once at load time — used for App Store compliance checks
+
+// The tab bar renders at the root as a SIBLING of <Liri/>, so it can't read
+// Liri's internal state directly. This tiny signal bridges the two: Liri writes
+// whether the bar should be hidden (iOS idle player), TabBarHost subscribes.
+const tabBarHiddenSignal = {
+  value: false,
+  listeners: new Set(),
+  set(v) { if (v !== this.value) { this.value = v; this.listeners.forEach(fn => fn(v)); } },
+  subscribe(fn) { this.listeners.add(fn); return () => this.listeners.delete(fn); },
+};
 const TRANSCRIBE_PROXY = window.Capacitor ? "https://www.getliri.com/api/transcribe"    : "/api/transcribe";
 const ITUNES_PROXY   = window.Capacitor ? "https://www.getliri.com/api/itunes-lookup"   : "/api/itunes-lookup";
 // Shazam + NativeAudio plugin bridges are imported from app/ios/.
@@ -2943,6 +2953,13 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
     else release();
     return () => { release(); document.removeEventListener("visibilitychange", onVisibility); };
   }, [keepScreenAwake]);
+
+  // Publish tab-bar visibility to the root-level bar (fades out with the iOS
+  // idle player). Uses `mode` not `isSyncing` — this runs before the early
+  // returns where isSyncing is declared, per React hooks rules.
+  useEffect(() => {
+    tabBarHiddenSignal.set(IS_IOS && mode === "syncing" && !controlsVisible);
+  }, [mode, controlsVisible]);
 
   // ── Controls auto-hide ──
   // Landscape (web + iOS) and iOS portrait: fade the menus away after a few
@@ -6846,9 +6863,17 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
     }
   }, "Maybe later")))));
 }
+// Root-level tab bar (sibling of <Liri/>). Subscribes to the shared signal so
+// it can fade out when the iOS player goes idle without reaching into Liri.
+function TabBarHost() {
+  const [hidden, setHidden] = useState(tabBarHiddenSignal.value);
+  useEffect(() => tabBarHiddenSignal.subscribe(setHidden), []);
+  if (!window.TabBar) return null;
+  return /*#__PURE__*/React.createElement(window.TabBar, { current: "sync", hidden });
+}
 ReactDOM.createRoot(document.getElementById("root")).render(
   /*#__PURE__*/React.createElement(React.Fragment, null,
     /*#__PURE__*/React.createElement(Liri, null),
-    window.TabBar ? /*#__PURE__*/React.createElement(window.TabBar, { current: "sync", hidden: IS_IOS && isSyncing && !controlsVisible }) : null
+    /*#__PURE__*/React.createElement(TabBarHost, null)
   )
 );
