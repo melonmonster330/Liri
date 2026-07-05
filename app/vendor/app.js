@@ -370,8 +370,20 @@
     }
   };
   var sb = supabase.createClient("https://xjdjpaxgymgbvcwmvorc.supabase.co", "sb_publishable_C-NBnfg0ltAoUi46XQTUjA_ozjZW_Nd", { auth: { storage: liriAuthStorage } });
-  var APP_VERSION = "1.3.9";
+  var APP_VERSION = "1.4.0";
   var plainToLines = (txt) => (txt || "").split("\n").filter((l) => l.trim()).map((text) => ({ time: null, text }));
+  var sessionTabId = (() => {
+    try {
+      let id = sessionStorage.getItem("liri_tab_id");
+      if (!id) {
+        id = Math.random().toString(36).slice(2);
+        sessionStorage.setItem("liri_tab_id", id);
+      }
+      return id;
+    } catch {
+      return String(Math.random());
+    }
+  })();
   var IS_IOS = !!window.Capacitor;
   var TRANSCRIBE_PROXY = window.Capacitor ? "https://www.getliri.com/api/transcribe" : "/api/transcribe";
   var ITUNES_PROXY = window.Capacitor ? "https://www.getliri.com/api/itunes-lookup" : "/api/itunes-lookup";
@@ -1268,6 +1280,22 @@
           }
           console.log("[turntable] lrcRows:", (lrcRows || []).length, "cache entries:", Object.keys(cache).length, "tracks:", trackRows.length);
           turntableLyricsCacheRef.current = cache;
+          const refreshCurrentLyrics = () => {
+            const idx = turntableMatchedIdxRef.current;
+            const track = turntableTracksRef.current[idx];
+            if (idx < 0 || !track?.trackId) return;
+            const entry = turntableLyricsCacheRef.current[String(track.trackId)];
+            if (!entry) return;
+            const fresh = entry.lrc_raw ? parseLRC(entry.lrc_raw) : plainToLines(entry.lyrics_plain);
+            if (!fresh.length) return;
+            const cur = lyricsRef.current || [];
+            if (cur.length > 0 && cur[0].time != null && fresh[0].time == null) return;
+            const sig = (a) => a.length + "|" + (a[0]?.time ?? "n") + "|" + (a[0]?.text || "") + "|" + (a[a.length - 1]?.text || "");
+            if (sig(fresh) === sig(cur)) return;
+            setLyrics(fresh);
+            lyricsRef.current = fresh;
+          };
+          refreshCurrentLyrics();
           setTurntableTracksProgress({ percent: 90, stage: "Loading side data\u2026" });
           vinylSidesRef.current = [];
           {
@@ -1307,10 +1335,14 @@
                   const d = await r.json();
                   if (d?.syncedLyrics || d?.plainLyrics) {
                     cache[String(t.itunes_track_id)] = { lrc_raw: d.syncedLyrics || null, words_json: null, lyrics_plain: d.plainLyrics || null };
+                    const apiBase = window.Capacitor ? "https://www.getliri.com" : "";
+                    fetch(`${apiBase}/api/refresh-lyrics?action=track&id=${t.itunes_track_id}`, { method: "POST" }).catch(() => {
+                    });
                   }
                 } catch {
                 }
               }));
+              refreshCurrentLyrics();
             }
             if (!vinylDbReleaseRef.current?.vinyl_tracks?.length && !vinylSidesRef.current.length) {
               try {
@@ -2051,6 +2083,25 @@ Move closer to your speakers and try again.`);
       return () => window.removeEventListener("pagehide", onHide);
     }, []);
     useEffect3(() => {
+      if (mode !== "syncing") return;
+      const beat = () => {
+        try {
+          localStorage.setItem("liri_playing_beat", JSON.stringify({ id: sessionTabId, ts: Date.now() }));
+        } catch {
+        }
+      };
+      beat();
+      const id = setInterval(beat, 5e3);
+      return () => {
+        clearInterval(id);
+        try {
+          const b = JSON.parse(localStorage.getItem("liri_playing_beat") || "null");
+          if (b?.id === sessionTabId) localStorage.removeItem("liri_playing_beat");
+        } catch {
+        }
+      };
+    }, [mode]);
+    useEffect3(() => {
       let saved = null;
       try {
         saved = JSON.parse(sessionStorage.getItem("liri_nowplaying") || "null");
@@ -2059,7 +2110,9 @@ Move closer to your speakers and try again.`);
       }
       if (!saved) {
         try {
-          saved = JSON.parse(localStorage.getItem("liri_nowplaying") || "null");
+          const b = JSON.parse(localStorage.getItem("liri_playing_beat") || "null");
+          const otherTabPlaying = b && b.id !== sessionTabId && Date.now() - b.ts < 15e3;
+          if (!otherTabPlaying) saved = JSON.parse(localStorage.getItem("liri_nowplaying") || "null");
         } catch {
         }
       }
@@ -2083,7 +2136,6 @@ Move closer to your speakers and try again.`);
     }, []);
     const togglePause = () => {
       if (isPaused) {
-        initialPosRef.current = playbackTime;
         syncStartRef.current = Date.now();
         clearInterval(syncIntervalRef.current);
         syncIntervalRef.current = setInterval(() => {
@@ -2104,6 +2156,7 @@ Move closer to your speakers and try again.`);
         }, 80);
         setIsPaused(false);
       } else {
+        initialPosRef.current = Math.max(0, playbackTime);
         clearInterval(syncIntervalRef.current);
         setIsPaused(true);
       }
@@ -2111,6 +2164,19 @@ Move closer to your speakers and try again.`);
     const nudge = (s) => {
       userNudgeRef.current += s;
       initialPosRef.current = Math.max(0, initialPosRef.current + s);
+      setPlaybackTime((p) => Math.max(0, p + s));
+      if (isPaused) {
+        const lrc = lyricsRef.current;
+        if (lrc.length > 0 && lrc[0].time != null) {
+          const t = Math.max(0, initialPosRef.current);
+          let idx = -1;
+          for (let i = 0; i < lrc.length; i++) {
+            if (lrc[i].time <= t) idx = i;
+            else break;
+          }
+          setCurrentIndex(idx);
+        }
+      }
     };
     const adjustScrollSpeed = (delta) => {
       setScrollSpeed((s) => Math.round(Math.min(4, Math.max(0.25, s + delta)) * 100) / 100);

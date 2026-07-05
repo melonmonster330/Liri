@@ -121,6 +121,38 @@ module.exports = async (req, res) => {
     return res.status(405).json({ error: "POST or GET only" });
   }
 
+  // ── Public single-track backfill (no auth) ────────────────────────────────
+  // Called fire-and-forget by the app when its album-select gap-fill finds
+  // lyrics on lrclib that aren't in track_lyrics yet, so the DB catches up
+  // with what the app displays. Abuse-safe by construction: the id must exist
+  // in album_tracks, we no-op when synced lyrics are already stored, and the
+  // SERVER refetches from lrclib itself — no client-supplied content is ever
+  // written, so the worst an abuser can do is make us re-check lrclib.
+  if (action === "track") {
+    if (req.method !== "POST") return res.status(405).json({ error: "POST only" });
+    const tid = parseInt(url.searchParams.get("id") || "0", 10);
+    if (!tid) return res.status(400).json({ error: "id required" });
+    const { data: rows } = await sbRequest(
+      "GET",
+      `album_tracks?itunes_track_id=eq.${tid}&select=itunes_track_id,track_name,artist_name,itunes_collection_id,duration_ms&limit=1`
+    );
+    const track = Array.isArray(rows) && rows[0];
+    if (!track) return res.status(404).json({ error: "unknown track" });
+    const { data: lyricRows } = await sbRequest(
+      "GET",
+      `track_lyrics?itunes_track_id=eq.${tid}&select=itunes_track_id,lrc_raw,lyrics_plain,source&limit=1`
+    );
+    const stored = (Array.isArray(lyricRows) && lyricRows[0]) || {};
+    if (stored.lrc_raw) return res.status(200).json({ status: "kept_existing" });
+    const { data: cats } = await sbRequest(
+      "GET",
+      `catalogue?itunes_collection_id=eq.${track.itunes_collection_id}&select=album_name&limit=1`
+    );
+    const albumName = (Array.isArray(cats) && cats[0]?.album_name) || "";
+    const result = await refreshOne(track, albumName, stored);
+    return res.status(200).json(result);
+  }
+
   // Auth — accept Vercel's signed cron header in addition to the manual cron
   // secret. Vercel automatically attaches x-vercel-cron when it fires a
   // scheduled job, so the daily email run doesn't require any extra setup.

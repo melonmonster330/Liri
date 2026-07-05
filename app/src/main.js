@@ -28,10 +28,19 @@ const liriAuthStorage = {
   removeItem: k => { try { sessionStorage.removeItem(k); } catch {} try { localStorage.removeItem(k); } catch {} },
 };
 const sb = supabase.createClient("https://xjdjpaxgymgbvcwmvorc.supabase.co", "sb_publishable_C-NBnfg0ltAoUi46XQTUjA_ozjZW_Nd", { auth: { storage: liriAuthStorage } });
-const APP_VERSION = "1.3.9";
+const APP_VERSION = "1.4.0";
 // Plain (unsynced) lyrics carry no timestamps — time:null marks them so the
 // player renders the flat auto-scroll view instead of pretending to be synced.
 const plainToLines = txt => (txt || "").split("\n").filter(l => l.trim()).map(text => ({ time: null, text }));
+// Stable per-tab id (survives refresh via sessionStorage) — used by the
+// playing-tab heartbeat so multiple Liri tabs don't double-run one session.
+const sessionTabId = (() => {
+  try {
+    let id = sessionStorage.getItem("liri_tab_id");
+    if (!id) { id = Math.random().toString(36).slice(2); sessionStorage.setItem("liri_tab_id", id); }
+    return id;
+  } catch { return String(Math.random()); }
+})();
 const IS_IOS = !!window.Capacitor; // set once at load time — used for App Store compliance checks
 const TRANSCRIBE_PROXY = window.Capacitor ? "https://www.getliri.com/api/transcribe"    : "/api/transcribe";
 const ITUNES_PROXY   = window.Capacitor ? "https://www.getliri.com/api/itunes-lookup"   : "/api/itunes-lookup";
@@ -1104,6 +1113,29 @@ function Liri() {
         // start listening immediately; gap-fill below mutates this same object.
         turntableLyricsCacheRef.current = cache;
 
+        // Hot-swap fresher lyrics for the track currently on screen (if any).
+        // Runs after the DB fetch and again after the lrclib gap-fill, so lyrics
+        // submitted via the admin (or found online) show up on a simple page
+        // refresh mid-listen — the sync clock is untouched and the highlight
+        // recomputes from the running time on the next tick.
+        const refreshCurrentLyrics = () => {
+          const idx = turntableMatchedIdxRef.current;
+          const track = turntableTracksRef.current[idx];
+          if (idx < 0 || !track?.trackId) return;
+          const entry = turntableLyricsCacheRef.current[String(track.trackId)];
+          if (!entry) return;
+          const fresh = entry.lrc_raw ? parseLRC(entry.lrc_raw) : plainToLines(entry.lyrics_plain);
+          if (!fresh.length) return;
+          const cur = lyricsRef.current || [];
+          // Never downgrade a synced view to plain, and skip no-op swaps.
+          if (cur.length > 0 && cur[0].time != null && fresh[0].time == null) return;
+          const sig = a => a.length + "|" + (a[0]?.time ?? "n") + "|" + (a[0]?.text || "") + "|" + (a[a.length - 1]?.text || "");
+          if (sig(fresh) === sig(cur)) return;
+          setLyrics(fresh);
+          lyricsRef.current = fresh;
+        };
+        refreshCurrentLyrics();
+
         // ── Load vinyl side data from our own DB (fast) ──
         setTurntableTracksProgress({ percent: 90, stage: "Loading side data…" });
 
@@ -1162,9 +1194,16 @@ function Liri() {
                 const d = await r.json();
                 if (d?.syncedLyrics || d?.plainLyrics) {
                   cache[String(t.itunes_track_id)] = { lrc_raw: d.syncedLyrics || null, words_json: null, lyrics_plain: d.plainLyrics || null };
+                  // Persist the find to track_lyrics (fire-and-forget) so the DB
+                  // catches up with what the app displays — otherwise the admin
+                  // "Missing Lyrics" list shows tracks as missing forever even
+                  // though every listen gap-fills them live from lrclib.
+                  const apiBase = window.Capacitor ? "https://www.getliri.com" : "";
+                  fetch(`${apiBase}/api/refresh-lyrics?action=track&id=${t.itunes_track_id}`, { method: "POST" }).catch(() => {});
                 }
               } catch {}
             }));
+            refreshCurrentLyrics();
           }
           // If we still have no side data, try the Discogs auto-populate (slow —
           // sequential Discogs calls). Backgrounded so it never blocks listening.
@@ -2110,6 +2149,28 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
     return () => window.removeEventListener("pagehide", onHide);
   }, []);
 
+  // ── Playing-tab heartbeat ─────────────────────────────────────────────────
+  // With per-tab accounts, two Liri tabs can be open at once. A tab that is
+  // actively syncing stamps a heartbeat every 5s so OTHER tabs know playback
+  // is alive elsewhere and don't ghost-restore the same session from
+  // localStorage (double clocks = duplicate/early flip chimes + notifications).
+  useEffect(() => {
+    if (mode !== "syncing") return;
+    const beat = () => {
+      try { localStorage.setItem("liri_playing_beat", JSON.stringify({ id: sessionTabId, ts: Date.now() })); } catch {}
+    };
+    beat();
+    const id = setInterval(beat, 5000);
+    return () => {
+      clearInterval(id);
+      // Only clear the beat if it's ours — never stomp another tab's.
+      try {
+        const b = JSON.parse(localStorage.getItem("liri_playing_beat") || "null");
+        if (b?.id === sessionTabId) localStorage.removeItem("liri_playing_beat");
+      } catch {}
+    };
+  }, [mode]);
+
   // Restore on mount — check sessionStorage first (tab nav), then localStorage (refresh)
   useEffect(() => {
     let saved = null;
@@ -2119,7 +2180,12 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
     } catch {}
     if (!saved) {
       try {
-        saved = JSON.parse(localStorage.getItem("liri_nowplaying") || "null");
+        // The localStorage fallback is for a refresh/restart of the PLAYING
+        // tab. If another tab's heartbeat is fresh, playback is alive over
+        // there — restoring here too would run a second ghost clock.
+        const b = JSON.parse(localStorage.getItem("liri_playing_beat") || "null");
+        const otherTabPlaying = b && b.id !== sessionTabId && Date.now() - b.ts < 15000;
+        if (!otherTabPlaying) saved = JSON.parse(localStorage.getItem("liri_nowplaying") || "null");
         // don't remove from localStorage here — leave it so rapid re-refreshes also work
       } catch {}
     }
@@ -2145,8 +2211,9 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
 
   const togglePause = () => {
     if (isPaused) {
-      // Resume: restart sync from current position
-      initialPosRef.current = playbackTime;
+      // Resume: restart the clock from the paused anchor. initialPosRef was
+      // captured at pause time and nudges made while paused shifted it, so it
+      // (NOT playbackTime, which may lag a keyboard nudge) is authoritative.
       syncStartRef.current = Date.now();
       clearInterval(syncIntervalRef.current); // never leak a second interval
       syncIntervalRef.current = setInterval(() => {
@@ -2166,7 +2233,10 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
       }, 80);
       setIsPaused(false);
     } else {
-      // Pause: freeze lyrics at current position
+      // Pause: freeze lyrics at the current position. Capture it into
+      // initialPosRef so it becomes the single source of truth while paused —
+      // nudges shift it, and resume restarts the clock from it.
+      initialPosRef.current = Math.max(0, playbackTime);
       clearInterval(syncIntervalRef.current);
       setIsPaused(true);
     }
@@ -2174,6 +2244,22 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
   const nudge = s => {
     userNudgeRef.current += s;
     initialPosRef.current = Math.max(0, initialPosRef.current + s);
+    // Shift the displayed time immediately. While playing the next 80ms tick
+    // recomputes the same value, but while PAUSED the interval is stopped —
+    // without this the nudge is invisible, and resume (which re-anchors from
+    // playbackTime) would silently discard every nudge made during the pause.
+    setPlaybackTime(p => Math.max(0, p + s));
+    if (isPaused) {
+      const lrc = lyricsRef.current;
+      if (lrc.length > 0 && lrc[0].time != null) {
+        const t = Math.max(0, initialPosRef.current);
+        let idx = -1;
+        for (let i = 0; i < lrc.length; i++) {
+          if (lrc[i].time <= t) idx = i;else break;
+        }
+        setCurrentIndex(idx);
+      }
+    }
   };
 
   // ── Unsynced auto-scroll speed control (replaces the old sync-rate setting) ──
