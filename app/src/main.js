@@ -32,6 +32,11 @@ const APP_VERSION = "1.4.1";
 // Plain (unsynced) lyrics carry no timestamps — time:null marks them so the
 // player renders the flat auto-scroll view instead of pretending to be synced.
 const plainToLines = txt => (txt || "").split("\n").filter(l => l.trim()).map(text => ({ time: null, text }));
+// Lyrics lead the audio clock by this many seconds — the highlighted line
+// switches slightly BEFORE its nominal timestamp. Displayed time / progress bar
+// are unaffected (we only add this to the line-matching comparison). Helps the
+// perceived sync since reading slightly ahead feels more in-time than behind.
+const LYRIC_LEAD_SECONDS = 1;
 // Stable per-tab id (survives refresh via sessionStorage) — used by the
 // playing-tab heartbeat so multiple Liri tabs don't double-run one session.
 const sessionTabId = (() => {
@@ -42,16 +47,6 @@ const sessionTabId = (() => {
   } catch { return String(Math.random()); }
 })();
 const IS_IOS = !!window.Capacitor; // set once at load time — used for App Store compliance checks
-
-// The tab bar renders at the root as a SIBLING of <Liri/>, so it can't read
-// Liri's internal state directly. This tiny signal bridges the two: Liri writes
-// whether the bar should be hidden (iOS idle player), TabBarHost subscribes.
-const tabBarHiddenSignal = {
-  value: false,
-  listeners: new Set(),
-  set(v) { if (v !== this.value) { this.value = v; this.listeners.forEach(fn => fn(v)); } },
-  subscribe(fn) { this.listeners.add(fn); return () => this.listeners.delete(fn); },
-};
 const TRANSCRIBE_PROXY = window.Capacitor ? "https://www.getliri.com/api/transcribe"    : "/api/transcribe";
 const ITUNES_PROXY   = window.Capacitor ? "https://www.getliri.com/api/itunes-lookup"   : "/api/itunes-lookup";
 // Shazam + NativeAudio plugin bridges are imported from app/ios/.
@@ -2091,9 +2086,10 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
     const lrc0 = lyricsRef.current;
     const t0 = initialPosRef.current;
     let initIdx = -1;
-    if (lrc0.length > 0 && lrc0[0].time != null && t0 >= lrc0[0].time) {
+    const t0Lead = t0 + LYRIC_LEAD_SECONDS;
+    if (lrc0.length > 0 && lrc0[0].time != null && t0Lead >= lrc0[0].time) {
       for (let i = 0; i < lrc0.length; i++) {
-        if (lrc0[i].time <= t0) initIdx = i;else break;
+        if (lrc0[i].time <= t0Lead) initIdx = i;else break;
       }
     }
     setMode("syncing");
@@ -2111,13 +2107,14 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
       // the flat auto-scroll view handles motion instead.
       if (!lrc.length || lrc[0].time == null) return;
       // Stay at -1 (no highlight) until playback reaches the first lyric timestamp
-      if (t < lrc[0].time) {
+      const tLead = t + LYRIC_LEAD_SECONDS;
+      if (tLead < lrc[0].time) {
         setCurrentIndex(-1);
         return;
       }
       let idx = 0;
       for (let i = 0; i < lrc.length; i++) {
-        if (lrc[i].time <= t) idx = i;else break;
+        if (lrc[i].time <= tLead) idx = i;else break;
       }
       setCurrentIndex(idx);
     }, 80);
@@ -2246,13 +2243,14 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
         setPlaybackTime(t);
         const lrc = lyricsRef.current;
         if (!lrc.length || lrc[0].time == null) return;
-        if (t < lrc[0].time) {
+        const tLead = t + LYRIC_LEAD_SECONDS;
+        if (tLead < lrc[0].time) {
           setCurrentIndex(-1);
           return;
         }
         let idx = 0;
         for (let i = 0; i < lrc.length; i++) {
-          if (lrc[i].time <= t) idx = i;else break;
+          if (lrc[i].time <= tLead) idx = i;else break;
         }
         setCurrentIndex(idx);
       }, 80);
@@ -2277,7 +2275,7 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
     if (isPaused) {
       const lrc = lyricsRef.current;
       if (lrc.length > 0 && lrc[0].time != null) {
-        const t = Math.max(0, initialPosRef.current);
+        const t = Math.max(0, initialPosRef.current) + LYRIC_LEAD_SECONDS;
         let idx = -1;
         for (let i = 0; i < lrc.length; i++) {
           if (lrc[i].time <= t) idx = i;else break;
@@ -2963,13 +2961,6 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
     else release();
     return () => { release(); document.removeEventListener("visibilitychange", onVisibility); };
   }, [keepScreenAwake]);
-
-  // Publish tab-bar visibility to the root-level bar (fades out with the iOS
-  // idle player). Uses `mode` not `isSyncing` — this runs before the early
-  // returns where isSyncing is declared, per React hooks rules.
-  useEffect(() => {
-    tabBarHiddenSignal.set(IS_IOS && mode === "syncing" && !controlsVisible);
-  }, [mode, controlsVisible]);
 
   // ── Controls auto-hide ──
   // Landscape (web + iOS) and iOS portrait: fade the menus away after a few
@@ -4400,7 +4391,7 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
     onClick: () => setShowTrackList(false),
     style: { background: "rgba(255,255,255,0.07)", border: "none", color: "rgba(255,255,255,0.5)", width: 30, height: 30, borderRadius: "50%", cursor: "pointer", fontSize: 18, lineHeight: "1", display: "flex", alignItems: "center", justifyContent: "center", fontFamily: "inherit" }
   }, "\u00d7")), /*#__PURE__*/React.createElement("div", {
-    style: { overflowY: "auto", WebkitOverflowScrolling: "touch", padding: "0 24px 40px", display: "flex", flexDirection: "column", gap: "20px" }
+    style: { flex: 1, minHeight: 0, overflowY: "auto", WebkitOverflowScrolling: "touch", padding: "0 24px 40px", display: "flex", flexDirection: "column", gap: "20px" }
   }, (() => {
     const _wt = turntableTracksRef.current;
     if (!_wt.length) return null;
@@ -5320,16 +5311,14 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
   }, user?.email?.[0]?.toUpperCase() || "?")), !isLandscape && /*#__PURE__*/React.createElement("div", {
     className: "safe-top",
     // Portrait-only header (in landscape the fixed top bar carries this info).
-    // On iOS it fades out with the controls when the phone sits idle.
+    // Stays visible on iOS while idle — it's the "your spot is still saved"
+    // proof (song/artist/time). Only the bottom controls collapse on idle.
     style: {
       padding: "0 20px 16px",
       display: "flex",
       alignItems: "center",
       justifyContent: "space-between",
-      flexShrink: 0,
-      opacity: IS_IOS && !controlsVisible ? 0 : 1,
-      transition: "opacity 0.35s",
-      pointerEvents: IS_IOS && !controlsVisible ? "none" : "auto"
+      flexShrink: 0
     }
   }, /*#__PURE__*/React.createElement("div", {
     style: {
@@ -5593,10 +5582,12 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
     // Render every line so the whole song is scrollable. Lines near the
     // current one are brighter/larger; far lines fade out but stay readable.
     const NEAR = 4;
-    const curFontBase = 30;
-    const near1Font   = 18;
-    const nearFont    = 15;
-    const farFont     = 12;
+    // iOS portrait runs a touch smaller so more lines fit on the phone screen.
+    const iosPortrait = IS_IOS && !isLandscape;
+    const curFontBase = iosPortrait ? 26 : 30;
+    const near1Font   = iosPortrait ? 16 : 18;
+    const nearFont    = iosPortrait ? 13 : 15;
+    const farFont     = iosPortrait ? 11 : 12;
     const aheadBase  = isLandscape ? 0.55 : 0.32;
     const behindBase = isLandscape ? 0.38 : 0.22;
     return allLines.map((line, i) => {
@@ -5693,9 +5684,14 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
       // the tab bar fades out with the controls there, so it can't clip.
       paddingBottom: IS_IOS ? "calc(env(safe-area-inset-bottom) + 98px)" : "calc(env(safe-area-inset-bottom) + 120px)",
       flexShrink: 0,
-      // iOS: the whole bottom menu fades away while the phone is idle.
+      overflow: "hidden",
+      // iOS idle: collapse the controls (nudge / skip / etc.) to zero height so
+      // the lyrics reclaim the space. The header and tab bar stay put — only
+      // this control block folds away. box-sizing:border-box means maxHeight:0
+      // swallows the padding too. Any tap re-expands via bumpControls.
+      maxHeight: IS_IOS && !controlsVisible ? "0px" : "460px",
       opacity: IS_IOS && !controlsVisible ? 0 : 1,
-      transition: "opacity 0.35s",
+      transition: "max-height 0.35s ease, opacity 0.35s ease",
       pointerEvents: IS_IOS && !controlsVisible ? "none" : "auto"
     }
   }, /*#__PURE__*/React.createElement("div", {
@@ -5872,23 +5868,7 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
       fontFamily: "inherit",
       opacity: isResyncing ? 0.4 : 1
     }
-  }, "\u21BB Resync"), /*#__PURE__*/React.createElement("button", {
-    onClick: () => {
-      logButtonEvent("wrong_song");
-      reset();
-      setShowTrackList(true);
-    },
-    style: {
-      background: "rgba(255,255,255,0.04)",
-      border: "1px solid rgba(255,255,255,0.09)",
-      color: "rgba(255,255,255,0.35)",
-      borderRadius: "50px",
-      padding: isLandscape ? "7px 14px" : "10px 22px",
-      fontSize: isLandscape ? "12px" : "13px",
-      cursor: "pointer",
-      fontFamily: "inherit"
-    }
-  }, "Wrong song?")), (() => {
+  }, "\u21BB Resync")), (() => {
     // Prefer library (turntableTracksRef) over iTunes (albumTracks) whenever available
     const hasTT = turntableAlbum && turntableTracksRef.current.length > 0 && turntableMatchedIdxRef.current >= 0;
     const isTT = !vinylMode && hasTT;
@@ -5999,7 +5979,7 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
           /*#__PURE__*/React.createElement("div", { style: { fontSize: "12px", color: "rgba(212,168,70,0.85)", marginTop: "4px" } },
             `${tIdx + 1} of ${tTracks.length} played \u00b7 ${remaining} left on the record`)),
         /*#__PURE__*/React.createElement("div", {
-          style: { overflowY: "auto", padding: "8px 0" }
+          style: { flex: 1, minHeight: 0, overflowY: "auto", WebkitOverflowScrolling: "touch", padding: "8px 0" }
         }, tTracks.map((t, i) => {
           const isCur = i === tIdx, isPast = i < tIdx;
           return /*#__PURE__*/React.createElement("button", {
@@ -6896,17 +6876,9 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
     }
   }, "Maybe later")))));
 }
-// Root-level tab bar (sibling of <Liri/>). Subscribes to the shared signal so
-// it can fade out when the iOS player goes idle without reaching into Liri.
-function TabBarHost() {
-  const [hidden, setHidden] = useState(tabBarHiddenSignal.value);
-  useEffect(() => tabBarHiddenSignal.subscribe(setHidden), []);
-  if (!window.TabBar) return null;
-  return /*#__PURE__*/React.createElement(window.TabBar, { current: "sync", hidden });
-}
 ReactDOM.createRoot(document.getElementById("root")).render(
   /*#__PURE__*/React.createElement(React.Fragment, null,
     /*#__PURE__*/React.createElement(Liri, null),
-    /*#__PURE__*/React.createElement(TabBarHost, null)
+    window.TabBar ? /*#__PURE__*/React.createElement(window.TabBar, { current: "sync" }) : null
   )
 );

@@ -372,6 +372,7 @@
   var sb = supabase.createClient("https://xjdjpaxgymgbvcwmvorc.supabase.co", "sb_publishable_C-NBnfg0ltAoUi46XQTUjA_ozjZW_Nd", { auth: { storage: liriAuthStorage } });
   var APP_VERSION = "1.4.1";
   var plainToLines = (txt) => (txt || "").split("\n").filter((l) => l.trim()).map((text) => ({ time: null, text }));
+  var LYRIC_LEAD_SECONDS = 1;
   var sessionTabId = (() => {
     try {
       let id = sessionStorage.getItem("liri_tab_id");
@@ -385,20 +386,6 @@
     }
   })();
   var IS_IOS = !!window.Capacitor;
-  var tabBarHiddenSignal = {
-    value: false,
-    listeners: /* @__PURE__ */ new Set(),
-    set(v) {
-      if (v !== this.value) {
-        this.value = v;
-        this.listeners.forEach((fn) => fn(v));
-      }
-    },
-    subscribe(fn) {
-      this.listeners.add(fn);
-      return () => this.listeners.delete(fn);
-    }
-  };
   var TRANSCRIBE_PROXY = window.Capacitor ? "https://www.getliri.com/api/transcribe" : "/api/transcribe";
   var ITUNES_PROXY = window.Capacitor ? "https://www.getliri.com/api/itunes-lookup" : "/api/itunes-lookup";
   var styleEl = document.createElement("style");
@@ -2030,9 +2017,10 @@ Move closer to your speakers and try again.`);
       const lrc0 = lyricsRef.current;
       const t0 = initialPosRef.current;
       let initIdx = -1;
-      if (lrc0.length > 0 && lrc0[0].time != null && t0 >= lrc0[0].time) {
+      const t0Lead = t0 + LYRIC_LEAD_SECONDS;
+      if (lrc0.length > 0 && lrc0[0].time != null && t0Lead >= lrc0[0].time) {
         for (let i = 0; i < lrc0.length; i++) {
-          if (lrc0[i].time <= t0) initIdx = i;
+          if (lrc0[i].time <= t0Lead) initIdx = i;
           else break;
         }
       }
@@ -2045,13 +2033,14 @@ Move closer to your speakers and try again.`);
         setPlaybackTime(t < 0 ? 0 : t);
         const lrc = lyricsRef.current;
         if (!lrc.length || lrc[0].time == null) return;
-        if (t < lrc[0].time) {
+        const tLead = t + LYRIC_LEAD_SECONDS;
+        if (tLead < lrc[0].time) {
           setCurrentIndex(-1);
           return;
         }
         let idx = 0;
         for (let i = 0; i < lrc.length; i++) {
-          if (lrc[i].time <= t) idx = i;
+          if (lrc[i].time <= tLead) idx = i;
           else break;
         }
         setCurrentIndex(idx);
@@ -2167,13 +2156,14 @@ Move closer to your speakers and try again.`);
           setPlaybackTime(t);
           const lrc = lyricsRef.current;
           if (!lrc.length || lrc[0].time == null) return;
-          if (t < lrc[0].time) {
+          const tLead = t + LYRIC_LEAD_SECONDS;
+          if (tLead < lrc[0].time) {
             setCurrentIndex(-1);
             return;
           }
           let idx = 0;
           for (let i = 0; i < lrc.length; i++) {
-            if (lrc[i].time <= t) idx = i;
+            if (lrc[i].time <= tLead) idx = i;
             else break;
           }
           setCurrentIndex(idx);
@@ -2192,7 +2182,7 @@ Move closer to your speakers and try again.`);
       if (isPaused) {
         const lrc = lyricsRef.current;
         if (lrc.length > 0 && lrc[0].time != null) {
-          const t = Math.max(0, initialPosRef.current);
+          const t = Math.max(0, initialPosRef.current) + LYRIC_LEAD_SECONDS;
           let idx = -1;
           for (let i = 0; i < lrc.length; i++) {
             if (lrc[i].time <= t) idx = i;
@@ -2792,9 +2782,6 @@ Move closer to your speakers and try again.`);
         document.removeEventListener("visibilitychange", onVisibility);
       };
     }, [keepScreenAwake]);
-    useEffect3(() => {
-      tabBarHiddenSignal.set(IS_IOS && mode === "syncing" && !controlsVisible);
-    }, [mode, controlsVisible]);
     useEffect3(() => {
       if (mode === "syncing" && (isLandscape || IS_IOS)) {
         bumpControls();
@@ -4218,7 +4205,7 @@ Move closer to your speakers and try again.`);
       onClick: () => setShowTrackList(false),
       style: { background: "rgba(255,255,255,0.07)", border: "none", color: "rgba(255,255,255,0.5)", width: 30, height: 30, borderRadius: "50%", cursor: "pointer", fontSize: 18, lineHeight: "1", display: "flex", alignItems: "center", justifyContent: "center", fontFamily: "inherit" }
     }, "\xD7")), /* @__PURE__ */ React.createElement("div", {
-      style: { overflowY: "auto", WebkitOverflowScrolling: "touch", padding: "0 24px 40px", display: "flex", flexDirection: "column", gap: "20px" }
+      style: { flex: 1, minHeight: 0, overflowY: "auto", WebkitOverflowScrolling: "touch", padding: "0 24px 40px", display: "flex", flexDirection: "column", gap: "20px" }
     }, (() => {
       const _wt = turntableTracksRef.current;
       if (!_wt.length) return null;
@@ -5244,16 +5231,14 @@ Move closer to your speakers and try again.`);
     ), !isLandscape && /* @__PURE__ */ React.createElement("div", {
       className: "safe-top",
       // Portrait-only header (in landscape the fixed top bar carries this info).
-      // On iOS it fades out with the controls when the phone sits idle.
+      // Stays visible on iOS while idle — it's the "your spot is still saved"
+      // proof (song/artist/time). Only the bottom controls collapse on idle.
       style: {
         padding: "0 20px 16px",
         display: "flex",
         alignItems: "center",
         justifyContent: "space-between",
-        flexShrink: 0,
-        opacity: IS_IOS && !controlsVisible ? 0 : 1,
-        transition: "opacity 0.35s",
-        pointerEvents: IS_IOS && !controlsVisible ? "none" : "auto"
+        flexShrink: 0
       }
     }, /* @__PURE__ */ React.createElement("div", {
       style: {
@@ -5510,10 +5495,11 @@ Move closer to your speakers and try again.`);
       const pastLastLyric = currentIndex >= lyrics.length - 1 && lyrics.length > 0;
       const effectiveIndex = pastLastLyric ? lyrics.length - 1 + creditLines.reduce((best, cl, ci) => playbackTime >= cl.time ? ci + 1 : best, 0) : currentIndex;
       const NEAR = 4;
-      const curFontBase = 30;
-      const near1Font = 18;
-      const nearFont = 15;
-      const farFont = 12;
+      const iosPortrait = IS_IOS && !isLandscape;
+      const curFontBase = iosPortrait ? 26 : 30;
+      const near1Font = iosPortrait ? 16 : 18;
+      const nearFont = iosPortrait ? 13 : 15;
+      const farFont = iosPortrait ? 11 : 12;
       const aheadBase = isLandscape ? 0.55 : 0.32;
       const behindBase = isLandscape ? 0.38 : 0.22;
       return allLines.map((line, i) => {
@@ -5605,9 +5591,14 @@ Move closer to your speakers and try again.`);
         // the tab bar fades out with the controls there, so it can't clip.
         paddingBottom: IS_IOS ? "calc(env(safe-area-inset-bottom) + 98px)" : "calc(env(safe-area-inset-bottom) + 120px)",
         flexShrink: 0,
-        // iOS: the whole bottom menu fades away while the phone is idle.
+        overflow: "hidden",
+        // iOS idle: collapse the controls (nudge / skip / etc.) to zero height so
+        // the lyrics reclaim the space. The header and tab bar stay put — only
+        // this control block folds away. box-sizing:border-box means maxHeight:0
+        // swallows the padding too. Any tap re-expands via bumpControls.
+        maxHeight: IS_IOS && !controlsVisible ? "0px" : "460px",
         opacity: IS_IOS && !controlsVisible ? 0 : 1,
-        transition: "opacity 0.35s",
+        transition: "max-height 0.35s ease, opacity 0.35s ease",
         pointerEvents: IS_IOS && !controlsVisible ? "none" : "auto"
       }
     }, /* @__PURE__ */ React.createElement("div", {
@@ -5787,23 +5778,7 @@ Move closer to your speakers and try again.`);
         fontFamily: "inherit",
         opacity: isResyncing ? 0.4 : 1
       }
-    }, "\u21BB Resync"), /* @__PURE__ */ React.createElement("button", {
-      onClick: () => {
-        logButtonEvent("wrong_song");
-        reset();
-        setShowTrackList(true);
-      },
-      style: {
-        background: "rgba(255,255,255,0.04)",
-        border: "1px solid rgba(255,255,255,0.09)",
-        color: "rgba(255,255,255,0.35)",
-        borderRadius: "50px",
-        padding: isLandscape ? "7px 14px" : "10px 22px",
-        fontSize: isLandscape ? "12px" : "13px",
-        cursor: "pointer",
-        fontFamily: "inherit"
-      }
-    }, "Wrong song?")), (() => {
+    }, "\u21BB Resync")), (() => {
       const hasTT = turntableAlbum && turntableTracksRef.current.length > 0 && turntableMatchedIdxRef.current >= 0;
       const isTT = !vinylMode && hasTT;
       const isVM = vinylMode && (hasTT || albumTracks.length > 0) && currentTrackIndex >= 0;
@@ -5934,7 +5909,7 @@ Move closer to your speakers and try again.`);
             )
           ),
           /* @__PURE__ */ React.createElement("div", {
-            style: { overflowY: "auto", padding: "8px 0" }
+            style: { flex: 1, minHeight: 0, overflowY: "auto", WebkitOverflowScrolling: "touch", padding: "8px 0" }
           }, tTracks.map((t, i) => {
             const isCur = i === tIdx, isPast = i < tIdx;
             return /* @__PURE__ */ React.createElement(
@@ -6884,18 +6859,12 @@ Move closer to your speakers and try again.`);
       }, "Maybe later")
     ))));
   }
-  function TabBarHost() {
-    const [hidden, setHidden] = useState2(tabBarHiddenSignal.value);
-    useEffect3(() => tabBarHiddenSignal.subscribe(setHidden), []);
-    if (!window.TabBar) return null;
-    return /* @__PURE__ */ React.createElement(window.TabBar, { current: "sync", hidden });
-  }
   ReactDOM.createRoot(document.getElementById("root")).render(
     /* @__PURE__ */ React.createElement(
       React.Fragment,
       null,
       /* @__PURE__ */ React.createElement(Liri, null),
-      /* @__PURE__ */ React.createElement(TabBarHost, null)
+      window.TabBar ? /* @__PURE__ */ React.createElement(window.TabBar, { current: "sync" }) : null
     )
   );
 })();
