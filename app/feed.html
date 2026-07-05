@@ -454,6 +454,7 @@
 
       return (
         <div style={{ minHeight: "100vh", paddingBottom: 100 }}>
+          {window.NowPlayingBar && React.createElement(window.NowPlayingBar)}
           <div style={{ padding: "max(64px, calc(env(safe-area-inset-top) + 20px)) 24px 0" }}>
             <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 6 }}>
               <div style={{ fontSize: 28, fontWeight: 700, letterSpacing: "-0.5px" }}>Feed</div>

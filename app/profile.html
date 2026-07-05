@@ -899,6 +899,7 @@
 
       return (
         <div style={{ minHeight: "100vh", paddingBottom: 100 }}>
+          {window.NowPlayingBar && React.createElement(window.NowPlayingBar)}
 
           {/* Top bar — own profile: notifications bell (left) + settings (right).
               Viewing someone else: just a back button. */}

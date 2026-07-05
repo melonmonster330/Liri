@@ -2670,7 +2670,7 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
   // ── Manual track jump — user picks a track from the list during listening ──
   // Stops the current recording session and jumps straight into confirmed mode
   // at position 0 for the chosen track. Same state setup as advanceToNextTrack.
-  const jumpToTrackIdx = (idx) => {
+  const jumpToTrackIdx = (idx, startPos = 0) => {
     const tracks = turntableTracksRef.current;
     const track = tracks[idx];
     if (!track) return;
@@ -2707,8 +2707,8 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
       setLyrics([]); lyricsRef.current = [];
     }
     userNudgeRef.current = 0;
-    initialPosRef.current = 0;
-    syncCalcRef.current = { startPos: 0, phraseOffset: 0, recStart: Date.now() };
+    initialPosRef.current = startPos;
+    syncCalcRef.current = { startPos, phraseOffset: 0, recStart: Date.now() };
     autoAdvanceFiredRef.current = false;
     autoRetryCountRef.current = 0;
     saveToHistory(user, song);
@@ -2800,7 +2800,10 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
     return null;
   };
 
-  // ── Resync: use Shazam to snap position back to the actual record (iOS only) ──
+  // ── Resync: use Shazam to snap back to the actual record (iOS only) ──
+  // Matches against the WHOLE album, not just the track we think is playing —
+  // so if the needle is actually on a different song, resync jumps to that song
+  // (and its lyrics) at the detected position instead of giving up.
   const resync = async () => {
     if (isResyncing || !IS_IOS) return;
     setIsResyncing(true);
@@ -2810,16 +2813,25 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
       const { title, offset, matchTime } = result;
       const elapsed = (Date.now() - matchTime) / 1000;
       const adjustedOffset = Math.max(0, offset + elapsed);
-      const curIdx = currentTrackIndexRef.current;
-      const track = curIdx >= 0 ? turntableTracksRef.current[curIdx] : null;
-      if (!track) { setIsResyncing(false); return; }
       const norm = normText;
-      if (!norm(title).includes(norm(track.trackName)) && !norm(track.trackName).includes(norm(title))) {
-        setIsResyncing(false); return;
+      const tracks = turntableTracksRef.current;
+      // Find which album track the match belongs to.
+      let matchedIdx = -1;
+      for (let i = 0; i < tracks.length; i++) {
+        const tn = tracks[i].trackName || "";
+        if (tn && (norm(title).includes(norm(tn)) || norm(tn).includes(norm(title)))) { matchedIdx = i; break; }
       }
-      initialPosRef.current = adjustedOffset;
-      syncStartRef.current = Date.now();
-      syncCalcRef.current = null;
+      if (matchedIdx === -1) { setIsResyncing(false); return; } // match isn't on this album — leave as-is
+      const curIdx = turntableMatchedIdxRef.current >= 0 ? turntableMatchedIdxRef.current : currentTrackIndexRef.current;
+      if (matchedIdx === curIdx) {
+        // Same song — just snap the position.
+        initialPosRef.current = adjustedOffset;
+        syncStartRef.current = Date.now();
+        syncCalcRef.current = null;
+      } else {
+        // Different song — switch to it at the detected position.
+        jumpToTrackIdx(matchedIdx, adjustedOffset);
+      }
     } catch (err) {
       console.error("[resync] error:", err);
     }

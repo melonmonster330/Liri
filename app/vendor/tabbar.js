@@ -17,7 +17,9 @@
   if (window.Capacitor) {
     const s = document.createElement("style");
     s.textContent =
-      "html,body{height:100%;overflow:hidden;overscroll-behavior:none;}" +
+      // background on <html> too so page-to-page navigation paints the app's
+      // dark colour instead of a black WKWebView flash between tabs.
+      "html,body{height:100%;overflow:hidden;overscroll-behavior:none;background:#080810;}" +
       "#root{height:100%;overflow-y:auto;-webkit-overflow-scrolling:touch;overscroll-behavior:none;}";
     document.head.appendChild(s);
   }
@@ -73,6 +75,61 @@
   // can use the same web ↔ Capacitor path rewrite the tab bar uses. Without it
   // hardcoded "/app/..." links are dead paths inside the iOS bundle.
   window.liriHref = pageHref;
+
+  // ── Persistent now-playing bar ────────────────────────────────────────────
+  // While a sync session is live, its snapshot is saved to liri_nowplaying (the
+  // sync page restores from it on return). We surface that snapshot as a slim
+  // sticky bar on the OTHER tabs — proof your spot is still held — that taps
+  // back to the sync page. Fresh window matches the sync page's 1h restore.
+  function readNowPlaying() {
+    try {
+      const s = JSON.parse(localStorage.getItem("liri_nowplaying") || "null");
+      if (!s || !s.detectedSong || !s.savedAt) return null;
+      if (Date.now() - s.savedAt > 60 * 60 * 1000) return null;
+      return { title: s.detectedSong.title, artist: s.detectedSong.artist, artwork: s.detectedSong.artwork };
+    } catch (e) { return null; }
+  }
+
+  window.NowPlayingBar = function NowPlayingBar() {
+    const [np, setNp] = React.useState(readNowPlaying());
+    React.useEffect(() => {
+      const tick = () => setNp(readNowPlaying());
+      const id = setInterval(tick, 3000);
+      window.addEventListener("focus", tick);
+      window.addEventListener("storage", tick);
+      return () => { clearInterval(id); window.removeEventListener("focus", tick); window.removeEventListener("storage", tick); };
+    }, []);
+    if (!np) return null;
+
+    return h("a", {
+      href: pageHref("/app/index.html"),
+      "aria-label": "Return to now playing",
+      style: {
+        position: "sticky", top: 0, zIndex: 90,
+        display: "flex", alignItems: "center", gap: "10px",
+        padding: "calc(env(safe-area-inset-top) + 8px) 16px 8px",
+        background: "rgba(14,14,26,0.96)",
+        backdropFilter: "blur(20px)", WebkitBackdropFilter: "blur(20px)",
+        borderBottom: "1px solid rgba(212,168,70,0.25)",
+        textDecoration: "none", color: "#f0e6d3",
+      },
+    },
+      h("span", { style: { width: 8, height: 8, borderRadius: "50%", background: "#d4a846", flexShrink: 0, animation: "nppulse 1.4s ease-in-out infinite" } }),
+      np.artwork ? h("img", { src: np.artwork, alt: "", style: { width: 30, height: 30, borderRadius: 5, objectFit: "cover", flexShrink: 0 } }) : null,
+      h("div", { style: { flex: 1, minWidth: 0 } },
+        h("div", { style: { fontSize: 13, fontWeight: 700, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" } }, np.title || "Now playing"),
+        h("div", { style: { fontSize: 11, color: "rgba(255,255,255,0.45)", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" } }, np.artist || "")
+      ),
+      h("span", { style: { fontSize: 11, fontWeight: 700, color: "#d4a846", flexShrink: 0, letterSpacing: 0.3 } }, "Now playing ›")
+    );
+  };
+
+  // Keyframes for the pulsing dot (injected once).
+  (function () {
+    var st = document.createElement("style");
+    st.textContent = "@keyframes nppulse{0%,100%{opacity:1;transform:scale(1)}50%{opacity:.4;transform:scale(.7)}}";
+    document.head.appendChild(st);
+  })();
 
   window.TabBar = function TabBar(props) {
     const current = (props && props.current) || "";

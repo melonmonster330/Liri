@@ -2508,7 +2508,7 @@ Move closer to your speakers and try again.`);
       });
       setMode("confirmed");
     };
-    const jumpToTrackIdx = (idx) => {
+    const jumpToTrackIdx = (idx, startPos = 0) => {
       const tracks = turntableTracksRef.current;
       const track = tracks[idx];
       if (!track) return;
@@ -2544,8 +2544,8 @@ Move closer to your speakers and try again.`);
         lyricsRef.current = [];
       }
       userNudgeRef.current = 0;
-      initialPosRef.current = 0;
-      syncCalcRef.current = { startPos: 0, phraseOffset: 0, recStart: Date.now() };
+      initialPosRef.current = startPos;
+      syncCalcRef.current = { startPos, phraseOffset: 0, recStart: Date.now() };
       autoAdvanceFiredRef.current = false;
       autoRetryCountRef.current = 0;
       saveToHistory(user, song);
@@ -2628,20 +2628,28 @@ Move closer to your speakers and try again.`);
         const { title, offset, matchTime } = result;
         const elapsed = (Date.now() - matchTime) / 1e3;
         const adjustedOffset = Math.max(0, offset + elapsed);
-        const curIdx = currentTrackIndexRef.current;
-        const track = curIdx >= 0 ? turntableTracksRef.current[curIdx] : null;
-        if (!track) {
-          setIsResyncing(false);
-          return;
-        }
         const norm = normText;
-        if (!norm(title).includes(norm(track.trackName)) && !norm(track.trackName).includes(norm(title))) {
+        const tracks = turntableTracksRef.current;
+        let matchedIdx = -1;
+        for (let i = 0; i < tracks.length; i++) {
+          const tn = tracks[i].trackName || "";
+          if (tn && (norm(title).includes(norm(tn)) || norm(tn).includes(norm(title)))) {
+            matchedIdx = i;
+            break;
+          }
+        }
+        if (matchedIdx === -1) {
           setIsResyncing(false);
           return;
         }
-        initialPosRef.current = adjustedOffset;
-        syncStartRef.current = Date.now();
-        syncCalcRef.current = null;
+        const curIdx = turntableMatchedIdxRef.current >= 0 ? turntableMatchedIdxRef.current : currentTrackIndexRef.current;
+        if (matchedIdx === curIdx) {
+          initialPosRef.current = adjustedOffset;
+          syncStartRef.current = Date.now();
+          syncCalcRef.current = null;
+        } else {
+          jumpToTrackIdx(matchedIdx, adjustedOffset);
+        }
       } catch (err) {
         console.error("[resync] error:", err);
       }

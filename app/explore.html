@@ -182,6 +182,7 @@
 
       return (
         <div style={{ minHeight: "100vh", paddingBottom: 100 }}>
+          {window.NowPlayingBar && React.createElement(window.NowPlayingBar)}
           <div style={{ padding: "max(64px, calc(env(safe-area-inset-top) + 20px)) 24px 0" }}>
             <div style={{ fontSize: 28, fontWeight: 700, letterSpacing: "-0.5px", marginBottom: 6 }}>Explore</div>
             <div style={{ fontSize: 14, color: "rgba(255,255,255,0.3)", marginBottom: 20 }}>

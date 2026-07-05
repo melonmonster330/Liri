@@ -2,6 +2,10 @@
   "appId": "com.getliri.app",
   "appName": "Liri – Vinyl Lyrics",
   "webDir": "app",
+  "backgroundColor": "#080810",
+  "ios": {
+    "backgroundColor": "#080810"
+  },
   "server": {
     "androidScheme": "https"
   },

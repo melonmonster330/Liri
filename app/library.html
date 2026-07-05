@@ -1008,6 +1008,7 @@
 
       return (
         <div style={{ minHeight: "100vh", paddingBottom: 100 }}>
+          {window.NowPlayingBar && React.createElement(window.NowPlayingBar)}
 
           {/* ── Checkout success banner ── */}
           {checkoutSuccess && (
