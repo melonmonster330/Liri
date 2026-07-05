@@ -370,7 +370,7 @@
     }
   };
   var sb = supabase.createClient("https://xjdjpaxgymgbvcwmvorc.supabase.co", "sb_publishable_C-NBnfg0ltAoUi46XQTUjA_ozjZW_Nd", { auth: { storage: liriAuthStorage } });
-  var APP_VERSION = "1.4.0";
+  var APP_VERSION = "1.4.1";
   var plainToLines = (txt) => (txt || "").split("\n").filter((l) => l.trim()).map((text) => ({ time: null, text }));
   var sessionTabId = (() => {
     try {
@@ -432,10 +432,10 @@
       window.addEventListener("resize", onResize);
       return () => window.removeEventListener("resize", onResize);
     }, []);
-    const [controlsVisible, setControlsVisible] = useState2(true);
+    const [controlsVisible2, setControlsVisible] = useState2(true);
     const controlsHideTimerRef = useRef2(null);
     const railW = Math.min(270, Math.max(190, Math.round(winW * 0.26)));
-    const menuOpen = isLandscape && controlsVisible;
+    const menuOpen = isLandscape && controlsVisible2;
     const lyricAreaW = menuOpen ? Math.min(760, Math.max(260, winW - railW - 48)) : Math.min(820, winW - 48);
     const lyricAreaLeft = menuOpen ? Math.max(railW + 24, Math.round((winW - lyricAreaW) / 2)) : Math.round((winW - lyricAreaW) / 2);
     const lyricFontScale = menuOpen ? 1.1 * Math.max(0.72, Math.min(1, lyricAreaW / 640)) : 1.25;
@@ -1500,7 +1500,7 @@
       };
       raf = requestAnimationFrame(pin);
       return () => cancelAnimationFrame(raf);
-    }, [controlsVisible, isLandscape, mode, lyricsUnsynced]);
+    }, [controlsVisible2, isLandscape, mode, lyricsUnsynced]);
     useEffect3(() => {
       if (mode !== "syncing" || !lyricsUnsynced || isPaused) return;
       const el = lyricsScrollRef.current;
@@ -1554,6 +1554,7 @@
     }, [Math.floor(playbackTime), mode, lyrics.length]);
     useEffect3(() => {
       if (mode !== "syncing") return;
+      if (turntableAlbumRef.current && turntableTracksLoading && turntableTracksRef.current.length === 0) return;
       const lastLyricTime = lyrics.length > 0 ? lyrics[lyrics.length - 1].time : null;
       const tIdx = turntableMatchedIdxRef.current;
       const trackDuration = tIdx >= 0 ? (turntableTracksRef.current[tIdx]?.trackTimeMillis ?? 0) / 1e3 || null : null;
@@ -2769,7 +2770,7 @@ Move closer to your speakers and try again.`);
       };
     }, [keepScreenAwake]);
     useEffect3(() => {
-      if (mode === "syncing" && isLandscape) {
+      if (mode === "syncing" && (isLandscape || IS_IOS)) {
         bumpControls();
       } else {
         clearTimeout(controlsHideTimerRef.current);
@@ -2856,16 +2857,18 @@ Move closer to your speakers and try again.`);
           alignItems: "center",
           justifyContent: "flex-start",
           minHeight: "100vh",
-          padding: "max(80px,calc(env(safe-area-inset-top)+56px)) 32px max(90px,calc(env(safe-area-inset-bottom)+80px))",
+          // iOS: tighter vertical rhythm so the whole landing (logo → features →
+          // Get Started + Sign In) fits one phone screen with no scrolling.
+          padding: IS_IOS ? "max(36px,calc(env(safe-area-inset-top)+16px)) 32px max(24px,calc(env(safe-area-inset-bottom)+12px))" : "max(80px,calc(env(safe-area-inset-top)+56px)) 32px max(90px,calc(env(safe-area-inset-bottom)+80px))",
           textAlign: "center",
-          gap: "24px"
+          gap: IS_IOS ? "0px" : "24px"
         }
       }, /* @__PURE__ */ React.createElement(Vinyl, {
-        size: 130,
+        size: IS_IOS ? 92 : 130,
         spinning: false
       }), /* @__PURE__ */ React.createElement("div", {
         style: {
-          marginTop: "32px",
+          marginTop: IS_IOS ? "18px" : "32px",
           fontSize: "11px",
           letterSpacing: "5px",
           color: "rgba(212,168,70,0.6)",
@@ -2874,7 +2877,7 @@ Move closer to your speakers and try again.`);
         }
       }, "Welcome to"), /* @__PURE__ */ React.createElement("div", {
         style: {
-          fontSize: "52px",
+          fontSize: IS_IOS ? "42px" : "52px",
           letterSpacing: "18px",
           color: "#d4a846",
           fontWeight: "300",
@@ -2887,13 +2890,13 @@ Move closer to your speakers and try again.`);
           letterSpacing: "3px",
           textTransform: "uppercase",
           marginTop: "10px",
-          marginBottom: "52px"
+          marginBottom: IS_IOS ? "24px" : "52px"
         }
       }, "Lyrics for Vinyl"), /* @__PURE__ */ React.createElement("div", {
         style: {
           display: "flex",
           gap: "12px",
-          marginBottom: "56px",
+          marginBottom: IS_IOS ? "24px" : "56px",
           flexWrap: "wrap",
           justifyContent: "center"
         }
@@ -2903,7 +2906,7 @@ Move closer to your speakers and try again.`);
           background: "rgba(255,255,255,0.03)",
           border: "1px solid rgba(255,255,255,0.07)",
           borderRadius: "16px",
-          padding: "16px 18px",
+          padding: IS_IOS ? "12px 14px" : "16px 18px",
           minWidth: "100px",
           flex: "0 0 auto"
         }
@@ -3286,7 +3289,7 @@ Move closer to your speakers and try again.`);
         }, "Forgot your password?")))
       ))));
     }
-    const isSyncing = mode === "syncing";
+    const isSyncing2 = mode === "syncing";
     const artwork = detectedSong?.artwork;
     return /* @__PURE__ */ React.createElement("div", {
       style: {
@@ -3307,7 +3310,7 @@ Move closer to your speakers and try again.`);
         backgroundPosition: "center",
         filter: "blur(80px) brightness(0.15) saturate(2)",
         transition: "opacity 1s ease",
-        opacity: isSyncing ? 1 : 0.4
+        opacity: isSyncing2 ? 1 : 0.4
       }
     }), /* @__PURE__ */ React.createElement("div", {
       style: {
@@ -5138,7 +5141,7 @@ Move closer to your speakers and try again.`);
         color: "rgba(255,255,255,0.2)",
         flexShrink: 0
       }
-    }, timeAgo(item.listened_at))))))), isSyncing && /* @__PURE__ */ React.createElement("div", {
+    }, timeAgo(item.listened_at))))))), isSyncing2 && /* @__PURE__ */ React.createElement("div", {
       style: {
         position: "fixed",
         inset: 0,
@@ -5147,7 +5150,7 @@ Move closer to your speakers and try again.`);
         flexDirection: "column"
       },
       onPointerMove: isLandscape ? bumpControls : void 0,
-      onTouchStart: isLandscape ? bumpControls : void 0
+      onTouchStart: isLandscape || IS_IOS ? bumpControls : void 0
     }, kbToast && /* @__PURE__ */ React.createElement("div", {
       style: {
         position: "fixed",
@@ -5214,12 +5217,16 @@ Move closer to your speakers and try again.`);
     ), !isLandscape && /* @__PURE__ */ React.createElement("div", {
       className: "safe-top",
       // Portrait-only header (in landscape the fixed top bar carries this info).
+      // On iOS it fades out with the controls when the phone sits idle.
       style: {
         padding: "0 20px 16px",
         display: "flex",
         alignItems: "center",
         justifyContent: "space-between",
-        flexShrink: 0
+        flexShrink: 0,
+        opacity: IS_IOS && !controlsVisible2 ? 0 : 1,
+        transition: "opacity 0.35s",
+        pointerEvents: IS_IOS && !controlsVisible2 ? "none" : "auto"
       }
     }, /* @__PURE__ */ React.createElement("div", {
       style: {
@@ -5557,18 +5564,24 @@ Move closer to your speakers and try again.`);
         background: "rgba(8,8,16,0.97)",
         borderRight: "1px solid rgba(255,255,255,0.06)",
         zIndex: 15,
-        opacity: controlsVisible ? 1 : 0,
+        opacity: controlsVisible2 ? 1 : 0,
         transition: "opacity 0.35s",
-        pointerEvents: controlsVisible ? "auto" : "none"
+        pointerEvents: controlsVisible2 ? "auto" : "none"
       } : {
-        paddingTop: "12px",
+        paddingTop: IS_IOS ? "8px" : "12px",
         paddingLeft: "20px",
         paddingRight: "20px",
         // Reserve room for the fixed tab bar (~55px content + safe-area) PLUS
         // the tracklist peek pill (~44px including margin) and the version
         // footer (~20px) so nothing gets clipped by the tab bar.
-        paddingBottom: "calc(env(safe-area-inset-bottom) + 120px)",
-        flexShrink: 0
+        // iOS sits a touch lower (smaller reserve) so the lyrics get more room;
+        // the tab bar fades out with the controls there, so it can't clip.
+        paddingBottom: IS_IOS ? "calc(env(safe-area-inset-bottom) + 98px)" : "calc(env(safe-area-inset-bottom) + 120px)",
+        flexShrink: 0,
+        // iOS: the whole bottom menu fades away while the phone is idle.
+        opacity: IS_IOS && !controlsVisible2 ? 0 : 1,
+        transition: "opacity 0.35s",
+        pointerEvents: IS_IOS && !controlsVisible2 ? "none" : "auto"
       }
     }, /* @__PURE__ */ React.createElement("div", {
       style: {
@@ -5935,7 +5948,7 @@ Move closer to your speakers and try again.`);
         color: "rgba(255,255,255,0.1)",
         letterSpacing: "1px"
       }
-    }, "v", APP_VERSION))), !isSyncing && /* @__PURE__ */ React.createElement("div", {
+    }, "v", APP_VERSION))), !isSyncing2 && /* @__PURE__ */ React.createElement("div", {
       style: {
         position: "relative",
         zIndex: 10,
@@ -6831,7 +6844,7 @@ Move closer to your speakers and try again.`);
       React.Fragment,
       null,
       /* @__PURE__ */ React.createElement(Liri, null),
-      window.TabBar ? /* @__PURE__ */ React.createElement(window.TabBar, { current: "sync" }) : null
+      window.TabBar ? /* @__PURE__ */ React.createElement(window.TabBar, { current: "sync", hidden: IS_IOS && isSyncing && !controlsVisible }) : null
     )
   );
 })();

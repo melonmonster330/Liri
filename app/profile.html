@@ -33,7 +33,7 @@
   <script type="text/babel">
     const { useState, useEffect, useCallback, useRef } = React;
 
-    const APP_VERSION = "1.4.0";
+    const APP_VERSION = "1.4.1";
 
     const sb = supabase.createClient(
       "https://xjdjpaxgymgbvcwmvorc.supabase.co",
@@ -56,11 +56,81 @@
       );
     }
 
-    function Stat({ value, label }) {
+    function Stat({ value, label, onClick }) {
       return (
-        <div style={{ flex: 1, textAlign: "center" }}>
+        <div onClick={onClick} role={onClick ? "button" : undefined}
+          style={{ flex: 1, textAlign: "center", cursor: onClick ? "pointer" : "default" }}>
           <div style={{ fontSize: 20, fontWeight: 700, color: "#f0e6d3" }}>{value}</div>
           <div style={{ fontSize: 11, fontWeight: 600, color: "rgba(255,255,255,0.4)", letterSpacing: 0.4, textTransform: "uppercase", marginTop: 2 }}>{label}</div>
+        </div>
+      );
+    }
+
+    function Avatar({ profile, size = 44 }) {
+      if (profile?.avatar_url) {
+        return <img src={profile.avatar_url} alt="" style={{ width: size, height: size, borderRadius: "50%", objectFit: "cover", flexShrink: 0 }} />;
+      }
+      const initials = (profile?.display_name || profile?.username || "?").trim().slice(0, 2).toUpperCase();
+      return (
+        <div style={{ width: size, height: size, borderRadius: "50%", background: "linear-gradient(135deg, #d4a846, #c9807a)", color: "#080810", fontSize: size * 0.34, fontWeight: 800, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
+          {initials}
+        </div>
+      );
+    }
+
+    // Bottom sheet listing a profile's followers or following. `allowed` is the
+    // client-side privacy verdict (owner / public / mutual friend) — the
+    // follow_list RPC enforces the same rules server-side, so a spoofed client
+    // still gets nothing back.
+    function FollowListSheet({ profile, kind, allowed, onClose }) {
+      const [rows, setRows] = useState(null);
+
+      useEffect(() => {
+        if (!allowed) { setRows([]); return; }
+        sb.rpc("follow_list", { p_profile: profile.id, p_kind: kind })
+          .then(({ data, error }) => {
+            if (error) console.error("[follow_list]", error);
+            setRows(data || []);
+          });
+      }, [profile.id, kind, allowed]);
+
+      return (
+        <div style={{ position: "fixed", inset: 0, zIndex: 1000, display: "flex", flexDirection: "column", justifyContent: "flex-end" }}>
+          <div onClick={onClose} style={{ position: "absolute", inset: 0, background: "rgba(0,0,0,0.6)", backdropFilter: "blur(4px)" }} />
+          <div style={{ position: "relative", background: "#0e0e1a", borderRadius: "20px 20px 0 0", border: "1px solid rgba(255,255,255,0.09)", maxHeight: "70vh", display: "flex", flexDirection: "column", animation: "slide-up 0.28s ease", paddingBottom: "max(24px, calc(env(safe-area-inset-bottom) + 12px))" }}>
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "20px 20px 14px", borderBottom: "1px solid rgba(255,255,255,0.06)" }}>
+              <div style={{ fontSize: 17, fontWeight: 700, textTransform: "capitalize" }}>{kind}</div>
+              <button onClick={onClose} style={{ background: "rgba(255,255,255,0.07)", border: "none", color: "rgba(255,255,255,0.6)", borderRadius: "50%", width: 32, height: 32, fontFamily: "inherit", fontSize: 18, display: "flex", alignItems: "center", justifyContent: "center" }}>×</button>
+            </div>
+            <div style={{ overflowY: "auto", padding: "6px 0" }}>
+              {!allowed ? (
+                <div style={{ textAlign: "center", padding: "36px 24px", color: "rgba(255,255,255,0.4)", fontSize: 14, lineHeight: 1.6 }}>
+                  <div style={{ fontSize: 22, marginBottom: 8 }}>🔒</div>
+                  {profile.privacy === "friends"
+                    ? `Only friends can see @${profile.username}'s ${kind}.`
+                    : `@${profile.username}'s ${kind} are private.`}
+                </div>
+              ) : rows === null ? (
+                <div style={{ display: "flex", justifyContent: "center", padding: "36px 0" }}><Spinner /></div>
+              ) : rows.length === 0 ? (
+                <div style={{ textAlign: "center", padding: "36px 24px", color: "rgba(255,255,255,0.4)", fontSize: 14 }}>
+                  {kind === "followers" ? "No followers yet." : "Not following anyone yet."}
+                </div>
+              ) : rows.map(p => (
+                <a key={p.id} href={`/app/profile.html?u=${encodeURIComponent(p.username)}`}
+                  style={{ display: "flex", alignItems: "center", gap: 12, padding: "10px 20px", textDecoration: "none", color: "#f0e6d3" }}>
+                  <Avatar profile={p} />
+                  <div style={{ minWidth: 0 }}>
+                    <div style={{ display: "flex", alignItems: "center", gap: 5, fontSize: 14, fontWeight: 700, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+                      {p.display_name || p.username}
+                      {p.is_official && <svg width="14" height="14" viewBox="0 0 24 24" fill="#d4a846"><path d="M12 1.6l2.4 2.6 3.5-.4.4 3.5 2.6 2.4-2.6 2.4.4 3.5-3.5.4-2.4 2.6-2.4-2.6-3.5.4-.4-3.5L2 12l2.6-2.4-.4-3.5 3.5.4z"/><polyline points="8 12 11 15 16 9" fill="none" stroke="#080810" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"/></svg>}
+                    </div>
+                    <div style={{ fontSize: 12, color: "rgba(255,255,255,0.45)" }}>@{p.username}</div>
+                  </div>
+                </a>
+              ))}
+            </div>
+          </div>
         </div>
       );
     }
@@ -593,6 +663,8 @@
       const [postsLoading, setPostsLoading] = useState(false);
       const [myLikedIds, setMyLikedIds]   = useState(new Set());
       const [showNewPost, setShowNewPost] = useState(false);
+      const [theyFollow, setTheyFollow]   = useState(null); // profile → me edge (for the mutual-friend check)
+      const [listSheet, setListSheet]     = useState(null); // null | "followers" | "following"
 
       const requestedUsername = (new URLSearchParams(window.location.search).get("u") || "").trim().toLowerCase();
       const viewingOther = profile && user && profile.id !== user.id;
@@ -629,10 +701,15 @@
         ]);
         setCounts({ posts: postsCount || 0, followers: followersCount || 0, following: followingCount || 0 });
         if (profile.id !== user.id) {
-          const { data: f } = await sb.from("follows").select("*").eq("follower_id", user.id).eq("followed_id", profile.id).maybeSingle();
+          const [{ data: f }, { data: rf }] = await Promise.all([
+            sb.from("follows").select("*").eq("follower_id", user.id).eq("followed_id", profile.id).maybeSingle(),
+            sb.from("follows").select("*").eq("follower_id", profile.id).eq("followed_id", user.id).maybeSingle(),
+          ]);
           setFollow(f || null);
+          setTheyFollow(rf || null);
         } else {
           setFollow(null);
+          setTheyFollow(null);
         }
       }, [profile, user]);
 
@@ -736,11 +813,11 @@
             <PrivacyBadge value={profile.privacy} />
           </div>
 
-          {/* Stats row */}
+          {/* Stats row — follower/following counts open the list sheet */}
           <div style={{ display: "flex", padding: "24px 24px 0", gap: 8 }}>
             <Stat value={counts.posts}     label="Posts" />
-            <Stat value={counts.followers} label="Followers" />
-            <Stat value={counts.following} label="Following" />
+            <Stat value={counts.followers} label="Followers" onClick={() => setListSheet("followers")} />
+            <Stat value={counts.following} label="Following" onClick={() => setListSheet("following")} />
           </div>
 
           {/* Actions */}
@@ -802,6 +879,12 @@
           {showNewPost && (
             <NewPostSheet user={user} onClose={() => setShowNewPost(false)} onPosted={() => { loadPosts(); loadFollowAndCounts(); }} />
           )}
+
+          {listSheet && (() => {
+            const isFriend = follow?.status === "accepted" && theyFollow?.status === "accepted";
+            const allowed = !viewingOther || profile.privacy === "public" || (profile.privacy === "friends" && isFriend);
+            return <FollowListSheet profile={profile} kind={listSheet} allowed={allowed} onClose={() => setListSheet(null)} />;
+          })()}
         </div>
       );
     }

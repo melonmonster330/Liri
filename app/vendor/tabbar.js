@@ -5,6 +5,17 @@
 (function () {
   const h = React.createElement;
 
+  // iOS app: anchor the tab bar by moving all scrolling into #root. WKWebView
+  // otherwise scrolls/rubber-bands the whole body, which drags the "fixed"
+  // tab bar off screen until you scroll it back. Web keeps body scrolling.
+  if (window.Capacitor) {
+    const s = document.createElement("style");
+    s.textContent =
+      "html,body{position:fixed;inset:0;width:100%;height:100%;overflow:hidden;}" +
+      "#root{height:100%;overflow-y:auto;-webkit-overflow-scrolling:touch;}";
+    document.head.appendChild(s);
+  }
+
   function checkSignedIn() {
     try {
       for (let i = 0; i < localStorage.length; i++) {
@@ -50,6 +61,7 @@
 
   window.TabBar = function TabBar(props) {
     const current = (props && props.current) || "";
+    const hidden = !!(props && props.hidden); // fades the bar out (e.g. idle lyrics view on iOS)
 
     const [signedIn, setSignedIn] = React.useState(checkSignedIn());
     React.useEffect(() => {
@@ -90,6 +102,9 @@
           paddingBottom: "env(safe-area-inset-bottom)",
           display: "flex",
           zIndex: 100,
+          opacity: hidden ? 0 : 1,
+          transition: "opacity 0.35s",
+          pointerEvents: hidden ? "none" : "auto",
         },
       },
       tabs.map((t) => {

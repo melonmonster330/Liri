@@ -28,7 +28,7 @@ const liriAuthStorage = {
   removeItem: k => { try { sessionStorage.removeItem(k); } catch {} try { localStorage.removeItem(k); } catch {} },
 };
 const sb = supabase.createClient("https://xjdjpaxgymgbvcwmvorc.supabase.co", "sb_publishable_C-NBnfg0ltAoUi46XQTUjA_ozjZW_Nd", { auth: { storage: liriAuthStorage } });
-const APP_VERSION = "1.4.0";
+const APP_VERSION = "1.4.1";
 // Plain (unsynced) lyrics carry no timestamps — time:null marks them so the
 // player renders the flat auto-scroll view instead of pretending to be synced.
 const plainToLines = txt => (txt || "").split("\n").filter(l => l.trim()).map(text => ({ time: null, text }));
@@ -1460,6 +1460,11 @@ function Liri() {
   // ── Vinyl auto-advance: trigger when song nears its end ──
   useEffect(() => {
     if (mode !== "syncing") return;
+    // A turntable album is selected but its track list is still loading (e.g.
+    // right after a tab-nav restore re-mounts the page). Advancing now would
+    // find an empty track list and fall through to the flip screen mid-side —
+    // hold off until the tracks are in; this effect re-runs every clock tick.
+    if (turntableAlbumRef.current && turntableTracksLoading && turntableTracksRef.current.length === 0) return;
     const lastLyricTime = lyrics.length > 0 ? lyrics[lyrics.length - 1].time : null;
     // Read duration from turntable track ref directly — more reliable than state
     // when songDuration hasn't updated yet for the new track.
@@ -2939,10 +2944,12 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
     return () => { release(); document.removeEventListener("visibilitychange", onVisibility); };
   }, [keepScreenAwake]);
 
-  // ── Landscape controls auto-hide ──
+  // ── Controls auto-hide ──
+  // Landscape (web + iOS) and iOS portrait: fade the menus away after a few
+  // idle seconds so only the lyrics remain. Any touch brings them back.
   // Must live here — BEFORE any conditional early returns — to satisfy React hooks rules.
   useEffect(() => {
-    if (mode === "syncing" && isLandscape) {
+    if (mode === "syncing" && (isLandscape || IS_IOS)) {
       bumpControls();
     } else {
       clearTimeout(controlsHideTimerRef.current);
@@ -3039,16 +3046,20 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
         alignItems: "center",
         justifyContent: "flex-start",
         minHeight: "100vh",
-        padding: "max(80px,calc(env(safe-area-inset-top)+56px)) 32px max(90px,calc(env(safe-area-inset-bottom)+80px))",
+        // iOS: tighter vertical rhythm so the whole landing (logo → features →
+        // Get Started + Sign In) fits one phone screen with no scrolling.
+        padding: IS_IOS
+          ? "max(36px,calc(env(safe-area-inset-top)+16px)) 32px max(24px,calc(env(safe-area-inset-bottom)+12px))"
+          : "max(80px,calc(env(safe-area-inset-top)+56px)) 32px max(90px,calc(env(safe-area-inset-bottom)+80px))",
         textAlign: "center",
-        gap: "24px"
+        gap: IS_IOS ? "0px" : "24px"
       }
     }, /*#__PURE__*/React.createElement(Vinyl, {
-      size: 130,
+      size: IS_IOS ? 92 : 130,
       spinning: false
     }), /*#__PURE__*/React.createElement("div", {
       style: {
-        marginTop: "32px",
+        marginTop: IS_IOS ? "18px" : "32px",
         fontSize: "11px",
         letterSpacing: "5px",
         color: "rgba(212,168,70,0.6)",
@@ -3057,7 +3068,7 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
       }
     }, "Welcome to"), /*#__PURE__*/React.createElement("div", {
       style: {
-        fontSize: "52px",
+        fontSize: IS_IOS ? "42px" : "52px",
         letterSpacing: "18px",
         color: "#d4a846",
         fontWeight: "300",
@@ -3070,13 +3081,13 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
         letterSpacing: "3px",
         textTransform: "uppercase",
         marginTop: "10px",
-        marginBottom: "52px"
+        marginBottom: IS_IOS ? "24px" : "52px"
       }
     }, "Lyrics for Vinyl"), /*#__PURE__*/React.createElement("div", {
       style: {
         display: "flex",
         gap: "12px",
-        marginBottom: "56px",
+        marginBottom: IS_IOS ? "24px" : "56px",
         flexWrap: "wrap",
         justifyContent: "center"
       }
@@ -3086,7 +3097,7 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
         background: "rgba(255,255,255,0.03)",
         border: "1px solid rgba(255,255,255,0.07)",
         borderRadius: "16px",
-        padding: "16px 18px",
+        padding: IS_IOS ? "12px 14px" : "16px 18px",
         minWidth: "100px",
         flex: "0 0 auto"
       }
@@ -5231,7 +5242,7 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
       flexDirection: "column"
     },
     onPointerMove: isLandscape ? bumpControls : undefined,
-    onTouchStart: isLandscape ? bumpControls : undefined
+    onTouchStart: (isLandscape || IS_IOS) ? bumpControls : undefined
   }, kbToast && /*#__PURE__*/React.createElement("div", {
     style: {
       position: "fixed",
@@ -5279,12 +5290,16 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
   }, user?.email?.[0]?.toUpperCase() || "?")), !isLandscape && /*#__PURE__*/React.createElement("div", {
     className: "safe-top",
     // Portrait-only header (in landscape the fixed top bar carries this info).
+    // On iOS it fades out with the controls when the phone sits idle.
     style: {
       padding: "0 20px 16px",
       display: "flex",
       alignItems: "center",
       justifyContent: "space-between",
-      flexShrink: 0
+      flexShrink: 0,
+      opacity: IS_IOS && !controlsVisible ? 0 : 1,
+      transition: "opacity 0.35s",
+      pointerEvents: IS_IOS && !controlsVisible ? "none" : "auto"
     }
   }, /*#__PURE__*/React.createElement("div", {
     style: {
@@ -5638,14 +5653,20 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
       transition: "opacity 0.35s",
       pointerEvents: controlsVisible ? "auto" : "none"
     } : {
-      paddingTop: "12px",
+      paddingTop: IS_IOS ? "8px" : "12px",
       paddingLeft: "20px",
       paddingRight: "20px",
       // Reserve room for the fixed tab bar (~55px content + safe-area) PLUS
       // the tracklist peek pill (~44px including margin) and the version
       // footer (~20px) so nothing gets clipped by the tab bar.
-      paddingBottom: "calc(env(safe-area-inset-bottom) + 120px)",
-      flexShrink: 0
+      // iOS sits a touch lower (smaller reserve) so the lyrics get more room;
+      // the tab bar fades out with the controls there, so it can't clip.
+      paddingBottom: IS_IOS ? "calc(env(safe-area-inset-bottom) + 98px)" : "calc(env(safe-area-inset-bottom) + 120px)",
+      flexShrink: 0,
+      // iOS: the whole bottom menu fades away while the phone is idle.
+      opacity: IS_IOS && !controlsVisible ? 0 : 1,
+      transition: "opacity 0.35s",
+      pointerEvents: IS_IOS && !controlsVisible ? "none" : "auto"
     }
   }, /*#__PURE__*/React.createElement("div", {
     style: {
@@ -6828,6 +6849,6 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
 ReactDOM.createRoot(document.getElementById("root")).render(
   /*#__PURE__*/React.createElement(React.Fragment, null,
     /*#__PURE__*/React.createElement(Liri, null),
-    window.TabBar ? /*#__PURE__*/React.createElement(window.TabBar, { current: "sync" }) : null
+    window.TabBar ? /*#__PURE__*/React.createElement(window.TabBar, { current: "sync", hidden: IS_IOS && isSyncing && !controlsVisible }) : null
   )
 );
