@@ -8,11 +8,17 @@
   // iOS app: anchor the tab bar by moving all scrolling into #root. WKWebView
   // otherwise scrolls/rubber-bands the whole body, which drags the "fixed"
   // tab bar off screen until you scroll it back. Web keeps body scrolling.
+  //
+  // NOTE: we deliberately do NOT use `position:fixed` on <body> here. That is
+  // the classic iOS trick, but focusing an <input> makes WKWebView scroll the
+  // fixed body to reveal the field and then leaves it shifted — which reads as
+  // the page "getting scrolly" while typing (e.g. Explore search). Plain
+  // `overflow:hidden` + a scrollable #root anchors the bar without that bug.
   if (window.Capacitor) {
     const s = document.createElement("style");
     s.textContent =
-      "html,body{position:fixed;inset:0;width:100%;height:100%;overflow:hidden;}" +
-      "#root{height:100%;overflow-y:auto;-webkit-overflow-scrolling:touch;}";
+      "html,body{height:100%;overflow:hidden;overscroll-behavior:none;}" +
+      "#root{height:100%;overflow-y:auto;-webkit-overflow-scrolling:touch;overscroll-behavior:none;}";
     document.head.appendChild(s);
   }
 

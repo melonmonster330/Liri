@@ -558,6 +558,16 @@ function Liri() {
     flipChimeTimersRef.current = [];
   };
 
+  // Mute toggle on the flip screen. Drives the same liri_flip_sound flag as the
+  // Settings switch; muting also cancels any dings already queued for this flip
+  // (playFlipChime re-checks the flag at fire time, so this is belt-and-braces).
+  const toggleFlipDings = () => {
+    const v = !flipSound;
+    setFlipSound(v);
+    try { localStorage.setItem("liri_flip_sound", String(v)); } catch {}
+    if (!v) cancelFlipChimes();
+  };
+
   const bumpControls = () => {
     setControlsVisible(true);
     clearTimeout(controlsHideTimerRef.current);
@@ -6601,7 +6611,27 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
   }, /*#__PURE__*/React.createElement(Vinyl, {
     size: 100,
     spinning: false
-  }), sideEndReason === "flip" && /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("div", {
+  }), (sideEndReason === "flip" || sideEndReason === "failed") && /*#__PURE__*/React.createElement("button", {
+    onClick: toggleFlipDings,
+    "aria-label": flipSound ? "Mute flip dings" : "Unmute flip dings",
+    style: {
+      marginTop: "16px",
+      background: flipSound ? "rgba(255,255,255,0.06)" : "rgba(212,168,70,0.12)",
+      border: flipSound ? "1px solid rgba(255,255,255,0.12)" : "1px solid rgba(212,168,70,0.4)",
+      color: flipSound ? "rgba(240,230,211,0.7)" : "#d4a846",
+      borderRadius: "50px",
+      padding: "8px 18px",
+      fontSize: "13px",
+      fontWeight: "700",
+      cursor: "pointer",
+      fontFamily: "inherit",
+      display: "inline-flex",
+      alignItems: "center",
+      gap: "7px"
+    }
+  }, flipSound
+    ? /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("svg", { width: "15", height: "15", viewBox: "0 0 24 24", fill: "none", stroke: "currentColor", strokeWidth: "2", strokeLinecap: "round", strokeLinejoin: "round" }, /*#__PURE__*/React.createElement("path", { d: "M11 5 6 9H2v6h4l5 4V5z" }), /*#__PURE__*/React.createElement("path", { d: "M15.54 8.46a5 5 0 0 1 0 7.07" }), /*#__PURE__*/React.createElement("path", { d: "M19.07 4.93a10 10 0 0 1 0 14.14" })), "Mute dings")
+    : /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("svg", { width: "15", height: "15", viewBox: "0 0 24 24", fill: "none", stroke: "currentColor", strokeWidth: "2", strokeLinecap: "round", strokeLinejoin: "round" }, /*#__PURE__*/React.createElement("path", { d: "M11 5 6 9H2v6h4l5 4V5z" }), /*#__PURE__*/React.createElement("line", { x1: "23", y1: "9", x2: "17", y2: "15" }), /*#__PURE__*/React.createElement("line", { x1: "17", y1: "9", x2: "23", y2: "15" })), "Dings muted")), sideEndReason === "flip" && /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("div", {
     style: {
       marginTop: "32px",
       fontSize: "22px",

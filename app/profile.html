@@ -151,6 +151,78 @@
       { key: "private", label: "Private" },
     ];
 
+    // Notifications inbox. Derived from the `follows` table (the only event
+    // source right now): incoming follow requests (pending) and new followers
+    // (accepted). Read/unread is tracked with a "seen at" timestamp in
+    // localStorage — anything created after your last open is unread.
+    function NotificationsPanel({ notifs, threshold, onAccept, onDecline, onClose }) {
+      const isUnread = n => new Date(n.created_at).getTime() > threshold;
+      const unread = notifs.filter(isUnread);
+      const read   = notifs.filter(n => !isUnread(n));
+
+      const Row = ({ n, fresh }) => {
+        const p = n.profile;
+        const pending = n.status === "pending";
+        return (
+          <div style={{ display: "flex", alignItems: "center", gap: 12, padding: "12px 20px", background: fresh ? "rgba(212,168,70,0.06)" : "transparent" }}>
+            <a href={p?.username ? liriHref(`/app/profile.html?u=${encodeURIComponent(p.username)}`) : "#"}
+              style={{ display: "flex", alignItems: "center", gap: 12, flex: 1, minWidth: 0, textDecoration: "none", color: "#f0e6d3" }}>
+              <div style={{ position: "relative", flexShrink: 0 }}>
+                <Avatar profile={p} />
+                {fresh && <span style={{ position: "absolute", top: -1, right: -1, width: 10, height: 10, borderRadius: "50%", background: "#d4a846", border: "2px solid #0e0e1a" }} />}
+              </div>
+              <div style={{ minWidth: 0 }}>
+                <div style={{ fontSize: 14, lineHeight: 1.4 }}>
+                  <strong>{p?.display_name || p?.username || "Someone"}</strong>
+                  <span style={{ color: "rgba(255,255,255,0.5)" }}>{pending ? " requested to follow you" : " started following you"}</span>
+                </div>
+                <div style={{ fontSize: 12, color: "rgba(255,255,255,0.35)" }}>{timeAgo(n.created_at)}</div>
+              </div>
+            </a>
+            {pending && (
+              <div style={{ display: "flex", gap: 6, flexShrink: 0 }}>
+                <button onClick={() => onAccept(n)}
+                  style={{ background: "linear-gradient(135deg,#d4a846,#c9807a)", color: "#080810", border: "none", borderRadius: 50, padding: "8px 14px", fontSize: 12, fontWeight: 700, fontFamily: "inherit" }}>Accept</button>
+                <button onClick={() => onDecline(n)}
+                  style={{ background: "rgba(255,255,255,0.06)", color: "rgba(240,230,211,0.7)", border: "1px solid rgba(255,255,255,0.12)", borderRadius: 50, padding: "8px 12px", fontSize: 12, fontWeight: 700, fontFamily: "inherit" }}>Decline</button>
+              </div>
+            )}
+          </div>
+        );
+      };
+
+      const SectionLabel = ({ children }) => (
+        <div style={{ padding: "12px 20px 4px", fontSize: 11, fontWeight: 700, letterSpacing: 0.5, textTransform: "uppercase", color: "rgba(255,255,255,0.35)" }}>{children}</div>
+      );
+
+      return (
+        <div style={{ position: "fixed", inset: 0, zIndex: 1000, display: "flex", flexDirection: "column", justifyContent: "flex-end" }}>
+          <div onClick={onClose} style={{ position: "absolute", inset: 0, background: "rgba(0,0,0,0.6)", backdropFilter: "blur(4px)" }} />
+          <div style={{ position: "relative", background: "#0e0e1a", borderRadius: "20px 20px 0 0", border: "1px solid rgba(255,255,255,0.09)", maxHeight: "75vh", display: "flex", flexDirection: "column", animation: "slide-up 0.28s ease", paddingBottom: "max(24px, calc(env(safe-area-inset-bottom) + 12px))" }}>
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "20px 20px 14px", borderBottom: "1px solid rgba(255,255,255,0.06)" }}>
+              <div style={{ fontSize: 17, fontWeight: 700 }}>Notifications</div>
+              <button onClick={onClose} style={{ background: "rgba(255,255,255,0.07)", border: "none", color: "rgba(255,255,255,0.6)", borderRadius: "50%", width: 32, height: 32, fontFamily: "inherit", fontSize: 18, display: "flex", alignItems: "center", justifyContent: "center" }}>×</button>
+            </div>
+            <div style={{ overflowY: "auto" }}>
+              {notifs.length === 0 ? (
+                <div style={{ textAlign: "center", padding: "44px 24px", color: "rgba(255,255,255,0.4)", fontSize: 14 }}>
+                  <div style={{ fontSize: 24, marginBottom: 8 }}>🔔</div>
+                  Nothing yet. Follow requests and new followers show up here.
+                </div>
+              ) : (
+                <>
+                  {unread.length > 0 && <SectionLabel>New</SectionLabel>}
+                  {unread.map(n => <Row key={"u" + n.follower_id} n={n} fresh={true} />)}
+                  {read.length > 0 && <SectionLabel>Earlier</SectionLabel>}
+                  {read.map(n => <Row key={"r" + n.follower_id} n={n} fresh={false} />)}
+                </>
+              )}
+            </div>
+          </div>
+        </div>
+      );
+    }
+
     function FollowButton({ me, target, follow, onChange }) {
       const [working, setWorking] = useState(false);
       if (!me || me.id === target.id) return null;
@@ -665,6 +737,10 @@
       const [showNewPost, setShowNewPost] = useState(false);
       const [theyFollow, setTheyFollow]   = useState(null); // profile → me edge (for the mutual-friend check)
       const [listSheet, setListSheet]     = useState(null); // null | "followers" | "following"
+      const [notifs, setNotifs]           = useState([]);   // my incoming follow requests + new followers
+      const [showNotifs, setShowNotifs]   = useState(false);
+      const [notifSeenAt, setNotifSeenAt] = useState(() => Number(localStorage.getItem("liri_notifs_seen_at") || 0));
+      const [notifThreshold, setNotifThreshold] = useState(0); // seenAt snapshot when panel opened (for unread styling)
 
       const requestedUsername = (new URLSearchParams(window.location.search).get("u") || "").trim().toLowerCase();
       const viewingOther = profile && user && profile.id !== user.id;
@@ -714,6 +790,50 @@
       }, [profile, user]);
 
       useEffect(() => { loadFollowAndCounts(); }, [loadFollowAndCounts]);
+
+      // Notifications (own profile only): incoming follow edges aimed at me.
+      const loadNotifs = useCallback(async () => {
+        if (!user) return;
+        const { data: rows } = await sb.from("follows")
+          .select("follower_id, status, created_at")
+          .eq("followed_id", user.id)
+          .order("created_at", { ascending: false })
+          .limit(50);
+        const list = rows || [];
+        const ids = list.map(r => r.follower_id);
+        const { data: profs } = ids.length
+          ? await sb.from("profiles").select("id,username,display_name,avatar_url,is_official").in("id", ids)
+          : { data: [] };
+        const byId = Object.fromEntries((profs || []).map(p => [p.id, p]));
+        setNotifs(list.map(r => ({ ...r, profile: byId[r.follower_id] })));
+      }, [user]);
+
+      useEffect(() => { loadNotifs(); }, [loadNotifs]);
+
+      const unreadCount = notifs.filter(n => new Date(n.created_at).getTime() > notifSeenAt).length;
+
+      const openNotifs = () => {
+        setNotifThreshold(notifSeenAt);      // snapshot so this view still highlights the unread ones
+        const now = Date.now();
+        try { localStorage.setItem("liri_notifs_seen_at", String(now)); } catch {}
+        setNotifSeenAt(now);                 // clears the badge
+        setShowNotifs(true);
+      };
+
+      const acceptNotif = useCallback(async (n) => {
+        setNotifs(prev => prev.map(x => x.follower_id === n.follower_id ? { ...x, status: "accepted" } : x));
+        const { error } = await sb.from("follows").update({ status: "accepted" })
+          .eq("follower_id", n.follower_id).eq("followed_id", user.id);
+        if (error) { console.error(error); loadNotifs(); }
+        else loadFollowAndCounts();
+      }, [user, loadNotifs, loadFollowAndCounts]);
+
+      const declineNotif = useCallback(async (n) => {
+        setNotifs(prev => prev.filter(x => x.follower_id !== n.follower_id));
+        const { error } = await sb.from("follows").delete()
+          .eq("follower_id", n.follower_id).eq("followed_id", user.id);
+        if (error) { console.error(error); loadNotifs(); }
+      }, [user, loadNotifs]);
 
       const loadPosts = useCallback(async () => {
         if (!profile || !user) return;
@@ -780,8 +900,9 @@
       return (
         <div style={{ minHeight: "100vh", paddingBottom: 100 }}>
 
-          {/* Top bar */}
-          <div style={{ padding: "max(64px, calc(env(safe-area-inset-top) + 20px)) 24px 0", display: "flex", justifyContent: viewingOther ? "flex-start" : "flex-end", alignItems: "center" }}>
+          {/* Top bar — own profile: notifications bell (left) + settings (right).
+              Viewing someone else: just a back button. */}
+          <div style={{ padding: "max(64px, calc(env(safe-area-inset-top) + 20px)) 24px 0", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
             {viewingOther ? (
               <a href="#" aria-label="Back"
                 onClick={e => { e.preventDefault(); if (history.length > 1) history.back(); else window.location.href = liriHref('/app/explore.html'); }}
@@ -789,6 +910,17 @@
                 <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="15 18 9 12 15 6"/></svg>
               </a>
             ) : (
+              <button onClick={openNotifs} aria-label="Notifications"
+                style={{ position: "relative", background: "rgba(255,255,255,0.05)", border: "1px solid rgba(255,255,255,0.1)", color: "rgba(255,255,255,0.7)", borderRadius: 50, width: 40, height: 40, display: "flex", alignItems: "center", justifyContent: "center", fontFamily: "inherit" }}>
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg>
+                {unreadCount > 0 && (
+                  <span style={{ position: "absolute", top: -3, right: -3, minWidth: 18, height: 18, borderRadius: 9, background: "#c9807a", color: "#080810", fontSize: 11, fontWeight: 800, display: "flex", alignItems: "center", justifyContent: "center", padding: "0 5px", border: "2px solid #080810" }}>
+                    {unreadCount}
+                  </span>
+                )}
+              </button>
+            )}
+            {!viewingOther && (
               <a href={liriHref("/app/settings.html")} aria-label="Settings"
                 style={{ background: "rgba(255,255,255,0.05)", border: "1px solid rgba(255,255,255,0.1)", color: "rgba(255,255,255,0.7)", borderRadius: 50, width: 40, height: 40, display: "flex", alignItems: "center", justifyContent: "center", textDecoration: "none" }}>
                 <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09a1.65 1.65 0 0 0-1-1.51 1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09a1.65 1.65 0 0 0 1.51-1 1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
@@ -886,6 +1018,12 @@
             const allowed = !viewingOther || profile.privacy === "public" || (profile.privacy === "friends" && isFriend);
             return <FollowListSheet profile={profile} kind={listSheet} allowed={allowed} onClose={() => setListSheet(null)} />;
           })()}
+
+          {showNotifs && (
+            <NotificationsPanel notifs={notifs} threshold={notifThreshold}
+              onAccept={acceptNotif} onDecline={declineNotif}
+              onClose={() => setShowNotifs(false)} />
+          )}
         </div>
       );
     }
