@@ -56,8 +56,17 @@
   // In Capacitor, webDir="app" means the app/ folder is served as "/".
   // Web paths are /app/library.html etc., but in Capacitor they must be /library.html.
   function pageHref(webPath) {
-    return window.Capacitor ? webPath.replace(/^\/app/, "") : webPath;
+    if (!window.Capacitor) return webPath;
+    // Strip the /app prefix; a bare "/app" (the signed-out "Open app" CTA)
+    // becomes "" which would reload the current page — send it to root instead.
+    const stripped = webPath.replace(/^\/app/, "");
+    return stripped === "" ? "/" : stripped;
   }
+
+  // Exposed so in-page links on every page (settings gear, profile rows, etc.)
+  // can use the same web ↔ Capacitor path rewrite the tab bar uses. Without it
+  // hardcoded "/app/..." links are dead paths inside the iOS bundle.
+  window.liriHref = pageHref;
 
   window.TabBar = function TabBar(props) {
     const current = (props && props.current) || "";

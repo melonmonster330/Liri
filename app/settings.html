@@ -162,7 +162,7 @@
       if (!user) return (
         <div style={{ minHeight:"100vh", display:"flex", flexDirection:"column", alignItems:"center", justifyContent:"center", padding:"40px 24px", textAlign:"center" }}>
           <div style={{ fontSize: 22, fontWeight: 700, marginBottom: 12 }}>Sign in to manage settings</div>
-          <a href="/app" style={{ background:"linear-gradient(135deg,#d4a846,#c9807a)", color:"#080810", borderRadius: 50, padding:"14px 32px", fontSize: 14, fontWeight: 700, textDecoration: "none", marginTop: 16 }}>
+          <a href={liriHref("/app")} style={{ background:"linear-gradient(135deg,#d4a846,#c9807a)", color:"#080810", borderRadius: 50, padding:"14px 32px", fontSize: 14, fontWeight: 700, textDecoration: "none", marginTop: 16 }}>
             Sign in to Liri →
           </a>
         </div>
@@ -178,7 +178,7 @@
           {/* Header */}
           <div style={{ padding: "max(64px, calc(env(safe-area-inset-top) + 20px)) 24px 0" }}>
             <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 20 }}>
-              <button onClick={() => window.history.length > 1 ? window.history.back() : (window.location.href = "/app/profile.html")}
+              <button onClick={() => window.history.length > 1 ? window.history.back() : (window.location.href = liriHref("/app/profile.html"))}
                 style={{ background: "none", border: "none", color: "rgba(255,255,255,0.5)", padding: "10px", display: "flex", alignItems: "center", justifyContent: "center", minWidth: 44, minHeight: 44 }}>
                 <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="15 18 9 12 15 6"/></svg>
               </button>

@@ -97,7 +97,7 @@
       const initials = (profile.display_name || profile.username || "?").trim().slice(0, 2).toUpperCase();
       return (
         <div style={{ display: "flex", alignItems: "center", gap: 12, padding: "10px 0" }}>
-          <a href={"/app/profile.html?u=" + encodeURIComponent(profile.username)}
+          <a href={liriHref("/app/profile.html?u=" + encodeURIComponent(profile.username))}
             style={{ display: "flex", alignItems: "center", gap: 12, flex: 1, textDecoration: "none", color: "inherit", minWidth: 0 }}>
             <div style={{
               width: 44, height: 44, borderRadius: "50%",
@@ -174,7 +174,7 @@
       if (!user) return (
         <div style={{ minHeight:"100vh", display:"flex", flexDirection:"column", alignItems:"center", justifyContent:"center", padding:"40px 24px", textAlign:"center" }}>
           <div style={{ fontSize: 22, fontWeight: 700, marginBottom: 12 }}>Sign in to explore</div>
-          <a href="/app" style={{ background:"linear-gradient(135deg,#d4a846,#c9807a)", color:"#080810", borderRadius: 50, padding:"14px 32px", fontSize: 14, fontWeight: 700, textDecoration:"none", marginTop: 16 }}>
+          <a href={liriHref("/app")} style={{ background:"linear-gradient(135deg,#d4a846,#c9807a)", color:"#080810", borderRadius: 50, padding:"14px 32px", fontSize: 14, fontWeight: 700, textDecoration:"none", marginTop: 16 }}>
             Sign in to Liri →
           </a>
         </div>

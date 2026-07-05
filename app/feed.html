@@ -117,7 +117,7 @@
       const verb = post.kind === "update" ? "posted an update"
                  : post.source === "auto" ? "spun"
                  : (post.kind === "lyric" ? "quoted" : "shared");
-      const href = author?.username ? `/app/profile.html?u=${encodeURIComponent(author.username)}` : null;
+      const href = author?.username ? liriHref(`/app/profile.html?u=${encodeURIComponent(author.username)}`) : null;
       const Name = (
         <span style={{ display: "inline-flex", alignItems: "center", gap: 4 }}>
           <strong style={{ color: "#f0e6d3", fontWeight: 700 }}>{author?.display_name || author?.username || "Someone"}</strong>
@@ -287,7 +287,7 @@
                 </div>
               ) : requests.map(r => (
                 <div key={r.follower_id} style={{ display: "flex", alignItems: "center", gap: 12, padding: "10px 20px" }}>
-                  <a href={r.profile?.username ? `/app/profile.html?u=${encodeURIComponent(r.profile.username)}` : "#"}
+                  <a href={r.profile?.username ? liriHref(`/app/profile.html?u=${encodeURIComponent(r.profile.username)}`) : "#"}
                     style={{ display: "flex", alignItems: "center", gap: 12, flex: 1, minWidth: 0, textDecoration: "none", color: "#f0e6d3" }}>
                     <Avatar profile={r.profile} size={44} />
                     <div style={{ minWidth: 0 }}>
@@ -328,7 +328,7 @@
               ? "The people you follow haven't posted yet. Share what you're spinning to get things going."
               : "Follow friends to see what they're spinning, and share your own records and favorite lyrics."}
           </div>
-          <a href="/app/explore.html" style={{ background: "linear-gradient(135deg,#d4a846,#c9807a)", color: "#080810", borderRadius: 50, padding: "12px 24px", fontSize: 14, fontWeight: 700, textDecoration: "none" }}>
+          <a href={liriHref("/app/explore.html")} style={{ background: "linear-gradient(135deg,#d4a846,#c9807a)", color: "#080810", borderRadius: 50, padding: "12px 24px", fontSize: 14, fontWeight: 700, textDecoration: "none" }}>
             Find people to follow →
           </a>
         </div>
@@ -446,7 +446,7 @@
       if (!user) return (
         <div style={{ minHeight:"100vh", display:"flex", flexDirection:"column", alignItems:"center", justifyContent:"center", padding:"40px 24px", textAlign:"center" }}>
           <div style={{ fontSize: 22, fontWeight: 700, marginBottom: 12 }}>Sign in to see your feed</div>
-          <a href="/app" style={{ background:"linear-gradient(135deg,#d4a846,#c9807a)", color:"#080810", borderRadius: 50, padding:"14px 32px", fontSize: 14, fontWeight: 700, textDecoration:"none", marginTop: 16 }}>
+          <a href={liriHref("/app")} style={{ background:"linear-gradient(135deg,#d4a846,#c9807a)", color:"#080810", borderRadius: 50, padding:"14px 32px", fontSize: 14, fontWeight: 700, textDecoration:"none", marginTop: 16 }}>
             Sign in to Liri →
           </a>
         </div>

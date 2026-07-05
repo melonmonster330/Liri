@@ -3914,7 +3914,8 @@ Move closer to your speakers and try again.`);
         cursor: "pointer"
       }
     })))), coachStep > 0 && (() => {
-      const sel = coachStep === 1 ? "#liri-listen-cta" : 'a[href="/app/feed.html"]';
+      const feedSel = window.Capacitor ? 'a[href="/feed.html"]' : 'a[href="/app/feed.html"]';
+      const sel = coachStep === 1 ? "#liri-listen-cta" : feedSel;
       const el = typeof document !== "undefined" ? document.querySelector(sel) : null;
       const r = el ? el.getBoundingClientRect() : null;
       const isLast = coachStep === 2;
