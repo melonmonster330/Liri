@@ -370,7 +370,7 @@
     }
   };
   var sb = supabase.createClient("https://xjdjpaxgymgbvcwmvorc.supabase.co", "sb_publishable_C-NBnfg0ltAoUi46XQTUjA_ozjZW_Nd", { auth: { storage: liriAuthStorage } });
-  var APP_VERSION = "1.4.3";
+  var APP_VERSION = "1.4.4";
   var plainToLines = (txt) => (txt || "").split("\n").filter((l) => l.trim()).map((text) => ({ time: null, text }));
   var LYRIC_LEAD_SECONDS = 1;
   function orderLibrary(lib, recentIds) {
@@ -1128,7 +1128,9 @@
             options: {
               emailRedirectTo: "https://getliri.com/app",
               data: {
-                name: authName.trim()
+                name: authName.trim(),
+                // Acquisition source — surfaced in the admin dashboard.
+                signup_platform: IS_IOS ? "ios" : "web"
               }
             }
           });
@@ -4017,6 +4019,7 @@ Move closer to your speakers and try again.`);
         background: "#0f0f1c",
         borderRadius: "24px 24px 0 0",
         maxHeight: "80vh",
+        overflow: "hidden",
         display: "flex",
         flexDirection: "column",
         boxShadow: "0 -8px 48px rgba(0,0,0,0.6)",
@@ -4237,7 +4240,7 @@ Move closer to your speakers and try again.`);
       style: { position: "fixed", inset: 0, zIndex: 201, background: "rgba(0,0,0,0.6)", backdropFilter: "blur(4px)", cursor: "pointer", display: "flex", alignItems: "flex-end", justifyContent: "center" }
     }, /* @__PURE__ */ React.createElement("div", {
       onClick: (e) => e.stopPropagation(),
-      style: { width: "100%", maxWidth: "520px", background: "#0f0f1c", borderRadius: "24px 24px 0 0", maxHeight: "80vh", display: "flex", flexDirection: "column", boxShadow: "0 -8px 48px rgba(0,0,0,0.6)", animation: "slide-up 0.3s ease" }
+      style: { width: "100%", maxWidth: "520px", background: "#0f0f1c", borderRadius: "24px 24px 0 0", maxHeight: "80vh", overflow: "hidden", display: "flex", flexDirection: "column", boxShadow: "0 -8px 48px rgba(0,0,0,0.6)", animation: "slide-up 0.3s ease" }
     }, /* @__PURE__ */ React.createElement("div", {
       style: { display: "flex", justifyContent: "center", padding: "12px 0 4px" }
     }, /* @__PURE__ */ React.createElement("div", {
@@ -5096,6 +5099,7 @@ Move closer to your speakers and try again.`);
         background: "#0f0f1c",
         borderRadius: "24px 24px 0 0",
         maxHeight: "80vh",
+        overflow: "hidden",
         display: "flex",
         flexDirection: "column",
         boxShadow: "0 -8px 48px rgba(0,0,0,0.6)",
@@ -5126,6 +5130,8 @@ Move closer to your speakers and try again.`);
       style: {
         overflowY: "auto",
         flex: 1,
+        minHeight: 0,
+        WebkitOverflowScrolling: "touch",
         padding: "0 24px max(24px, calc(env(safe-area-inset-bottom) + 16px))"
       }
     }, historyLoading ? /* @__PURE__ */ React.createElement("div", {
@@ -5936,7 +5942,7 @@ Move closer to your speakers and try again.`);
           "div",
           {
             onClick: (e) => e.stopPropagation(),
-            style: { background: "#0e0e1a", borderRadius: "20px 20px 0 0", border: "1px solid rgba(255,255,255,0.09)", maxHeight: "80vh", display: "flex", flexDirection: "column", paddingBottom: "max(24px, calc(env(safe-area-inset-bottom) + 12px))" }
+            style: { background: "#0e0e1a", borderRadius: "20px 20px 0 0", border: "1px solid rgba(255,255,255,0.09)", maxHeight: "80vh", overflow: "hidden", display: "flex", flexDirection: "column", paddingBottom: "max(24px, calc(env(safe-area-inset-bottom) + 12px))" }
           },
           /* @__PURE__ */ React.createElement(
             "div",

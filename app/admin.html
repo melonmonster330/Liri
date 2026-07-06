@@ -426,6 +426,17 @@ function renderBugList(bugs, idPrefix = "bug") {
 }
 
 // ── Drill-in: users list → user detail ───────────────────────────────────────
+// Where a user signed up. Explicit metadata (new accounts) reads clean;
+// older accounts fall back to a guess from the platforms their plays came from.
+function signupPlatform(u) {
+  if (u.signup_platform === "ios") return "📱 iOS App Store";
+  if (u.signup_platform === "web") return "🌐 Web";
+  if (u.platform_inferred === "ios")  return "📱 iOS (inferred)";
+  if (u.platform_inferred === "web")  return "🌐 Web (inferred)";
+  if (u.platform_inferred === "both") return "📱🌐 Both (inferred)";
+  return "· platform unknown";
+}
+
 async function openUsers() {
   const c = document.getElementById("content");
   c.innerHTML = `<div class="loading">Loading users…</div>`;
@@ -443,6 +454,7 @@ async function openUsers() {
             <div class="album-info">
               <div class="album-name">${esc(u.email)}</div>
               <div class="album-artist">${esc(u.provider)} · joined ${timeAgo(u.created_at)}</div>
+              <div class="album-artist" style="margin-top:2px">${signupPlatform(u)}</div>
             </div>
             <div class="album-stats">
               <div class="album-stat"><div class="album-stat-val">${fmt(u.plays)}</div><div class="album-stat-lbl">plays</div></div>

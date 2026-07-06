@@ -28,7 +28,7 @@ const liriAuthStorage = {
   removeItem: k => { try { sessionStorage.removeItem(k); } catch {} try { localStorage.removeItem(k); } catch {} },
 };
 const sb = supabase.createClient("https://xjdjpaxgymgbvcwmvorc.supabase.co", "sb_publishable_C-NBnfg0ltAoUi46XQTUjA_ozjZW_Nd", { auth: { storage: liriAuthStorage } });
-const APP_VERSION = "1.4.3";
+const APP_VERSION = "1.4.4";
 // Plain (unsynced) lyrics carry no timestamps — time:null marks them so the
 // player renders the flat auto-scroll view instead of pretending to be synced.
 const plainToLines = txt => (txt || "").split("\n").filter(l => l.trim()).map(text => ({ time: null, text }));
@@ -934,7 +934,9 @@ function Liri() {
           options: {
             emailRedirectTo: "https://getliri.com/app",
             data: {
-              name: authName.trim()
+              name: authName.trim(),
+              // Acquisition source — surfaced in the admin dashboard.
+              signup_platform: IS_IOS ? "ios" : "web"
             }
           }
         });
@@ -4218,6 +4220,7 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
       background: "#0f0f1c",
       borderRadius: "24px 24px 0 0",
       maxHeight: "80vh",
+      overflow: "hidden",
       display: "flex",
       flexDirection: "column",
       boxShadow: "0 -8px 48px rgba(0,0,0,0.6)",
@@ -4438,7 +4441,7 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
     style: { position: "fixed", inset: 0, zIndex: 201, background: "rgba(0,0,0,0.6)", backdropFilter: "blur(4px)", cursor: "pointer", display: "flex", alignItems: "flex-end", justifyContent: "center" }
   }, /*#__PURE__*/React.createElement("div", {
     onClick: e => e.stopPropagation(),
-    style: { width: "100%", maxWidth: "520px", background: "#0f0f1c", borderRadius: "24px 24px 0 0", maxHeight: "80vh", display: "flex", flexDirection: "column", boxShadow: "0 -8px 48px rgba(0,0,0,0.6)", animation: "slide-up 0.3s ease" }
+    style: { width: "100%", maxWidth: "520px", background: "#0f0f1c", borderRadius: "24px 24px 0 0", maxHeight: "80vh", overflow: "hidden", display: "flex", flexDirection: "column", boxShadow: "0 -8px 48px rgba(0,0,0,0.6)", animation: "slide-up 0.3s ease" }
   }, /*#__PURE__*/React.createElement("div", {
     style: { display: "flex", justifyContent: "center", padding: "12px 0 4px" }
   }, /*#__PURE__*/React.createElement("div", {
@@ -5210,6 +5213,7 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
       background: "#0f0f1c",
       borderRadius: "24px 24px 0 0",
       maxHeight: "80vh",
+      overflow: "hidden",
       display: "flex",
       flexDirection: "column",
       boxShadow: "0 -8px 48px rgba(0,0,0,0.6)",
@@ -5240,6 +5244,8 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
     style: {
       overflowY: "auto",
       flex: 1,
+      minHeight: 0,
+      WebkitOverflowScrolling: "touch",
       padding: "0 24px max(24px, calc(env(safe-area-inset-bottom) + 16px))"
     }
   }, historyLoading ? /*#__PURE__*/React.createElement("div", {
@@ -6028,7 +6034,7 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
         style: { position: "fixed", inset: 0, zIndex: 600, background: "rgba(8,8,16,0.75)", backdropFilter: "blur(6px)", display: "flex", flexDirection: "column", justifyContent: "flex-end" }
       }, /*#__PURE__*/React.createElement("div", {
         onClick: e => e.stopPropagation(),
-        style: { background: "#0e0e1a", borderRadius: "20px 20px 0 0", border: "1px solid rgba(255,255,255,0.09)", maxHeight: "80vh", display: "flex", flexDirection: "column", paddingBottom: "max(24px, calc(env(safe-area-inset-bottom) + 12px))" }
+        style: { background: "#0e0e1a", borderRadius: "20px 20px 0 0", border: "1px solid rgba(255,255,255,0.09)", maxHeight: "80vh", overflow: "hidden", display: "flex", flexDirection: "column", paddingBottom: "max(24px, calc(env(safe-area-inset-bottom) + 12px))" }
       },
         /*#__PURE__*/React.createElement("div", {
           style: { padding: "18px 20px 12px", borderBottom: "1px solid rgba(255,255,255,0.06)" }

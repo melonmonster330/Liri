@@ -445,12 +445,23 @@ async function getUsersList() {
   }
   const [libRows, eventRows] = await Promise.all([
     sbGetAll("user_library?select=user_id"),
-    sbGetAll("listening_events?select=user_id"),
+    sbGetAll("listening_events?select=user_id,platform"),
   ]);
   const albumByUid = {};
   for (const r of libRows) albumByUid[r.user_id] = (albumByUid[r.user_id] || 0) + 1;
   const playByUid = {};
-  for (const r of eventRows) if (r.user_id) playByUid[r.user_id] = (playByUid[r.user_id] || 0) + 1;
+  const platByUid = {}; // uid → Set of platforms seen (fallback when no signup metadata)
+  for (const r of eventRows) {
+    if (!r.user_id) continue;
+    playByUid[r.user_id] = (playByUid[r.user_id] || 0) + 1;
+    (platByUid[r.user_id] = platByUid[r.user_id] || new Set()).add(r.platform || null);
+  }
+  const inferPlatform = (uid) => {
+    const seen = platByUid[uid];
+    if (!seen) return null;
+    const ios = seen.has("ios"), web = seen.has("web");
+    return ios && web ? "both" : ios ? "ios" : web ? "web" : null;
+  };
 
   // Sort by created_at desc — same ordering as Recent Signups so the preview
   // and the drill-in list line up.
@@ -464,6 +475,10 @@ async function getUsersList() {
         provider:   authProvider(u),
         albums:     albumByUid[u.id] || 0,
         plays:      playByUid[u.id] || 0,
+        // Where they signed up: explicit metadata (new accounts) or inferred
+        // from the platforms their plays came from (older accounts).
+        signup_platform:   u.user_metadata?.signup_platform || null,
+        platform_inferred: inferPlatform(u.id),
       })),
   };
 }
