@@ -370,7 +370,7 @@
     }
   };
   var sb = supabase.createClient("https://xjdjpaxgymgbvcwmvorc.supabase.co", "sb_publishable_C-NBnfg0ltAoUi46XQTUjA_ozjZW_Nd", { auth: { storage: liriAuthStorage } });
-  var APP_VERSION = "1.4.6";
+  var APP_VERSION = "1.4.7";
   var plainToLines = (txt) => (txt || "").split("\n").filter((l) => l.trim()).map((text) => ({ time: null, text }));
   var LYRIC_LEAD_SECONDS = 1;
   function orderLibrary(lib, recentIds) {
@@ -2918,16 +2918,19 @@ Move closer to your speakers and try again.`);
           // Get Started + Sign In) fits one phone screen with no scrolling. Top
           // padding keeps a ≥64px floor so the vinyl always clears the notch /
           // Dynamic Island even if the safe-area inset reads low.
-          padding: IS_IOS ? "max(64px,calc(env(safe-area-inset-top)+26px)) 32px max(20px,calc(env(safe-area-inset-bottom)+10px))" : "max(80px,calc(env(safe-area-inset-top)+56px)) 32px max(90px,calc(env(safe-area-inset-bottom)+80px))",
+          // Both platforms keep the whole landing (logo → features → Get Started
+          // + Sign In) on one screen with no scroll. iOS keeps a ≥64px top floor
+          // so the vinyl clears the notch; web sits tighter but still centered-ish.
+          padding: IS_IOS ? "max(64px,calc(env(safe-area-inset-top)+26px)) 32px max(20px,calc(env(safe-area-inset-bottom)+10px))" : "max(40px,calc(env(safe-area-inset-top)+28px)) 32px max(40px,calc(env(safe-area-inset-bottom)+28px))",
           textAlign: "center",
-          gap: IS_IOS ? "0px" : "24px"
+          gap: IS_IOS ? "0px" : "14px"
         }
       }, /* @__PURE__ */ React.createElement(Vinyl, {
-        size: IS_IOS ? 92 : 130,
+        size: IS_IOS ? 92 : 104,
         spinning: false
       }), /* @__PURE__ */ React.createElement("div", {
         style: {
-          marginTop: IS_IOS ? "18px" : "32px",
+          marginTop: IS_IOS ? "18px" : "20px",
           fontSize: "11px",
           letterSpacing: "5px",
           color: "rgba(212,168,70,0.6)",
@@ -2936,7 +2939,7 @@ Move closer to your speakers and try again.`);
         }
       }, "Welcome to"), /* @__PURE__ */ React.createElement("div", {
         style: {
-          fontSize: IS_IOS ? "42px" : "52px",
+          fontSize: IS_IOS ? "42px" : "46px",
           letterSpacing: "18px",
           color: "#d4a846",
           fontWeight: "300",
@@ -2949,13 +2952,13 @@ Move closer to your speakers and try again.`);
           letterSpacing: "3px",
           textTransform: "uppercase",
           marginTop: "10px",
-          marginBottom: IS_IOS ? "24px" : "52px"
+          marginBottom: IS_IOS ? "24px" : "28px"
         }
       }, "Lyrics for Vinyl"), /* @__PURE__ */ React.createElement("div", {
         style: {
           display: "flex",
           gap: "12px",
-          marginBottom: IS_IOS ? "24px" : "56px",
+          marginBottom: IS_IOS ? "24px" : "30px",
           flexWrap: "wrap",
           justifyContent: "center"
         }
