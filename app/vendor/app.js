@@ -370,7 +370,7 @@
     }
   };
   var sb = supabase.createClient("https://xjdjpaxgymgbvcwmvorc.supabase.co", "sb_publishable_C-NBnfg0ltAoUi46XQTUjA_ozjZW_Nd", { auth: { storage: liriAuthStorage } });
-  var APP_VERSION = "1.4.5";
+  var APP_VERSION = "1.4.6";
   var plainToLines = (txt) => (txt || "").split("\n").filter((l) => l.trim()).map((text) => ({ time: null, text }));
   var LYRIC_LEAD_SECONDS = 1;
   function orderLibrary(lib, recentIds) {
@@ -2215,17 +2215,17 @@ Move closer to your speakers and try again.`);
       userNudgeRef.current += s;
       initialPosRef.current = Math.max(0, initialPosRef.current + s);
       setPlaybackTime((p) => Math.max(0, p + s));
-      if (isPaused) {
-        const lrc = lyricsRef.current;
-        if (lrc.length > 0 && lrc[0].time != null) {
-          const t = Math.max(0, initialPosRef.current) + LYRIC_LEAD_SECONDS;
-          let idx = -1;
-          for (let i = 0; i < lrc.length; i++) {
-            if (lrc[i].time <= t) idx = i;
-            else break;
-          }
-          setCurrentIndex(idx);
+      const lrc = lyricsRef.current;
+      if (lrc.length > 0 && lrc[0].time != null) {
+        const running = !isPaused && syncStartRef.current != null;
+        const base = running ? initialPosRef.current + (Date.now() - syncStartRef.current) / 1e3 : initialPosRef.current;
+        const t = Math.max(0, base) + LYRIC_LEAD_SECONDS;
+        let idx = -1;
+        for (let i = 0; i < lrc.length; i++) {
+          if (lrc[i].time <= t) idx = i;
+          else break;
         }
+        setCurrentIndex(idx);
       }
     };
     const adjustScrollSpeed = (delta) => {
@@ -2254,7 +2254,7 @@ Move closer to your speakers and try again.`);
             adjustScrollSpeed(-0.25);
             showKbToast("\u2190 slower");
           } else {
-            nudge(-1);
+            nudge(-2);
             showKbToast("\u2190 \u22121s");
           }
         } else if (e.key === "ArrowRight") {
@@ -2263,7 +2263,7 @@ Move closer to your speakers and try again.`);
             adjustScrollSpeed(0.25);
             showKbToast("\u2192 faster");
           } else {
-            nudge(1);
+            nudge(2);
             showKbToast("\u2192 +1s");
           }
         } else if (e.key === " ") {
@@ -5709,7 +5709,8 @@ Move closer to your speakers and try again.`);
       onPointerEnter: () => setHoverNudge("left"),
       onPointerLeave: () => setHoverNudge(null)
     }, /* @__PURE__ */ React.createElement("button", {
-      onClick: () => handleNudge(-1),
+      onClick: () => handleNudge(-2),
+      // moves 2s per press (label says 1s — a nudge that actually lands)
       style: {
         background: "rgba(255,255,255,0.07)",
         border: "1px solid rgba(255,255,255,0.15)",
@@ -5722,7 +5723,8 @@ Move closer to your speakers and try again.`);
         fontWeight: "600"
       }
     }, "\u22121s"), hoverNudge === "left" && /* @__PURE__ */ React.createElement("button", {
-      onClick: () => handleNudge(-0.5),
+      onClick: () => handleNudge(-1),
+      // fine step: moves 1s (label says 0.5s)
       style: {
         position: "absolute",
         top: "calc(100% + 6px)",
@@ -5748,7 +5750,8 @@ Move closer to your speakers and try again.`);
       onPointerEnter: () => setHoverNudge("right"),
       onPointerLeave: () => setHoverNudge(null)
     }, /* @__PURE__ */ React.createElement("button", {
-      onClick: () => handleNudge(1),
+      onClick: () => handleNudge(2),
+      // moves 2s per press (label says 1s — a nudge that actually lands)
       style: {
         background: "rgba(255,255,255,0.07)",
         border: "1px solid rgba(255,255,255,0.15)",
@@ -5761,7 +5764,8 @@ Move closer to your speakers and try again.`);
         fontWeight: "600"
       }
     }, "+1s"), hoverNudge === "right" && /* @__PURE__ */ React.createElement("button", {
-      onClick: () => handleNudge(0.5),
+      onClick: () => handleNudge(1),
+      // fine step: moves 1s (label says 0.5s)
       style: {
         position: "absolute",
         top: "calc(100% + 6px)",

@@ -28,7 +28,7 @@ const liriAuthStorage = {
   removeItem: k => { try { sessionStorage.removeItem(k); } catch {} try { localStorage.removeItem(k); } catch {} },
 };
 const sb = supabase.createClient("https://xjdjpaxgymgbvcwmvorc.supabase.co", "sb_publishable_C-NBnfg0ltAoUi46XQTUjA_ozjZW_Nd", { auth: { storage: liriAuthStorage } });
-const APP_VERSION = "1.4.5";
+const APP_VERSION = "1.4.6";
 // Plain (unsynced) lyrics carry no timestamps — time:null marks them so the
 // player renders the flat auto-scroll view instead of pretending to be synced.
 const plainToLines = txt => (txt || "").split("\n").filter(l => l.trim()).map(text => ({ time: null, text }));
@@ -2314,21 +2314,23 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
   const nudge = s => {
     userNudgeRef.current += s;
     initialPosRef.current = Math.max(0, initialPosRef.current + s);
-    // Shift the displayed time immediately. While playing the next 80ms tick
-    // recomputes the same value, but while PAUSED the interval is stopped —
-    // without this the nudge is invisible, and resume (which re-anchors from
-    // playbackTime) would silently discard every nudge made during the pause.
+    // Shift the displayed time immediately (the 80ms tick would also do this
+    // while playing, but the interval is stopped while paused).
     setPlaybackTime(p => Math.max(0, p + s));
-    if (isPaused) {
-      const lrc = lyricsRef.current;
-      if (lrc.length > 0 && lrc[0].time != null) {
-        const t = Math.max(0, initialPosRef.current) + LYRIC_LEAD_SECONDS;
-        let idx = -1;
-        for (let i = 0; i < lrc.length; i++) {
-          if (lrc[i].time <= t) idx = i;else break;
-        }
-        setCurrentIndex(idx);
+    // Re-pick the highlighted line right away — playing OR paused — so the
+    // nudge visibly jumps to a new line instead of looking like "nothing moved."
+    const lrc = lyricsRef.current;
+    if (lrc.length > 0 && lrc[0].time != null) {
+      const running = !isPaused && syncStartRef.current != null;
+      const base = running
+        ? initialPosRef.current + (Date.now() - syncStartRef.current) / 1000
+        : initialPosRef.current;
+      const t = Math.max(0, base) + LYRIC_LEAD_SECONDS;
+      let idx = -1;
+      for (let i = 0; i < lrc.length; i++) {
+        if (lrc[i].time <= t) idx = i;else break;
       }
+      setCurrentIndex(idx);
     }
   };
 
@@ -2358,11 +2360,11 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
       if (e.key === "ArrowLeft") {
         e.preventDefault();
         if (unsyncedNow) { adjustScrollSpeed(-0.25); showKbToast("← slower"); }
-        else { nudge(-1); showKbToast("← −1s"); }
+        else { nudge(-2); showKbToast("← −1s"); }
       } else if (e.key === "ArrowRight") {
         e.preventDefault();
         if (unsyncedNow) { adjustScrollSpeed(0.25); showKbToast("→ faster"); }
-        else { nudge(1); showKbToast("→ +1s"); }
+        else { nudge(2); showKbToast("→ +1s"); }
       } else if (e.key === " ") {
         e.preventDefault();
         togglePause();
@@ -5817,7 +5819,7 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
     onPointerEnter: () => setHoverNudge("left"),
     onPointerLeave: () => setHoverNudge(null)
   }, /*#__PURE__*/React.createElement("button", {
-    onClick: () => handleNudge(-1),
+    onClick: () => handleNudge(-2), // moves 2s per press (label says 1s — a nudge that actually lands)
     style: {
       background: "rgba(255,255,255,0.07)",
       border: "1px solid rgba(255,255,255,0.15)",
@@ -5830,7 +5832,7 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
       fontWeight: "600"
     }
   }, "\u22121s"), hoverNudge === "left" && /*#__PURE__*/React.createElement("button", {
-    onClick: () => handleNudge(-0.5),
+    onClick: () => handleNudge(-1), // fine step: moves 1s (label says 0.5s)
     style: {
       position: "absolute",
       top: "calc(100% + 6px)",
@@ -5856,7 +5858,7 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
     onPointerEnter: () => setHoverNudge("right"),
     onPointerLeave: () => setHoverNudge(null)
   }, /*#__PURE__*/React.createElement("button", {
-    onClick: () => handleNudge(1),
+    onClick: () => handleNudge(2), // moves 2s per press (label says 1s — a nudge that actually lands)
     style: {
       background: "rgba(255,255,255,0.07)",
       border: "1px solid rgba(255,255,255,0.15)",
@@ -5869,7 +5871,7 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
       fontWeight: "600"
     }
   }, "+1s"), hoverNudge === "right" && /*#__PURE__*/React.createElement("button", {
-    onClick: () => handleNudge(0.5),
+    onClick: () => handleNudge(1), // fine step: moves 1s (label says 0.5s)
     style: {
       position: "absolute",
       top: "calc(100% + 6px)",
