@@ -370,7 +370,7 @@
     }
   };
   var sb = supabase.createClient("https://xjdjpaxgymgbvcwmvorc.supabase.co", "sb_publishable_C-NBnfg0ltAoUi46XQTUjA_ozjZW_Nd", { auth: { storage: liriAuthStorage } });
-  var APP_VERSION = "1.4.4";
+  var APP_VERSION = "1.4.5";
   var plainToLines = (txt) => (txt || "").split("\n").filter((l) => l.trim()).map((text) => ({ time: null, text }));
   var LYRIC_LEAD_SECONDS = 1;
   function orderLibrary(lib, recentIds) {
@@ -5332,8 +5332,9 @@ Move closer to your speakers and try again.`);
         fontWeight: "600",
         color: "#f0e6d3",
         overflow: "hidden",
-        textOverflow: "ellipsis",
-        whiteSpace: "nowrap"
+        // iOS: wrap a long title onto up to 2 lines instead of cutting it off.
+        // Web keeps the single-line ellipsis (unchanged).
+        ...IS_IOS ? { display: "-webkit-box", WebkitBoxOrient: "vertical", WebkitLineClamp: 2, lineHeight: 1.2 } : { textOverflow: "ellipsis", whiteSpace: "nowrap" }
       }
     }, detectedSong?.title), /* @__PURE__ */ React.createElement("div", {
       style: {

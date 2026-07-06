@@ -28,7 +28,7 @@ const liriAuthStorage = {
   removeItem: k => { try { sessionStorage.removeItem(k); } catch {} try { localStorage.removeItem(k); } catch {} },
 };
 const sb = supabase.createClient("https://xjdjpaxgymgbvcwmvorc.supabase.co", "sb_publishable_C-NBnfg0ltAoUi46XQTUjA_ozjZW_Nd", { auth: { storage: liriAuthStorage } });
-const APP_VERSION = "1.4.4";
+const APP_VERSION = "1.4.5";
 // Plain (unsynced) lyrics carry no timestamps — time:null marks them so the
 // player renders the flat auto-scroll view instead of pretending to be synced.
 const plainToLines = txt => (txt || "").split("\n").filter(l => l.trim()).map(text => ({ time: null, text }));
@@ -5427,8 +5427,11 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
       fontWeight: "600",
       color: "#f0e6d3",
       overflow: "hidden",
-      textOverflow: "ellipsis",
-      whiteSpace: "nowrap"
+      // iOS: wrap a long title onto up to 2 lines instead of cutting it off.
+      // Web keeps the single-line ellipsis (unchanged).
+      ...(IS_IOS
+        ? { display: "-webkit-box", WebkitBoxOrient: "vertical", WebkitLineClamp: 2, lineHeight: 1.2 }
+        : { textOverflow: "ellipsis", whiteSpace: "nowrap" })
     }
   }, detectedSong?.title), /*#__PURE__*/React.createElement("div", {
     style: {
