@@ -370,9 +370,22 @@
     }
   };
   var sb = supabase.createClient("https://xjdjpaxgymgbvcwmvorc.supabase.co", "sb_publishable_C-NBnfg0ltAoUi46XQTUjA_ozjZW_Nd", { auth: { storage: liriAuthStorage } });
-  var APP_VERSION = "1.4.2";
+  var APP_VERSION = "1.4.3";
   var plainToLines = (txt) => (txt || "").split("\n").filter((l) => l.trim()).map((text) => ({ time: null, text }));
   var LYRIC_LEAD_SECONDS = 1;
+  function orderLibrary(lib, recentIds) {
+    const seen = /* @__PURE__ */ new Set();
+    const recent = [];
+    for (const id of recentIds || []) {
+      const a = (lib || []).find((x) => String(x.itunes_collection_id) === String(id));
+      if (a && !seen.has(String(id))) {
+        recent.push(a);
+        seen.add(String(id));
+      }
+    }
+    const rest = (lib || []).filter((x) => !seen.has(String(x.itunes_collection_id))).sort((a, b) => (a.album_name || "").localeCompare(b.album_name || "", void 0, { sensitivity: "base" }));
+    return [...recent, ...rest];
+  }
   var sessionTabId = (() => {
     try {
       let id = sessionStorage.getItem("liri_tab_id");
@@ -494,6 +507,7 @@
     const [showAlbumPicker, setShowAlbumPicker] = useState2(false);
     const [userLibrary, setUserLibrary] = useState2([]);
     const [libLoading, setLibLoading] = useState2(false);
+    const [recentPlayedIds, setRecentPlayedIds] = useState2([]);
     const [turntableTracksLoading, setTurntableTracksLoading] = useState2(false);
     const [turntableTracksProgress, setTurntableTracksProgress] = useState2({ percent: 0, stage: "" });
     const turntableAlbumRef = useRef2(turntableAlbum);
@@ -577,6 +591,7 @@
     const creditsRef = useRef2(null);
     const userScrollingRef = useRef2(false);
     const [userScrolling, setUserScrolling] = useState2(false);
+    const refollowTimerRef = useRef2(null);
     const scrollInhibitTimer = useRef2(null);
     const listenSessionRef = useRef2(0);
     const attemptLogRef = useRef2([]);
@@ -1404,6 +1419,17 @@
           artwork_url: row.catalogue?.artwork_url || row.artwork_url || null
         }));
         setUserLibrary(library);
+        try {
+          const { data: recent } = await sb.from("listening_events").select("itunes_collection_id").eq("user_id", uid).not("itunes_collection_id", "is", null).order("listened_at", { ascending: false }).limit(60);
+          const ids = [];
+          for (const r of recent || []) {
+            const id = String(r.itunes_collection_id);
+            if (!ids.includes(id)) ids.push(id);
+            if (ids.length >= 2) break;
+          }
+          setRecentPlayedIds(ids);
+        } catch {
+        }
         if (library.length === 0) {
           setTurntableAlbum(null);
         } else {
@@ -1548,11 +1574,18 @@
     const refollow = () => {
       userScrollingRef.current = false;
       setUserScrolling(false);
+      clearTimeout(refollowTimerRef.current);
       if (lyricsRef.current[0]?.time == null) return;
       currentLineRef.current?.scrollIntoView({
         behavior: "smooth",
         block: "center"
       });
+    };
+    const noteUserScroll = () => {
+      userScrollingRef.current = true;
+      setUserScrolling(true);
+      clearTimeout(refollowTimerRef.current);
+      refollowTimerRef.current = setTimeout(() => refollow(), 1e4);
     };
     useEffect3(() => {
       if (mode !== "syncing" || !lyrics.length || lyricsUnsynced) return;
@@ -1594,6 +1627,7 @@
     useEffect3(() => () => {
       clearInterval(syncIntervalRef.current);
       clearInterval(progressTimerRef.current);
+      clearTimeout(refollowTimerRef.current);
       streamRef.current?.getTracks().forEach((t) => t.stop());
     }, []);
     useEffect3(() => {
@@ -2878,9 +2912,11 @@ Move closer to your speakers and try again.`);
           alignItems: "center",
           justifyContent: "flex-start",
           minHeight: "100vh",
-          // iOS: tighter vertical rhythm so the whole landing (logo → features →
-          // Get Started + Sign In) fits one phone screen with no scrolling.
-          padding: IS_IOS ? "max(36px,calc(env(safe-area-inset-top)+16px)) 32px max(24px,calc(env(safe-area-inset-bottom)+12px))" : "max(80px,calc(env(safe-area-inset-top)+56px)) 32px max(90px,calc(env(safe-area-inset-bottom)+80px))",
+          // iOS: tight vertical rhythm so the whole landing (logo → features →
+          // Get Started + Sign In) fits one phone screen with no scrolling. Top
+          // padding keeps a ≥64px floor so the vinyl always clears the notch /
+          // Dynamic Island even if the safe-area inset reads low.
+          padding: IS_IOS ? "max(64px,calc(env(safe-area-inset-top)+26px)) 32px max(20px,calc(env(safe-area-inset-bottom)+10px))" : "max(80px,calc(env(safe-area-inset-top)+56px)) 32px max(90px,calc(env(safe-area-inset-bottom)+80px))",
           textAlign: "center",
           gap: IS_IOS ? "0px" : "24px"
         }
@@ -4029,6 +4065,7 @@ Move closer to your speakers and try again.`);
         overflowY: "auto",
         padding: "0 24px",
         flex: 1,
+        minHeight: 0,
         paddingBottom: "max(24px, env(safe-area-inset-bottom))",
         WebkitOverflowScrolling: "touch"
       }
@@ -4107,7 +4144,7 @@ Move closer to your speakers and try again.`);
         marginBottom: 20,
         lineHeight: 1.6
       }
-    }, "Head to My Records to add your first album.")) : userLibrary.map((album) => {
+    }, "Head to My Records to add your first album.")) : orderLibrary(userLibrary, recentPlayedIds).map((album) => {
       const isSelected = turntableAlbum?.itunes_collection_id === album.itunes_collection_id;
       return /* @__PURE__ */ React.createElement("button", {
         key: album.id,
@@ -5451,16 +5488,18 @@ Move closer to your speakers and try again.`);
         width: isLandscape ? lyricAreaW + "px" : void 0,
         maxWidth: isLandscape ? menuOpen ? "760px" : "820px" : "none",
         marginLeft: isLandscape ? lyricAreaLeft + "px" : void 0,
+        // iOS: this lyric list lives inside a position:fixed overlay, so momentum
+        // touch scrolling needs these or the user can't drag to pick a line.
+        WebkitOverflowScrolling: "touch",
+        touchAction: "pan-y",
+        overscrollBehavior: "contain",
         // Slide + resize in step with the 0.35s menu fade
         transition: isLandscape ? "margin-left 0.35s, width 0.35s" : "none"
       },
-      onTouchStart: () => {
-        userScrollingRef.current = true;
-        setUserScrolling(true);
-      },
-      onWheel: () => {
-        userScrollingRef.current = true;
-        setUserScrolling(true);
+      onTouchStart: noteUserScroll,
+      onWheel: noteUserScroll,
+      onScroll: () => {
+        if (userScrollingRef.current) noteUserScroll();
       }
     }, lyrics.length > 0 ? lyricsUnsynced ? /* @__PURE__ */ React.createElement(
       React.Fragment,

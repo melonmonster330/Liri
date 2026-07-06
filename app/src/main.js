@@ -28,7 +28,7 @@ const liriAuthStorage = {
   removeItem: k => { try { sessionStorage.removeItem(k); } catch {} try { localStorage.removeItem(k); } catch {} },
 };
 const sb = supabase.createClient("https://xjdjpaxgymgbvcwmvorc.supabase.co", "sb_publishable_C-NBnfg0ltAoUi46XQTUjA_ozjZW_Nd", { auth: { storage: liriAuthStorage } });
-const APP_VERSION = "1.4.2";
+const APP_VERSION = "1.4.3";
 // Plain (unsynced) lyrics carry no timestamps — time:null marks them so the
 // player renders the flat auto-scroll view instead of pretending to be synced.
 const plainToLines = txt => (txt || "").split("\n").filter(l => l.trim()).map(text => ({ time: null, text }));
@@ -37,6 +37,20 @@ const plainToLines = txt => (txt || "").split("\n").filter(l => l.trim()).map(te
 // are unaffected (we only add this to the line-matching comparison). Helps the
 // perceived sync since reading slightly ahead feels more in-time than behind.
 const LYRIC_LEAD_SECONDS = 1;
+// Order a record library: the (up to 2) most-recently-played albums first, in
+// recency order, then everything else alphabetically by album name.
+function orderLibrary(lib, recentIds) {
+  const seen = new Set();
+  const recent = [];
+  for (const id of (recentIds || [])) {
+    const a = (lib || []).find(x => String(x.itunes_collection_id) === String(id));
+    if (a && !seen.has(String(id))) { recent.push(a); seen.add(String(id)); }
+  }
+  const rest = (lib || [])
+    .filter(x => !seen.has(String(x.itunes_collection_id)))
+    .sort((a, b) => (a.album_name || "").localeCompare(b.album_name || "", undefined, { sensitivity: "base" }));
+  return [...recent, ...rest];
+}
 // Stable per-tab id (survives refresh via sessionStorage) — used by the
 // playing-tab heartbeat so multiple Liri tabs don't double-run one session.
 const sessionTabId = (() => {
@@ -199,6 +213,7 @@ function Liri() {
   const [showAlbumPicker, setShowAlbumPicker] = useState(false);
   const [userLibrary, setUserLibrary] = useState([]);
   const [libLoading, setLibLoading] = useState(false);
+  const [recentPlayedIds, setRecentPlayedIds] = useState([]); // 2 most-recently-played collection ids, newest first
   const [turntableTracksLoading, setTurntableTracksLoading] = useState(false);
   const [turntableTracksProgress, setTurntableTracksProgress] = useState({ percent: 0, stage: "" });
   const turntableAlbumRef = useRef(turntableAlbum);
@@ -328,6 +343,7 @@ function Liri() {
   const creditsRef = useRef(null);
   const userScrollingRef = useRef(false); // true while user is browsing lyrics manually
   const [userScrolling, setUserScrolling] = useState(false); // reactive mirror for Follow button visibility
+  const refollowTimerRef = useRef(null); // auto snap-back to the current line after the user stops scrolling
   const scrollInhibitTimer = useRef(null);
   const listenSessionRef = useRef(0); // increments on each startListening; guards stale async callbacks
   const attemptLogRef = useRef([]); // collects per-attempt debug info for the error screen
@@ -1271,6 +1287,24 @@ function Liri() {
       }));
       setUserLibrary(library);
 
+      // The 2 most-recently-played albums float to the top of the picker /
+      // library; the rest sort alphabetically. Pull recent plays newest-first.
+      try {
+        const { data: recent } = await sb.from("listening_events")
+          .select("itunes_collection_id")
+          .eq("user_id", uid)
+          .not("itunes_collection_id", "is", null)
+          .order("listened_at", { ascending: false })
+          .limit(60);
+        const ids = [];
+        for (const r of recent || []) {
+          const id = String(r.itunes_collection_id);
+          if (!ids.includes(id)) ids.push(id);
+          if (ids.length >= 2) break;
+        }
+        setRecentPlayedIds(ids);
+      } catch {}
+
       // If the saved album is no longer in the library (e.g. after data wipe), clear it
       if (library.length === 0) {
         setTurntableAlbum(null);
@@ -1453,6 +1487,7 @@ function Liri() {
   const refollow = () => {
     userScrollingRef.current = false;
     setUserScrolling(false);
+    clearTimeout(refollowTimerRef.current);
     // Unsynced view: auto-scroll simply resumes from wherever the user left
     // the page — there is no "current line" to snap to.
     if (lyricsRef.current[0]?.time == null) return;
@@ -1460,6 +1495,15 @@ function Liri() {
       behavior: "smooth",
       block: "center"
     });
+  };
+
+  // Mark the user as manually scrolling and (re)arm a 10s idle timer — once they
+  // stop scrolling for 10s we snap back to the current line and resume following.
+  const noteUserScroll = () => {
+    userScrollingRef.current = true;
+    setUserScrolling(true);
+    clearTimeout(refollowTimerRef.current);
+    refollowTimerRef.current = setTimeout(() => refollow(), 10000);
   };
 
   // ── Scroll to credits once song passes the last lyric (outro roll) ──
@@ -1518,6 +1562,7 @@ function Liri() {
   useEffect(() => () => {
     clearInterval(syncIntervalRef.current);
     clearInterval(progressTimerRef.current);
+    clearTimeout(refollowTimerRef.current);
     streamRef.current?.getTracks().forEach(t => t.stop());
   }, []);
 
@@ -3076,10 +3121,12 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
         alignItems: "center",
         justifyContent: "flex-start",
         minHeight: "100vh",
-        // iOS: tighter vertical rhythm so the whole landing (logo → features →
-        // Get Started + Sign In) fits one phone screen with no scrolling.
+        // iOS: tight vertical rhythm so the whole landing (logo → features →
+        // Get Started + Sign In) fits one phone screen with no scrolling. Top
+        // padding keeps a ≥64px floor so the vinyl always clears the notch /
+        // Dynamic Island even if the safe-area inset reads low.
         padding: IS_IOS
-          ? "max(36px,calc(env(safe-area-inset-top)+16px)) 32px max(24px,calc(env(safe-area-inset-bottom)+12px))"
+          ? "max(64px,calc(env(safe-area-inset-top)+26px)) 32px max(20px,calc(env(safe-area-inset-bottom)+10px))"
           : "max(80px,calc(env(safe-area-inset-top)+56px)) 32px max(90px,calc(env(safe-area-inset-bottom)+80px))",
         textAlign: "center",
         gap: IS_IOS ? "0px" : "24px"
@@ -4219,6 +4266,7 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
       overflowY: "auto",
       padding: "0 24px",
       flex: 1,
+      minHeight: 0,
       paddingBottom: "max(24px, env(safe-area-inset-bottom))",
       WebkitOverflowScrolling: "touch"
     }
@@ -4297,7 +4345,7 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
       marginBottom: 20,
       lineHeight: 1.6
     }
-  }, "Head to My Records to add your first album.")) : userLibrary.map(album => {
+  }, "Head to My Records to add your first album.")) : orderLibrary(userLibrary, recentPlayedIds).map(album => {
     const isSelected = turntableAlbum?.itunes_collection_id === album.itunes_collection_id;
     return /*#__PURE__*/React.createElement("button", {
       key: album.id,
@@ -5535,17 +5583,17 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
       width: isLandscape ? lyricAreaW + "px" : undefined,
       maxWidth: isLandscape ? (menuOpen ? "760px" : "820px") : "none",
       marginLeft: isLandscape ? lyricAreaLeft + "px" : undefined,
+      // iOS: this lyric list lives inside a position:fixed overlay, so momentum
+      // touch scrolling needs these or the user can't drag to pick a line.
+      WebkitOverflowScrolling: "touch",
+      touchAction: "pan-y",
+      overscrollBehavior: "contain",
       // Slide + resize in step with the 0.35s menu fade
       transition: isLandscape ? "margin-left 0.35s, width 0.35s" : "none"
     },
-    onTouchStart: () => {
-      userScrollingRef.current = true;
-      setUserScrolling(true);
-    },
-    onWheel: () => {
-      userScrollingRef.current = true;
-      setUserScrolling(true);
-    }
+    onTouchStart: noteUserScroll,
+    onWheel: noteUserScroll,
+    onScroll: () => { if (userScrollingRef.current) noteUserScroll(); }
   }, lyrics.length > 0 ? (lyricsUnsynced ? /*#__PURE__*/React.createElement(React.Fragment, null,
     /*#__PURE__*/React.createElement("div", {
       style: { textAlign: "center", fontSize: "10px", letterSpacing: "2px", textTransform: "uppercase", color: "rgba(212,168,70,0.45)", marginBottom: "22px" }

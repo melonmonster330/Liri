@@ -36,7 +36,7 @@
   <script type="text/babel">
     const { useState, useEffect, useRef, useCallback } = React;
 
-    const APP_VERSION = "1.4.2";
+    const APP_VERSION = "1.4.3";
 
     // On iOS Capacitor relative URLs don't resolve — route all API calls through the live domain.
     const API_BASE = window.Capacitor ? "https://www.getliri.com" : "";
@@ -317,6 +317,20 @@
       );
     }
 
+    // 2 most-recently-played albums first (recency order), then the rest A→Z.
+    function orderLibrary(lib, recentIds) {
+      const seen = new Set();
+      const recent = [];
+      for (const id of (recentIds || [])) {
+        const a = (lib || []).find(x => String(x.itunes_collection_id) === String(id));
+        if (a && !seen.has(String(id))) { recent.push(a); seen.add(String(id)); }
+      }
+      const rest = (lib || [])
+        .filter(x => !seen.has(String(x.itunes_collection_id)))
+        .sort((a, b) => (a.album_name || "").localeCompare(b.album_name || "", undefined, { sensitivity: "base" }));
+      return [...recent, ...rest];
+    }
+
     // ── Track Lyrics Sheet ─────────────────────────────────────────────────
     function TrackLyricsSheet({ track, album, onClose }) {
       const [lrc, setLrc]         = useState(null);
@@ -580,6 +594,7 @@
 
       // Library state
       const [library, setLibrary]         = useState([]);
+      const [recentPlayedIds, setRecentPlayedIds] = useState([]); // 2 most-recently-played, newest first
       const [libLoading, setLibLoading]   = useState(true);
       const [playCounts, setPlayCounts]   = useState({});
 
@@ -667,6 +682,23 @@
         }));
         setLibrary(library);
         setLibLoading(false);
+
+        // Recency for ordering: the 2 most-recently-played albums float to top.
+        try {
+          const { data: recent } = await sb.from("listening_events")
+            .select("itunes_collection_id")
+            .eq("user_id", uid)
+            .not("itunes_collection_id", "is", null)
+            .order("listened_at", { ascending: false })
+            .limit(60);
+          const ids = [];
+          for (const r of recent || []) {
+            const id = String(r.itunes_collection_id);
+            if (!ids.includes(id)) ids.push(id);
+            if (ids.length >= 2) break;
+          }
+          setRecentPlayedIds(ids);
+        } catch (e) {}
       }, []);
 
       // ── Fetch play counts ──
@@ -1119,7 +1151,7 @@
                     {q.status === "adding" ? <Spinner size={18} /> : <div style={{ width: 18, height: 18, borderRadius: "50%", border: "2px solid rgba(255,255,255,0.12)" }} />}
                   </div>
                 ))}
-                {library.map((album, i) => {
+                {orderLibrary(library, recentPlayedIds).map((album, i) => {
                   const plays = playCounts[album.itunes_collection_id] || 0;
                   const isRemoving = removing === album.itunes_collection_id;
                   return (
