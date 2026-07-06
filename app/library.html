@@ -36,7 +36,7 @@
   <script type="text/babel">
     const { useState, useEffect, useRef, useCallback } = React;
 
-    const APP_VERSION = "1.4.9";
+    const APP_VERSION = "1.5.0";
 
     // On iOS Capacitor relative URLs don't resolve — route all API calls through the live domain.
     const API_BASE = window.Capacitor ? "https://www.getliri.com" : "";
@@ -1203,7 +1203,7 @@
 
           {/* ── Undo toast ── */}
           {undoAlbum && (
-            <div style={{ position: "fixed", bottom: "max(40px, calc(env(safe-area-inset-bottom) + 16px))", left: "50%", transform: "translateX(-50%)", zIndex: 50, background: "#1e1e30", border: "1px solid rgba(255,255,255,0.1)", borderRadius: 50, padding: "12px 20px", display: "flex", alignItems: "center", gap: 14, boxShadow: "0 8px 32px rgba(0,0,0,0.5)", animation: "fade-up 0.25s ease", whiteSpace: "nowrap" }}>
+            <div style={{ position: "fixed", bottom: "calc(env(safe-area-inset-bottom) + 78px)", left: "50%", transform: "translateX(-50%)", zIndex: 150, background: "#1e1e30", border: "1px solid rgba(255,255,255,0.1)", borderRadius: 50, padding: "12px 20px", display: "flex", alignItems: "center", gap: 14, boxShadow: "0 8px 32px rgba(0,0,0,0.5)", animation: "fade-up 0.25s ease", whiteSpace: "nowrap" }}>
               <span style={{ fontSize: 13, color: "rgba(255,255,255,0.6)" }}>Removed <strong style={{ color: "#f0e6d3" }}>{undoAlbum.album.album_name}</strong></span>
               <button onClick={undoRemove} style={{ background: "#d4a846", color: "#080810", border: "none", borderRadius: 50, padding: "6px 14px", fontSize: 12, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>Undo</button>
             </div>
