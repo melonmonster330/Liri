@@ -28,7 +28,7 @@ const liriAuthStorage = {
   removeItem: k => { try { sessionStorage.removeItem(k); } catch {} try { localStorage.removeItem(k); } catch {} },
 };
 const sb = supabase.createClient("https://xjdjpaxgymgbvcwmvorc.supabase.co", "sb_publishable_C-NBnfg0ltAoUi46XQTUjA_ozjZW_Nd", { auth: { storage: liriAuthStorage } });
-const APP_VERSION = "1.4.7";
+const APP_VERSION = "1.4.8";
 // Plain (unsynced) lyrics carry no timestamps — time:null marks them so the
 // player renders the flat auto-scroll view instead of pretending to be synced.
 const plainToLines = txt => (txt || "").split("\n").filter(l => l.trim()).map(text => ({ time: null, text }));
@@ -4213,21 +4213,25 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
       zIndex: 200,
       background: "rgba(0,0,0,0.6)",
       backdropFilter: "blur(4px)",
-      cursor: "pointer"
+      cursor: "pointer",
+      // Flex column pinning the sheet to the bottom. This (not an absolutely
+      // positioned panel) is what gives the flex:1 scroll child a real bounded
+      // height on iOS — otherwise the album list won't scroll.
+      display: "flex",
+      flexDirection: "column",
+      justifyContent: "flex-end"
     }
   }, /*#__PURE__*/React.createElement("div", {
     onClick: e => e.stopPropagation(),
     style: {
-      position: "absolute",
-      bottom: 0,
-      left: 0,
-      right: 0,
+      width: "100%",
       background: "#0f0f1c",
       borderRadius: "24px 24px 0 0",
       maxHeight: "80vh",
       overflow: "hidden",
       display: "flex",
       flexDirection: "column",
+      minHeight: 0,
       boxShadow: "0 -8px 48px rgba(0,0,0,0.6)",
       animation: "slide-up 0.3s ease"
     }
@@ -5206,21 +5210,23 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
       inset: 0,
       zIndex: 200,
       background: "rgba(0,0,0,0.5)",
-      backdropFilter: "blur(4px)"
+      backdropFilter: "blur(4px)",
+      // Flex-end pin (not an absolute panel) so the flex:1 list scrolls on iOS.
+      display: "flex",
+      flexDirection: "column",
+      justifyContent: "flex-end"
     }
   }, /*#__PURE__*/React.createElement("div", {
     onClick: e => e.stopPropagation(),
     style: {
-      position: "absolute",
-      bottom: 0,
-      left: 0,
-      right: 0,
+      width: "100%",
       background: "#0f0f1c",
       borderRadius: "24px 24px 0 0",
       maxHeight: "80vh",
       overflow: "hidden",
       display: "flex",
       flexDirection: "column",
+      minHeight: 0,
       boxShadow: "0 -8px 48px rgba(0,0,0,0.6)",
       animation: "slide-up 0.3s ease"
     }
