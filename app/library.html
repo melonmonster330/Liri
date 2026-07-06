@@ -36,7 +36,7 @@
   <script type="text/babel">
     const { useState, useEffect, useRef, useCallback } = React;
 
-    const APP_VERSION = "1.4.8";
+    const APP_VERSION = "1.4.9";
 
     // On iOS Capacitor relative URLs don't resolve — route all API calls through the live domain.
     const API_BASE = window.Capacitor ? "https://www.getliri.com" : "";
@@ -876,34 +876,46 @@
       }, [addQueue]);
 
       // ── Remove album from library (with undo toast) ──
-      const removeAlbum = (collectionId) => {
+      const removeAlbum = async (collectionId) => {
         if (!user) return;
         const album = library.find(a => a.itunes_collection_id === collectionId);
         if (!album) return;
         // Hide immediately from UI
         setLibrary(prev => prev.filter(a => a.itunes_collection_id !== collectionId));
-        // Cancel any existing undo toast
         if (undoAlbum?.timer) clearTimeout(undoAlbum.timer);
-        // Show undo toast — actually delete after 5s if not undone
-        const timer = setTimeout(async () => {
-          await sb.from("user_library")
-            .delete()
-            .eq("user_id", user.id)
-            .eq("itunes_collection_id", collectionId);
-          try {
-            const saved = JSON.parse(localStorage.getItem("liri_turntable") || "null");
-            if (saved?.itunes_collection_id === collectionId) localStorage.removeItem("liri_turntable");
-          } catch {}
-          setUndoAlbum(null);
-        }, 5000);
+        // Delete from the DB RIGHT AWAY so it sticks even if you leave the tab
+        // before the undo toast times out. (Previously this ran in a 5s
+        // setTimeout that a tab navigation destroyed, so the row never went.)
+        const { error } = await sb.from("user_library")
+          .delete()
+          .eq("user_id", user.id)
+          .eq("itunes_collection_id", collectionId);
+        if (error) {
+          console.error("[library] remove failed:", error);
+          setLibrary(prev => [album, ...prev.filter(a => a.itunes_collection_id !== collectionId)]);
+          return;
+        }
+        try {
+          const saved = JSON.parse(localStorage.getItem("liri_turntable") || "null");
+          if (saved?.itunes_collection_id === collectionId) localStorage.removeItem("liri_turntable");
+        } catch {}
+        // Undo toast just auto-dismisses now — no pending DB work to cancel.
+        const timer = setTimeout(() => setUndoAlbum(null), 5000);
         setUndoAlbum({ album, timer });
       };
 
-      const undoRemove = () => {
+      const undoRemove = async () => {
         if (!undoAlbum) return;
         clearTimeout(undoAlbum.timer);
-        setLibrary(prev => [undoAlbum.album, ...prev.filter(a => a.itunes_collection_id !== undoAlbum.album.itunes_collection_id)]);
+        const album = undoAlbum.album;
+        setLibrary(prev => [album, ...prev.filter(a => a.itunes_collection_id !== album.itunes_collection_id)]);
         setUndoAlbum(null);
+        // Re-add the row we deleted.
+        const { error } = await sb.from("user_library").upsert(
+          { user_id: user.id, itunes_collection_id: album.itunes_collection_id, added_at: album.added_at || new Date().toISOString() },
+          { onConflict: "user_id,itunes_collection_id" }
+        );
+        if (error) { console.error("[library] undo failed:", error); fetchLibrary(user.id); }
       };
 
       // ── Fetch live IAP price on iOS ──
