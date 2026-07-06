@@ -28,7 +28,7 @@ const liriAuthStorage = {
   removeItem: k => { try { sessionStorage.removeItem(k); } catch {} try { localStorage.removeItem(k); } catch {} },
 };
 const sb = supabase.createClient("https://xjdjpaxgymgbvcwmvorc.supabase.co", "sb_publishable_C-NBnfg0ltAoUi46XQTUjA_ozjZW_Nd", { auth: { storage: liriAuthStorage } });
-const APP_VERSION = "1.5.0";
+const APP_VERSION = "1.5.1";
 // Plain (unsynced) lyrics carry no timestamps — time:null marks them so the
 // player renders the flat auto-scroll view instead of pretending to be synced.
 const plainToLines = txt => (txt || "").split("\n").filter(l => l.trim()).map(text => ({ time: null, text }));
@@ -3123,17 +3123,13 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
         display: "flex",
         flexDirection: "column",
         alignItems: "center",
-        justifyContent: "flex-start",
+        // Center the whole landing vertically so it doesn't cram against the top
+        // (vinyl clipped by the notch) with a huge empty gap below. The padding
+        // floors keep it clear of the notch / home indicator even when centered.
+        justifyContent: "center",
         minHeight: "100vh",
-        // iOS: tight vertical rhythm so the whole landing (logo → features →
-        // Get Started + Sign In) fits one phone screen with no scrolling. Top
-        // padding keeps a ≥64px floor so the vinyl always clears the notch /
-        // Dynamic Island even if the safe-area inset reads low.
-        // Both platforms keep the whole landing (logo → features → Get Started
-        // + Sign In) on one screen with no scroll. iOS keeps a ≥64px top floor
-        // so the vinyl clears the notch; web sits tighter but still centered-ish.
         padding: IS_IOS
-          ? "max(64px,calc(env(safe-area-inset-top)+26px)) 32px max(20px,calc(env(safe-area-inset-bottom)+10px))"
+          ? "max(28px,env(safe-area-inset-top)) 32px max(28px,env(safe-area-inset-bottom))"
           : "max(40px,calc(env(safe-area-inset-top)+28px)) 32px max(40px,calc(env(safe-area-inset-bottom)+28px))",
         textAlign: "center",
         gap: IS_IOS ? "0px" : "14px"
