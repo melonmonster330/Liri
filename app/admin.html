@@ -611,6 +611,8 @@ async function openBacklog() {
 
 // ── Drill-in: albums list → album detail ─────────────────────────────────────
 let albumsCache = null;
+let albumDetailCache = null;   // last album detail loaded (for the track-order editor)
+let reorderTracks = null;      // working copy of tracks while reordering
 
 async function openAlbums() {
   const c = document.getElementById("content");
@@ -690,6 +692,7 @@ async function openAlbum(id) {
 
 function renderAlbum(d) {
   const c = document.getElementById("content");
+  albumDetailCache = d;
   const a = d.album || {};
   const tracks = d.tracks || [];
   const sc = d.sideCoverage || { total: tracks.length, with_side: 0, missing: tracks.length };
@@ -710,6 +713,7 @@ function renderAlbum(d) {
           </div>
         </div>
       </div>
+      ${tracks.length > 1 ? `<button class="back-btn" style="margin:0 0 14px" onclick="openReorder()">⇅ Fix track order</button>` : ''}
       ${tracks.length === 0 ? '<div style="color:var(--muted);font-size:13px">No track data</div>' :
         tracks.map(t => `
           <div class="track-row">
@@ -737,6 +741,79 @@ function renderAlbum(d) {
       </div>` : ''}
     </div>
   `;
+}
+
+// ── Track-order editor ─────────────────────────────────────────────────────
+// Reorders album_tracks to match a vinyl pressing whose sequence differs from
+// the iTunes listing. Always acts on the explicit itunes_collection_id.
+function openReorder() {
+  if (!albumDetailCache) return;
+  reorderTracks = (albumDetailCache.tracks || []).map(t => ({
+    itunes_track_id: t.itunes_track_id,
+    track_name: t.track_name,
+  }));
+  renderReorder();
+}
+
+function renderReorder() {
+  const c = document.getElementById("content");
+  const a = (albumDetailCache && albumDetailCache.album) || {};
+  const cid = a.itunes_collection_id;
+  c.innerHTML = `
+    <button class="back-btn" onclick="openAlbum(${cid})">← Back to album</button>
+    <div class="section">
+      <div class="section-title">Fix track order — ${esc(a.album_name || '')}</div>
+      <div style="font-size:12px;color:var(--muted);margin-bottom:14px">Reorder so the sequence matches the vinyl pressing. Saving rewrites the track numbers for this album and clears its side data (re-enter it afterward).</div>
+      <div id="reorder-list">
+        ${reorderTracks.map((t, i) => `
+          <div class="track-row">
+            <div class="track-num">${i + 1}</div>
+            <div class="track-name">${esc(t.track_name || '')}</div>
+            <div style="display:flex;gap:6px;flex-shrink:0">
+              <button class="back-btn" style="margin:0;padding:4px 10px" ${i === 0 ? 'disabled' : ''} onclick="moveReorder(${i},-1)">▲</button>
+              <button class="back-btn" style="margin:0;padding:4px 10px" ${i === reorderTracks.length - 1 ? 'disabled' : ''} onclick="moveReorder(${i},1)">▼</button>
+            </div>
+          </div>`).join("")}
+      </div>
+      <button class="side-form-btn" style="margin-top:16px" onclick="saveOrder(${cid})">Save order</button>
+      <div class="side-form-msg" id="reorder-msg"></div>
+    </div>
+  `;
+}
+
+function moveReorder(idx, dir) {
+  const j = idx + dir;
+  if (j < 0 || j >= reorderTracks.length) return;
+  const tmp = reorderTracks[idx]; reorderTracks[idx] = reorderTracks[j]; reorderTracks[j] = tmp;
+  renderReorder();
+}
+
+async function saveOrder(collectionId) {
+  const msg = document.getElementById("reorder-msg");
+  const btn = document.querySelector("#content .side-form-btn");
+  btn.disabled = true;
+  msg.textContent = "Saving…"; msg.className = "side-form-msg";
+  try {
+    const r = await fetch(API, {
+      method: "POST",
+      headers: { "x-admin-password": pw, "Content-Type": "application/json" },
+      body: JSON.stringify({ action: "reorder-tracks", collectionId, trackIds: reorderTracks.map(t => t.itunes_track_id) }),
+    });
+    const d = await r.json().catch(() => ({}));
+    if (r.ok && d.ok) {
+      msg.textContent = `✓ Saved new order (${d.updated} tracks). Re-enter side data on the album page.`;
+      msg.className = "side-form-msg ok";
+      setTimeout(() => openAlbum(collectionId), 1500);
+    } else {
+      msg.textContent = "✗ " + (d.error || ("HTTP " + r.status));
+      msg.className = "side-form-msg err";
+      btn.disabled = false;
+    }
+  } catch (e) {
+    msg.textContent = "✗ " + e.message;
+    msg.className = "side-form-msg err";
+    btn.disabled = false;
+  }
 }
 
 async function submitSideData(collectionId, totalTracks) {

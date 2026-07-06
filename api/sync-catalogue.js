@@ -654,7 +654,10 @@ async function getAlbumDetail(collectionId) {
     missing:   tracks.filter(t => !t.position).length,
   };
 
-  return { album, tracks, sideCoverage };
+  // Thread the explicit collection id onto the album object so the admin UI
+  // (side-data form, track-order editor) always acts on this exact version
+  // rather than a value the catalogue select never returned.
+  return { album: { ...(album || {}), itunes_collection_id: collectionId }, tracks, sideCoverage };
 }
 
 // ── Main handler ──────────────────────────────────────────────────────────────
@@ -887,6 +890,31 @@ module.exports = async (req, res) => {
       return (status >= 200 && status < 300)
         ? res.status(200).json({ ok: true, inserted: rows.length })
         : res.status(500).json({ error: `vinyl_sides insert failed (${status})` });
+    }
+
+    if (body?.action === "reorder-tracks") {
+      // Fix an album whose vinyl track order differs from the iTunes order.
+      // Rewrites album_tracks.track_number (1..N, disc 1) to the supplied order.
+      // The player builds turntableTracksRef ordered by disc_number,track_number,
+      // so this immediately corrects turntable playback + auto-advance.
+      const { collectionId, trackIds } = body;
+      if (!collectionId || !Array.isArray(trackIds) || trackIds.length === 0) {
+        return res.status(400).json({ error: "collectionId and trackIds[] required" });
+      }
+      const rows = trackIds.map((tid, i) => ({
+        itunes_track_id:      Number(tid),
+        itunes_collection_id: String(collectionId),
+        track_number:         i + 1,
+        disc_number:          1,
+      }));
+      const { status } = await sbUpsert("album_tracks?on_conflict=itunes_track_id", rows);
+      if (status < 200 || status >= 300) {
+        return res.status(500).json({ error: `album_tracks update failed (${status})` });
+      }
+      // Side assignments were derived from the OLD order — clear them so the
+      // admin re-enters side counts against the corrected sequence.
+      await sbDelete(`vinyl_sides?itunes_collection_id=eq.${collectionId}`);
+      return res.status(200).json({ ok: true, updated: rows.length });
     }
 
     if (body?.action === "post-update") {
