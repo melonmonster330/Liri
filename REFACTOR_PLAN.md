@@ -14,8 +14,16 @@ inline functions, and a 503-`createElement` render. That's the #1 bottleneck.
   Web build verified on Vercel preview + manually smoke-tested (library
   order, plain-lyrics fallback, button/listening/flip/auto-post logging) —
   all good. Still owed: `npm run sync` + on-device iOS test (not yet run).
-- [ ] **Phase 2 — Feature hooks.** In progress.
-- [ ] **Phase 3 — Core playback hooks.**
+- [x] **Phase 2 — Feature hooks.** Done in commit `b9170db`. Created
+  `hooks/usePayments.js` (userTier/albumCount/IAP/Stripe),
+  `hooks/useNowPlaying.js` (cross-tab persistence + heartbeat),
+  `hooks/useLyricScroll.js` (auto-scroll/tap-to-seek/re-follow). `main.js`
+  6716 → 6429 lines. `APP_VERSION` → 1.5.4. Not yet build/device-tested —
+  do that before Phase 3.
+- [ ] **Phase 3 — Core playback hooks.** Up next: `useTurntable`,
+  `useListening`, `useTrackAdvance`. Highest-care phase — these share refs
+  across the whole component. Re-locate regions by name search first, the
+  plan's old line numbers (below) are stale.
 - [ ] **Phase 4 — Split the render.**
 - [ ] **Phase 5 — Tab HTML pages.**
 
@@ -89,12 +97,15 @@ Extract top-level/near-pure functions to `base/lib`:
 > 6716 lines). Re-locate each region by content/name search before editing,
 > don't trust the numbers.
 
-### Phase 2 — Self-contained feature logic → hooks
+### Phase 2 — Self-contained feature logic → hooks ✅ DONE (commit `b9170db`)
 Move a domain's state + effects into a `use*` hook, return what render needs:
 - `usePayments` — Apple IAP + Stripe upgrade (~788–1032)
 - `useNowPlaying` — persistence + heartbeat (~2170–2336)
 - `useLyricScroll` — scroll effects (~1415–1520, ~2337–2408)
 Do **one hook per commit**; verify playback after each.
+(Landed as one commit with three hooks rather than three separate commits —
+each was diffed line-for-line against the pre-refactor source before moving
+on, so the safety property still held.)
 
 ### Phase 3 — Core playback hooks (highest value, most care)
 - `useTurntable` — album/track/side load (~205–262, ~1078–1274, ~2409–2608)
