@@ -370,9 +370,9 @@
     }
   };
   var sb = supabase.createClient("https://xjdjpaxgymgbvcwmvorc.supabase.co", "sb_publishable_C-NBnfg0ltAoUi46XQTUjA_ozjZW_Nd", { auth: { storage: liriAuthStorage } });
-  var APP_VERSION = "1.5.1";
+  var APP_VERSION = "1.5.2";
   var plainToLines = (txt) => (txt || "").split("\n").filter((l) => l.trim()).map((text) => ({ time: null, text }));
-  var LYRIC_LEAD_SECONDS = 1;
+  var LYRIC_LEAD_SECONDS = 2;
   function orderLibrary(lib, recentIds) {
     const seen = /* @__PURE__ */ new Set();
     const recent = [];
@@ -5220,7 +5220,14 @@ Move closer to your speakers and try again.`);
         flexDirection: "column"
       },
       onPointerMove: isLandscape ? bumpControls : void 0,
-      onTouchStart: isLandscape || IS_IOS ? bumpControls : void 0
+      // Tap the background (outside the controls panel, which stops propagation)
+      // to dismiss the menu immediately instead of waiting for the auto-hide.
+      onTouchStart: isLandscape || IS_IOS ? (() => {
+        if (controlsVisible) {
+          clearTimeout(controlsHideTimerRef.current);
+          setControlsVisible(false);
+        } else bumpControls();
+      }) : void 0
     }, kbToast && /* @__PURE__ */ React.createElement("div", {
       style: {
         position: "fixed",
@@ -5617,6 +5624,9 @@ Move closer to your speakers and try again.`);
         pointerEvents: "none"
       }
     })), /* @__PURE__ */ React.createElement("div", {
+      // Taps inside the controls panel must NOT bubble to the background
+      // dismiss handler, or pressing a button would hide the menu.
+      onTouchStart: (e) => e.stopPropagation(),
       style: isLandscape ? {
         // Landscape: the ONLY left panel now — a full-height controls sidebar from
         // just below the top bar (52px) to the bottom. Controls are vertically
