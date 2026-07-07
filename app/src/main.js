@@ -1,4 +1,13 @@
 import { parseLRC, formatTime, timeAgo, normText } from "../base/lib/text.js";
+import { plainToLines, orderLibrary } from "../base/lib/library.js";
+import { matchTranscriptToTracks } from "../base/lib/match.js";
+import {
+  logListeningEvent as libLogListeningEvent,
+  maybeAutoPostPlay as libMaybeAutoPostPlay,
+  logFlipEvent as libLogFlipEvent,
+  logButtonEvent as libLogButtonEvent,
+} from "../base/lib/analytics.js";
+import { IS_IOS, TRANSCRIBE_PROXY, ITUNES_PROXY, PLAYBACK_OFFSET_CORRECTION, AUTO_ADVANCE_OFFSET } from "../base/lib/config.js";
 import { startWhisperChunks } from "../base/lib/whisper.js";
 import { getSideGroups, hasSideData } from "../base/lib/sides.js";
 import { showFlipPushNotification, showAlbumEndPushNotification, getLocalNotif } from "../base/lib/notifications.js";
@@ -28,29 +37,12 @@ const liriAuthStorage = {
   removeItem: k => { try { sessionStorage.removeItem(k); } catch {} try { localStorage.removeItem(k); } catch {} },
 };
 const sb = supabase.createClient("https://xjdjpaxgymgbvcwmvorc.supabase.co", "sb_publishable_C-NBnfg0ltAoUi46XQTUjA_ozjZW_Nd", { auth: { storage: liriAuthStorage } });
-const APP_VERSION = "1.5.2";
-// Plain (unsynced) lyrics carry no timestamps — time:null marks them so the
-// player renders the flat auto-scroll view instead of pretending to be synced.
-const plainToLines = txt => (txt || "").split("\n").filter(l => l.trim()).map(text => ({ time: null, text }));
+const APP_VERSION = "1.5.3";
 // Lyrics lead the audio clock by this many seconds — the highlighted line
 // switches slightly BEFORE its nominal timestamp. Displayed time / progress bar
 // are unaffected (we only add this to the line-matching comparison). Helps the
 // perceived sync since reading slightly ahead feels more in-time than behind.
 const LYRIC_LEAD_SECONDS = 2;
-// Order a record library: the (up to 2) most-recently-played albums first, in
-// recency order, then everything else alphabetically by album name.
-function orderLibrary(lib, recentIds) {
-  const seen = new Set();
-  const recent = [];
-  for (const id of (recentIds || [])) {
-    const a = (lib || []).find(x => String(x.itunes_collection_id) === String(id));
-    if (a && !seen.has(String(id))) { recent.push(a); seen.add(String(id)); }
-  }
-  const rest = (lib || [])
-    .filter(x => !seen.has(String(x.itunes_collection_id)))
-    .sort((a, b) => (a.album_name || "").localeCompare(b.album_name || "", undefined, { sensitivity: "base" }));
-  return [...recent, ...rest];
-}
 // Stable per-tab id (survives refresh via sessionStorage) — used by the
 // playing-tab heartbeat so multiple Liri tabs don't double-run one session.
 const sessionTabId = (() => {
@@ -60,9 +52,6 @@ const sessionTabId = (() => {
     return id;
   } catch { return String(Math.random()); }
 })();
-const IS_IOS = !!window.Capacitor; // set once at load time — used for App Store compliance checks
-const TRANSCRIBE_PROXY = window.Capacitor ? "https://www.getliri.com/api/transcribe"    : "/api/transcribe";
-const ITUNES_PROXY   = window.Capacitor ? "https://www.getliri.com/api/itunes-lookup"   : "/api/itunes-lookup";
 // Shazam + NativeAudio plugin bridges are imported from app/ios/.
 
 //   3. Landing page feature cards (🎵 → sound/wave art, 💿 → vinyl art)
@@ -71,11 +60,6 @@ const ITUNES_PROXY   = window.Capacitor ? "https://www.getliri.com/api/itunes-lo
 // All original artwork should match the dark palette: deep navy #080810, gold #d4a846, rose #c9807a
 // ─────────────────────────────────────────────────────────────────────────────────────────────
 
-
-const PLAYBACK_OFFSET_CORRECTION = 4.0;
-// Extra offset added when auto-advancing to next track (no re-listen),
-// accounting for lyrics-fetch + state-update delay. Tune if still drifting.
-const AUTO_ADVANCE_OFFSET = 2.0;
 const styleEl = document.createElement("style");
 styleEl.textContent = `
       @keyframes vinyl-spin { to { transform: rotate(360deg); } }
@@ -653,92 +637,13 @@ function Liri() {
     });
   };
 
-  // ── Analytics: log a song play to listening_events ──
-  // Called for both manual recognitions and vinyl auto-advances.
-  // Never throws — analytics must never block or break the UI.
-  const logListeningEvent = async params => {
-    try {
-      await sb.from("listening_events").insert({
-        user_id: params.userId || null,
-        session_id: sessionId,
-        track_title: params.title,
-        artist_name: params.artist,
-        album_name: params.album || null,
-        artwork_url: params.artwork || null,
-        genre: params.genre || null,
-        itunes_track_id: params.itunesTrackId ? Number(params.itunesTrackId) : null,
-        itunes_collection_id: params.collectionId ? Number(params.collectionId) : null,
-        vinyl_release_id: params.vinylReleaseId || null,
-        vinyl_mode_on: params.vinylModeOn ?? false,
-        source: params.source || "recognition",
-        platform: window.Capacitor ? "ios" : "web",
-        country_code: params.countryCode || null,
-        playback_offset_s: params.offsetSecs != null ? Math.round(params.offsetSecs) : null,
-        track_duration_s: params.durationSecs != null ? Math.round(params.durationSecs) : null,
-        acr_confidence: params.acrScore || null
-      });
-    } catch (e) {
-      console.error("logListeningEvent failed:", e.message);
-    }
-  };
-
-  // ── Social: auto-post the record you're spinning (if the user opted in) ──
-  // Posts ONE album post per record per listening session — never per track —
-  // so auto-advancing through a side doesn't spam the feed. Cross-session spam
-  // is guarded by a 12h DB check. Never throws; social must not break playback.
-  const maybeAutoPostPlay = async ({ userId, collectionId, album, artist, artwork }) => {
-    try {
-      const vis = autoPostVisRef.current;
-      if (!userId || vis === "off") return;
-      if (!collectionId) return;
-      const key = String(collectionId);
-      if (autoPostedAlbumsRef.current.has(key)) return; // already posted this session
-      autoPostedAlbumsRef.current.add(key);
-
-      // Cross-session dedup: skip if we auto-posted this album in the last 12h.
-      const since = new Date(Date.now() - 12 * 60 * 60 * 1000).toISOString();
-      const { data: recent } = await sb.from("posts")
-        .select("id")
-        .eq("author_id", userId)
-        .eq("collection_id", Number(collectionId))
-        .eq("source", "auto")
-        .gte("created_at", since)
-        .limit(1);
-      if (recent && recent.length) return;
-
-      await sb.from("posts").insert({
-        author_id: userId,
-        kind: "album",
-        source: "auto",
-        visibility: vis,
-        collection_id: Number(collectionId),
-        album_name: album || null,
-        artist_name: artist || null,
-        artwork_url: artwork || null,
-      });
-    } catch (e) {
-      console.error("maybeAutoPostPlay failed:", e.message);
-    }
-  };
-
-  // ── Analytics: log a vinyl side flip to flip_events ──
-  const logFlipEvent = async params => {
-    try {
-      await sb.from("flip_events").insert({
-        user_id: params.userId || null,
-        session_id: sessionId,
-        vinyl_release_id: params.vinylReleaseId || null,
-        itunes_collection_id: params.collectionId ? Number(params.collectionId) : null,
-        album_name: params.album || null,
-        artist_name: params.artist || null,
-        from_side: params.fromSide || null,
-        to_side: params.toSide || null,
-        detection_method: params.method || "heuristic"
-      });
-    } catch (e) {
-      console.error("logFlipEvent failed:", e.message);
-    }
-  };
+  // ── Analytics + social auto-post — extracted to base/lib/analytics.js ──
+  // (pure functions; sb/sessionId/refs are passed in explicitly). Thin
+  // wrappers below preserve the original call signatures used throughout
+  // this component.
+  const logListeningEvent = params => libLogListeningEvent(sb, sessionId, params);
+  const maybeAutoPostPlay = params => libMaybeAutoPostPlay(sb, autoPostVisRef, autoPostedAlbumsRef, params);
+  const logFlipEvent = params => libLogFlipEvent(sb, sessionId, params);
 
   // ── Auth setup ──
   useEffect(() => {
@@ -1671,172 +1576,15 @@ function Liri() {
   };
 
   // ── Vinyl-aware track matching ──────────────────────────────────────────────
-  // When the user has told us what album is on the turntable, fetch LRC lyrics
-  // for ALL tracks in parallel and score the Whisper transcript against each.
-  // Returns { track, lrcMatch, lyrics, startPos, score } or null.
-  // Skips GPT entirely — much more accurate for obscure / re-recorded albums.
-  // ── Unique consecutive-word match against cached lyrics ──
-  // Tries word runs from 1 upward — shortest unique run wins.
-  // A single rare word is enough if it appears in only one track.
-  // Pure in-memory, no network calls.
-  const matchTranscriptToTracks = (transcript, tracks, wordsData, logRef) => {
-    // Normalise a single word: lowercase, strip non-alphanumeric except apostrophe
-    const normWord = w => w.toLowerCase().replace(/[^a-z0-9']/g, "");
+  // Extracted to base/lib/match.js (pure, no React) — see that file for the
+  // full matching algorithm and its comments.
 
-    // Fuzzy word equality: allow small edit-distance for Whisper transcription noise
-    // Short words (≤3 chars) must match exactly — too risky to fuzz "I", "me", "the"
-    // Medium words (4-6 chars): allow 1 edit; long words (7+): allow 2 edits
-    const editDist = (a, b) => {
-      if (Math.abs(a.length - b.length) > 2) return 99;
-      const dp = Array.from({length: a.length + 1}, (_, i) => i);
-      for (let j = 1; j <= b.length; j++) {
-        let prev = dp[0]; dp[0] = j;
-        for (let i = 1; i <= a.length; i++) {
-          const temp = dp[i];
-          dp[i] = a[i-1] === b[j-1] ? prev : 1 + Math.min(prev, dp[i], dp[i-1]);
-          prev = temp;
-        }
-      }
-      return dp[a.length];
-    };
-    const fuzzyEq = (a, b) => {
-      if (a === b) return true;
-      if (!a || !b) return false;
-      if (a.length <= 3 || b.length <= 3) return false; // short words: exact only
-      return editDist(a, b) <= (a.length <= 6 ? 1 : 2);
-    };
-    const heardWords = transcript.toLowerCase().split(/\s+/).map(normWord).filter(w => w.length > 1);
-    if (logRef) logRef.push(`match: ${heardWords.length} words from transcript`);
-    if (!heardWords.length) return null;
-
-    // baseName strips suffixes like "(live)", "[bonus track]", "(remastered)" etc.
-    // Albums that include both a studio take and a live/session version of the same
-    // song would otherwise have two tracks with identical word sets. Without this
-    // deduplication both tracks would match the same phrase, producing hits.length > 1
-    // and breaking the uniqueness requirement. seenNames ensures only the FIRST
-    // occurrence (by track order from the DB) is used as the canonical version.
-    const baseName = n => (n || "").toLowerCase().replace(/\s*[\(\[].*/, "").trim();
-    const seenNames = new Set();
-
-    // Build per-track word arrays from words_json stored in Supabase
-    const tracksWithWords = tracks.map(t => {
-      const data = wordsData[t.trackId];
-      if (!data?.words?.length) return null;
-      const base = baseName(t.trackName);
-      if (seenNames.has(base)) return null; // skip duplicates
-      seenNames.add(base);
-      return {
-        ...t,
-        wordArr: data.words.map(w => w.word), // already normalised at store time
-        wordTimings: data.words,               // [{word, start_ms}] for position lookup
-        lrc_raw: data.lrc_raw,
-        lyrics_plain: data.lyrics_plain,
-      };
-    }).filter(Boolean);
-
-    if (logRef) logRef.push(`match: ${tracksWithWords.length}/${tracks.length} tracks have lyrics`);
-    console.log("[match] tracksWithWords:", tracksWithWords.length, "/", tracks.length, "| heardWords:", heardWords.slice(0, 8).join(" "));
-    if (tracksWithWords.length > 0) console.log("[match] sample track words:", tracksWithWords[0]?.trackName, tracksWithWords[0]?.wordArr?.slice(0, 10));
-    if (!tracksWithWords.length) return null;
-
-    // MIN_RUN = 4: require at least 4 consecutive matching words before committing.
-    // Why 4 and not lower?
-    //   1-word match: too many false positives — common words like "love" appear in
-    //     almost every track on the album.
-    //   2-3 word match: still ambiguous on pop albums with similar lyric vocabulary.
-    //   4+ word match: in practice almost always unique within an album AND across
-    //     repeated choruses within a single track (uniqueness-within-track is also
-    //     required — count > 1 → rejected).
-    // Why not higher? Longer runs mean the user has to hold the mic for longer before
-    // anything happens, degrading perceived responsiveness. 4 words ≈ 1–2 seconds of
-    // speech, which feels instant.
-    const MIN_RUN = 3; // 3 consecutive fuzzy-matching words is enough within a single album
-
-    // Scan all possible windows of length MIN_RUN upward through the transcript.
-    // Stops at the SHORTEST run that satisfies BOTH:
-    //   (a) appears in exactly ONE track in the album (uniqueness across tracks)
-    //   (b) appears exactly ONCE inside that track (not a repeated chorus fragment)
-    // Requiring exactly-one-track (not "best scoring track") is intentional — if we
-    // accepted a best-guess the lyrics display would start at the wrong song entirely
-    // with no error shown to the user. Forcing strict uniqueness means we keep
-    // listening until we are certain, which is always the right trade-off here.
-    for (let len = MIN_RUN; len <= heardWords.length; len++) {
-      for (let start = 0; start <= heardWords.length - len; start++) {
-        const phrase = heardWords.slice(start, start + len);
-
-        const hits = tracksWithWords.filter(t => {
-          let count = 0;
-          const arr = t.wordArr;
-          for (let i = 0; i <= arr.length - len; i++) {
-            let ok = true;
-            for (let j = 0; j < len; j++) {
-              if (!fuzzyEq(arr[i + j], phrase[j])) { ok = false; break; }
-            }
-            if (ok) { count++; if (count > 1) return false; } // repeats within track → not unique enough
-          }
-          return count === 1;
-        });
-
-        if (hits.length !== 1) continue; // not unique across tracks
-
-        const match = hits[0];
-
-        // Find the position (in seconds) of the matched phrase in this track.
-        // matchWordIdx is the index into match.wordTimings of the first word of the
-        // matched phrase. start_ms / 1000 gives the lyric display start position.
-        // This is also returned as startPos, which flows into the sync offset formula
-        // in startSync / startListeningSpeech.
-        let matchWordIdx = -1;
-        const arr = match.wordArr;
-        for (let i = 0; i <= arr.length - len; i++) {
-          let ok = true;
-          for (let j = 0; j < len; j++) {
-            if (!fuzzyEq(arr[i + j], phrase[j])) { ok = false; break; }
-          }
-          if (ok) { matchWordIdx = i; break; }
-        }
-        const startPos = matchWordIdx >= 0 ? (match.wordTimings[matchWordIdx].start_ms / 1000) : 0;
-
-        // Build lyrics array for display — prefer timestamped LRC, fall back to plain
-        const lyrics = match.lrc_raw
-          ? parseLRC(match.lrc_raw)
-          : plainToLines(match.lyrics_plain);
-
-        if (logRef) logRef.push(`match: unique run (${len}w) → "${match.trackName}" at ${startPos.toFixed(1)}s`);
-
-        // phraseWordStart: the index (in heardWords[]) of the first word of the
-        // matched phrase. Returned so the caller can calculate how far into the
-        // live transcript the match landed — used in _phraseOffset to estimate how
-        // many seconds of audio had already played before the matching words were
-        // spoken. Without this, sync always assumes the match happened at the very
-        // end of the recording window, causing a consistent early-offset bug.
-        return { track: match, lyrics, startPos, score: len, phraseWordStart: start, totalWords: heardWords.length };
-      }
-    }
-
-    if (logRef) logRef.push(`match: no unique run yet — keep listening`);
-    return null;
-  };
-
-  // ── Analytics: log a button tap (resync / wrong_song) to button_events ──
-  const logButtonEvent = async (buttonName) => {
-    try {
-      const raw = lastRawMatchRef.current;
-      await sb.from("button_events").insert({
-        user_id: user?.id || null,
-        session_id: sessionId,
-        button_name: buttonName,
-        track_title: detectedSong?.title || null,
-        artist_name: detectedSong?.artist || null,
-        album_name: detectedSong?.album || null,
-        itunes_collection_id: albumCollectionIdRef?.current ? Number(albumCollectionIdRef.current) : null,
-        platform: window.Capacitor ? "ios" : "web",
-        identified_by: raw?.identified_by || null,
-        raw_match_title: raw?.title || null,
-        raw_match_artist: raw?.artist || null,
-      });
-    } catch (e) { /* silently ignore — table may not exist yet */ }
-  };
+  // ── Analytics: log a button tap (resync / wrong_song) — base/lib/analytics.js ──
+  const logButtonEvent = buttonName => libLogButtonEvent(
+    sb,
+    { sessionId, user, detectedSong, albumCollectionIdRef, lastRawMatchRef },
+    buttonName
+  );
 
   // ── Handle final recognition failure ──
   const handleNoMatch = (isAutoAdvance, stage = "acr") => {
