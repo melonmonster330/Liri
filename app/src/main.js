@@ -8,6 +8,9 @@ import {
   logButtonEvent as libLogButtonEvent,
 } from "../base/lib/analytics.js";
 import { IS_IOS, TRANSCRIBE_PROXY, ITUNES_PROXY, PLAYBACK_OFFSET_CORRECTION, AUTO_ADVANCE_OFFSET } from "../base/lib/config.js";
+import { usePayments } from "./hooks/usePayments.js";
+import { useNowPlaying } from "./hooks/useNowPlaying.js";
+import { useLyricScroll } from "./hooks/useLyricScroll.js";
 import { startWhisperChunks } from "../base/lib/whisper.js";
 import { getSideGroups, hasSideData } from "../base/lib/sides.js";
 import { showFlipPushNotification, showAlbumEndPushNotification, getLocalNotif } from "../base/lib/notifications.js";
@@ -16,7 +19,6 @@ import { WaveAnimation }  from "../base/components/WaveAnimation.js";
 import { ProgressRing }   from "../base/components/ProgressRing.js";
 import { Shazam }         from "../ios/shazam.js";
 import { getNativeAudio } from "../ios/audio.js";
-import { getLiriIAP }     from "../ios/iap.js";
 
 const {
   useState,
@@ -37,7 +39,7 @@ const liriAuthStorage = {
   removeItem: k => { try { sessionStorage.removeItem(k); } catch {} try { localStorage.removeItem(k); } catch {} },
 };
 const sb = supabase.createClient("https://xjdjpaxgymgbvcwmvorc.supabase.co", "sb_publishable_C-NBnfg0ltAoUi46XQTUjA_ozjZW_Nd", { auth: { storage: liriAuthStorage } });
-const APP_VERSION = "1.5.3";
+const APP_VERSION = "1.5.4";
 // Lyrics lead the audio clock by this many seconds — the highlighted line
 // switches slightly BEFORE its nominal timestamp. Displayed time / progress bar
 // are unaffected (we only add this to the line-matching comparison). Helps the
@@ -170,13 +172,17 @@ function Liri() {
   // ── Usage ──
   const isUnlimited = u => true; // recognition is now free — no API costs at listen time
 
-  // ── Subscription tier — fetched from /api/subscription-status on login ──
-  const [userTier, setUserTier]       = useState("free"); // "free" | "premium"
-  const [albumCount, setAlbumCount]   = useState(0);
-  const [upgradeWorking, setUpgradeWorking] = useState(false);
-
   // ── Auth token ref — kept current for API Authorization headers ──
   const sessionTokenRef = useRef(null);
+
+  // ── Payments: subscription tier + Apple IAP + Stripe — hooks/usePayments.js ──
+  const {
+    userTier, setUserTier,
+    albumCount, setAlbumCount,
+    upgradeWorking,
+    iapPrice, premiumPlan, setPremiumPlan, iapWorking,
+    syncAppleSubscription, upgradeWithApple, restoreApplePurchases, upgradeToStripe,
+  } = usePayments({ sb, sessionTokenRef });
 
   // ── History ──
   const [history, setHistory] = useState([]);
@@ -690,113 +696,7 @@ function Liri() {
     });
     return () => subscription.unsubscribe();
   }, []);
-  // ── Apple IAP ─────────────────────────────────────────────────────────────
-  const [iapPrice,   setIapPrice]   = useState("$2.99/mo"); // overwritten by iap.fetchProduct() on mount
-  const [premiumPlan, setPremiumPlan] = useState("monthly"); // "monthly" | "lifetime"
-  const [iapWorking, setIapWorking] = useState(false);
-
-  // Fetch live price from App Store on iOS (best-effort)
-  useEffect(() => {
-    const iap = getLiriIAP();
-    if (!IS_IOS || !iap) return;
-    iap.fetchProduct()
-      .then(p => { if (p?.displayPrice) setIapPrice(`${p.displayPrice}/mo`); })
-      .catch(() => {});
-  }, []);
-
-  // On iOS login, check for an active Apple subscription and sync with server
-  const syncAppleSubscription = async (token) => {
-    const iap = getLiriIAP();
-    if (!IS_IOS || !iap) return;
-    try {
-      const status = await iap.getSubscriptionStatus();
-      if (status?.isActive && status?.signedTransaction) {
-        const r = await fetch("https://www.getliri.com/api/stripe-checkout", {
-          method: "POST",
-          headers: { "Content-Type": "application/json", "Authorization": `Bearer ${token}` },
-          body: JSON.stringify({ appleTransaction: status.signedTransaction }),
-        });
-        if (r.ok) setUserTier("premium");
-      }
-    } catch {}
-  };
-
-  // plan: "monthly" (renewable sub) | "lifetime" (non-consumable)
-  const upgradeWithApple = async (plan = "monthly") => {
-    const iap = getLiriIAP();
-    if (!iap) {
-      alert("In-app purchases are not available right now. Please try again or contact support.");
-      return;
-    }
-    setIapWorking(true);
-    try {
-      const result = plan === "lifetime"
-        ? await iap.purchaseLifetime()
-        : await iap.purchase();
-      if (result?.signedTransaction) {
-        const token = sessionTokenRef.current;
-        const r = await fetch("https://www.getliri.com/api/stripe-checkout", {
-          method: "POST",
-          headers: { "Content-Type": "application/json", "Authorization": `Bearer ${token}` },
-          body: JSON.stringify({ appleTransaction: result.signedTransaction, plan }),
-        });
-        const data = await r.json();
-        if (data.tier === "premium" || data.tier === "lifetime") {
-          setUserTier(data.tier);
-          setAlbumCount(prev => prev); // keep count, limit lifted
-        } else {
-          alert(data.error || "Could not verify purchase. Please contact support.");
-        }
-      }
-    } catch (e) {
-      if (e?.message !== "cancelled") alert("Purchase failed. Please try again.");
-    } finally {
-      setIapWorking(false);
-    }
-  };
-
-  const restoreApplePurchases = async () => {
-    const iap = getLiriIAP();
-    if (!iap) { alert("Restore is not available right now."); return; }
-    setIapWorking(true);
-    try {
-      const status = await iap.restorePurchases();
-      if (status?.isActive && status?.signedTransaction) {
-        const token = sessionTokenRef.current;
-        // restorePurchases tells us which product is active; pass the matching plan.
-        const plan = status.isLifetime ? "lifetime" : "monthly";
-        const r = await fetch("https://www.getliri.com/api/stripe-checkout", {
-          method: "POST",
-          headers: { "Content-Type": "application/json", "Authorization": `Bearer ${token}` },
-          body: JSON.stringify({ appleTransaction: status.signedTransaction, plan }),
-        });
-        const data = await r.json();
-        if (data.tier === "premium" || data.tier === "lifetime") setUserTier(data.tier);
-        else alert("No active subscription found.");
-      } else {
-        alert("No active subscription found.");
-      }
-    } catch { alert("Restore failed. Please try again."); }
-    finally { setIapWorking(false); }
-  };
-
-  // ── Upgrade via Stripe Checkout (web) ──
-  // plan: "monthly" (recurring) | "lifetime" (one-time)
-  const upgradeToStripe = async (plan = "monthly") => {
-    setUpgradeWorking(true);
-    try {
-      const { data: { session: s } } = await sb.auth.getSession();
-      const token = s?.access_token || sessionTokenRef.current;
-      const res  = await fetch("/api/stripe-checkout", {
-        method: "POST",
-        headers: { "Content-Type": "application/json", "Authorization": `Bearer ${token}` },
-        body: JSON.stringify({ plan }),
-      });
-      const json = await res.json().catch(() => ({}));
-      if (json.url) { window.location.href = json.url; }
-      else { alert(json.error || "Could not start checkout. Please try again."); setUpgradeWorking(false); }
-    } catch { alert("Network error — please try again."); setUpgradeWorking(false); }
-  };
+  // ── Apple IAP + Stripe upgrade — extracted to hooks/usePayments.js ──
 
   const handleAuth = async () => {
     setAuthError(null);
@@ -1317,111 +1217,21 @@ function Liri() {
     };
   }, [mode]);
 
-  // ── Unsynced lyrics: plain text with time:null — flat auto-scroll view ──
-  const lyricsUnsynced = lyrics.length > 0 && lyrics[0].time == null;
-  const lyricsScrollRef = useRef(null); // the lyrics overflow container
-
-  // ── Scroll to current lyric (skip if user is manually browsing) ──
-  useEffect(() => {
-    if (userScrollingRef.current || lyricsUnsynced) return;
-    if (currentLineRef.current && mode === "syncing") currentLineRef.current.scrollIntoView({
-      behavior: "smooth",
-      block: "center"
-    });
-  }, [currentIndex, mode, lyricsUnsynced]);
-
-  // ── Keep the current line centered while the menu fades in/out (landscape) ──
-  // Hiding/showing the menu animates the lyrics column's width and font size
-  // over 0.35s, which reflows the lines vertically. Without this the current
-  // line drifts off-screen mid-transition and only snaps back on the next line
-  // change. Pin it to center every frame (instant scroll — no animation to
-  // fight) for the duration of the transition so it stays put throughout.
-  useEffect(() => {
-    if (!isLandscape || mode !== "syncing" || lyricsUnsynced) return;
-    let raf, start;
-    const pin = ts => {
-      if (start == null) start = ts;
-      if (!userScrollingRef.current) currentLineRef.current?.scrollIntoView({ block: "center" });
-      if (ts - start < 450) raf = requestAnimationFrame(pin);
-    };
-    raf = requestAnimationFrame(pin);
-    return () => cancelAnimationFrame(raf);
-  }, [controlsVisible, isLandscape, mode, lyricsUnsynced]);
-
-  // ── Unsynced auto-scroll: glide the flat lyric page at a steady rate ──
-  // Base rate spreads the full scroll height over the track duration (guessing
-  // ~4.5s a line when duration is unknown); scrollSpeed multiplies it. While
-  // the user is manually scrolling we follow their position, so resuming
-  // continues from wherever they left the page.
-  useEffect(() => {
-    if (mode !== "syncing" || !lyricsUnsynced || isPaused) return;
-    const el = lyricsScrollRef.current;
-    if (!el) return;
-    const durGuess = songDuration || lyricsRef.current.length * 4.5 || 180;
-    let pos = el.scrollTop;
-    let last = performance.now();
-    let raf;
-    const tick = now => {
-      const dt = Math.min(0.2, (now - last) / 1000); // clamp jumps after a backgrounded tab wakes up
-      last = now;
-      if (userScrollingRef.current) {
-        pos = el.scrollTop;
-      } else {
-        const total = Math.max(0, el.scrollHeight - el.clientHeight);
-        const base = total / Math.max(45, durGuess); // px per second at 1×
-        pos = Math.min(total, pos + base * scrollSpeedRef.current * dt);
-        el.scrollTop = pos;
-      }
-      raf = requestAnimationFrame(tick);
-    };
-    raf = requestAnimationFrame(tick);
-    return () => cancelAnimationFrame(raf);
-  }, [mode, lyricsUnsynced, isPaused, songDuration]);
-
-  // ── Tap-to-seek: jump sync to the tapped lyric line ──
-  const seekToLine = i => {
-    const targetTime = lyricsRef.current[i]?.time;
-    if (targetTime == null) return;
-    initialPosRef.current = targetTime;
-    syncStartRef.current = Date.now();
-    setCurrentIndex(i);
-    setPlaybackTime(targetTime);
-    userScrollingRef.current = false;
-    setUserScrolling(false);
-  };
-
-  // ── Re-follow: re-enable auto-scroll and snap back to current line ──
-  const refollow = () => {
-    userScrollingRef.current = false;
-    setUserScrolling(false);
-    clearTimeout(refollowTimerRef.current);
-    // Unsynced view: auto-scroll simply resumes from wherever the user left
-    // the page — there is no "current line" to snap to.
-    if (lyricsRef.current[0]?.time == null) return;
-    currentLineRef.current?.scrollIntoView({
-      behavior: "smooth",
-      block: "center"
-    });
-  };
-
-  // Mark the user as manually scrolling and (re)arm a 10s idle timer — once they
-  // stop scrolling for 10s we snap back to the current line and resume following.
-  const noteUserScroll = () => {
-    userScrollingRef.current = true;
-    setUserScrolling(true);
-    clearTimeout(refollowTimerRef.current);
-    refollowTimerRef.current = setTimeout(() => refollow(), 10000);
-  };
-
-  // ── Scroll to credits once song passes the last lyric (outro roll) ──
-  useEffect(() => {
-    if (mode !== "syncing" || !lyrics.length || lyricsUnsynced) return;
-    const lastTime = lyrics[lyrics.length - 1].time;
-    if (playbackTime >= lastTime + 6 && creditsRef.current) creditsRef.current.scrollIntoView({
-      behavior: "smooth",
-      block: "center"
-    });
-  }, [Math.floor(playbackTime), mode, lyrics.length]);
+  // ── Lyric scroll behavior — hooks/useLyricScroll.js ──
+  const { lyricsUnsynced, lyricsScrollRef, seekToLine, refollow, noteUserScroll } = useLyricScroll({
+    mode,
+    lyrics, lyricsRef,
+    songDuration,
+    isPaused,
+    isLandscape, controlsVisible,
+    currentIndex, setCurrentIndex,
+    playbackTime, setPlaybackTime,
+    setUserScrolling, userScrollingRef,
+    refollowTimerRef,
+    currentLineRef, creditsRef,
+    scrollSpeedRef,
+    initialPosRef, syncStartRef,
+  });
 
   // ── Vinyl auto-advance: trigger when song nears its end ──
   useEffect(() => {
@@ -1915,116 +1725,19 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
     }, 80);
   }, []);
 
-  // ── Now-playing state persistence across tab navigation ──────────────────
-  // The tab bar uses regular <a href> links, which do a full page reload and
-  // destroy all React state. We save whatever is currently playing to
-  // sessionStorage before the page unloads, then restore it on the way back.
-  //
-  // A ref captures the latest snapshot each time key state changes, so the
-  // pagehide handler always gets fresh values without stale closure issues.
-  const nowPlayingSnapshotRef = useRef(null);
-  useEffect(() => {
-    if (mode === "syncing" || mode === "confirmed") {
-      nowPlayingSnapshotRef.current = {
-        detectedSong, lyrics, songDuration,
-        currentTrackIndex, albumCollectionId, identifiedBy,
-        turntableMatchedIdx: turntableMatchedIdxRef.current,
-      };
-      // Also persist to localStorage continuously so a page refresh never loses state
-      try {
-        const t = syncStartRef.current != null
-          ? initialPosRef.current + (Date.now() - syncStartRef.current) / 1000
-          : initialPosRef.current;
-        localStorage.setItem("liri_nowplaying", JSON.stringify({
-          ...nowPlayingSnapshotRef.current,
-          playbackTime: Math.max(0, t),
-          savedAt: Date.now(),
-        }));
-      } catch {}
-    } else {
-      nowPlayingSnapshotRef.current = null;
-      // Clear persisted state when user explicitly leaves playing mode
-      if (mode === "idle" || mode === "listening") {
-        try { localStorage.removeItem("liri_nowplaying"); } catch {}
-      }
-    }
-  }, [mode, detectedSong, lyrics, songDuration, currentTrackIndex, albumCollectionId, identifiedBy]);
-
-  // Save on navigation away (belt-and-suspenders alongside localStorage)
-  useEffect(() => {
-    const onHide = () => {
-      const snap = nowPlayingSnapshotRef.current;
-      if (!snap || !snap.detectedSong) return;
-      const t = syncStartRef.current != null
-        ? initialPosRef.current + (Date.now() - syncStartRef.current) / 1000
-        : initialPosRef.current;
-      const payload = JSON.stringify({ ...snap, playbackTime: Math.max(0, t), savedAt: Date.now() });
-      try { sessionStorage.setItem("liri_nowplaying", payload); } catch {}
-      try { localStorage.setItem("liri_nowplaying", payload); } catch {}
-    };
-    window.addEventListener("pagehide", onHide);
-    return () => window.removeEventListener("pagehide", onHide);
-  }, []);
-
-  // ── Playing-tab heartbeat ─────────────────────────────────────────────────
-  // With per-tab accounts, two Liri tabs can be open at once. A tab that is
-  // actively syncing stamps a heartbeat every 5s so OTHER tabs know playback
-  // is alive elsewhere and don't ghost-restore the same session from
-  // localStorage (double clocks = duplicate/early flip chimes + notifications).
-  useEffect(() => {
-    if (mode !== "syncing") return;
-    const beat = () => {
-      try { localStorage.setItem("liri_playing_beat", JSON.stringify({ id: sessionTabId, ts: Date.now() })); } catch {}
-    };
-    beat();
-    const id = setInterval(beat, 5000);
-    return () => {
-      clearInterval(id);
-      // Only clear the beat if it's ours — never stomp another tab's.
-      try {
-        const b = JSON.parse(localStorage.getItem("liri_playing_beat") || "null");
-        if (b?.id === sessionTabId) localStorage.removeItem("liri_playing_beat");
-      } catch {}
-    };
-  }, [mode]);
-
-  // Restore on mount — check sessionStorage first (tab nav), then localStorage (refresh)
-  useEffect(() => {
-    let saved = null;
-    try {
-      saved = JSON.parse(sessionStorage.getItem("liri_nowplaying") || "null");
-      sessionStorage.removeItem("liri_nowplaying");
-    } catch {}
-    if (!saved) {
-      try {
-        // The localStorage fallback is for a refresh/restart of the PLAYING
-        // tab. If another tab's heartbeat is fresh, playback is alive over
-        // there — restoring here too would run a second ghost clock.
-        const b = JSON.parse(localStorage.getItem("liri_playing_beat") || "null");
-        const otherTabPlaying = b && b.id !== sessionTabId && Date.now() - b.ts < 15000;
-        if (!otherTabPlaying) saved = JSON.parse(localStorage.getItem("liri_nowplaying") || "null");
-        // don't remove from localStorage here — leave it so rapid re-refreshes also work
-      } catch {}
-    }
-    if (!saved || !saved.detectedSong || Date.now() - saved.savedAt > 60 * 60 * 1000) return; // 1hr window
-    // Compute how far the record has advanced while we were on the other page
-    const elapsed = (Date.now() - saved.savedAt) / 1000;
-    const restoredPos = Math.max(0, saved.playbackTime + elapsed);
-    // Restore content state
-    setDetectedSong(saved.detectedSong);
-    const lrc = saved.lyrics || [];
-    setLyrics(lrc);
-    lyricsRef.current = lrc;
-    setSongDuration(saved.songDuration ?? null);
-    setCurrentTrackIndex(saved.currentTrackIndex ?? 0);
-    turntableMatchedIdxRef.current = saved.turntableMatchedIdx ?? 0;
-    if (saved.albumCollectionId) { setAlbumCollectionId(saved.albumCollectionId); albumCollectionIdRef.current = saved.albumCollectionId; }
-    if (saved.identifiedBy) setIdentifiedBy(saved.identifiedBy);
-    // Prime the timing so startSync (triggered by setMode below) lands at the right position
-    syncCalcRef.current = { startPos: restoredPos, phraseOffset: 0, recStart: Date.now() };
-    // Trigger startSync via the mode effect
-    setMode("confirmed");
-  }, []);
+  // ── Now-playing: cross-tab persistence + heartbeat — hooks/useNowPlaying.js ──
+  useNowPlaying({
+    sessionTabId,
+    mode, setMode,
+    detectedSong, setDetectedSong,
+    identifiedBy, setIdentifiedBy,
+    songDuration, setSongDuration,
+    lyrics, setLyrics, lyricsRef,
+    currentTrackIndex, setCurrentTrackIndex,
+    albumCollectionId, setAlbumCollectionId, albumCollectionIdRef,
+    turntableMatchedIdxRef,
+    syncStartRef, initialPosRef, syncCalcRef,
+  });
 
   const togglePause = () => {
     if (isPaused) {
