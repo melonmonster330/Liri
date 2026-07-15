@@ -1211,7 +1211,7 @@
     }
   };
   var sb = supabase.createClient("https://xjdjpaxgymgbvcwmvorc.supabase.co", "sb_publishable_C-NBnfg0ltAoUi46XQTUjA_ozjZW_Nd", { auth: { storage: liriAuthStorage } });
-  var APP_VERSION = "1.5.10";
+  var APP_VERSION = "1.5.11";
   var LYRIC_LEAD_SECONDS = 2;
   var sessionTabId = (() => {
     try {

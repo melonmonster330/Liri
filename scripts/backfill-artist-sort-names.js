@@ -111,8 +111,11 @@ async function fetchAll(pathBase) {
   return out;
 }
 
-// Look up an artist's MusicBrainz sort name. Null on any miss or a match
-// scoring below 90 — same rule as api/add-to-library.js.
+const foldName = s => (s || "").toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/\s*&\s*/g, " and ").replace(/\s+/g, " ").trim();
+
+// Look up an artist's MusicBrainz sort name. Null on any miss, a match
+// scoring below 90, or a matched name that isn't the one we asked for
+// ("Tokyo" must not adopt "Tokyo Blade") — same rule as api/add-to-library.js.
 function fetchSortName(artistName) {
   const q = `artist:"${artistName.replace(/"/g, '\\"')}"`;
   const url = `https://musicbrainz.org/ws/2/artist/?query=${encodeURIComponent(q)}&fmt=json&limit=1`;
@@ -123,7 +126,8 @@ function fetchSortName(artistName) {
       res.on("end", () => {
         try {
           const artist = JSON.parse(Buffer.concat(chunks).toString())?.artists?.[0];
-          resolve((artist && artist.score >= 90 && artist["sort-name"]) ? artist["sort-name"] : null);
+          const nameOk = artist && foldName(artist.name) === foldName(artistName);
+          resolve((nameOk && artist.score >= 90 && artist["sort-name"]) ? artist["sort-name"] : null);
         } catch { resolve(null); }
       });
     }).on("error", () => resolve(null));

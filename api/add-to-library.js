@@ -146,6 +146,8 @@ async function fetchItunesAlbum(collectionId) {
 // ("Bowie, David"; "Rolling Stones, The") drives record-shop ordering in the
 // library. Returns null on any miss or low-confidence match — clients fall
 // back to the plain artist name.
+const foldName = s => (s || "").toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/\s*&\s*/g, " and ").replace(/\s+/g, " ").trim();
+
 async function fetchArtistSortName(artistName) {
   if (!artistName) return null;
   try {
@@ -153,7 +155,10 @@ async function fetchArtistSortName(artistName) {
     const url = `https://musicbrainz.org/ws/2/artist/?query=${encodeURIComponent(q)}&fmt=json&limit=1`;
     const { data } = await httpsGet(url, { "User-Agent": "Liri/1.0 +https://getliri.com" });
     const artist = data?.artists?.[0];
-    return (artist && artist.score >= 90 && artist["sort-name"]) ? artist["sort-name"] : null;
+    // Score alone lets partial-name hits through ("Tokyo" → "Tokyo Blade"),
+    // so the matched name must also equal what we asked for.
+    const nameOk = artist && foldName(artist.name) === foldName(artistName);
+    return (nameOk && artist.score >= 90 && artist["sort-name"]) ? artist["sort-name"] : null;
   } catch (e) {
     console.warn("[add-to-library] MusicBrainz sort-name lookup failed (non-fatal):", e.message);
     return null;
