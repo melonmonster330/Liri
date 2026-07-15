@@ -36,7 +36,7 @@
   <script type="text/babel">
     const { useState, useEffect, useRef, useCallback } = React;
 
-    const APP_VERSION = "1.5.5";
+    const APP_VERSION = "1.5.6";
 
     // On iOS Capacitor relative URLs don't resolve — route all API calls through the live domain.
     const API_BASE = window.Capacitor ? "https://www.getliri.com" : "";
@@ -270,6 +270,75 @@
       return null;
     }
 
+    // ── User-contributed metadata (lyrics + side info) ─────────────────────
+    // Mirrors app/base/lib/usermeta.js (tab pages are self-contained babel
+    // scripts and can't import ESM — keep the write shape in sync with it).
+    // RLS grants authenticated users insert/update on both tables.
+    const LYRIC_SITES = [
+      { name: "LRCLIB",     url: "https://lrclib.net" },
+      { name: "Genius",     url: "https://genius.com" },
+      { name: "Musixmatch", url: "https://www.musixmatch.com" },
+      { name: "AZLyrics",   url: "https://www.azlyrics.com" },
+      { name: "Lyrics.com", url: "https://www.lyrics.com" },
+    ];
+    const openLyricSite = url => window.open(url, window.Capacitor ? "_system" : "_blank");
+
+    function looksLikeLRC(text) {
+      const stamped = (text || "").split("\n").filter(l => /^\s*\[\d{1,2}:\d{2}/.test(l));
+      return stamped.length >= 2;
+    }
+    function lrcToPlain(text) {
+      return (text || "").split("\n").map(l => l.replace(/\[[^\]]*\]/g, "").trim()).filter(Boolean).join("\n");
+    }
+    async function saveUserLyrics(trackId, text) {
+      const trimmed = (text || "").trim();
+      if (!trackId || !trimmed) throw new Error("Nothing to save");
+      const isLrc = looksLikeLRC(trimmed);
+      const row = {
+        itunes_track_id: trackId,
+        lrc_raw:      isLrc ? trimmed : null,
+        lyrics_plain: isLrc ? lrcToPlain(trimmed) : trimmed,
+        words_json:   null,
+        source:       "user",
+        fetched_at:   new Date().toISOString(),
+      };
+      const { error } = await sb.from("track_lyrics").upsert(row, { onConflict: "itunes_track_id" });
+      if (error) throw error;
+      return row;
+    }
+    // letters: one side letter per track (album order, monotonic A→B→C…).
+    async function saveUserSides(collectionId, tracks, letters) {
+      const perSideCount = {};
+      const now = new Date().toISOString();
+      const rows = tracks.map((t, i) => {
+        const side = letters[i];
+        perSideCount[side] = (perSideCount[side] || 0) + 1;
+        if (!t.trackId) return null;
+        return {
+          itunes_collection_id: collectionId,
+          itunes_track_id: t.trackId,
+          side,
+          side_track_number: perSideCount[side],
+          position: side + perSideCount[side],
+          fetched_at: now,
+        };
+      }).filter(Boolean);
+      if (!rows.length) throw new Error("Nothing to save");
+      const { error } = await sb.from("vinyl_sides").upsert(rows, { onConflict: "itunes_track_id" });
+      if (error) throw error;
+      return rows;
+    }
+    // Supabase .in() puts every id in the URL — chunk so long libraries don't
+    // blow the URL length limit.
+    async function sbInChunked(table, select, col, ids, chunk = 150) {
+      const out = [];
+      for (let i = 0; i < ids.length; i += chunk) {
+        const { data } = await sb.from(table).select(select).in(col, ids.slice(i, i + chunk));
+        if (data) out.push(...data);
+      }
+      return out;
+    }
+
     // ── Liri wordmark icon — minimal soundwave bars ────────────────────────
     function VinylDot({ size = 32 }) {
       const s = size / 32;
@@ -332,10 +401,26 @@
     }
 
     // ── Track Lyrics Sheet ─────────────────────────────────────────────────
-    function TrackLyricsSheet({ track, album, onClose }) {
+    function TrackLyricsSheet({ track, album, onClose, onLyricsSaved }) {
       const [lrc, setLrc]         = useState(null);
       const [loading, setLoading] = useState(true);
       const [noLyrics, setNoLyrics] = useState(false);
+      const [draft, setDraft]     = useState("");
+      const [saving, setSaving]   = useState(false);
+      const [saveError, setSaveError] = useState(null);
+
+      const saveDraft = async () => {
+        setSaving(true); setSaveError(null);
+        try {
+          const row = await saveUserLyrics(track.trackId, draft);
+          setLrc(parseLRC(row.lrc_raw || row.lyrics_plain));
+          setNoLyrics(false);
+          onLyricsSaved && onLyricsSaved(track.trackId);
+        } catch (e) {
+          setSaveError(e?.message || "Couldn't save — try again");
+        }
+        setSaving(false);
+      };
 
       useEffect(() => {
         fetchLyricsForTrack(
@@ -386,9 +471,45 @@
                   <Spinner />
                 </div>
               ) : noLyrics ? (
-                <div style={{ textAlign: "center", padding: "48px 0", color: "rgba(255,255,255,0.2)", fontSize: 14 }}>
-                  <div style={{ fontSize: 32, marginBottom: 12, opacity: 0.4 }}><svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M9 18V5l12-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="16" r="3"/></svg></div>
-                  No synced lyrics found
+                <div style={{ padding: "16px 0 32px" }}>
+                  <div style={{ textAlign: "center", padding: "8px 0 20px", color: "rgba(255,255,255,0.2)", fontSize: 14 }}>
+                    <div style={{ fontSize: 32, marginBottom: 12, opacity: 0.4 }}><svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M9 18V5l12-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="16" r="3"/></svg></div>
+                    No lyrics found — you can add them
+                  </div>
+                  {track.trackId ? (
+                    <>
+                      <div style={{ fontSize: 12, color: "rgba(255,255,255,0.45)", lineHeight: 1.6, marginBottom: 10 }}>
+                        Search one of these sites for the song, then paste the lyrics below. Timestamped LRC lines (e.g. [00:12.34]) sync automatically; plain text scrolls at reading speed.
+                      </div>
+                      <div style={{ display: "flex", flexWrap: "wrap", gap: 8, marginBottom: 14 }}>
+                        {LYRIC_SITES.map(s => (
+                          <button key={s.name} onClick={() => openLyricSite(s.url)}
+                            style={{ background: "rgba(212,168,70,0.08)", border: "1px solid rgba(212,168,70,0.25)", color: "rgba(212,168,70,0.9)", borderRadius: 50, padding: "7px 14px", fontSize: 12, fontWeight: 600, cursor: "pointer", fontFamily: "inherit" }}>
+                            {s.name} ↗
+                          </button>
+                        ))}
+                      </div>
+                      <textarea value={draft} onChange={e => setDraft(e.target.value)}
+                        placeholder="Paste lyrics here…" rows={8}
+                        style={{ width: "100%", boxSizing: "border-box", background: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.1)", borderRadius: 14, color: "#f0e6d3", fontFamily: "inherit", fontSize: 14, lineHeight: 1.6, padding: "12px 14px", resize: "vertical", minHeight: 130, outline: "none" }} />
+                      {saveError && <div style={{ color: "#c9807a", fontSize: 12, marginTop: 8 }}>{String(saveError)}</div>}
+                      <button onClick={() => !saving && draft.trim() && saveDraft()} disabled={saving || !draft.trim()}
+                        style={{
+                          width: "100%", marginTop: 14,
+                          background: draft.trim() && !saving ? "linear-gradient(135deg, #d4a846, #c9807a)" : "rgba(255,255,255,0.08)",
+                          color: draft.trim() && !saving ? "#080810" : "rgba(255,255,255,0.3)",
+                          border: "none", borderRadius: 50, padding: "15px 0",
+                          fontSize: 14, fontWeight: 700, letterSpacing: "0.5px",
+                          cursor: draft.trim() && !saving ? "pointer" : "default", fontFamily: "inherit",
+                        }}>
+                        {saving ? "Saving…" : "Save lyrics"}
+                      </button>
+                    </>
+                  ) : (
+                    <div style={{ textAlign: "center", fontSize: 12, color: "rgba(255,255,255,0.25)" }}>
+                      This track can't be edited (no track ID).
+                    </div>
+                  )}
                 </div>
               ) : (
                 <div style={{ paddingBottom: 24 }}>
@@ -405,12 +526,131 @@
       );
     }
 
+    // ── Side Info Editor ───────────────────────────────────────────────────
+    // "New side starts here" model: tap the track that opens each side.
+    // Side letters are assigned sequentially from the breaks, so the result
+    // is monotonic — required for the positional vinyl_sides matching.
+    function SideInfoEditor({ album, tracks, onSaved, onClose }) {
+      const [breaks, setBreaks] = useState(() => new Set([Math.ceil(tracks.length / 2)]));
+      const [saving, setSaving] = useState(false);
+      const [error, setError]   = useState(null);
+
+      const letters = [];
+      { let side = 0;
+        for (let i = 0; i < tracks.length; i++) {
+          if (i > 0 && breaks.has(i)) side++;
+          letters.push(String.fromCharCode(65 + side));
+        } }
+
+      const toggleBreak = i => {
+        if (i === 0) return; // track 1 always starts side A
+        setBreaks(prev => {
+          const next = new Set(prev);
+          if (next.has(i)) next.delete(i); else next.add(i);
+          return next;
+        });
+      };
+
+      const save = async () => {
+        setSaving(true); setError(null);
+        try {
+          await saveUserSides(album.itunes_collection_id, tracks, letters);
+          onSaved();
+        } catch (e) {
+          setError(e?.message || "Couldn't save — try again");
+          setSaving(false);
+        }
+      };
+
+      return (
+        <>
+          <div onClick={onClose}
+            style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.55)", zIndex: 30 }} />
+          {/* flex-end outer keeps the inner list scrollable on iOS */}
+          <div style={{ position: "fixed", inset: 0, zIndex: 31, display: "flex", flexDirection: "column", justifyContent: "flex-end", pointerEvents: "none" }}>
+            <div style={{
+              pointerEvents: "auto",
+              background: "#0e0e1a", borderRadius: "20px 20px 0 0",
+              maxHeight: "85vh", display: "flex", flexDirection: "column", minHeight: 0,
+              animation: "sheet-up 0.28s cubic-bezier(0.4,0,0.2,1)",
+            }}>
+              <div style={{ display: "flex", justifyContent: "center", padding: "12px 0 4px" }}>
+                <div style={{ width: 36, height: 4, borderRadius: 2, background: "rgba(255,255,255,0.12)" }} />
+              </div>
+              <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", padding: "8px 24px 4px" }}>
+                <div style={{ flex: 1, paddingRight: 12 }}>
+                  <div style={{ fontSize: 16, fontWeight: 700 }}>Add side info</div>
+                  <div style={{ fontSize: 12, color: "rgba(255,255,255,0.4)", marginTop: 3, lineHeight: 1.5 }}>
+                    Tap the first track of each side — check the record sleeve or disc labels.
+                  </div>
+                </div>
+                <button onClick={onClose}
+                  style={{ background: "rgba(255,255,255,0.07)", border: "none", color: "rgba(255,255,255,0.5)", width: 30, height: 30, borderRadius: "50%", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
+                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+                </button>
+              </div>
+              <div style={{ overflowY: "auto", flex: 1, minHeight: 0, padding: "4px 24px", WebkitOverflowScrolling: "touch" }}>
+                {tracks.map((t, i) => {
+                  const startsSide = i === 0 || breaks.has(i);
+                  const numOnSide = letters.slice(0, i + 1).filter(l => l === letters[i]).length;
+                  return (
+                    <React.Fragment key={t.trackId || i}>
+                      {startsSide && (
+                        <div style={{ padding: "16px 0 6px", fontSize: 11, fontWeight: 700, letterSpacing: "0.12em", color: "rgba(212,168,70,0.75)", textTransform: "uppercase" }}>
+                          Side {letters[i]}
+                        </div>
+                      )}
+                      <button onClick={() => toggleBreak(i)}
+                        style={{
+                          width: "100%", display: "flex", alignItems: "center", gap: 12,
+                          padding: "11px 2px", background: "none", border: "none",
+                          borderBottom: "1px solid rgba(255,255,255,0.04)",
+                          cursor: i === 0 ? "default" : "pointer", textAlign: "left", fontFamily: "inherit",
+                        }}>
+                        <div style={{ width: 28, fontSize: 12, fontWeight: 700, color: "rgba(212,168,70,0.65)", flexShrink: 0 }}>{letters[i]}{numOnSide}</div>
+                        <div style={{ flex: 1, minWidth: 0, fontSize: 14, color: "#f0e6d3", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{t.trackName}</div>
+                        {i > 0 && (
+                          <div style={{
+                            fontSize: 10, fontWeight: 600, flexShrink: 0, borderRadius: 50, padding: "4px 10px",
+                            background: breaks.has(i) ? "rgba(212,168,70,0.15)" : "rgba(255,255,255,0.04)",
+                            border: breaks.has(i) ? "1px solid rgba(212,168,70,0.4)" : "1px solid rgba(255,255,255,0.08)",
+                            color: breaks.has(i) ? "rgba(212,168,70,0.9)" : "rgba(255,255,255,0.3)",
+                          }}>
+                            {breaks.has(i) ? `starts side ${letters[i]}` : "same side"}
+                          </div>
+                        )}
+                      </button>
+                    </React.Fragment>
+                  );
+                })}
+              </div>
+              <div style={{ padding: "12px 24px max(24px, env(safe-area-inset-bottom))", borderTop: "1px solid rgba(255,255,255,0.06)" }}>
+                {error && <div style={{ color: "#c9807a", fontSize: 12, marginBottom: 8 }}>{String(error)}</div>}
+                <button onClick={save} disabled={saving}
+                  style={{
+                    width: "100%",
+                    background: saving ? "rgba(255,255,255,0.08)" : "linear-gradient(135deg, #d4a846, #c9807a)",
+                    color: saving ? "rgba(255,255,255,0.3)" : "#080810",
+                    border: "none", borderRadius: 50, padding: "15px 0",
+                    fontSize: 14, fontWeight: 700, letterSpacing: "0.5px",
+                    cursor: saving ? "default" : "pointer", fontFamily: "inherit",
+                  }}>
+                  {saving ? "Saving…" : "Save side info"}
+                </button>
+              </div>
+            </div>
+          </div>
+        </>
+      );
+    }
+
     // ── Album Detail Sheet ─────────────────────────────────────────────────
-    function AlbumDetailSheet({ album, onClose }) {
+    function AlbumDetailSheet({ album, onClose, onMetaChanged }) {
       const [tracks, setTracks]           = useState([]);
       const [loading, setLoading]         = useState(true);
       const [selectedTrack, setSelectedTrack] = useState(null);
       const [vinylSource, setVinylSource] = useState(null); // "db" | "estimated"
+      const [showSideEditor, setShowSideEditor] = useState(false);
 
       useEffect(() => { loadTracks(); }, []);
 
@@ -450,6 +690,14 @@
         const hasSideData = sidesByPosition.length > 0 && sidesByPosition.length >= trackList.length;
         setVinylSource(hasSideData ? "db" : "estimated");
 
+        // Which tracks already have lyrics in the DB — drives the per-track
+        // "no lyrics" tag so missing ones can be filled in from here.
+        const trackIds = trackList.map(t => t.itunes_track_id).filter(Boolean);
+        const lyricRows = await sbInChunked(
+          "track_lyrics", "itunes_track_id, lrc_raw, lyrics_plain", "itunes_track_id", trackIds);
+        const lyricSet = new Set(
+          (lyricRows || []).filter(r => r.lrc_raw || r.lyrics_plain).map(r => String(r.itunes_track_id)));
+
         const merged = trackList.map((t, i) => {
           let side, trackOnSide, position;
           if (hasSideData && sidesByPosition[i]) {
@@ -468,6 +716,7 @@
             collectionName: album.album_name,
             trackTimeMillis: t.duration_ms,
             side, trackOnSide, position,
+            hasLyrics: lyricSet.has(String(t.itunes_track_id)),
           };
         });
 
@@ -524,6 +773,20 @@
             </div>
           </div>
 
+          {/* ── Missing side info banner ── */}
+          {!loading && tracks.length > 0 && vinylSource === "estimated" && (
+            <div style={{ margin: "14px 24px 0", background: "rgba(212,168,70,0.06)", border: "1px solid rgba(212,168,70,0.25)", borderRadius: 14, padding: "10px 14px", display: "flex", alignItems: "center", gap: 10 }}>
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{ fontSize: 12, fontWeight: 600, color: "rgba(212,168,70,0.9)" }}>Side info is a guess</div>
+                <div style={{ fontSize: 11, color: "rgba(255,255,255,0.4)", marginTop: 2, lineHeight: 1.4 }}>Tell Liri which tracks are on each side so flips are detected right.</div>
+              </div>
+              <button onClick={() => setShowSideEditor(true)}
+                style={{ background: "rgba(212,168,70,0.15)", border: "1px solid rgba(212,168,70,0.4)", color: "rgba(212,168,70,0.95)", borderRadius: 50, padding: "8px 14px", fontSize: 12, fontWeight: 700, cursor: "pointer", fontFamily: "inherit", flexShrink: 0, whiteSpace: "nowrap" }}>
+                Add sides
+              </button>
+            </div>
+          )}
+
           {/* ── Tracklist ── */}
           <div style={{ paddingBottom: "max(80px, calc(env(safe-area-inset-bottom) + 48px))" }}>
             {loading ? (
@@ -560,9 +823,12 @@
                         <div style={{ fontSize: 14, color: "#f0e6d3", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
                           {track.trackName}
                         </div>
-                        {track.trackTimeMillis && (
+                        {(track.trackTimeMillis || !track.hasLyrics) && (
                           <div style={{ fontSize: 11, color: "rgba(255,255,255,0.28)", marginTop: 2 }}>
-                            {formatDuration(track.trackTimeMillis)}
+                            {track.trackTimeMillis ? formatDuration(track.trackTimeMillis) : ""}
+                            {!track.hasLyrics && (
+                              <span style={{ color: "rgba(212,168,70,0.7)", marginLeft: track.trackTimeMillis ? 8 : 0 }}>{track.trackTimeMillis ? "· " : ""}no lyrics — tap to add</span>
+                            )}
                           </div>
                         )}
                       </div>
@@ -581,6 +847,24 @@
               track={selectedTrack}
               album={album}
               onClose={() => setSelectedTrack(null)}
+              onLyricsSaved={trackId => {
+                setTracks(prev => prev.map(t => String(t.trackId) === String(trackId) ? { ...t, hasLyrics: true } : t));
+                onMetaChanged && onMetaChanged();
+              }}
+            />
+          )}
+
+          {/* Side info editor */}
+          {showSideEditor && (
+            <SideInfoEditor
+              album={album}
+              tracks={tracks}
+              onClose={() => setShowSideEditor(false)}
+              onSaved={() => {
+                setShowSideEditor(false);
+                loadTracks();
+                onMetaChanged && onMetaChanged();
+              }}
             />
           )}
         </div>
@@ -700,6 +984,48 @@
           setRecentPlayedIds(ids);
         } catch (e) {}
       }, []);
+
+      // ── Missing-info scan — drives the "needs info" badges + filter ──
+      // One pass over the whole library: which albums lack side data, and how
+      // many of their tracks have no lyrics row. Runs after the library loads
+      // and again after the user saves lyrics/sides from the detail sheet.
+      const [metaFlags, setMetaFlags] = useState({}); // cid → { sidesMissing, lyricsMissing }
+      const [needsInfoOnly, setNeedsInfoOnly] = useState(false);
+      const metaScanSeq = useRef(0);
+      const scanMissingInfo = useCallback(async (lib) => {
+        const seq = ++metaScanSeq.current;
+        const cids = (lib || []).map(a => String(a.itunes_collection_id)).filter(Boolean);
+        if (!cids.length) { setMetaFlags({}); return; }
+        try {
+          const [trackRows, sideRows] = await Promise.all([
+            sbInChunked("album_tracks", "itunes_collection_id, itunes_track_id", "itunes_collection_id", cids),
+            sbInChunked("vinyl_sides", "itunes_collection_id, side, side_track_number", "itunes_collection_id", cids),
+          ]);
+          const allTrackIds = trackRows.map(t => t.itunes_track_id).filter(Boolean);
+          const lyricRows = await sbInChunked(
+            "track_lyrics", "itunes_track_id, lrc_raw, lyrics_plain", "itunes_track_id", allTrackIds);
+          if (seq !== metaScanSeq.current) return; // a newer scan superseded this one
+          const lyricSet = new Set(
+            lyricRows.filter(r => r.lrc_raw || r.lyrics_plain).map(r => String(r.itunes_track_id)));
+          const flags = {};
+          for (const cid of cids) {
+            const tracks = trackRows.filter(t => String(t.itunes_collection_id) === cid);
+            if (!tracks.length) continue; // no track data at all — nothing to edit yet
+            // Same rule as AlbumDetailSheet: deduped side rows must cover every track.
+            const seen = new Set();
+            for (const s of sideRows.filter(s => String(s.itunes_collection_id) === cid)) {
+              seen.add(`${s.side}|${s.side_track_number}`);
+            }
+            const sidesMissing = seen.size < tracks.length;
+            const lyricsMissing = tracks.filter(t => t.itunes_track_id && !lyricSet.has(String(t.itunes_track_id))).length;
+            if (sidesMissing || lyricsMissing > 0) flags[cid] = { sidesMissing, lyricsMissing };
+          }
+          setMetaFlags(flags);
+        } catch (e) { console.warn("[library] missing-info scan failed:", e); }
+      }, []);
+      useEffect(() => {
+        if (!libLoading && library.length) scanMissingInfo(library);
+      }, [libLoading, library]);
 
       // ── Fetch play counts ──
       const fetchPlayCounts = useCallback(async () => {
@@ -1137,6 +1463,22 @@
             )}
           </div>
 
+          {/* ── Missing-info filter — batch-fix everything from one place ── */}
+          {!libLoading && Object.keys(metaFlags).length > 0 && (
+            <div style={{ padding: "0 24px", marginBottom: 12 }}>
+              <button onClick={() => setNeedsInfoOnly(v => !v)}
+                style={{
+                  background: needsInfoOnly ? "rgba(212,168,70,0.15)" : "rgba(255,255,255,0.04)",
+                  border: needsInfoOnly ? "1px solid rgba(212,168,70,0.4)" : "1px solid rgba(255,255,255,0.08)",
+                  color: needsInfoOnly ? "rgba(212,168,70,0.95)" : "rgba(255,255,255,0.45)",
+                  borderRadius: 50, padding: "8px 16px", fontSize: 12, fontWeight: 600,
+                  cursor: "pointer", fontFamily: "inherit",
+                }}>
+                {needsInfoOnly ? "Showing records needing info" : `Needs info (${Object.keys(metaFlags).length})`}
+              </button>
+            </div>
+          )}
+
           {/* ── Library list ── */}
           <div style={{ padding: "0 24px" }}>
             {libLoading ? (
@@ -1163,9 +1505,17 @@
                     {q.status === "adding" ? <Spinner size={18} /> : <div style={{ width: 18, height: 18, borderRadius: "50%", border: "2px solid rgba(255,255,255,0.12)" }} />}
                   </div>
                 ))}
-                {orderLibrary(library, recentPlayedIds).map((album, i) => {
+                {orderLibrary(library, recentPlayedIds)
+                  .filter(album => !needsInfoOnly || metaFlags[String(album.itunes_collection_id)])
+                  .map((album, i) => {
                   const plays = playCounts[album.itunes_collection_id] || 0;
                   const isRemoving = removing === album.itunes_collection_id;
+                  const flags = metaFlags[String(album.itunes_collection_id)];
+                  const flagText = flags
+                    ? [flags.sidesMissing ? "side info" : null,
+                       flags.lyricsMissing > 0 ? `${flags.lyricsMissing} lyric${flags.lyricsMissing !== 1 ? "s" : ""}` : null]
+                        .filter(Boolean).join(" · ")
+                    : null;
                   return (
                     <div key={album.id}
                       style={{ display: "flex", alignItems: "center", gap: 14, padding: "12px 0", borderBottom: "1px solid rgba(255,255,255,0.04)", animation: "fade-up 0.3s ease both", animationDelay: `${i * 30}ms` }}>
@@ -1179,6 +1529,12 @@
                           <div style={{ fontSize: 12, color: "rgba(255,255,255,0.4)", marginTop: 2, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{album.artist_name}</div>
                           {plays > 0 && (
                             <div style={{ fontSize: 10, color: "rgba(212,168,70,0.6)", marginTop: 4 }}>{plays} play{plays !== 1 ? "s" : ""} on Liri</div>
+                          )}
+                          {flagText && (
+                            <div style={{ fontSize: 10, color: "rgba(212,168,70,0.75)", marginTop: 4, display: "flex", alignItems: "center", gap: 4 }}>
+                              <svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round"><path d="M12 9v4"/><path d="M12 17h.01"/><circle cx="12" cy="12" r="10"/></svg>
+                              missing {flagText}
+                            </div>
                           )}
                         </div>
                       </div>
@@ -1214,6 +1570,7 @@
             <AlbumDetailSheet
               album={selectedAlbum}
               onClose={() => setSelectedAlbum(null)}
+              onMetaChanged={() => scanMissingInfo(library)}
             />
           )}
 

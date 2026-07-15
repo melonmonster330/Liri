@@ -13,10 +13,13 @@ import { useNowPlaying } from "./hooks/useNowPlaying.js";
 import { useLyricScroll } from "./hooks/useLyricScroll.js";
 import { startWhisperChunks } from "../base/lib/whisper.js";
 import { getSideGroups, hasSideData } from "../base/lib/sides.js";
+import { LYRIC_SITES, saveUserLyrics, buildSideRows, saveUserSides } from "../base/lib/usermeta.js";
 import { showFlipPushNotification, showAlbumEndPushNotification, getLocalNotif } from "../base/lib/notifications.js";
 import { Vinyl }          from "../base/components/Vinyl.js";
 import { WaveAnimation }  from "../base/components/WaveAnimation.js";
 import { ProgressRing }   from "../base/components/ProgressRing.js";
+import { LyricsEditorSheet } from "../base/components/LyricsEditorSheet.js";
+import { SideInfoSheet }     from "../base/components/SideInfoSheet.js";
 import { Shazam }         from "../ios/shazam.js";
 import { getNativeAudio } from "../ios/audio.js";
 
@@ -39,7 +42,7 @@ const liriAuthStorage = {
   removeItem: k => { try { sessionStorage.removeItem(k); } catch {} try { localStorage.removeItem(k); } catch {} },
 };
 const sb = supabase.createClient("https://xjdjpaxgymgbvcwmvorc.supabase.co", "sb_publishable_C-NBnfg0ltAoUi46XQTUjA_ozjZW_Nd", { auth: { storage: liriAuthStorage } });
-const APP_VERSION = "1.5.5";
+const APP_VERSION = "1.5.6";
 // Lyrics lead the audio clock by this many seconds — the highlighted line
 // switches slightly BEFORE its nominal timestamp. Displayed time / progress bar
 // are unaffected (we only add this to the line-matching comparison). Helps the
@@ -261,6 +264,15 @@ function Liri() {
   // vinyl_sides: array of { side, side_track_number, position } sorted A1…B1…
   // Positionally indexed — vinylSidesRef.current[i] is the side for turntableTracksRef[i].
   const vinylSidesRef = useRef([]);
+
+  // ── User-contributed metadata (lyrics + side info) ──
+  // sideDataMissing mirrors "no vinyl_sides AND no Discogs fallback" into
+  // state so the idle screen can warn before sync (refs don't re-render).
+  const [sideDataMissing, setSideDataMissing] = useState(false);
+  const [showSideInfoSheet, setShowSideInfoSheet] = useState(false);
+  const [showLyricsEditor, setShowLyricsEditor] = useState(false);
+  const [userMetaSaving, setUserMetaSaving] = useState(false);
+  const [userMetaError, setUserMetaError] = useState(null);
 
   // ── Unsynced-lyrics auto-scroll speed (multiplier on the base scroll rate) ──
   const [scrollSpeed, setScrollSpeed] = useState(() => {
@@ -892,6 +904,7 @@ function Liri() {
     turntableTracksRef.current = [];
     turntableLyricsCacheRef.current = {};
     vinylSidesRef.current = [];
+    setSideDataMissing(false); // recomputed once this album's side data loads
     try {
       const alb = turntableAlbumRef.current;
       const artistName = alb?.artist_name || "";
@@ -1006,6 +1019,10 @@ function Liri() {
           setVinylDbRelease(null);
           vinylDbReleaseRef.current = null;
         }
+        // Surface the "no side info" warning on the idle screen (user can add
+        // it manually). May flip back to false below if the background Discogs
+        // auto-populate finds a pressing.
+        setSideDataMissing(!vinylSidesRef.current.length && !(dbRelease?.vinyl_tracks?.length > 0));
 
         // ── The record is now playable — everything below is background enrichment ──
         // (lyric gap-fill over the network + Discogs side auto-populate). These used
@@ -1049,7 +1066,7 @@ function Liri() {
             try {
               await autoPopulateVinylSides(collectionId, albumName, artistName);
               const retry = await fetchVinylRelease(collectionId);
-              if (retry?.vinyl_tracks?.length > 0) { setVinylDbRelease(retry); vinylDbReleaseRef.current = retry; }
+              if (retry?.vinyl_tracks?.length > 0) { setVinylDbRelease(retry); vinylDbReleaseRef.current = retry; setSideDataMissing(false); }
             } catch {}
           }
         })();
@@ -1074,8 +1091,59 @@ function Liri() {
       localStorage.removeItem("liri_turntable");
       turntableTracksRef.current = [];
       setTurntableTracksLoading(false);
+      setSideDataMissing(false);
     }
   }, [turntableAlbum]);
+
+  // ── User-contributed metadata: save handlers ──
+  // The track currently on screen while syncing — used by the "Add lyrics"
+  // flow on the no-lyrics playback screen. Only turntable (library) tracks
+  // have an itunes_track_id to key track_lyrics on.
+  const lyricsEditorTrack = currentTrackIndex >= 0 ? turntableTracksRef.current[currentTrackIndex] : null;
+
+  const handleSaveUserLyrics = async text => {
+    const track = currentTrackIndex >= 0 ? turntableTracksRef.current[currentTrackIndex] : null;
+    if (!track?.trackId) return;
+    setUserMetaSaving(true);
+    setUserMetaError(null);
+    try {
+      const entry = await saveUserLyrics(sb, track.trackId, text);
+      // Update the in-memory cache and swap the lyrics on screen immediately.
+      turntableLyricsCacheRef.current[String(track.trackId)] = entry;
+      const fresh = entry.lrc_raw ? parseLRC(entry.lrc_raw) : plainToLines(entry.lyrics_plain);
+      if (fresh.length) {
+        setLyrics(fresh);
+        lyricsRef.current = fresh;
+      }
+      setShowLyricsEditor(false);
+      logButtonEvent("user_lyrics_saved");
+    } catch (err) {
+      console.error("[usermeta] lyrics save failed:", err);
+      setUserMetaError(err?.message || "Couldn't save — try again");
+    }
+    setUserMetaSaving(false);
+  };
+
+  const handleSaveUserSides = async letters => {
+    const alb = turntableAlbumRef.current;
+    const tracks = turntableTracksRef.current;
+    if (!alb?.itunes_collection_id || !tracks.length) return;
+    setUserMetaSaving(true);
+    setUserMetaError(null);
+    try {
+      const rows = buildSideRows(alb.itunes_collection_id, tracks, letters);
+      const sides = await saveUserSides(sb, rows);
+      // Adopt immediately — flip detection and the track picker read this ref.
+      vinylSidesRef.current = sides;
+      setSideDataMissing(false);
+      setShowSideInfoSheet(false);
+      logButtonEvent("user_sides_saved");
+    } catch (err) {
+      console.error("[usermeta] sides save failed:", err);
+      setUserMetaError(err?.message || "Couldn't save — try again");
+    }
+    setUserMetaSaving(false);
+  };
 
   // ── User's personal vinyl library (for the album picker) ──
   const fetchUserLibrary = async (uid, autoSelect = false) => {
@@ -3902,7 +3970,21 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
       color: "rgba(255,255,255,0.3)",
       textDecoration: "none"
     }
-  }, "+ Add Record"))))), showTrackList && !window.Capacitor && /*#__PURE__*/React.createElement("div", {
+  }, "+ Add Record"))))), showSideInfoSheet && /*#__PURE__*/React.createElement(SideInfoSheet, {
+    tracks: turntableTracksRef.current,
+    initialBreaks: null,
+    saving: userMetaSaving,
+    error: userMetaError,
+    onSave: handleSaveUserSides,
+    onClose: () => setShowSideInfoSheet(false)
+  }), showLyricsEditor && lyricsEditorTrack?.trackId && /*#__PURE__*/React.createElement(LyricsEditorSheet, {
+    track: lyricsEditorTrack,
+    sites: LYRIC_SITES,
+    saving: userMetaSaving,
+    error: userMetaError,
+    onSave: handleSaveUserLyrics,
+    onClose: () => setShowLyricsEditor(false)
+  }), showTrackList && !window.Capacitor && /*#__PURE__*/React.createElement("div", {
     onClick: () => setShowTrackList(false),
     style: { position: "fixed", inset: 0, zIndex: 201, background: "rgba(0,0,0,0.6)", backdropFilter: "blur(4px)", cursor: "pointer", display: "flex", alignItems: "flex-end", justifyContent: "center" }
   }, /*#__PURE__*/React.createElement("div", {
@@ -5173,7 +5255,23 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
       fontSize: "16px",
       paddingTop: "30vh"
     }
-  }, "No lyrics found for this track")), /*#__PURE__*/React.createElement("div", {
+  }, /*#__PURE__*/React.createElement("div", null, "No lyrics found for this track"), lyricsEditorTrack?.trackId && /*#__PURE__*/React.createElement("button", {
+    onClick: () => { setUserMetaError(null); setShowLyricsEditor(true); },
+    style: {
+      marginTop: "18px",
+      background: "rgba(212,168,70,0.1)",
+      border: "1px solid rgba(212,168,70,0.35)",
+      color: "rgba(212,168,70,0.9)",
+      borderRadius: "50px",
+      padding: "12px 28px",
+      fontSize: "13px",
+      fontWeight: 700,
+      cursor: "pointer",
+      fontFamily: "inherit"
+    }
+  }, "Add lyrics"), lyricsEditorTrack?.trackId && /*#__PURE__*/React.createElement("div", {
+    style: { fontSize: "11px", color: "rgba(255,255,255,0.25)", marginTop: 10, lineHeight: 1.5 }
+  }, "Find them on Genius, AZLyrics, Musixmatch or LRCLIB and paste them in"))), /*#__PURE__*/React.createElement("div", {
     style: {
       position: "absolute",
       top: 0,
@@ -5819,7 +5917,43 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
       color: "rgba(255,255,255,0.35)",
       marginTop: 2
     }
-  }, "Tap to choose a record from your library")))), /*#__PURE__*/React.createElement("button", {
+  }, "Tap to choose a record from your library")))), !turntableTracksLoading && turntableAlbum && sideDataMissing && /*#__PURE__*/React.createElement("div", {
+    // No side info for this record — warn before sync so the user can add it
+    // (flip detection would otherwise guess a midpoint A/B split).
+    style: {
+      width: "100%",
+      background: "rgba(212,168,70,0.06)",
+      border: "1px solid rgba(212,168,70,0.25)",
+      borderRadius: "14px",
+      padding: "10px 14px",
+      marginBottom: "12px",
+      display: "flex",
+      alignItems: "center",
+      gap: "10px",
+      textAlign: "left"
+    }
+  }, /*#__PURE__*/React.createElement("div", {
+    style: { flex: 1, minWidth: 0 }
+  }, /*#__PURE__*/React.createElement("div", {
+    style: { fontSize: "12px", fontWeight: 600, color: "rgba(212,168,70,0.9)" }
+  }, "No side info for this record"), /*#__PURE__*/React.createElement("div", {
+    style: { fontSize: "11px", color: "rgba(255,255,255,0.4)", marginTop: 2, lineHeight: 1.4 }
+  }, "Liri is guessing where the sides split, so flip detection may be off.")), /*#__PURE__*/React.createElement("button", {
+    onClick: () => { setUserMetaError(null); setShowSideInfoSheet(true); },
+    style: {
+      background: "rgba(212,168,70,0.15)",
+      border: "1px solid rgba(212,168,70,0.4)",
+      color: "rgba(212,168,70,0.95)",
+      borderRadius: "50px",
+      padding: "8px 14px",
+      fontSize: "12px",
+      fontWeight: 700,
+      cursor: "pointer",
+      fontFamily: "inherit",
+      flexShrink: 0,
+      whiteSpace: "nowrap"
+    }
+  }, "Add sides")), /*#__PURE__*/React.createElement("button", {
     id: "liri-listen-cta",
     onClick: () => !turntableTracksLoading && startListening(false),
     style: {
