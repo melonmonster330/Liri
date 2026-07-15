@@ -42,7 +42,7 @@ const liriAuthStorage = {
   removeItem: k => { try { sessionStorage.removeItem(k); } catch {} try { localStorage.removeItem(k); } catch {} },
 };
 const sb = supabase.createClient("https://xjdjpaxgymgbvcwmvorc.supabase.co", "sb_publishable_C-NBnfg0ltAoUi46XQTUjA_ozjZW_Nd", { auth: { storage: liriAuthStorage } });
-const APP_VERSION = "1.5.9";
+const APP_VERSION = "1.5.10";
 // Lyrics lead the audio clock by this many seconds — the highlighted line
 // switches slightly BEFORE its nominal timestamp. Displayed time / progress bar
 // are unaffected (we only add this to the line-matching comparison). Helps the
@@ -250,6 +250,7 @@ function Liri() {
   const [shouldAdvanceTrack, setShouldAdvanceTrack] = useState(false);
   const [sideEndReason, setSideEndReason] = useState("failed"); // "failed" | "flip" | "album-end"
   const [sideEndNextDiscInfo, setSideEndNextDiscInfo] = useState(null); // {isNewDisc, nextDisc, nextSide}
+  const [showSideEndPicker, setShowSideEndPicker] = useState(false); // "Or select another side" list on the side-end screen
   const flipChimeTimersRef = useRef([]); // ids for the repeating flip-chime setTimeouts
   const flipStartDelayMsRef = useRef(0); // when set, startSync will hold playbackTime at 0 for this many ms (used after manual flip)
 
@@ -2290,6 +2291,7 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
     syncCalcRef.current = { startPos, phraseOffset: 0, recStart: Date.now() };
     autoAdvanceFiredRef.current = false;
     autoRetryCountRef.current = 0;
+    setShowSideEndPicker(false);
     saveToHistory(user, song);
     // Picking a record off the shelf (the main web flow) counts as spinning it —
     // auto-post the album. Dedup (per-session + 12h) is handled inside.
@@ -2337,6 +2339,22 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
     // Past all known side ends
     setSideEndReason("album-end");
     setMode("side-end");
+  };
+
+  // ── Manual side pick: start any side from the side-end screen ──
+  // Same contract as manualFlipToNextSide: the user is physically moving the
+  // needle, so hold playback at 0 for 10s while they drop it on the new side.
+  const startSideAtIdx = (idx) => {
+    try {
+      if (!chimeCtxRef.current) {
+        chimeCtxRef.current = new (window.AudioContext || window.webkitAudioContext)();
+      } else if (chimeCtxRef.current.state === "suspended") {
+        chimeCtxRef.current.resume();
+      }
+    } catch {}
+    cancelFlipChimes();
+    flipStartDelayMsRef.current = 10000;
+    jumpToTrackIdx(idx);
   };
 
   // Helper: next side letter based on current track position (for UI labels)
@@ -2419,6 +2437,7 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
 
     const reset = () => {
     cancelFlipChimes();
+    setShowSideEndPicker(false);
     flipStartDelayMsRef.current = 0;
     clearInterval(syncIntervalRef.current);
     clearInterval(progressTimerRef.current);
@@ -6476,7 +6495,70 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
       cursor: "pointer",
       fontFamily: "inherit"
     }
-  }, "\u2190 Back")))), mode === "limit" && /*#__PURE__*/React.createElement("div", {
+  }, "\u2190 Back"))),
+  /* \u2500\u2500 "Or select another side" \u2014 quiet picker under the main flip CTA \u2500\u2500 */
+  (sideEndReason === "flip" || sideEndReason === "failed") && !isNeedleDrop && turntableTracksRef.current.length > 0 && (() => {
+    const groups = getSideGroups(turntableTracksRef.current, vinylSidesRef.current, vinylDbRelease?.vinyl_tracks);
+    if (!groups.length) return null;
+    return /*#__PURE__*/React.createElement("div", {
+      style: { marginTop: "20px", width: "100%" }
+    }, /*#__PURE__*/React.createElement("button", {
+      onClick: () => setShowSideEndPicker(v => !v),
+      style: {
+        background: "none",
+        border: "none",
+        color: "rgba(255,255,255,0.3)",
+        fontSize: "12px",
+        cursor: "pointer",
+        fontFamily: "inherit",
+        width: "100%",
+        padding: "6px 0"
+      }
+    }, (showSideEndPicker ? "\u25b4" : "\u25be") + " Or select another side"),
+    showSideEndPicker && /*#__PURE__*/React.createElement("div", {
+      style: {
+        marginTop: "8px",
+        background: "rgba(0,0,0,0.35)",
+        border: "1px solid rgba(255,255,255,0.07)",
+        borderRadius: "12px",
+        padding: "8px",
+        maxHeight: "32vh",
+        overflowY: "auto",
+        WebkitOverflowScrolling: "touch",
+        display: "flex",
+        flexDirection: "column",
+        gap: "6px",
+        textAlign: "left"
+      }
+    }, groups.map(({ side, tracks: sideTracks }) => /*#__PURE__*/React.createElement("button", {
+      key: side,
+      onClick: () => startSideAtIdx(sideTracks[0].idx),
+      style: {
+        background: "rgba(255,255,255,0.03)",
+        border: "1px solid rgba(255,255,255,0.06)",
+        borderRadius: "10px",
+        padding: "10px 12px",
+        cursor: "pointer",
+        fontFamily: "inherit",
+        textAlign: "left",
+        width: "100%"
+      }
+    }, /*#__PURE__*/React.createElement("div", {
+      style: {
+        fontSize: "10px",
+        letterSpacing: "2px",
+        textTransform: "uppercase",
+        color: "rgba(212,168,70,0.75)",
+        fontWeight: "700",
+        marginBottom: "5px"
+      }
+    }, "Side " + side + " \u2192"), /*#__PURE__*/React.createElement("div", {
+      style: { fontSize: "11px", color: "rgba(255,255,255,0.4)", lineHeight: "1.6" }
+    }, sideTracks.map(({ track: t, idx: i }) => /*#__PURE__*/React.createElement("div", {
+      key: i,
+      style: { overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }
+    }, (i + 1) + ". " + (t.trackName || ""))))))));
+  })()), mode === "limit" && /*#__PURE__*/React.createElement("div", {
     style: {
       maxWidth: "300px",
       animation: "fade-up 0.3s ease both",

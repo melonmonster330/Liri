@@ -1211,7 +1211,7 @@
     }
   };
   var sb = supabase.createClient("https://xjdjpaxgymgbvcwmvorc.supabase.co", "sb_publishable_C-NBnfg0ltAoUi46XQTUjA_ozjZW_Nd", { auth: { storage: liriAuthStorage } });
-  var APP_VERSION = "1.5.9";
+  var APP_VERSION = "1.5.10";
   var LYRIC_LEAD_SECONDS = 2;
   var sessionTabId = (() => {
     try {
@@ -1366,6 +1366,7 @@
     const [shouldAdvanceTrack, setShouldAdvanceTrack] = useState5(false);
     const [sideEndReason, setSideEndReason] = useState5("failed");
     const [sideEndNextDiscInfo, setSideEndNextDiscInfo] = useState5(null);
+    const [showSideEndPicker, setShowSideEndPicker] = useState5(false);
     const flipChimeTimersRef = useRef4([]);
     const flipStartDelayMsRef = useRef4(0);
     const [albumCollectionId, setAlbumCollectionId] = useState5(null);
@@ -3055,6 +3056,7 @@ Move closer to your speakers and try again.`);
       syncCalcRef.current = { startPos, phraseOffset: 0, recStart: Date.now() };
       autoAdvanceFiredRef.current = false;
       autoRetryCountRef.current = 0;
+      setShowSideEndPicker(false);
       saveToHistory(user, song);
       maybeAutoPostPlay2({ userId: user?.id, collectionId: ta?.itunes_collection_id, album: song.album, artist: song.artist, artwork: song.artwork });
       setShowTrackList(false);
@@ -3091,6 +3093,19 @@ Move closer to your speakers and try again.`);
       }
       setSideEndReason("album-end");
       setMode("side-end");
+    };
+    const startSideAtIdx = (idx) => {
+      try {
+        if (!chimeCtxRef.current) {
+          chimeCtxRef.current = new (window.AudioContext || window.webkitAudioContext)();
+        } else if (chimeCtxRef.current.state === "suspended") {
+          chimeCtxRef.current.resume();
+        }
+      } catch {
+      }
+      cancelFlipChimes();
+      flipStartDelayMsRef.current = 1e4;
+      jumpToTrackIdx(idx);
     };
     const getNextSideLetter = () => {
       const tracks = turntableTracksRef.current;
@@ -3164,6 +3179,7 @@ Move closer to your speakers and try again.`);
     };
     const reset = () => {
       cancelFlipChimes();
+      setShowSideEndPicker(false);
       flipStartDelayMsRef.current = 0;
       clearInterval(syncIntervalRef.current);
       clearInterval(progressTimerRef.current);
@@ -7158,234 +7174,309 @@ Move closer to your speakers and try again.`);
         cursor: "pointer",
         fontFamily: "inherit"
       }
-    }, "\u2193 recording"))), mode === "side-end" && /* @__PURE__ */ React.createElement("div", {
-      style: {
-        maxWidth: "300px",
-        animation: "fade-up 0.3s ease both",
-        textAlign: "center"
-      }
-    }, /* @__PURE__ */ React.createElement(Vinyl, {
-      size: 100,
-      spinning: false
-    }), (sideEndReason === "flip" || sideEndReason === "failed") && /* @__PURE__ */ React.createElement("button", {
-      onClick: toggleFlipDings,
-      "aria-label": flipSound ? "Mute flip dings" : "Unmute flip dings",
-      style: {
-        marginTop: "16px",
-        background: flipSound ? "rgba(255,255,255,0.06)" : "rgba(212,168,70,0.12)",
-        border: flipSound ? "1px solid rgba(255,255,255,0.12)" : "1px solid rgba(212,168,70,0.4)",
-        color: flipSound ? "rgba(240,230,211,0.7)" : "#d4a846",
-        borderRadius: "50px",
-        padding: "8px 18px",
-        fontSize: "13px",
-        fontWeight: "700",
-        cursor: "pointer",
-        fontFamily: "inherit",
-        display: "inline-flex",
-        alignItems: "center",
-        gap: "7px"
-      }
-    }, flipSound ? /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement("svg", { width: "15", height: "15", viewBox: "0 0 24 24", fill: "none", stroke: "currentColor", strokeWidth: "2", strokeLinecap: "round", strokeLinejoin: "round" }, /* @__PURE__ */ React.createElement("path", { d: "M11 5 6 9H2v6h4l5 4V5z" }), /* @__PURE__ */ React.createElement("path", { d: "M15.54 8.46a5 5 0 0 1 0 7.07" }), /* @__PURE__ */ React.createElement("path", { d: "M19.07 4.93a10 10 0 0 1 0 14.14" })), "Mute dings") : /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement("svg", { width: "15", height: "15", viewBox: "0 0 24 24", fill: "none", stroke: "currentColor", strokeWidth: "2", strokeLinecap: "round", strokeLinejoin: "round" }, /* @__PURE__ */ React.createElement("path", { d: "M11 5 6 9H2v6h4l5 4V5z" }), /* @__PURE__ */ React.createElement("line", { x1: "23", y1: "9", x2: "17", y2: "15" }), /* @__PURE__ */ React.createElement("line", { x1: "17", y1: "9", x2: "23", y2: "15" })), "Dings muted")), sideEndReason === "flip" && /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement("div", {
-      style: {
-        marginTop: "32px",
-        fontSize: "22px",
-        fontWeight: "700",
-        color: "#f0e6d3",
-        marginBottom: "12px"
-      }
-    }, sideEndNextDiscInfo && sideEndNextDiscInfo.isNewDisc ? "Time for LP " + sideEndNextDiscInfo.nextDisc + "! \u{1F4BF}" : "Time to flip! \u{1F4BF}"), /* @__PURE__ */ React.createElement("div", {
-      style: {
-        color: "rgba(255,255,255,0.4)",
-        marginBottom: "36px",
-        lineHeight: "1.8",
-        fontSize: "15px"
-      }
-    }, sideEndNextDiscInfo && sideEndNextDiscInfo.isNewDisc ? "Grab LP " + sideEndNextDiscInfo.nextDisc + " and tap below." : "Flip the record, then tap below."), isNeedleDrop ? /* @__PURE__ */ React.createElement("div", {
-      style: {
-        marginTop: "8px",
-        display: "flex",
-        flexDirection: "column",
-        alignItems: "center",
-        gap: "10px",
-        animation: "fade-up 0.3s ease both"
-      }
-    }, /* @__PURE__ */ React.createElement("div", {
-      style: {
-        width: "36px",
-        height: "36px",
-        border: "3px solid rgba(212,168,70,0.2)",
-        borderTop: "3px solid #d4a846",
-        borderRadius: "50%",
-        animation: "spin 0.9s linear infinite"
-      }
-    }), /* @__PURE__ */ React.createElement("div", {
-      style: { fontSize: "13px", color: "rgba(255,255,255,0.35)" }
-    }, "Dropping needle\u2026")) : /* @__PURE__ */ React.createElement(React.Fragment, null, turntableTracksRef.current.length > 0 && (sideEndNextDiscInfo || getNextSideLetter()) && /* @__PURE__ */ React.createElement("button", {
-      onClick: manualFlipToNextSide,
-      style: {
-        background: "linear-gradient(135deg, #d4a846, #c9807a)",
-        color: "#080810",
-        border: "none",
-        borderRadius: "50px",
-        padding: "14px 36px",
-        fontSize: "14px",
-        fontWeight: "700",
-        cursor: "pointer",
-        fontFamily: "inherit",
-        width: "100%",
-        marginBottom: "10px"
-      }
-    }, sideEndNextDiscInfo && sideEndNextDiscInfo.isNewDisc ? "Start Side " + sideEndNextDiscInfo.nextSide + " \u2192" : "Flip to Side " + (sideEndNextDiscInfo ? sideEndNextDiscInfo.nextSide : getNextSideLetter()) + " \u2192"), IS_IOS && /* @__PURE__ */ React.createElement("button", {
-      onClick: () => {
-        reset();
-        setTimeout(() => startListening(false), 300);
+    }, "\u2193 recording"))), mode === "side-end" && /* @__PURE__ */ React.createElement(
+      "div",
+      {
+        style: {
+          maxWidth: "300px",
+          animation: "fade-up 0.3s ease both",
+          textAlign: "center"
+        }
       },
-      style: {
-        marginTop: "4px",
-        marginBottom: "4px",
-        background: "none",
-        border: "none",
-        color: "rgba(255,255,255,0.25)",
-        fontSize: "13px",
-        cursor: "pointer",
-        fontFamily: "inherit"
-      }
-    }, "\u21BB Sync with Shazam"), lastSong && /* @__PURE__ */ React.createElement("button", {
-      onClick: () => setMode("idle"),
-      style: {
-        marginTop: "4px",
-        background: "none",
-        border: "none",
-        color: "rgba(255,255,255,0.25)",
-        fontSize: "13px",
-        cursor: "pointer",
-        fontFamily: "inherit"
-      }
-    }, "\u2190 Back"))), sideEndReason === "album-end" && /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement("div", {
-      style: {
-        marginTop: "32px",
-        fontSize: "22px",
-        fontWeight: "700",
-        color: "#f0e6d3",
-        marginBottom: "12px"
-      }
-    }, "That's the album! \u{1F3B6}"), /* @__PURE__ */ React.createElement("div", {
-      style: {
-        color: "rgba(255,255,255,0.4)",
-        marginBottom: "36px",
-        lineHeight: "1.8",
-        fontSize: "15px"
-      }
-    }, "Put on your next LP to keep going."), /* @__PURE__ */ React.createElement("button", {
-      onClick: reset,
-      style: {
-        background: "linear-gradient(135deg, #d4a846, #c9807a)",
-        color: "#080810",
-        border: "none",
-        borderRadius: "50px",
-        padding: "14px 36px",
-        fontSize: "14px",
-        fontWeight: "700",
-        cursor: "pointer",
-        fontFamily: "inherit"
-      }
-    }, "New LP \u2192"), lastSong && /* @__PURE__ */ React.createElement("button", {
-      onClick: () => setMode("idle"),
-      style: {
-        marginTop: "12px",
-        background: "none",
-        border: "none",
-        color: "rgba(255,255,255,0.25)",
-        fontSize: "13px",
-        cursor: "pointer",
-        fontFamily: "inherit"
-      }
-    }, "\u2190 Back")), sideEndReason === "failed" && /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement("div", {
-      style: {
-        marginTop: "32px",
-        fontSize: "22px",
-        fontWeight: "700",
-        color: "#f0e6d3",
-        marginBottom: "12px"
-      }
-    }, (function() {
-      var _di = getNextDiscInfo();
-      return _di && _di.isNewDisc ? "Time for LP " + _di.nextDisc + "?" : "Time to flip?";
-    })()), /* @__PURE__ */ React.createElement("div", {
-      style: {
-        color: "rgba(255,255,255,0.4)",
-        marginBottom: "36px",
-        lineHeight: "1.8",
-        fontSize: "15px"
-      }
-    }, (function() {
-      var _di = getNextDiscInfo();
-      return _di && _di.isNewDisc ? "Grab LP " + _di.nextDisc + " and tap below." : "Flip the record, then tap below.";
-    })()), isNeedleDrop ? /* @__PURE__ */ React.createElement("div", {
-      style: {
-        marginTop: "8px",
-        display: "flex",
-        flexDirection: "column",
-        alignItems: "center",
-        gap: "10px",
-        animation: "fade-up 0.3s ease both"
-      }
-    }, /* @__PURE__ */ React.createElement("div", {
-      style: {
-        width: "36px",
-        height: "36px",
-        border: "3px solid rgba(212,168,70,0.2)",
-        borderTop: "3px solid #d4a846",
-        borderRadius: "50%",
-        animation: "spin 0.9s linear infinite"
-      }
-    }), /* @__PURE__ */ React.createElement("div", {
-      style: { fontSize: "13px", color: "rgba(255,255,255,0.35)" }
-    }, "Dropping needle\u2026")) : /* @__PURE__ */ React.createElement(React.Fragment, null, turntableTracksRef.current.length > 0 && (getNextDiscInfo() || getNextSideLetter()) && /* @__PURE__ */ React.createElement("button", {
-      onClick: manualFlipToNextSide,
-      style: {
-        background: "linear-gradient(135deg, #d4a846, #c9807a)",
-        color: "#080810",
-        border: "none",
-        borderRadius: "50px",
-        padding: "14px 36px",
-        fontSize: "14px",
-        fontWeight: "700",
-        cursor: "pointer",
-        fontFamily: "inherit",
-        width: "100%",
-        marginBottom: "10px"
-      }
-    }, (function() {
-      var _di = getNextDiscInfo();
-      return _di && _di.isNewDisc ? "Start Side " + _di.nextSide + " \u2192" : "Flip to Side " + (_di ? _di.nextSide : getNextSideLetter()) + " \u2192";
-    })()), IS_IOS && /* @__PURE__ */ React.createElement("button", {
-      onClick: () => {
-        reset();
-        setTimeout(() => startListening(false), 300);
-      },
-      style: {
-        marginTop: "4px",
-        marginBottom: "4px",
-        background: "none",
-        border: "none",
-        color: "rgba(255,255,255,0.25)",
-        fontSize: "13px",
-        cursor: "pointer",
-        fontFamily: "inherit"
-      }
-    }, "\u21BB Sync with Shazam"), lastSong && /* @__PURE__ */ React.createElement("button", {
-      onClick: () => setMode("idle"),
-      style: {
-        marginTop: "4px",
-        background: "none",
-        border: "none",
-        color: "rgba(255,255,255,0.25)",
-        fontSize: "13px",
-        cursor: "pointer",
-        fontFamily: "inherit"
-      }
-    }, "\u2190 Back")))), mode === "limit" && /* @__PURE__ */ React.createElement(
+      /* @__PURE__ */ React.createElement(Vinyl, {
+        size: 100,
+        spinning: false
+      }),
+      (sideEndReason === "flip" || sideEndReason === "failed") && /* @__PURE__ */ React.createElement("button", {
+        onClick: toggleFlipDings,
+        "aria-label": flipSound ? "Mute flip dings" : "Unmute flip dings",
+        style: {
+          marginTop: "16px",
+          background: flipSound ? "rgba(255,255,255,0.06)" : "rgba(212,168,70,0.12)",
+          border: flipSound ? "1px solid rgba(255,255,255,0.12)" : "1px solid rgba(212,168,70,0.4)",
+          color: flipSound ? "rgba(240,230,211,0.7)" : "#d4a846",
+          borderRadius: "50px",
+          padding: "8px 18px",
+          fontSize: "13px",
+          fontWeight: "700",
+          cursor: "pointer",
+          fontFamily: "inherit",
+          display: "inline-flex",
+          alignItems: "center",
+          gap: "7px"
+        }
+      }, flipSound ? /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement("svg", { width: "15", height: "15", viewBox: "0 0 24 24", fill: "none", stroke: "currentColor", strokeWidth: "2", strokeLinecap: "round", strokeLinejoin: "round" }, /* @__PURE__ */ React.createElement("path", { d: "M11 5 6 9H2v6h4l5 4V5z" }), /* @__PURE__ */ React.createElement("path", { d: "M15.54 8.46a5 5 0 0 1 0 7.07" }), /* @__PURE__ */ React.createElement("path", { d: "M19.07 4.93a10 10 0 0 1 0 14.14" })), "Mute dings") : /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement("svg", { width: "15", height: "15", viewBox: "0 0 24 24", fill: "none", stroke: "currentColor", strokeWidth: "2", strokeLinecap: "round", strokeLinejoin: "round" }, /* @__PURE__ */ React.createElement("path", { d: "M11 5 6 9H2v6h4l5 4V5z" }), /* @__PURE__ */ React.createElement("line", { x1: "23", y1: "9", x2: "17", y2: "15" }), /* @__PURE__ */ React.createElement("line", { x1: "17", y1: "9", x2: "23", y2: "15" })), "Dings muted")),
+      sideEndReason === "flip" && /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement("div", {
+        style: {
+          marginTop: "32px",
+          fontSize: "22px",
+          fontWeight: "700",
+          color: "#f0e6d3",
+          marginBottom: "12px"
+        }
+      }, sideEndNextDiscInfo && sideEndNextDiscInfo.isNewDisc ? "Time for LP " + sideEndNextDiscInfo.nextDisc + "! \u{1F4BF}" : "Time to flip! \u{1F4BF}"), /* @__PURE__ */ React.createElement("div", {
+        style: {
+          color: "rgba(255,255,255,0.4)",
+          marginBottom: "36px",
+          lineHeight: "1.8",
+          fontSize: "15px"
+        }
+      }, sideEndNextDiscInfo && sideEndNextDiscInfo.isNewDisc ? "Grab LP " + sideEndNextDiscInfo.nextDisc + " and tap below." : "Flip the record, then tap below."), isNeedleDrop ? /* @__PURE__ */ React.createElement("div", {
+        style: {
+          marginTop: "8px",
+          display: "flex",
+          flexDirection: "column",
+          alignItems: "center",
+          gap: "10px",
+          animation: "fade-up 0.3s ease both"
+        }
+      }, /* @__PURE__ */ React.createElement("div", {
+        style: {
+          width: "36px",
+          height: "36px",
+          border: "3px solid rgba(212,168,70,0.2)",
+          borderTop: "3px solid #d4a846",
+          borderRadius: "50%",
+          animation: "spin 0.9s linear infinite"
+        }
+      }), /* @__PURE__ */ React.createElement("div", {
+        style: { fontSize: "13px", color: "rgba(255,255,255,0.35)" }
+      }, "Dropping needle\u2026")) : /* @__PURE__ */ React.createElement(React.Fragment, null, turntableTracksRef.current.length > 0 && (sideEndNextDiscInfo || getNextSideLetter()) && /* @__PURE__ */ React.createElement("button", {
+        onClick: manualFlipToNextSide,
+        style: {
+          background: "linear-gradient(135deg, #d4a846, #c9807a)",
+          color: "#080810",
+          border: "none",
+          borderRadius: "50px",
+          padding: "14px 36px",
+          fontSize: "14px",
+          fontWeight: "700",
+          cursor: "pointer",
+          fontFamily: "inherit",
+          width: "100%",
+          marginBottom: "10px"
+        }
+      }, sideEndNextDiscInfo && sideEndNextDiscInfo.isNewDisc ? "Start Side " + sideEndNextDiscInfo.nextSide + " \u2192" : "Flip to Side " + (sideEndNextDiscInfo ? sideEndNextDiscInfo.nextSide : getNextSideLetter()) + " \u2192"), IS_IOS && /* @__PURE__ */ React.createElement("button", {
+        onClick: () => {
+          reset();
+          setTimeout(() => startListening(false), 300);
+        },
+        style: {
+          marginTop: "4px",
+          marginBottom: "4px",
+          background: "none",
+          border: "none",
+          color: "rgba(255,255,255,0.25)",
+          fontSize: "13px",
+          cursor: "pointer",
+          fontFamily: "inherit"
+        }
+      }, "\u21BB Sync with Shazam"), lastSong && /* @__PURE__ */ React.createElement("button", {
+        onClick: () => setMode("idle"),
+        style: {
+          marginTop: "4px",
+          background: "none",
+          border: "none",
+          color: "rgba(255,255,255,0.25)",
+          fontSize: "13px",
+          cursor: "pointer",
+          fontFamily: "inherit"
+        }
+      }, "\u2190 Back"))),
+      sideEndReason === "album-end" && /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement("div", {
+        style: {
+          marginTop: "32px",
+          fontSize: "22px",
+          fontWeight: "700",
+          color: "#f0e6d3",
+          marginBottom: "12px"
+        }
+      }, "That's the album! \u{1F3B6}"), /* @__PURE__ */ React.createElement("div", {
+        style: {
+          color: "rgba(255,255,255,0.4)",
+          marginBottom: "36px",
+          lineHeight: "1.8",
+          fontSize: "15px"
+        }
+      }, "Put on your next LP to keep going."), /* @__PURE__ */ React.createElement("button", {
+        onClick: reset,
+        style: {
+          background: "linear-gradient(135deg, #d4a846, #c9807a)",
+          color: "#080810",
+          border: "none",
+          borderRadius: "50px",
+          padding: "14px 36px",
+          fontSize: "14px",
+          fontWeight: "700",
+          cursor: "pointer",
+          fontFamily: "inherit"
+        }
+      }, "New LP \u2192"), lastSong && /* @__PURE__ */ React.createElement("button", {
+        onClick: () => setMode("idle"),
+        style: {
+          marginTop: "12px",
+          background: "none",
+          border: "none",
+          color: "rgba(255,255,255,0.25)",
+          fontSize: "13px",
+          cursor: "pointer",
+          fontFamily: "inherit"
+        }
+      }, "\u2190 Back")),
+      sideEndReason === "failed" && /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement("div", {
+        style: {
+          marginTop: "32px",
+          fontSize: "22px",
+          fontWeight: "700",
+          color: "#f0e6d3",
+          marginBottom: "12px"
+        }
+      }, (function() {
+        var _di = getNextDiscInfo();
+        return _di && _di.isNewDisc ? "Time for LP " + _di.nextDisc + "?" : "Time to flip?";
+      })()), /* @__PURE__ */ React.createElement("div", {
+        style: {
+          color: "rgba(255,255,255,0.4)",
+          marginBottom: "36px",
+          lineHeight: "1.8",
+          fontSize: "15px"
+        }
+      }, (function() {
+        var _di = getNextDiscInfo();
+        return _di && _di.isNewDisc ? "Grab LP " + _di.nextDisc + " and tap below." : "Flip the record, then tap below.";
+      })()), isNeedleDrop ? /* @__PURE__ */ React.createElement("div", {
+        style: {
+          marginTop: "8px",
+          display: "flex",
+          flexDirection: "column",
+          alignItems: "center",
+          gap: "10px",
+          animation: "fade-up 0.3s ease both"
+        }
+      }, /* @__PURE__ */ React.createElement("div", {
+        style: {
+          width: "36px",
+          height: "36px",
+          border: "3px solid rgba(212,168,70,0.2)",
+          borderTop: "3px solid #d4a846",
+          borderRadius: "50%",
+          animation: "spin 0.9s linear infinite"
+        }
+      }), /* @__PURE__ */ React.createElement("div", {
+        style: { fontSize: "13px", color: "rgba(255,255,255,0.35)" }
+      }, "Dropping needle\u2026")) : /* @__PURE__ */ React.createElement(React.Fragment, null, turntableTracksRef.current.length > 0 && (getNextDiscInfo() || getNextSideLetter()) && /* @__PURE__ */ React.createElement("button", {
+        onClick: manualFlipToNextSide,
+        style: {
+          background: "linear-gradient(135deg, #d4a846, #c9807a)",
+          color: "#080810",
+          border: "none",
+          borderRadius: "50px",
+          padding: "14px 36px",
+          fontSize: "14px",
+          fontWeight: "700",
+          cursor: "pointer",
+          fontFamily: "inherit",
+          width: "100%",
+          marginBottom: "10px"
+        }
+      }, (function() {
+        var _di = getNextDiscInfo();
+        return _di && _di.isNewDisc ? "Start Side " + _di.nextSide + " \u2192" : "Flip to Side " + (_di ? _di.nextSide : getNextSideLetter()) + " \u2192";
+      })()), IS_IOS && /* @__PURE__ */ React.createElement("button", {
+        onClick: () => {
+          reset();
+          setTimeout(() => startListening(false), 300);
+        },
+        style: {
+          marginTop: "4px",
+          marginBottom: "4px",
+          background: "none",
+          border: "none",
+          color: "rgba(255,255,255,0.25)",
+          fontSize: "13px",
+          cursor: "pointer",
+          fontFamily: "inherit"
+        }
+      }, "\u21BB Sync with Shazam"), lastSong && /* @__PURE__ */ React.createElement("button", {
+        onClick: () => setMode("idle"),
+        style: {
+          marginTop: "4px",
+          background: "none",
+          border: "none",
+          color: "rgba(255,255,255,0.25)",
+          fontSize: "13px",
+          cursor: "pointer",
+          fontFamily: "inherit"
+        }
+      }, "\u2190 Back"))),
+      /* \u2500\u2500 "Or select another side" \u2014 quiet picker under the main flip CTA \u2500\u2500 */
+      (sideEndReason === "flip" || sideEndReason === "failed") && !isNeedleDrop && turntableTracksRef.current.length > 0 && (() => {
+        const groups = getSideGroups(turntableTracksRef.current, vinylSidesRef.current, vinylDbRelease?.vinyl_tracks);
+        if (!groups.length) return null;
+        return /* @__PURE__ */ React.createElement(
+          "div",
+          {
+            style: { marginTop: "20px", width: "100%" }
+          },
+          /* @__PURE__ */ React.createElement("button", {
+            onClick: () => setShowSideEndPicker((v) => !v),
+            style: {
+              background: "none",
+              border: "none",
+              color: "rgba(255,255,255,0.3)",
+              fontSize: "12px",
+              cursor: "pointer",
+              fontFamily: "inherit",
+              width: "100%",
+              padding: "6px 0"
+            }
+          }, (showSideEndPicker ? "\u25B4" : "\u25BE") + " Or select another side"),
+          showSideEndPicker && /* @__PURE__ */ React.createElement("div", {
+            style: {
+              marginTop: "8px",
+              background: "rgba(0,0,0,0.35)",
+              border: "1px solid rgba(255,255,255,0.07)",
+              borderRadius: "12px",
+              padding: "8px",
+              maxHeight: "32vh",
+              overflowY: "auto",
+              WebkitOverflowScrolling: "touch",
+              display: "flex",
+              flexDirection: "column",
+              gap: "6px",
+              textAlign: "left"
+            }
+          }, groups.map(({ side, tracks: sideTracks }) => /* @__PURE__ */ React.createElement("button", {
+            key: side,
+            onClick: () => startSideAtIdx(sideTracks[0].idx),
+            style: {
+              background: "rgba(255,255,255,0.03)",
+              border: "1px solid rgba(255,255,255,0.06)",
+              borderRadius: "10px",
+              padding: "10px 12px",
+              cursor: "pointer",
+              fontFamily: "inherit",
+              textAlign: "left",
+              width: "100%"
+            }
+          }, /* @__PURE__ */ React.createElement("div", {
+            style: {
+              fontSize: "10px",
+              letterSpacing: "2px",
+              textTransform: "uppercase",
+              color: "rgba(212,168,70,0.75)",
+              fontWeight: "700",
+              marginBottom: "5px"
+            }
+          }, "Side " + side + " \u2192"), /* @__PURE__ */ React.createElement("div", {
+            style: { fontSize: "11px", color: "rgba(255,255,255,0.4)", lineHeight: "1.6" }
+          }, sideTracks.map(({ track: t, idx: i }) => /* @__PURE__ */ React.createElement("div", {
+            key: i,
+            style: { overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }
+          }, i + 1 + ". " + (t.trackName || "")))))))
+        );
+      })()
+    ), mode === "limit" && /* @__PURE__ */ React.createElement(
       "div",
       {
         style: {
