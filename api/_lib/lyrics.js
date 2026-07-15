@@ -121,10 +121,64 @@ async function fetchItunesDuration(trackName, artistName, albumName) {
 // LRClib /api/get is strict (±2s). Allow a hair more on our side when scanning
 // search results, since cross-master differences are usually under ~3s.
 const LRC_DURATION_TOLERANCE_S = 3;
+// A synced LRC should span most of its track. LRClib is full of entries whose
+// metadata says "live version" but whose timestamps were pasted from the
+// studio cut — e.g. Pearl Jam "Oceans (Live MTV Unplugged)" (239s) has entries
+// ending at 141s (studio paste, lyrics start at 0:00 over the long intro) and
+// at 201s (true live sync, first line at 0:40). Below this coverage ratio we
+// double-check the search variants for a better-synced copy at the same
+// duration instead of trusting /api/get's single answer.
+const LRC_COVERAGE_OK = 0.7;
 // A synced version more than this far from the reference is a fundamentally
 // different recording (live / remix / edit), not a remaster — so it overrides
 // even an album-name match. Within this window we trust the album match.
 const LRC_GROSS_MISMATCH_S = 30;
+
+// Last bracket-timestamp in an LRC, in seconds. Matches word-level (enhanced)
+// timestamps too — max wins either way.
+function lrcLastTimestampS(lrc) {
+  let last = 0;
+  const re = /[\[<](\d{2}):(\d{2})\.(\d{2,3})[\]>]/g;
+  let m;
+  while ((m = re.exec(lrc || "")) !== null) {
+    const s = parseInt(m[1]) * 60 + parseInt(m[2])
+            + parseInt(m[3].padEnd(3, "0").slice(0, 3)) / 1000;
+    if (s > last) last = s;
+  }
+  return last;
+}
+
+// Fraction of the track the synced timestamps actually span. 0 when the sync
+// overruns the track by more than a few seconds (an LRC pasted from a LONGER
+// version — lyrics would keep running after the song ends).
+function syncCoverage(x) {
+  if (!x?.syncedLyrics || !x.duration) return 0;
+  const last = lrcLastTimestampS(x.syncedLyrics);
+  if (last > x.duration + 5) return 0;
+  return last / x.duration;
+}
+
+function bestCovered(list) {
+  if (!list.length) return null;
+  return list.reduce((best, x) => syncCoverage(x) > syncCoverage(best) ? x : best);
+}
+
+// /api/get returns ONE entry for a (track, artist, album, ±2s duration)
+// signature — and on live albums that single answer is often a studio-timed
+// paste. When its coverage looks bad, scan the search variants at the same
+// duration and take the best-synced copy instead of the first one we found.
+async function lrclibGetVerified(trackName, artistName, albumName, d) {
+  const p = new URLSearchParams({
+    track_name: trackName, artist_name: artistName, album_name: albumName,
+    duration: String(d),
+  });
+  const hit = await lrclibGetOnce(p);
+  if (!hit?.syncedLyrics) return (hit?.plainLyrics ? hit : null);
+  if (syncCoverage(hit) >= LRC_COVERAGE_OK) return hit;
+  const variants = (await lrclibSearchAll(trackName, artistName)).filter(x =>
+    x.syncedLyrics && x.duration && Math.abs(x.duration - d) <= LRC_DURATION_TOLERANCE_S);
+  return bestCovered([hit, ...variants]);
+}
 
 async function fetchLrclib(trackName, artistName, albumName, durationSec) {
   // ── Build candidate durations ────────────────────────────────────────────
@@ -134,22 +188,14 @@ async function fetchLrclib(trackName, artistName, albumName, durationSec) {
   if (durationSec && durationSec > 0) candidates.push(Math.round(durationSec));
 
   for (const d of candidates) {
-    const p = new URLSearchParams({
-      track_name: trackName, artist_name: artistName, album_name: albumName,
-      duration: String(d),
-    });
-    const hit = await lrclibGetOnce(p);
-    if (hit?.syncedLyrics || hit?.plainLyrics) return packLrclib(hit);
+    const hit = await lrclibGetVerified(trackName, artistName, albumName, d);
+    if (hit) return packLrclib(hit);
   }
 
   const itunesDur = await fetchItunesDuration(trackName, artistName, albumName);
   if (itunesDur && Math.round(itunesDur) !== candidates[0]) {
-    const p = new URLSearchParams({
-      track_name: trackName, artist_name: artistName, album_name: albumName,
-      duration: String(Math.round(itunesDur)),
-    });
-    const hit = await lrclibGetOnce(p);
-    if (hit?.syncedLyrics || hit?.plainLyrics) return packLrclib(hit);
+    const hit = await lrclibGetVerified(trackName, artistName, albumName, Math.round(itunesDur));
+    if (hit) return packLrclib(hit);
   }
 
   // ── No duration-matched hit. We now have to *choose* among LRClib's many
@@ -184,14 +230,17 @@ async function fetchLrclib(trackName, artistName, albumName, durationSec) {
     return s.length ? s[Math.floor(s.length / 2)] : 0;
   };
   // Pick the best synced entry: closest to the reference duration if we have
-  // one, else closest to the cluster's median (consensus) duration.
+  // one, else closest to the cluster's median (consensus) duration. Among
+  // near-ties on duration, take the best sync coverage — duration alone can't
+  // tell a true sync from a studio-timed paste on the same release.
   const pickSynced = (list) => {
     const synced = list.filter(x => x.syncedLyrics);
     if (!synced.length) return null;
     const target = refDur || median(synced.map(x => x.duration));
-    if (!target) return synced[0];
-    return synced.reduce((best, x) =>
-      Math.abs((x.duration || 0) - target) < Math.abs((best.duration || 0) - target) ? x : best);
+    if (!target) return bestCovered(synced);
+    const dist = x => Math.abs((x.duration || 0) - target);
+    const closest = Math.min(...synced.map(dist));
+    return bestCovered(synced.filter(x => dist(x) <= closest + LRC_DURATION_TOLERANCE_S));
   };
 
   // Gather the canonical /api/get match (album-constrained) plus all search
