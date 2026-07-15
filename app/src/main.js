@@ -1,13 +1,27 @@
 import { parseLRC, formatTime, timeAgo, normText } from "../base/lib/text.js";
+import { plainToLines, orderLibrary } from "../base/lib/library.js";
+import { matchTranscriptToTracks } from "../base/lib/match.js";
+import {
+  logListeningEvent as libLogListeningEvent,
+  maybeAutoPostPlay as libMaybeAutoPostPlay,
+  logFlipEvent as libLogFlipEvent,
+  logButtonEvent as libLogButtonEvent,
+} from "../base/lib/analytics.js";
+import { IS_IOS, TRANSCRIBE_PROXY, ITUNES_PROXY, PLAYBACK_OFFSET_CORRECTION, AUTO_ADVANCE_OFFSET } from "../base/lib/config.js";
+import { usePayments } from "./hooks/usePayments.js";
+import { useNowPlaying } from "./hooks/useNowPlaying.js";
+import { useLyricScroll } from "./hooks/useLyricScroll.js";
 import { startWhisperChunks } from "../base/lib/whisper.js";
 import { getSideGroups, hasSideData } from "../base/lib/sides.js";
+import { LYRIC_SITES, saveUserLyrics, buildSideRows, saveUserSides } from "../base/lib/usermeta.js";
 import { showFlipPushNotification, showAlbumEndPushNotification, getLocalNotif } from "../base/lib/notifications.js";
 import { Vinyl }          from "../base/components/Vinyl.js";
 import { WaveAnimation }  from "../base/components/WaveAnimation.js";
 import { ProgressRing }   from "../base/components/ProgressRing.js";
+import { LyricsEditorSheet } from "../base/components/LyricsEditorSheet.js";
+import { SideInfoSheet }     from "../base/components/SideInfoSheet.js";
 import { Shazam }         from "../ios/shazam.js";
 import { getNativeAudio } from "../ios/audio.js";
-import { getLiriIAP }     from "../ios/iap.js";
 
 const {
   useState,
@@ -28,29 +42,12 @@ const liriAuthStorage = {
   removeItem: k => { try { sessionStorage.removeItem(k); } catch {} try { localStorage.removeItem(k); } catch {} },
 };
 const sb = supabase.createClient("https://xjdjpaxgymgbvcwmvorc.supabase.co", "sb_publishable_C-NBnfg0ltAoUi46XQTUjA_ozjZW_Nd", { auth: { storage: liriAuthStorage } });
-const APP_VERSION = "1.5.2";
-// Plain (unsynced) lyrics carry no timestamps — time:null marks them so the
-// player renders the flat auto-scroll view instead of pretending to be synced.
-const plainToLines = txt => (txt || "").split("\n").filter(l => l.trim()).map(text => ({ time: null, text }));
+const APP_VERSION = "1.5.6";
 // Lyrics lead the audio clock by this many seconds — the highlighted line
 // switches slightly BEFORE its nominal timestamp. Displayed time / progress bar
 // are unaffected (we only add this to the line-matching comparison). Helps the
 // perceived sync since reading slightly ahead feels more in-time than behind.
 const LYRIC_LEAD_SECONDS = 2;
-// Order a record library: the (up to 2) most-recently-played albums first, in
-// recency order, then everything else alphabetically by album name.
-function orderLibrary(lib, recentIds) {
-  const seen = new Set();
-  const recent = [];
-  for (const id of (recentIds || [])) {
-    const a = (lib || []).find(x => String(x.itunes_collection_id) === String(id));
-    if (a && !seen.has(String(id))) { recent.push(a); seen.add(String(id)); }
-  }
-  const rest = (lib || [])
-    .filter(x => !seen.has(String(x.itunes_collection_id)))
-    .sort((a, b) => (a.album_name || "").localeCompare(b.album_name || "", undefined, { sensitivity: "base" }));
-  return [...recent, ...rest];
-}
 // Stable per-tab id (survives refresh via sessionStorage) — used by the
 // playing-tab heartbeat so multiple Liri tabs don't double-run one session.
 const sessionTabId = (() => {
@@ -60,9 +57,6 @@ const sessionTabId = (() => {
     return id;
   } catch { return String(Math.random()); }
 })();
-const IS_IOS = !!window.Capacitor; // set once at load time — used for App Store compliance checks
-const TRANSCRIBE_PROXY = window.Capacitor ? "https://www.getliri.com/api/transcribe"    : "/api/transcribe";
-const ITUNES_PROXY   = window.Capacitor ? "https://www.getliri.com/api/itunes-lookup"   : "/api/itunes-lookup";
 // Shazam + NativeAudio plugin bridges are imported from app/ios/.
 
 //   3. Landing page feature cards (🎵 → sound/wave art, 💿 → vinyl art)
@@ -71,11 +65,6 @@ const ITUNES_PROXY   = window.Capacitor ? "https://www.getliri.com/api/itunes-lo
 // All original artwork should match the dark palette: deep navy #080810, gold #d4a846, rose #c9807a
 // ─────────────────────────────────────────────────────────────────────────────────────────────
 
-
-const PLAYBACK_OFFSET_CORRECTION = 4.0;
-// Extra offset added when auto-advancing to next track (no re-listen),
-// accounting for lyrics-fetch + state-update delay. Tune if still drifting.
-const AUTO_ADVANCE_OFFSET = 2.0;
 const styleEl = document.createElement("style");
 styleEl.textContent = `
       @keyframes vinyl-spin { to { transform: rotate(360deg); } }
@@ -186,13 +175,17 @@ function Liri() {
   // ── Usage ──
   const isUnlimited = u => true; // recognition is now free — no API costs at listen time
 
-  // ── Subscription tier — fetched from /api/subscription-status on login ──
-  const [userTier, setUserTier]       = useState("free"); // "free" | "premium"
-  const [albumCount, setAlbumCount]   = useState(0);
-  const [upgradeWorking, setUpgradeWorking] = useState(false);
-
   // ── Auth token ref — kept current for API Authorization headers ──
   const sessionTokenRef = useRef(null);
+
+  // ── Payments: subscription tier + Apple IAP + Stripe — hooks/usePayments.js ──
+  const {
+    userTier, setUserTier,
+    albumCount, setAlbumCount,
+    upgradeWorking,
+    iapPrice, premiumPlan, setPremiumPlan, iapWorking,
+    syncAppleSubscription, upgradeWithApple, restoreApplePurchases, upgradeToStripe,
+  } = usePayments({ sb, sessionTokenRef });
 
   // ── History ──
   const [history, setHistory] = useState([]);
@@ -271,6 +264,15 @@ function Liri() {
   // vinyl_sides: array of { side, side_track_number, position } sorted A1…B1…
   // Positionally indexed — vinylSidesRef.current[i] is the side for turntableTracksRef[i].
   const vinylSidesRef = useRef([]);
+
+  // ── User-contributed metadata (lyrics + side info) ──
+  // sideDataMissing mirrors "no vinyl_sides AND no Discogs fallback" into
+  // state so the idle screen can warn before sync (refs don't re-render).
+  const [sideDataMissing, setSideDataMissing] = useState(false);
+  const [showSideInfoSheet, setShowSideInfoSheet] = useState(false);
+  const [showLyricsEditor, setShowLyricsEditor] = useState(false);
+  const [userMetaSaving, setUserMetaSaving] = useState(false);
+  const [userMetaError, setUserMetaError] = useState(null);
 
   // ── Unsynced-lyrics auto-scroll speed (multiplier on the base scroll rate) ──
   const [scrollSpeed, setScrollSpeed] = useState(() => {
@@ -653,92 +655,13 @@ function Liri() {
     });
   };
 
-  // ── Analytics: log a song play to listening_events ──
-  // Called for both manual recognitions and vinyl auto-advances.
-  // Never throws — analytics must never block or break the UI.
-  const logListeningEvent = async params => {
-    try {
-      await sb.from("listening_events").insert({
-        user_id: params.userId || null,
-        session_id: sessionId,
-        track_title: params.title,
-        artist_name: params.artist,
-        album_name: params.album || null,
-        artwork_url: params.artwork || null,
-        genre: params.genre || null,
-        itunes_track_id: params.itunesTrackId ? Number(params.itunesTrackId) : null,
-        itunes_collection_id: params.collectionId ? Number(params.collectionId) : null,
-        vinyl_release_id: params.vinylReleaseId || null,
-        vinyl_mode_on: params.vinylModeOn ?? false,
-        source: params.source || "recognition",
-        platform: window.Capacitor ? "ios" : "web",
-        country_code: params.countryCode || null,
-        playback_offset_s: params.offsetSecs != null ? Math.round(params.offsetSecs) : null,
-        track_duration_s: params.durationSecs != null ? Math.round(params.durationSecs) : null,
-        acr_confidence: params.acrScore || null
-      });
-    } catch (e) {
-      console.error("logListeningEvent failed:", e.message);
-    }
-  };
-
-  // ── Social: auto-post the record you're spinning (if the user opted in) ──
-  // Posts ONE album post per record per listening session — never per track —
-  // so auto-advancing through a side doesn't spam the feed. Cross-session spam
-  // is guarded by a 12h DB check. Never throws; social must not break playback.
-  const maybeAutoPostPlay = async ({ userId, collectionId, album, artist, artwork }) => {
-    try {
-      const vis = autoPostVisRef.current;
-      if (!userId || vis === "off") return;
-      if (!collectionId) return;
-      const key = String(collectionId);
-      if (autoPostedAlbumsRef.current.has(key)) return; // already posted this session
-      autoPostedAlbumsRef.current.add(key);
-
-      // Cross-session dedup: skip if we auto-posted this album in the last 12h.
-      const since = new Date(Date.now() - 12 * 60 * 60 * 1000).toISOString();
-      const { data: recent } = await sb.from("posts")
-        .select("id")
-        .eq("author_id", userId)
-        .eq("collection_id", Number(collectionId))
-        .eq("source", "auto")
-        .gte("created_at", since)
-        .limit(1);
-      if (recent && recent.length) return;
-
-      await sb.from("posts").insert({
-        author_id: userId,
-        kind: "album",
-        source: "auto",
-        visibility: vis,
-        collection_id: Number(collectionId),
-        album_name: album || null,
-        artist_name: artist || null,
-        artwork_url: artwork || null,
-      });
-    } catch (e) {
-      console.error("maybeAutoPostPlay failed:", e.message);
-    }
-  };
-
-  // ── Analytics: log a vinyl side flip to flip_events ──
-  const logFlipEvent = async params => {
-    try {
-      await sb.from("flip_events").insert({
-        user_id: params.userId || null,
-        session_id: sessionId,
-        vinyl_release_id: params.vinylReleaseId || null,
-        itunes_collection_id: params.collectionId ? Number(params.collectionId) : null,
-        album_name: params.album || null,
-        artist_name: params.artist || null,
-        from_side: params.fromSide || null,
-        to_side: params.toSide || null,
-        detection_method: params.method || "heuristic"
-      });
-    } catch (e) {
-      console.error("logFlipEvent failed:", e.message);
-    }
-  };
+  // ── Analytics + social auto-post — extracted to base/lib/analytics.js ──
+  // (pure functions; sb/sessionId/refs are passed in explicitly). Thin
+  // wrappers below preserve the original call signatures used throughout
+  // this component.
+  const logListeningEvent = params => libLogListeningEvent(sb, sessionId, params);
+  const maybeAutoPostPlay = params => libMaybeAutoPostPlay(sb, autoPostVisRef, autoPostedAlbumsRef, params);
+  const logFlipEvent = params => libLogFlipEvent(sb, sessionId, params);
 
   // ── Auth setup ──
   useEffect(() => {
@@ -785,113 +708,7 @@ function Liri() {
     });
     return () => subscription.unsubscribe();
   }, []);
-  // ── Apple IAP ─────────────────────────────────────────────────────────────
-  const [iapPrice,   setIapPrice]   = useState("$2.99/mo"); // overwritten by iap.fetchProduct() on mount
-  const [premiumPlan, setPremiumPlan] = useState("monthly"); // "monthly" | "lifetime"
-  const [iapWorking, setIapWorking] = useState(false);
-
-  // Fetch live price from App Store on iOS (best-effort)
-  useEffect(() => {
-    const iap = getLiriIAP();
-    if (!IS_IOS || !iap) return;
-    iap.fetchProduct()
-      .then(p => { if (p?.displayPrice) setIapPrice(`${p.displayPrice}/mo`); })
-      .catch(() => {});
-  }, []);
-
-  // On iOS login, check for an active Apple subscription and sync with server
-  const syncAppleSubscription = async (token) => {
-    const iap = getLiriIAP();
-    if (!IS_IOS || !iap) return;
-    try {
-      const status = await iap.getSubscriptionStatus();
-      if (status?.isActive && status?.signedTransaction) {
-        const r = await fetch("https://www.getliri.com/api/stripe-checkout", {
-          method: "POST",
-          headers: { "Content-Type": "application/json", "Authorization": `Bearer ${token}` },
-          body: JSON.stringify({ appleTransaction: status.signedTransaction }),
-        });
-        if (r.ok) setUserTier("premium");
-      }
-    } catch {}
-  };
-
-  // plan: "monthly" (renewable sub) | "lifetime" (non-consumable)
-  const upgradeWithApple = async (plan = "monthly") => {
-    const iap = getLiriIAP();
-    if (!iap) {
-      alert("In-app purchases are not available right now. Please try again or contact support.");
-      return;
-    }
-    setIapWorking(true);
-    try {
-      const result = plan === "lifetime"
-        ? await iap.purchaseLifetime()
-        : await iap.purchase();
-      if (result?.signedTransaction) {
-        const token = sessionTokenRef.current;
-        const r = await fetch("https://www.getliri.com/api/stripe-checkout", {
-          method: "POST",
-          headers: { "Content-Type": "application/json", "Authorization": `Bearer ${token}` },
-          body: JSON.stringify({ appleTransaction: result.signedTransaction, plan }),
-        });
-        const data = await r.json();
-        if (data.tier === "premium" || data.tier === "lifetime") {
-          setUserTier(data.tier);
-          setAlbumCount(prev => prev); // keep count, limit lifted
-        } else {
-          alert(data.error || "Could not verify purchase. Please contact support.");
-        }
-      }
-    } catch (e) {
-      if (e?.message !== "cancelled") alert("Purchase failed. Please try again.");
-    } finally {
-      setIapWorking(false);
-    }
-  };
-
-  const restoreApplePurchases = async () => {
-    const iap = getLiriIAP();
-    if (!iap) { alert("Restore is not available right now."); return; }
-    setIapWorking(true);
-    try {
-      const status = await iap.restorePurchases();
-      if (status?.isActive && status?.signedTransaction) {
-        const token = sessionTokenRef.current;
-        // restorePurchases tells us which product is active; pass the matching plan.
-        const plan = status.isLifetime ? "lifetime" : "monthly";
-        const r = await fetch("https://www.getliri.com/api/stripe-checkout", {
-          method: "POST",
-          headers: { "Content-Type": "application/json", "Authorization": `Bearer ${token}` },
-          body: JSON.stringify({ appleTransaction: status.signedTransaction, plan }),
-        });
-        const data = await r.json();
-        if (data.tier === "premium" || data.tier === "lifetime") setUserTier(data.tier);
-        else alert("No active subscription found.");
-      } else {
-        alert("No active subscription found.");
-      }
-    } catch { alert("Restore failed. Please try again."); }
-    finally { setIapWorking(false); }
-  };
-
-  // ── Upgrade via Stripe Checkout (web) ──
-  // plan: "monthly" (recurring) | "lifetime" (one-time)
-  const upgradeToStripe = async (plan = "monthly") => {
-    setUpgradeWorking(true);
-    try {
-      const { data: { session: s } } = await sb.auth.getSession();
-      const token = s?.access_token || sessionTokenRef.current;
-      const res  = await fetch("/api/stripe-checkout", {
-        method: "POST",
-        headers: { "Content-Type": "application/json", "Authorization": `Bearer ${token}` },
-        body: JSON.stringify({ plan }),
-      });
-      const json = await res.json().catch(() => ({}));
-      if (json.url) { window.location.href = json.url; }
-      else { alert(json.error || "Could not start checkout. Please try again."); setUpgradeWorking(false); }
-    } catch { alert("Network error — please try again."); setUpgradeWorking(false); }
-  };
+  // ── Apple IAP + Stripe upgrade — extracted to hooks/usePayments.js ──
 
   const handleAuth = async () => {
     setAuthError(null);
@@ -1087,6 +904,7 @@ function Liri() {
     turntableTracksRef.current = [];
     turntableLyricsCacheRef.current = {};
     vinylSidesRef.current = [];
+    setSideDataMissing(false); // recomputed once this album's side data loads
     try {
       const alb = turntableAlbumRef.current;
       const artistName = alb?.artist_name || "";
@@ -1201,6 +1019,10 @@ function Liri() {
           setVinylDbRelease(null);
           vinylDbReleaseRef.current = null;
         }
+        // Surface the "no side info" warning on the idle screen (user can add
+        // it manually). May flip back to false below if the background Discogs
+        // auto-populate finds a pressing.
+        setSideDataMissing(!vinylSidesRef.current.length && !(dbRelease?.vinyl_tracks?.length > 0));
 
         // ── The record is now playable — everything below is background enrichment ──
         // (lyric gap-fill over the network + Discogs side auto-populate). These used
@@ -1244,7 +1066,7 @@ function Liri() {
             try {
               await autoPopulateVinylSides(collectionId, albumName, artistName);
               const retry = await fetchVinylRelease(collectionId);
-              if (retry?.vinyl_tracks?.length > 0) { setVinylDbRelease(retry); vinylDbReleaseRef.current = retry; }
+              if (retry?.vinyl_tracks?.length > 0) { setVinylDbRelease(retry); vinylDbReleaseRef.current = retry; setSideDataMissing(false); }
             } catch {}
           }
         })();
@@ -1269,8 +1091,59 @@ function Liri() {
       localStorage.removeItem("liri_turntable");
       turntableTracksRef.current = [];
       setTurntableTracksLoading(false);
+      setSideDataMissing(false);
     }
   }, [turntableAlbum]);
+
+  // ── User-contributed metadata: save handlers ──
+  // The track currently on screen while syncing — used by the "Add lyrics"
+  // flow on the no-lyrics playback screen. Only turntable (library) tracks
+  // have an itunes_track_id to key track_lyrics on.
+  const lyricsEditorTrack = currentTrackIndex >= 0 ? turntableTracksRef.current[currentTrackIndex] : null;
+
+  const handleSaveUserLyrics = async text => {
+    const track = currentTrackIndex >= 0 ? turntableTracksRef.current[currentTrackIndex] : null;
+    if (!track?.trackId) return;
+    setUserMetaSaving(true);
+    setUserMetaError(null);
+    try {
+      const entry = await saveUserLyrics(sb, track.trackId, text);
+      // Update the in-memory cache and swap the lyrics on screen immediately.
+      turntableLyricsCacheRef.current[String(track.trackId)] = entry;
+      const fresh = entry.lrc_raw ? parseLRC(entry.lrc_raw) : plainToLines(entry.lyrics_plain);
+      if (fresh.length) {
+        setLyrics(fresh);
+        lyricsRef.current = fresh;
+      }
+      setShowLyricsEditor(false);
+      logButtonEvent("user_lyrics_saved");
+    } catch (err) {
+      console.error("[usermeta] lyrics save failed:", err);
+      setUserMetaError(err?.message || "Couldn't save — try again");
+    }
+    setUserMetaSaving(false);
+  };
+
+  const handleSaveUserSides = async letters => {
+    const alb = turntableAlbumRef.current;
+    const tracks = turntableTracksRef.current;
+    if (!alb?.itunes_collection_id || !tracks.length) return;
+    setUserMetaSaving(true);
+    setUserMetaError(null);
+    try {
+      const rows = buildSideRows(alb.itunes_collection_id, tracks, letters);
+      const sides = await saveUserSides(sb, rows);
+      // Adopt immediately — flip detection and the track picker read this ref.
+      vinylSidesRef.current = sides;
+      setSideDataMissing(false);
+      setShowSideInfoSheet(false);
+      logButtonEvent("user_sides_saved");
+    } catch (err) {
+      console.error("[usermeta] sides save failed:", err);
+      setUserMetaError(err?.message || "Couldn't save — try again");
+    }
+    setUserMetaSaving(false);
+  };
 
   // ── User's personal vinyl library (for the album picker) ──
   const fetchUserLibrary = async (uid, autoSelect = false) => {
@@ -1412,111 +1285,21 @@ function Liri() {
     };
   }, [mode]);
 
-  // ── Unsynced lyrics: plain text with time:null — flat auto-scroll view ──
-  const lyricsUnsynced = lyrics.length > 0 && lyrics[0].time == null;
-  const lyricsScrollRef = useRef(null); // the lyrics overflow container
-
-  // ── Scroll to current lyric (skip if user is manually browsing) ──
-  useEffect(() => {
-    if (userScrollingRef.current || lyricsUnsynced) return;
-    if (currentLineRef.current && mode === "syncing") currentLineRef.current.scrollIntoView({
-      behavior: "smooth",
-      block: "center"
-    });
-  }, [currentIndex, mode, lyricsUnsynced]);
-
-  // ── Keep the current line centered while the menu fades in/out (landscape) ──
-  // Hiding/showing the menu animates the lyrics column's width and font size
-  // over 0.35s, which reflows the lines vertically. Without this the current
-  // line drifts off-screen mid-transition and only snaps back on the next line
-  // change. Pin it to center every frame (instant scroll — no animation to
-  // fight) for the duration of the transition so it stays put throughout.
-  useEffect(() => {
-    if (!isLandscape || mode !== "syncing" || lyricsUnsynced) return;
-    let raf, start;
-    const pin = ts => {
-      if (start == null) start = ts;
-      if (!userScrollingRef.current) currentLineRef.current?.scrollIntoView({ block: "center" });
-      if (ts - start < 450) raf = requestAnimationFrame(pin);
-    };
-    raf = requestAnimationFrame(pin);
-    return () => cancelAnimationFrame(raf);
-  }, [controlsVisible, isLandscape, mode, lyricsUnsynced]);
-
-  // ── Unsynced auto-scroll: glide the flat lyric page at a steady rate ──
-  // Base rate spreads the full scroll height over the track duration (guessing
-  // ~4.5s a line when duration is unknown); scrollSpeed multiplies it. While
-  // the user is manually scrolling we follow their position, so resuming
-  // continues from wherever they left the page.
-  useEffect(() => {
-    if (mode !== "syncing" || !lyricsUnsynced || isPaused) return;
-    const el = lyricsScrollRef.current;
-    if (!el) return;
-    const durGuess = songDuration || lyricsRef.current.length * 4.5 || 180;
-    let pos = el.scrollTop;
-    let last = performance.now();
-    let raf;
-    const tick = now => {
-      const dt = Math.min(0.2, (now - last) / 1000); // clamp jumps after a backgrounded tab wakes up
-      last = now;
-      if (userScrollingRef.current) {
-        pos = el.scrollTop;
-      } else {
-        const total = Math.max(0, el.scrollHeight - el.clientHeight);
-        const base = total / Math.max(45, durGuess); // px per second at 1×
-        pos = Math.min(total, pos + base * scrollSpeedRef.current * dt);
-        el.scrollTop = pos;
-      }
-      raf = requestAnimationFrame(tick);
-    };
-    raf = requestAnimationFrame(tick);
-    return () => cancelAnimationFrame(raf);
-  }, [mode, lyricsUnsynced, isPaused, songDuration]);
-
-  // ── Tap-to-seek: jump sync to the tapped lyric line ──
-  const seekToLine = i => {
-    const targetTime = lyricsRef.current[i]?.time;
-    if (targetTime == null) return;
-    initialPosRef.current = targetTime;
-    syncStartRef.current = Date.now();
-    setCurrentIndex(i);
-    setPlaybackTime(targetTime);
-    userScrollingRef.current = false;
-    setUserScrolling(false);
-  };
-
-  // ── Re-follow: re-enable auto-scroll and snap back to current line ──
-  const refollow = () => {
-    userScrollingRef.current = false;
-    setUserScrolling(false);
-    clearTimeout(refollowTimerRef.current);
-    // Unsynced view: auto-scroll simply resumes from wherever the user left
-    // the page — there is no "current line" to snap to.
-    if (lyricsRef.current[0]?.time == null) return;
-    currentLineRef.current?.scrollIntoView({
-      behavior: "smooth",
-      block: "center"
-    });
-  };
-
-  // Mark the user as manually scrolling and (re)arm a 10s idle timer — once they
-  // stop scrolling for 10s we snap back to the current line and resume following.
-  const noteUserScroll = () => {
-    userScrollingRef.current = true;
-    setUserScrolling(true);
-    clearTimeout(refollowTimerRef.current);
-    refollowTimerRef.current = setTimeout(() => refollow(), 10000);
-  };
-
-  // ── Scroll to credits once song passes the last lyric (outro roll) ──
-  useEffect(() => {
-    if (mode !== "syncing" || !lyrics.length || lyricsUnsynced) return;
-    const lastTime = lyrics[lyrics.length - 1].time;
-    if (playbackTime >= lastTime + 6 && creditsRef.current) creditsRef.current.scrollIntoView({
-      behavior: "smooth",
-      block: "center"
-    });
-  }, [Math.floor(playbackTime), mode, lyrics.length]);
+  // ── Lyric scroll behavior — hooks/useLyricScroll.js ──
+  const { lyricsUnsynced, lyricsScrollRef, seekToLine, refollow, noteUserScroll } = useLyricScroll({
+    mode,
+    lyrics, lyricsRef,
+    songDuration,
+    isPaused,
+    isLandscape, controlsVisible,
+    currentIndex, setCurrentIndex,
+    playbackTime, setPlaybackTime,
+    setUserScrolling, userScrollingRef,
+    refollowTimerRef,
+    currentLineRef, creditsRef,
+    scrollSpeedRef,
+    initialPosRef, syncStartRef,
+  });
 
   // ── Vinyl auto-advance: trigger when song nears its end ──
   useEffect(() => {
@@ -1671,172 +1454,15 @@ function Liri() {
   };
 
   // ── Vinyl-aware track matching ──────────────────────────────────────────────
-  // When the user has told us what album is on the turntable, fetch LRC lyrics
-  // for ALL tracks in parallel and score the Whisper transcript against each.
-  // Returns { track, lrcMatch, lyrics, startPos, score } or null.
-  // Skips GPT entirely — much more accurate for obscure / re-recorded albums.
-  // ── Unique consecutive-word match against cached lyrics ──
-  // Tries word runs from 1 upward — shortest unique run wins.
-  // A single rare word is enough if it appears in only one track.
-  // Pure in-memory, no network calls.
-  const matchTranscriptToTracks = (transcript, tracks, wordsData, logRef) => {
-    // Normalise a single word: lowercase, strip non-alphanumeric except apostrophe
-    const normWord = w => w.toLowerCase().replace(/[^a-z0-9']/g, "");
+  // Extracted to base/lib/match.js (pure, no React) — see that file for the
+  // full matching algorithm and its comments.
 
-    // Fuzzy word equality: allow small edit-distance for Whisper transcription noise
-    // Short words (≤3 chars) must match exactly — too risky to fuzz "I", "me", "the"
-    // Medium words (4-6 chars): allow 1 edit; long words (7+): allow 2 edits
-    const editDist = (a, b) => {
-      if (Math.abs(a.length - b.length) > 2) return 99;
-      const dp = Array.from({length: a.length + 1}, (_, i) => i);
-      for (let j = 1; j <= b.length; j++) {
-        let prev = dp[0]; dp[0] = j;
-        for (let i = 1; i <= a.length; i++) {
-          const temp = dp[i];
-          dp[i] = a[i-1] === b[j-1] ? prev : 1 + Math.min(prev, dp[i], dp[i-1]);
-          prev = temp;
-        }
-      }
-      return dp[a.length];
-    };
-    const fuzzyEq = (a, b) => {
-      if (a === b) return true;
-      if (!a || !b) return false;
-      if (a.length <= 3 || b.length <= 3) return false; // short words: exact only
-      return editDist(a, b) <= (a.length <= 6 ? 1 : 2);
-    };
-    const heardWords = transcript.toLowerCase().split(/\s+/).map(normWord).filter(w => w.length > 1);
-    if (logRef) logRef.push(`match: ${heardWords.length} words from transcript`);
-    if (!heardWords.length) return null;
-
-    // baseName strips suffixes like "(live)", "[bonus track]", "(remastered)" etc.
-    // Albums that include both a studio take and a live/session version of the same
-    // song would otherwise have two tracks with identical word sets. Without this
-    // deduplication both tracks would match the same phrase, producing hits.length > 1
-    // and breaking the uniqueness requirement. seenNames ensures only the FIRST
-    // occurrence (by track order from the DB) is used as the canonical version.
-    const baseName = n => (n || "").toLowerCase().replace(/\s*[\(\[].*/, "").trim();
-    const seenNames = new Set();
-
-    // Build per-track word arrays from words_json stored in Supabase
-    const tracksWithWords = tracks.map(t => {
-      const data = wordsData[t.trackId];
-      if (!data?.words?.length) return null;
-      const base = baseName(t.trackName);
-      if (seenNames.has(base)) return null; // skip duplicates
-      seenNames.add(base);
-      return {
-        ...t,
-        wordArr: data.words.map(w => w.word), // already normalised at store time
-        wordTimings: data.words,               // [{word, start_ms}] for position lookup
-        lrc_raw: data.lrc_raw,
-        lyrics_plain: data.lyrics_plain,
-      };
-    }).filter(Boolean);
-
-    if (logRef) logRef.push(`match: ${tracksWithWords.length}/${tracks.length} tracks have lyrics`);
-    console.log("[match] tracksWithWords:", tracksWithWords.length, "/", tracks.length, "| heardWords:", heardWords.slice(0, 8).join(" "));
-    if (tracksWithWords.length > 0) console.log("[match] sample track words:", tracksWithWords[0]?.trackName, tracksWithWords[0]?.wordArr?.slice(0, 10));
-    if (!tracksWithWords.length) return null;
-
-    // MIN_RUN = 4: require at least 4 consecutive matching words before committing.
-    // Why 4 and not lower?
-    //   1-word match: too many false positives — common words like "love" appear in
-    //     almost every track on the album.
-    //   2-3 word match: still ambiguous on pop albums with similar lyric vocabulary.
-    //   4+ word match: in practice almost always unique within an album AND across
-    //     repeated choruses within a single track (uniqueness-within-track is also
-    //     required — count > 1 → rejected).
-    // Why not higher? Longer runs mean the user has to hold the mic for longer before
-    // anything happens, degrading perceived responsiveness. 4 words ≈ 1–2 seconds of
-    // speech, which feels instant.
-    const MIN_RUN = 3; // 3 consecutive fuzzy-matching words is enough within a single album
-
-    // Scan all possible windows of length MIN_RUN upward through the transcript.
-    // Stops at the SHORTEST run that satisfies BOTH:
-    //   (a) appears in exactly ONE track in the album (uniqueness across tracks)
-    //   (b) appears exactly ONCE inside that track (not a repeated chorus fragment)
-    // Requiring exactly-one-track (not "best scoring track") is intentional — if we
-    // accepted a best-guess the lyrics display would start at the wrong song entirely
-    // with no error shown to the user. Forcing strict uniqueness means we keep
-    // listening until we are certain, which is always the right trade-off here.
-    for (let len = MIN_RUN; len <= heardWords.length; len++) {
-      for (let start = 0; start <= heardWords.length - len; start++) {
-        const phrase = heardWords.slice(start, start + len);
-
-        const hits = tracksWithWords.filter(t => {
-          let count = 0;
-          const arr = t.wordArr;
-          for (let i = 0; i <= arr.length - len; i++) {
-            let ok = true;
-            for (let j = 0; j < len; j++) {
-              if (!fuzzyEq(arr[i + j], phrase[j])) { ok = false; break; }
-            }
-            if (ok) { count++; if (count > 1) return false; } // repeats within track → not unique enough
-          }
-          return count === 1;
-        });
-
-        if (hits.length !== 1) continue; // not unique across tracks
-
-        const match = hits[0];
-
-        // Find the position (in seconds) of the matched phrase in this track.
-        // matchWordIdx is the index into match.wordTimings of the first word of the
-        // matched phrase. start_ms / 1000 gives the lyric display start position.
-        // This is also returned as startPos, which flows into the sync offset formula
-        // in startSync / startListeningSpeech.
-        let matchWordIdx = -1;
-        const arr = match.wordArr;
-        for (let i = 0; i <= arr.length - len; i++) {
-          let ok = true;
-          for (let j = 0; j < len; j++) {
-            if (!fuzzyEq(arr[i + j], phrase[j])) { ok = false; break; }
-          }
-          if (ok) { matchWordIdx = i; break; }
-        }
-        const startPos = matchWordIdx >= 0 ? (match.wordTimings[matchWordIdx].start_ms / 1000) : 0;
-
-        // Build lyrics array for display — prefer timestamped LRC, fall back to plain
-        const lyrics = match.lrc_raw
-          ? parseLRC(match.lrc_raw)
-          : plainToLines(match.lyrics_plain);
-
-        if (logRef) logRef.push(`match: unique run (${len}w) → "${match.trackName}" at ${startPos.toFixed(1)}s`);
-
-        // phraseWordStart: the index (in heardWords[]) of the first word of the
-        // matched phrase. Returned so the caller can calculate how far into the
-        // live transcript the match landed — used in _phraseOffset to estimate how
-        // many seconds of audio had already played before the matching words were
-        // spoken. Without this, sync always assumes the match happened at the very
-        // end of the recording window, causing a consistent early-offset bug.
-        return { track: match, lyrics, startPos, score: len, phraseWordStart: start, totalWords: heardWords.length };
-      }
-    }
-
-    if (logRef) logRef.push(`match: no unique run yet — keep listening`);
-    return null;
-  };
-
-  // ── Analytics: log a button tap (resync / wrong_song) to button_events ──
-  const logButtonEvent = async (buttonName) => {
-    try {
-      const raw = lastRawMatchRef.current;
-      await sb.from("button_events").insert({
-        user_id: user?.id || null,
-        session_id: sessionId,
-        button_name: buttonName,
-        track_title: detectedSong?.title || null,
-        artist_name: detectedSong?.artist || null,
-        album_name: detectedSong?.album || null,
-        itunes_collection_id: albumCollectionIdRef?.current ? Number(albumCollectionIdRef.current) : null,
-        platform: window.Capacitor ? "ios" : "web",
-        identified_by: raw?.identified_by || null,
-        raw_match_title: raw?.title || null,
-        raw_match_artist: raw?.artist || null,
-      });
-    } catch (e) { /* silently ignore — table may not exist yet */ }
-  };
+  // ── Analytics: log a button tap (resync / wrong_song) — base/lib/analytics.js ──
+  const logButtonEvent = buttonName => libLogButtonEvent(
+    sb,
+    { sessionId, user, detectedSong, albumCollectionIdRef, lastRawMatchRef },
+    buttonName
+  );
 
   // ── Handle final recognition failure ──
   const handleNoMatch = (isAutoAdvance, stage = "acr") => {
@@ -2167,116 +1793,19 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
     }, 80);
   }, []);
 
-  // ── Now-playing state persistence across tab navigation ──────────────────
-  // The tab bar uses regular <a href> links, which do a full page reload and
-  // destroy all React state. We save whatever is currently playing to
-  // sessionStorage before the page unloads, then restore it on the way back.
-  //
-  // A ref captures the latest snapshot each time key state changes, so the
-  // pagehide handler always gets fresh values without stale closure issues.
-  const nowPlayingSnapshotRef = useRef(null);
-  useEffect(() => {
-    if (mode === "syncing" || mode === "confirmed") {
-      nowPlayingSnapshotRef.current = {
-        detectedSong, lyrics, songDuration,
-        currentTrackIndex, albumCollectionId, identifiedBy,
-        turntableMatchedIdx: turntableMatchedIdxRef.current,
-      };
-      // Also persist to localStorage continuously so a page refresh never loses state
-      try {
-        const t = syncStartRef.current != null
-          ? initialPosRef.current + (Date.now() - syncStartRef.current) / 1000
-          : initialPosRef.current;
-        localStorage.setItem("liri_nowplaying", JSON.stringify({
-          ...nowPlayingSnapshotRef.current,
-          playbackTime: Math.max(0, t),
-          savedAt: Date.now(),
-        }));
-      } catch {}
-    } else {
-      nowPlayingSnapshotRef.current = null;
-      // Clear persisted state when user explicitly leaves playing mode
-      if (mode === "idle" || mode === "listening") {
-        try { localStorage.removeItem("liri_nowplaying"); } catch {}
-      }
-    }
-  }, [mode, detectedSong, lyrics, songDuration, currentTrackIndex, albumCollectionId, identifiedBy]);
-
-  // Save on navigation away (belt-and-suspenders alongside localStorage)
-  useEffect(() => {
-    const onHide = () => {
-      const snap = nowPlayingSnapshotRef.current;
-      if (!snap || !snap.detectedSong) return;
-      const t = syncStartRef.current != null
-        ? initialPosRef.current + (Date.now() - syncStartRef.current) / 1000
-        : initialPosRef.current;
-      const payload = JSON.stringify({ ...snap, playbackTime: Math.max(0, t), savedAt: Date.now() });
-      try { sessionStorage.setItem("liri_nowplaying", payload); } catch {}
-      try { localStorage.setItem("liri_nowplaying", payload); } catch {}
-    };
-    window.addEventListener("pagehide", onHide);
-    return () => window.removeEventListener("pagehide", onHide);
-  }, []);
-
-  // ── Playing-tab heartbeat ─────────────────────────────────────────────────
-  // With per-tab accounts, two Liri tabs can be open at once. A tab that is
-  // actively syncing stamps a heartbeat every 5s so OTHER tabs know playback
-  // is alive elsewhere and don't ghost-restore the same session from
-  // localStorage (double clocks = duplicate/early flip chimes + notifications).
-  useEffect(() => {
-    if (mode !== "syncing") return;
-    const beat = () => {
-      try { localStorage.setItem("liri_playing_beat", JSON.stringify({ id: sessionTabId, ts: Date.now() })); } catch {}
-    };
-    beat();
-    const id = setInterval(beat, 5000);
-    return () => {
-      clearInterval(id);
-      // Only clear the beat if it's ours — never stomp another tab's.
-      try {
-        const b = JSON.parse(localStorage.getItem("liri_playing_beat") || "null");
-        if (b?.id === sessionTabId) localStorage.removeItem("liri_playing_beat");
-      } catch {}
-    };
-  }, [mode]);
-
-  // Restore on mount — check sessionStorage first (tab nav), then localStorage (refresh)
-  useEffect(() => {
-    let saved = null;
-    try {
-      saved = JSON.parse(sessionStorage.getItem("liri_nowplaying") || "null");
-      sessionStorage.removeItem("liri_nowplaying");
-    } catch {}
-    if (!saved) {
-      try {
-        // The localStorage fallback is for a refresh/restart of the PLAYING
-        // tab. If another tab's heartbeat is fresh, playback is alive over
-        // there — restoring here too would run a second ghost clock.
-        const b = JSON.parse(localStorage.getItem("liri_playing_beat") || "null");
-        const otherTabPlaying = b && b.id !== sessionTabId && Date.now() - b.ts < 15000;
-        if (!otherTabPlaying) saved = JSON.parse(localStorage.getItem("liri_nowplaying") || "null");
-        // don't remove from localStorage here — leave it so rapid re-refreshes also work
-      } catch {}
-    }
-    if (!saved || !saved.detectedSong || Date.now() - saved.savedAt > 60 * 60 * 1000) return; // 1hr window
-    // Compute how far the record has advanced while we were on the other page
-    const elapsed = (Date.now() - saved.savedAt) / 1000;
-    const restoredPos = Math.max(0, saved.playbackTime + elapsed);
-    // Restore content state
-    setDetectedSong(saved.detectedSong);
-    const lrc = saved.lyrics || [];
-    setLyrics(lrc);
-    lyricsRef.current = lrc;
-    setSongDuration(saved.songDuration ?? null);
-    setCurrentTrackIndex(saved.currentTrackIndex ?? 0);
-    turntableMatchedIdxRef.current = saved.turntableMatchedIdx ?? 0;
-    if (saved.albumCollectionId) { setAlbumCollectionId(saved.albumCollectionId); albumCollectionIdRef.current = saved.albumCollectionId; }
-    if (saved.identifiedBy) setIdentifiedBy(saved.identifiedBy);
-    // Prime the timing so startSync (triggered by setMode below) lands at the right position
-    syncCalcRef.current = { startPos: restoredPos, phraseOffset: 0, recStart: Date.now() };
-    // Trigger startSync via the mode effect
-    setMode("confirmed");
-  }, []);
+  // ── Now-playing: cross-tab persistence + heartbeat — hooks/useNowPlaying.js ──
+  useNowPlaying({
+    sessionTabId,
+    mode, setMode,
+    detectedSong, setDetectedSong,
+    identifiedBy, setIdentifiedBy,
+    songDuration, setSongDuration,
+    lyrics, setLyrics, lyricsRef,
+    currentTrackIndex, setCurrentTrackIndex,
+    albumCollectionId, setAlbumCollectionId, albumCollectionIdRef,
+    turntableMatchedIdxRef,
+    syncStartRef, initialPosRef, syncCalcRef,
+  });
 
   const togglePause = () => {
     if (isPaused) {
@@ -4441,7 +3970,21 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
       color: "rgba(255,255,255,0.3)",
       textDecoration: "none"
     }
-  }, "+ Add Record"))))), showTrackList && !window.Capacitor && /*#__PURE__*/React.createElement("div", {
+  }, "+ Add Record"))))), showSideInfoSheet && /*#__PURE__*/React.createElement(SideInfoSheet, {
+    tracks: turntableTracksRef.current,
+    initialBreaks: null,
+    saving: userMetaSaving,
+    error: userMetaError,
+    onSave: handleSaveUserSides,
+    onClose: () => setShowSideInfoSheet(false)
+  }), showLyricsEditor && lyricsEditorTrack?.trackId && /*#__PURE__*/React.createElement(LyricsEditorSheet, {
+    track: lyricsEditorTrack,
+    sites: LYRIC_SITES,
+    saving: userMetaSaving,
+    error: userMetaError,
+    onSave: handleSaveUserLyrics,
+    onClose: () => setShowLyricsEditor(false)
+  }), showTrackList && !window.Capacitor && /*#__PURE__*/React.createElement("div", {
     onClick: () => setShowTrackList(false),
     style: { position: "fixed", inset: 0, zIndex: 201, background: "rgba(0,0,0,0.6)", backdropFilter: "blur(4px)", cursor: "pointer", display: "flex", alignItems: "flex-end", justifyContent: "center" }
   }, /*#__PURE__*/React.createElement("div", {
@@ -5712,7 +5255,23 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
       fontSize: "16px",
       paddingTop: "30vh"
     }
-  }, "No lyrics found for this track")), /*#__PURE__*/React.createElement("div", {
+  }, /*#__PURE__*/React.createElement("div", null, "No lyrics found for this track"), lyricsEditorTrack?.trackId && /*#__PURE__*/React.createElement("button", {
+    onClick: () => { setUserMetaError(null); setShowLyricsEditor(true); },
+    style: {
+      marginTop: "18px",
+      background: "rgba(212,168,70,0.1)",
+      border: "1px solid rgba(212,168,70,0.35)",
+      color: "rgba(212,168,70,0.9)",
+      borderRadius: "50px",
+      padding: "12px 28px",
+      fontSize: "13px",
+      fontWeight: 700,
+      cursor: "pointer",
+      fontFamily: "inherit"
+    }
+  }, "Add lyrics"), lyricsEditorTrack?.trackId && /*#__PURE__*/React.createElement("div", {
+    style: { fontSize: "11px", color: "rgba(255,255,255,0.25)", marginTop: 10, lineHeight: 1.5 }
+  }, "Find them on Genius, AZLyrics, Musixmatch or LRCLIB and paste them in"))), /*#__PURE__*/React.createElement("div", {
     style: {
       position: "absolute",
       top: 0,
@@ -6358,7 +5917,43 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
       color: "rgba(255,255,255,0.35)",
       marginTop: 2
     }
-  }, "Tap to choose a record from your library")))), /*#__PURE__*/React.createElement("button", {
+  }, "Tap to choose a record from your library")))), !turntableTracksLoading && turntableAlbum && sideDataMissing && /*#__PURE__*/React.createElement("div", {
+    // No side info for this record — warn before sync so the user can add it
+    // (flip detection would otherwise guess a midpoint A/B split).
+    style: {
+      width: "100%",
+      background: "rgba(212,168,70,0.06)",
+      border: "1px solid rgba(212,168,70,0.25)",
+      borderRadius: "14px",
+      padding: "10px 14px",
+      marginBottom: "12px",
+      display: "flex",
+      alignItems: "center",
+      gap: "10px",
+      textAlign: "left"
+    }
+  }, /*#__PURE__*/React.createElement("div", {
+    style: { flex: 1, minWidth: 0 }
+  }, /*#__PURE__*/React.createElement("div", {
+    style: { fontSize: "12px", fontWeight: 600, color: "rgba(212,168,70,0.9)" }
+  }, "No side info for this record"), /*#__PURE__*/React.createElement("div", {
+    style: { fontSize: "11px", color: "rgba(255,255,255,0.4)", marginTop: 2, lineHeight: 1.4 }
+  }, "Liri is guessing where the sides split, so flip detection may be off.")), /*#__PURE__*/React.createElement("button", {
+    onClick: () => { setUserMetaError(null); setShowSideInfoSheet(true); },
+    style: {
+      background: "rgba(212,168,70,0.15)",
+      border: "1px solid rgba(212,168,70,0.4)",
+      color: "rgba(212,168,70,0.95)",
+      borderRadius: "50px",
+      padding: "8px 14px",
+      fontSize: "12px",
+      fontWeight: 700,
+      cursor: "pointer",
+      fontFamily: "inherit",
+      flexShrink: 0,
+      whiteSpace: "nowrap"
+    }
+  }, "Add sides")), /*#__PURE__*/React.createElement("button", {
     id: "liri-listen-cta",
     onClick: () => !turntableTracksLoading && startListening(false),
     style: {

@@ -25,6 +25,487 @@
     return `${Math.floor(diff / 86400)}d ago`;
   }
 
+  // app/base/lib/library.js
+  var plainToLines = (txt) => (txt || "").split("\n").filter((l) => l.trim()).map((text) => ({ time: null, text }));
+  function orderLibrary(lib, recentIds) {
+    const seen = /* @__PURE__ */ new Set();
+    const recent = [];
+    for (const id of recentIds || []) {
+      const a = (lib || []).find((x) => String(x.itunes_collection_id) === String(id));
+      if (a && !seen.has(String(id))) {
+        recent.push(a);
+        seen.add(String(id));
+      }
+    }
+    const rest = (lib || []).filter((x) => !seen.has(String(x.itunes_collection_id))).sort((a, b) => (a.album_name || "").localeCompare(b.album_name || "", void 0, { sensitivity: "base" }));
+    return [...recent, ...rest];
+  }
+
+  // app/base/lib/analytics.js
+  async function logListeningEvent(sb2, sessionId, params) {
+    try {
+      await sb2.from("listening_events").insert({
+        user_id: params.userId || null,
+        session_id: sessionId,
+        track_title: params.title,
+        artist_name: params.artist,
+        album_name: params.album || null,
+        artwork_url: params.artwork || null,
+        genre: params.genre || null,
+        itunes_track_id: params.itunesTrackId ? Number(params.itunesTrackId) : null,
+        itunes_collection_id: params.collectionId ? Number(params.collectionId) : null,
+        vinyl_release_id: params.vinylReleaseId || null,
+        vinyl_mode_on: params.vinylModeOn ?? false,
+        source: params.source || "recognition",
+        platform: window.Capacitor ? "ios" : "web",
+        country_code: params.countryCode || null,
+        playback_offset_s: params.offsetSecs != null ? Math.round(params.offsetSecs) : null,
+        track_duration_s: params.durationSecs != null ? Math.round(params.durationSecs) : null,
+        acr_confidence: params.acrScore || null
+      });
+    } catch (e3) {
+      console.error("logListeningEvent failed:", e3.message);
+    }
+  }
+  async function maybeAutoPostPlay(sb2, autoPostVisRef, autoPostedAlbumsRef, { userId, collectionId, album, artist, artwork }) {
+    try {
+      const vis = autoPostVisRef.current;
+      if (!userId || vis === "off") return;
+      if (!collectionId) return;
+      const key = String(collectionId);
+      if (autoPostedAlbumsRef.current.has(key)) return;
+      autoPostedAlbumsRef.current.add(key);
+      const since = new Date(Date.now() - 12 * 60 * 60 * 1e3).toISOString();
+      const { data: recent } = await sb2.from("posts").select("id").eq("author_id", userId).eq("collection_id", Number(collectionId)).eq("source", "auto").gte("created_at", since).limit(1);
+      if (recent && recent.length) return;
+      await sb2.from("posts").insert({
+        author_id: userId,
+        kind: "album",
+        source: "auto",
+        visibility: vis,
+        collection_id: Number(collectionId),
+        album_name: album || null,
+        artist_name: artist || null,
+        artwork_url: artwork || null
+      });
+    } catch (e3) {
+      console.error("maybeAutoPostPlay failed:", e3.message);
+    }
+  }
+  async function logFlipEvent(sb2, sessionId, params) {
+    try {
+      await sb2.from("flip_events").insert({
+        user_id: params.userId || null,
+        session_id: sessionId,
+        vinyl_release_id: params.vinylReleaseId || null,
+        itunes_collection_id: params.collectionId ? Number(params.collectionId) : null,
+        album_name: params.album || null,
+        artist_name: params.artist || null,
+        from_side: params.fromSide || null,
+        to_side: params.toSide || null,
+        detection_method: params.method || "heuristic"
+      });
+    } catch (e3) {
+      console.error("logFlipEvent failed:", e3.message);
+    }
+  }
+  async function logButtonEvent(sb2, ctx, buttonName) {
+    const { sessionId, user, detectedSong, albumCollectionIdRef, lastRawMatchRef } = ctx;
+    try {
+      const raw = lastRawMatchRef.current;
+      await sb2.from("button_events").insert({
+        user_id: user?.id || null,
+        session_id: sessionId,
+        button_name: buttonName,
+        track_title: detectedSong?.title || null,
+        artist_name: detectedSong?.artist || null,
+        album_name: detectedSong?.album || null,
+        itunes_collection_id: albumCollectionIdRef?.current ? Number(albumCollectionIdRef.current) : null,
+        platform: window.Capacitor ? "ios" : "web",
+        identified_by: raw?.identified_by || null,
+        raw_match_title: raw?.title || null,
+        raw_match_artist: raw?.artist || null
+      });
+    } catch (e3) {
+    }
+  }
+
+  // app/base/lib/config.js
+  var IS_IOS = !!window.Capacitor;
+  var TRANSCRIBE_PROXY = window.Capacitor ? "https://www.getliri.com/api/transcribe" : "/api/transcribe";
+  var ITUNES_PROXY = window.Capacitor ? "https://www.getliri.com/api/itunes-lookup" : "/api/itunes-lookup";
+
+  // app/ios/iap.js
+  function getLiriIAP() {
+    return window.Capacitor?.Plugins?.LiriIAP ?? null;
+  }
+
+  // app/src/hooks/usePayments.js
+  var { useState, useEffect } = React;
+  function usePayments({ sb: sb2, sessionTokenRef }) {
+    const [userTier, setUserTier] = useState("free");
+    const [albumCount, setAlbumCount] = useState(0);
+    const [upgradeWorking, setUpgradeWorking] = useState(false);
+    const [iapPrice, setIapPrice] = useState("$2.99/mo");
+    const [premiumPlan, setPremiumPlan] = useState("monthly");
+    const [iapWorking, setIapWorking] = useState(false);
+    useEffect(() => {
+      const iap = getLiriIAP();
+      if (!IS_IOS || !iap) return;
+      iap.fetchProduct().then((p) => {
+        if (p?.displayPrice) setIapPrice(`${p.displayPrice}/mo`);
+      }).catch(() => {
+      });
+    }, []);
+    const syncAppleSubscription = async (token) => {
+      const iap = getLiriIAP();
+      if (!IS_IOS || !iap) return;
+      try {
+        const status = await iap.getSubscriptionStatus();
+        if (status?.isActive && status?.signedTransaction) {
+          const r = await fetch("https://www.getliri.com/api/stripe-checkout", {
+            method: "POST",
+            headers: { "Content-Type": "application/json", "Authorization": `Bearer ${token}` },
+            body: JSON.stringify({ appleTransaction: status.signedTransaction })
+          });
+          if (r.ok) setUserTier("premium");
+        }
+      } catch {
+      }
+    };
+    const upgradeWithApple = async (plan = "monthly") => {
+      const iap = getLiriIAP();
+      if (!iap) {
+        alert("In-app purchases are not available right now. Please try again or contact support.");
+        return;
+      }
+      setIapWorking(true);
+      try {
+        const result = plan === "lifetime" ? await iap.purchaseLifetime() : await iap.purchase();
+        if (result?.signedTransaction) {
+          const token = sessionTokenRef.current;
+          const r = await fetch("https://www.getliri.com/api/stripe-checkout", {
+            method: "POST",
+            headers: { "Content-Type": "application/json", "Authorization": `Bearer ${token}` },
+            body: JSON.stringify({ appleTransaction: result.signedTransaction, plan })
+          });
+          const data = await r.json();
+          if (data.tier === "premium" || data.tier === "lifetime") {
+            setUserTier(data.tier);
+            setAlbumCount((prev) => prev);
+          } else {
+            alert(data.error || "Could not verify purchase. Please contact support.");
+          }
+        }
+      } catch (e3) {
+        if (e3?.message !== "cancelled") alert("Purchase failed. Please try again.");
+      } finally {
+        setIapWorking(false);
+      }
+    };
+    const restoreApplePurchases = async () => {
+      const iap = getLiriIAP();
+      if (!iap) {
+        alert("Restore is not available right now.");
+        return;
+      }
+      setIapWorking(true);
+      try {
+        const status = await iap.restorePurchases();
+        if (status?.isActive && status?.signedTransaction) {
+          const token = sessionTokenRef.current;
+          const plan = status.isLifetime ? "lifetime" : "monthly";
+          const r = await fetch("https://www.getliri.com/api/stripe-checkout", {
+            method: "POST",
+            headers: { "Content-Type": "application/json", "Authorization": `Bearer ${token}` },
+            body: JSON.stringify({ appleTransaction: status.signedTransaction, plan })
+          });
+          const data = await r.json();
+          if (data.tier === "premium" || data.tier === "lifetime") setUserTier(data.tier);
+          else alert("No active subscription found.");
+        } else {
+          alert("No active subscription found.");
+        }
+      } catch {
+        alert("Restore failed. Please try again.");
+      } finally {
+        setIapWorking(false);
+      }
+    };
+    const upgradeToStripe = async (plan = "monthly") => {
+      setUpgradeWorking(true);
+      try {
+        const { data: { session: s } } = await sb2.auth.getSession();
+        const token = s?.access_token || sessionTokenRef.current;
+        const res = await fetch("/api/stripe-checkout", {
+          method: "POST",
+          headers: { "Content-Type": "application/json", "Authorization": `Bearer ${token}` },
+          body: JSON.stringify({ plan })
+        });
+        const json = await res.json().catch(() => ({}));
+        if (json.url) {
+          window.location.href = json.url;
+        } else {
+          alert(json.error || "Could not start checkout. Please try again.");
+          setUpgradeWorking(false);
+        }
+      } catch {
+        alert("Network error \u2014 please try again.");
+        setUpgradeWorking(false);
+      }
+    };
+    return {
+      userTier,
+      setUserTier,
+      albumCount,
+      setAlbumCount,
+      upgradeWorking,
+      setUpgradeWorking,
+      iapPrice,
+      setIapPrice,
+      premiumPlan,
+      setPremiumPlan,
+      iapWorking,
+      setIapWorking,
+      syncAppleSubscription,
+      upgradeWithApple,
+      restoreApplePurchases,
+      upgradeToStripe
+    };
+  }
+
+  // app/src/hooks/useNowPlaying.js
+  var { useRef, useEffect: useEffect2 } = React;
+  function useNowPlaying({
+    sessionTabId: sessionTabId2,
+    mode,
+    setMode,
+    detectedSong,
+    setDetectedSong,
+    identifiedBy,
+    setIdentifiedBy,
+    songDuration,
+    setSongDuration,
+    lyrics,
+    setLyrics,
+    lyricsRef,
+    currentTrackIndex,
+    setCurrentTrackIndex,
+    albumCollectionId,
+    setAlbumCollectionId,
+    albumCollectionIdRef,
+    turntableMatchedIdxRef,
+    syncStartRef,
+    initialPosRef,
+    syncCalcRef
+  }) {
+    const nowPlayingSnapshotRef = useRef(null);
+    useEffect2(() => {
+      if (mode === "syncing" || mode === "confirmed") {
+        nowPlayingSnapshotRef.current = {
+          detectedSong,
+          lyrics,
+          songDuration,
+          currentTrackIndex,
+          albumCollectionId,
+          identifiedBy,
+          turntableMatchedIdx: turntableMatchedIdxRef.current
+        };
+        try {
+          const t = syncStartRef.current != null ? initialPosRef.current + (Date.now() - syncStartRef.current) / 1e3 : initialPosRef.current;
+          localStorage.setItem("liri_nowplaying", JSON.stringify({
+            ...nowPlayingSnapshotRef.current,
+            playbackTime: Math.max(0, t),
+            savedAt: Date.now()
+          }));
+        } catch {
+        }
+      } else {
+        nowPlayingSnapshotRef.current = null;
+        if (mode === "idle" || mode === "listening") {
+          try {
+            localStorage.removeItem("liri_nowplaying");
+          } catch {
+          }
+        }
+      }
+    }, [mode, detectedSong, lyrics, songDuration, currentTrackIndex, albumCollectionId, identifiedBy]);
+    useEffect2(() => {
+      const onHide = () => {
+        const snap = nowPlayingSnapshotRef.current;
+        if (!snap || !snap.detectedSong) return;
+        const t = syncStartRef.current != null ? initialPosRef.current + (Date.now() - syncStartRef.current) / 1e3 : initialPosRef.current;
+        const payload = JSON.stringify({ ...snap, playbackTime: Math.max(0, t), savedAt: Date.now() });
+        try {
+          sessionStorage.setItem("liri_nowplaying", payload);
+        } catch {
+        }
+        try {
+          localStorage.setItem("liri_nowplaying", payload);
+        } catch {
+        }
+      };
+      window.addEventListener("pagehide", onHide);
+      return () => window.removeEventListener("pagehide", onHide);
+    }, []);
+    useEffect2(() => {
+      if (mode !== "syncing") return;
+      const beat = () => {
+        try {
+          localStorage.setItem("liri_playing_beat", JSON.stringify({ id: sessionTabId2, ts: Date.now() }));
+        } catch {
+        }
+      };
+      beat();
+      const id = setInterval(beat, 5e3);
+      return () => {
+        clearInterval(id);
+        try {
+          const b = JSON.parse(localStorage.getItem("liri_playing_beat") || "null");
+          if (b?.id === sessionTabId2) localStorage.removeItem("liri_playing_beat");
+        } catch {
+        }
+      };
+    }, [mode]);
+    useEffect2(() => {
+      let saved = null;
+      try {
+        saved = JSON.parse(sessionStorage.getItem("liri_nowplaying") || "null");
+        sessionStorage.removeItem("liri_nowplaying");
+      } catch {
+      }
+      if (!saved) {
+        try {
+          const b = JSON.parse(localStorage.getItem("liri_playing_beat") || "null");
+          const otherTabPlaying = b && b.id !== sessionTabId2 && Date.now() - b.ts < 15e3;
+          if (!otherTabPlaying) saved = JSON.parse(localStorage.getItem("liri_nowplaying") || "null");
+        } catch {
+        }
+      }
+      if (!saved || !saved.detectedSong || Date.now() - saved.savedAt > 60 * 60 * 1e3) return;
+      const elapsed = (Date.now() - saved.savedAt) / 1e3;
+      const restoredPos = Math.max(0, saved.playbackTime + elapsed);
+      setDetectedSong(saved.detectedSong);
+      const lrc = saved.lyrics || [];
+      setLyrics(lrc);
+      lyricsRef.current = lrc;
+      setSongDuration(saved.songDuration ?? null);
+      setCurrentTrackIndex(saved.currentTrackIndex ?? 0);
+      turntableMatchedIdxRef.current = saved.turntableMatchedIdx ?? 0;
+      if (saved.albumCollectionId) {
+        setAlbumCollectionId(saved.albumCollectionId);
+        albumCollectionIdRef.current = saved.albumCollectionId;
+      }
+      if (saved.identifiedBy) setIdentifiedBy(saved.identifiedBy);
+      syncCalcRef.current = { startPos: restoredPos, phraseOffset: 0, recStart: Date.now() };
+      setMode("confirmed");
+    }, []);
+  }
+
+  // app/src/hooks/useLyricScroll.js
+  var { useRef: useRef2, useEffect: useEffect3 } = React;
+  function useLyricScroll({
+    mode,
+    lyrics,
+    lyricsRef,
+    songDuration,
+    isPaused,
+    isLandscape,
+    controlsVisible,
+    currentIndex,
+    setCurrentIndex,
+    playbackTime,
+    setPlaybackTime,
+    setUserScrolling,
+    userScrollingRef,
+    refollowTimerRef,
+    currentLineRef,
+    creditsRef,
+    scrollSpeedRef,
+    initialPosRef,
+    syncStartRef
+  }) {
+    const lyricsUnsynced = lyrics.length > 0 && lyrics[0].time == null;
+    const lyricsScrollRef = useRef2(null);
+    useEffect3(() => {
+      if (userScrollingRef.current || lyricsUnsynced) return;
+      if (currentLineRef.current && mode === "syncing") currentLineRef.current.scrollIntoView({
+        behavior: "smooth",
+        block: "center"
+      });
+    }, [currentIndex, mode, lyricsUnsynced]);
+    useEffect3(() => {
+      if (!isLandscape || mode !== "syncing" || lyricsUnsynced) return;
+      let raf, start;
+      const pin = (ts) => {
+        if (start == null) start = ts;
+        if (!userScrollingRef.current) currentLineRef.current?.scrollIntoView({ block: "center" });
+        if (ts - start < 450) raf = requestAnimationFrame(pin);
+      };
+      raf = requestAnimationFrame(pin);
+      return () => cancelAnimationFrame(raf);
+    }, [controlsVisible, isLandscape, mode, lyricsUnsynced]);
+    useEffect3(() => {
+      if (mode !== "syncing" || !lyricsUnsynced || isPaused) return;
+      const el = lyricsScrollRef.current;
+      if (!el) return;
+      const durGuess = songDuration || lyricsRef.current.length * 4.5 || 180;
+      let pos = el.scrollTop;
+      let last = performance.now();
+      let raf;
+      const tick = (now) => {
+        const dt = Math.min(0.2, (now - last) / 1e3);
+        last = now;
+        if (userScrollingRef.current) {
+          pos = el.scrollTop;
+        } else {
+          const total = Math.max(0, el.scrollHeight - el.clientHeight);
+          const base = total / Math.max(45, durGuess);
+          pos = Math.min(total, pos + base * scrollSpeedRef.current * dt);
+          el.scrollTop = pos;
+        }
+        raf = requestAnimationFrame(tick);
+      };
+      raf = requestAnimationFrame(tick);
+      return () => cancelAnimationFrame(raf);
+    }, [mode, lyricsUnsynced, isPaused, songDuration]);
+    const seekToLine = (i) => {
+      const targetTime = lyricsRef.current[i]?.time;
+      if (targetTime == null) return;
+      initialPosRef.current = targetTime;
+      syncStartRef.current = Date.now();
+      setCurrentIndex(i);
+      setPlaybackTime(targetTime);
+      userScrollingRef.current = false;
+      setUserScrolling(false);
+    };
+    const refollow = () => {
+      userScrollingRef.current = false;
+      setUserScrolling(false);
+      clearTimeout(refollowTimerRef.current);
+      if (lyricsRef.current[0]?.time == null) return;
+      currentLineRef.current?.scrollIntoView({
+        behavior: "smooth",
+        block: "center"
+      });
+    };
+    const noteUserScroll = () => {
+      userScrollingRef.current = true;
+      setUserScrolling(true);
+      clearTimeout(refollowTimerRef.current);
+      refollowTimerRef.current = setTimeout(() => refollow(), 1e4);
+    };
+    useEffect3(() => {
+      if (mode !== "syncing" || !lyrics.length || lyricsUnsynced) return;
+      const lastTime = lyrics[lyrics.length - 1].time;
+      if (playbackTime >= lastTime + 6 && creditsRef.current) creditsRef.current.scrollIntoView({
+        behavior: "smooth",
+        block: "center"
+      });
+    }, [Math.floor(playbackTime), mode, lyrics.length]);
+    return { lyricsUnsynced, lyricsScrollRef, seekToLine, refollow, noteUserScroll };
+  }
+
   // app/base/lib/whisper.js
   var WHISPER_PROXY = window.Capacitor ? "https://www.getliri.com/api/whisper" : "/api/whisper";
 
@@ -64,6 +545,61 @@
       { side: "A", tracks: tracks.slice(0, mid).map((t, i) => ({ track: t, idx: i })) },
       { side: "B", tracks: tracks.slice(mid).map((t, i) => ({ track: t, idx: mid + i })) }
     ].filter((g) => g.tracks.length > 0);
+  }
+
+  // app/base/lib/usermeta.js
+  var LYRIC_SITES = [
+    { name: "LRCLIB", url: "https://lrclib.net" },
+    { name: "Genius", url: "https://genius.com" },
+    { name: "Musixmatch", url: "https://www.musixmatch.com" },
+    { name: "AZLyrics", url: "https://www.azlyrics.com" },
+    { name: "Lyrics.com", url: "https://www.lyrics.com" }
+  ];
+  function looksLikeLRC(text) {
+    const stamped = (text || "").split("\n").filter((l) => /^\s*\[\d{1,2}:\d{2}/.test(l));
+    return stamped.length >= 2;
+  }
+  function lrcToPlain(text) {
+    return (text || "").split("\n").map((l) => l.replace(/\[[^\]]*\]/g, "").trim()).filter(Boolean).join("\n");
+  }
+  async function saveUserLyrics(sb2, trackId, text) {
+    const trimmed = (text || "").trim();
+    if (!trackId || !trimmed) throw new Error("Nothing to save");
+    const isLrc = looksLikeLRC(trimmed);
+    const row = {
+      itunes_track_id: trackId,
+      lrc_raw: isLrc ? trimmed : null,
+      lyrics_plain: isLrc ? lrcToPlain(trimmed) : trimmed,
+      words_json: null,
+      source: "user",
+      fetched_at: (/* @__PURE__ */ new Date()).toISOString()
+    };
+    const { error } = await sb2.from("track_lyrics").upsert(row, { onConflict: "itunes_track_id" });
+    if (error) throw error;
+    return { lrc_raw: row.lrc_raw, words_json: null, lyrics_plain: row.lyrics_plain };
+  }
+  function buildSideRows(collectionId, tracks, letters) {
+    const perSideCount = {};
+    const now = (/* @__PURE__ */ new Date()).toISOString();
+    return tracks.map((t, i) => {
+      const side = letters[i];
+      perSideCount[side] = (perSideCount[side] || 0) + 1;
+      if (!t.trackId) return null;
+      return {
+        itunes_collection_id: collectionId,
+        itunes_track_id: t.trackId,
+        side,
+        side_track_number: perSideCount[side],
+        position: side + perSideCount[side],
+        fetched_at: now
+      };
+    }).filter(Boolean);
+  }
+  async function saveUserSides(sb2, rows) {
+    if (!rows.length) throw new Error("Nothing to save");
+    const { error } = await sb2.from("vinyl_sides").upsert(rows, { onConflict: "itunes_track_id" });
+    if (error) throw error;
+    return rows.map((r) => ({ side: r.side, side_track_number: r.side_track_number, position: r.position }));
   }
 
   // app/base/lib/notifications.js
@@ -152,23 +688,23 @@
   }
 
   // app/base/components/WaveAnimation.js
-  var { useRef, useEffect } = React;
+  var { useRef: useRef3, useEffect: useEffect4 } = React;
   var BAR_MULTS = [0.55, 0.85, 1, 0.75, 0.95, 0.65, 0.9, 0.7, 1, 0.6, 0.8, 0.5];
   function WaveAnimation({ active, size = 1, analyserRef, level }) {
-    const barRefs = useRef([]);
-    const rafRef = useRef(null);
-    const smoothRef = useRef(new Float32Array(BAR_MULTS.length));
-    const histRef = useRef([]);
-    useEffect(() => {
+    const barRefs = useRef3([]);
+    const rafRef = useRef3(null);
+    const smoothRef = useRef3(new Float32Array(BAR_MULTS.length));
+    const histRef = useRef3([]);
+    useEffect4(() => {
       if (!level || level <= 0) {
         histRef.current = [];
         return;
       }
       const now = Date.now();
       histRef.current.push({ t: now, v: level });
-      histRef.current = histRef.current.filter((e) => now - e.t < 3e3);
+      histRef.current = histRef.current.filter((e3) => now - e3.t < 3e3);
     }, [level]);
-    useEffect(() => {
+    useEffect4(() => {
       if (!active) {
         cancelAnimationFrame(rafRef.current);
         return;
@@ -243,12 +779,12 @@
   }
 
   // app/base/components/ProgressRing.js
-  var { useState, useEffect: useEffect2 } = React;
+  var { useState: useState2, useEffect: useEffect5 } = React;
   function ProgressRing({ size = 96 }) {
     const r = size / 2 - 5;
     const circ = 2 * Math.PI * r;
-    const [t, setT] = useState(0);
-    useEffect2(() => {
+    const [t, setT] = useState2(0);
+    useEffect5(() => {
       const start = Date.now();
       const id = setInterval(() => setT((Date.now() - start) % 3e4 / 3e4), 50);
       return () => clearInterval(id);
@@ -297,6 +833,313 @@
     );
   }
 
+  // app/base/components/LyricsEditorSheet.js
+  var { useState: useState3 } = React;
+  var e = React.createElement;
+  function LyricsEditorSheet({ track, sites, saving, error, onSave, onClose }) {
+    const [text, setText] = useState3("");
+    const openSite = (url) => window.open(url, window.Capacitor ? "_system" : "_blank");
+    return e("div", {
+      onClick: onClose,
+      style: {
+        position: "fixed",
+        inset: 0,
+        zIndex: 650,
+        background: "rgba(0,0,0,0.6)",
+        backdropFilter: "blur(4px)",
+        // Flex column pinning the sheet to the bottom — gives the scroll child
+        // a real bounded height on iOS (absolute panels don't scroll there).
+        display: "flex",
+        flexDirection: "column",
+        justifyContent: "flex-end"
+      }
+    }, e(
+      "div",
+      {
+        onClick: (ev) => ev.stopPropagation(),
+        style: {
+          width: "100%",
+          background: "#0f0f1c",
+          borderRadius: "24px 24px 0 0",
+          maxHeight: "85vh",
+          overflow: "hidden",
+          display: "flex",
+          flexDirection: "column",
+          minHeight: 0,
+          boxShadow: "0 -8px 48px rgba(0,0,0,0.6)",
+          animation: "slide-up 0.3s ease"
+        }
+      },
+      e(
+        "div",
+        { style: { display: "flex", justifyContent: "center", padding: "12px 0 4px" } },
+        e("div", { style: { width: 36, height: 4, borderRadius: 2, background: "rgba(255,255,255,0.12)" } })
+      ),
+      e(
+        "div",
+        { style: { display: "flex", alignItems: "flex-start", justifyContent: "space-between", padding: "10px 24px 4px" } },
+        e(
+          "div",
+          { style: { flex: 1, minWidth: 0, paddingRight: 12 } },
+          e("div", { style: { fontSize: 17, fontWeight: 700, color: "#f0e6d3" } }, "Add lyrics"),
+          e(
+            "div",
+            { style: { fontSize: 12, color: "rgba(255,255,255,0.4)", marginTop: 3, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" } },
+            track?.trackName,
+            track?.artistName ? " \xB7 " + track.artistName : ""
+          )
+        ),
+        e("button", {
+          onClick: onClose,
+          style: { background: "rgba(255,255,255,0.07)", border: "none", color: "rgba(255,255,255,0.5)", width: 30, height: 30, borderRadius: "50%", cursor: "pointer", fontFamily: "inherit", flexShrink: 0, display: "flex", alignItems: "center", justifyContent: "center" }
+        }, e(
+          "svg",
+          { width: "12", height: "12", viewBox: "0 0 24 24", fill: "none", stroke: "currentColor", strokeWidth: "2.5", strokeLinecap: "round" },
+          e("line", { x1: "18", y1: "6", x2: "6", y2: "18" }),
+          e("line", { x1: "6", y1: "6", x2: "18", y2: "18" })
+        ))
+      ),
+      e(
+        "div",
+        {
+          style: { overflowY: "auto", flex: 1, minHeight: 0, padding: "8px 24px", WebkitOverflowScrolling: "touch", paddingBottom: "max(24px, env(safe-area-inset-bottom))" }
+        },
+        e(
+          "div",
+          { style: { fontSize: 12, color: "rgba(255,255,255,0.45)", lineHeight: 1.6, marginBottom: 10 } },
+          "Search one of these sites for the song, then paste the lyrics below. Timestamped LRC lines (e.g. [00:12.34]) sync automatically; plain text scrolls at reading speed."
+        ),
+        e(
+          "div",
+          { style: { display: "flex", flexWrap: "wrap", gap: 8, marginBottom: 14 } },
+          (sites || []).map((s) => e("button", {
+            key: s.name,
+            onClick: () => openSite(s.url),
+            style: {
+              background: "rgba(212,168,70,0.08)",
+              border: "1px solid rgba(212,168,70,0.25)",
+              color: "rgba(212,168,70,0.9)",
+              borderRadius: 50,
+              padding: "7px 14px",
+              fontSize: 12,
+              fontWeight: 600,
+              cursor: "pointer",
+              fontFamily: "inherit"
+            }
+          }, s.name, " \u2197"))
+        ),
+        e("textarea", {
+          value: text,
+          onChange: (ev) => setText(ev.target.value),
+          placeholder: "Paste lyrics here\u2026",
+          rows: 10,
+          style: {
+            width: "100%",
+            boxSizing: "border-box",
+            background: "rgba(255,255,255,0.04)",
+            border: "1px solid rgba(255,255,255,0.1)",
+            borderRadius: 14,
+            color: "#f0e6d3",
+            fontFamily: "inherit",
+            fontSize: 14,
+            lineHeight: 1.6,
+            padding: "12px 14px",
+            resize: "vertical",
+            minHeight: 160,
+            outline: "none"
+          }
+        }),
+        error && e("div", { style: { color: "#c9807a", fontSize: 12, marginTop: 8 } }, String(error)),
+        e("button", {
+          onClick: () => !saving && text.trim() && onSave(text),
+          disabled: saving || !text.trim(),
+          style: {
+            width: "100%",
+            marginTop: 14,
+            background: text.trim() && !saving ? "linear-gradient(135deg, #d4a846, #c9807a)" : "rgba(255,255,255,0.08)",
+            color: text.trim() && !saving ? "#080810" : "rgba(255,255,255,0.3)",
+            border: "none",
+            borderRadius: 50,
+            padding: "15px 0",
+            fontSize: 14,
+            fontWeight: 700,
+            letterSpacing: "0.5px",
+            cursor: text.trim() && !saving ? "pointer" : "default",
+            fontFamily: "inherit"
+          }
+        }, saving ? "Saving\u2026" : "Save lyrics")
+      )
+    ));
+  }
+
+  // app/base/components/SideInfoSheet.js
+  var { useState: useState4 } = React;
+  var e2 = React.createElement;
+  function lettersFromBreaks(count, breakSet) {
+    const out = [];
+    let side = 0;
+    for (let i = 0; i < count; i++) {
+      if (i > 0 && breakSet.has(i)) side++;
+      out.push(String.fromCharCode(65 + side));
+    }
+    return out;
+  }
+  function SideInfoSheet({ tracks, initialBreaks, saving, error, onSave, onClose }) {
+    const [breaks, setBreaks] = useState4(() => {
+      if (initialBreaks?.length) return new Set(initialBreaks.filter((i) => i > 0));
+      return /* @__PURE__ */ new Set([Math.ceil((tracks?.length || 0) / 2)]);
+    });
+    const letters = lettersFromBreaks(tracks?.length || 0, breaks);
+    const toggleBreak = (i) => {
+      if (i === 0) return;
+      setBreaks((prev) => {
+        const next = new Set(prev);
+        if (next.has(i)) next.delete(i);
+        else next.add(i);
+        return next;
+      });
+    };
+    return e2("div", {
+      onClick: onClose,
+      style: {
+        position: "fixed",
+        inset: 0,
+        zIndex: 650,
+        background: "rgba(0,0,0,0.6)",
+        backdropFilter: "blur(4px)",
+        // Flex column pinning the sheet to the bottom — gives the scroll child
+        // a real bounded height on iOS (absolute panels don't scroll there).
+        display: "flex",
+        flexDirection: "column",
+        justifyContent: "flex-end"
+      }
+    }, e2(
+      "div",
+      {
+        onClick: (ev) => ev.stopPropagation(),
+        style: {
+          width: "100%",
+          background: "#0f0f1c",
+          borderRadius: "24px 24px 0 0",
+          maxHeight: "85vh",
+          overflow: "hidden",
+          display: "flex",
+          flexDirection: "column",
+          minHeight: 0,
+          boxShadow: "0 -8px 48px rgba(0,0,0,0.6)",
+          animation: "slide-up 0.3s ease"
+        }
+      },
+      e2(
+        "div",
+        { style: { display: "flex", justifyContent: "center", padding: "12px 0 4px" } },
+        e2("div", { style: { width: 36, height: 4, borderRadius: 2, background: "rgba(255,255,255,0.12)" } })
+      ),
+      e2(
+        "div",
+        { style: { display: "flex", alignItems: "flex-start", justifyContent: "space-between", padding: "10px 24px 4px" } },
+        e2(
+          "div",
+          { style: { flex: 1, paddingRight: 12 } },
+          e2("div", { style: { fontSize: 17, fontWeight: 700, color: "#f0e6d3" } }, "Add side info"),
+          e2(
+            "div",
+            { style: { fontSize: 12, color: "rgba(255,255,255,0.4)", marginTop: 3, lineHeight: 1.5 } },
+            "Tap the first track of each side. Check your record sleeve or the disc labels."
+          )
+        ),
+        e2("button", {
+          onClick: onClose,
+          style: { background: "rgba(255,255,255,0.07)", border: "none", color: "rgba(255,255,255,0.5)", width: 30, height: 30, borderRadius: "50%", cursor: "pointer", fontFamily: "inherit", flexShrink: 0, display: "flex", alignItems: "center", justifyContent: "center" }
+        }, e2(
+          "svg",
+          { width: "12", height: "12", viewBox: "0 0 24 24", fill: "none", stroke: "currentColor", strokeWidth: "2.5", strokeLinecap: "round" },
+          e2("line", { x1: "18", y1: "6", x2: "6", y2: "18" }),
+          e2("line", { x1: "6", y1: "6", x2: "18", y2: "18" })
+        ))
+      ),
+      e2(
+        "div",
+        {
+          style: { overflowY: "auto", flex: 1, minHeight: 0, padding: "8px 24px", WebkitOverflowScrolling: "touch" }
+        },
+        (tracks || []).map((t, i) => {
+          const startsSide = i === 0 || breaks.has(i);
+          return e2(
+            React.Fragment,
+            { key: t.trackId || i },
+            startsSide && e2("div", {
+              style: { padding: "16px 0 6px", fontSize: 11, fontWeight: 700, letterSpacing: "0.12em", color: "rgba(212,168,70,0.75)", textTransform: "uppercase" }
+            }, "Side " + letters[i]),
+            e2(
+              "button",
+              {
+                onClick: () => toggleBreak(i),
+                style: {
+                  width: "100%",
+                  display: "flex",
+                  alignItems: "center",
+                  gap: 12,
+                  padding: "11px 2px",
+                  background: "none",
+                  border: "none",
+                  borderBottom: "1px solid rgba(255,255,255,0.04)",
+                  cursor: i === 0 ? "default" : "pointer",
+                  textAlign: "left",
+                  fontFamily: "inherit"
+                }
+              },
+              e2(
+                "div",
+                { style: { width: 28, fontSize: 12, fontWeight: 700, color: "rgba(212,168,70,0.65)", flexShrink: 0 } },
+                letters[i] + letters.slice(0, i + 1).filter((l) => l === letters[i]).length
+              ),
+              e2(
+                "div",
+                { style: { flex: 1, minWidth: 0, fontSize: 14, color: "#f0e6d3", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" } },
+                t.trackName
+              ),
+              i > 0 && e2("div", {
+                style: {
+                  fontSize: 10,
+                  fontWeight: 600,
+                  flexShrink: 0,
+                  borderRadius: 50,
+                  padding: "4px 10px",
+                  background: breaks.has(i) ? "rgba(212,168,70,0.15)" : "rgba(255,255,255,0.04)",
+                  border: breaks.has(i) ? "1px solid rgba(212,168,70,0.4)" : "1px solid rgba(255,255,255,0.08)",
+                  color: breaks.has(i) ? "rgba(212,168,70,0.9)" : "rgba(255,255,255,0.3)"
+                }
+              }, breaks.has(i) ? "starts side " + letters[i] : "same side")
+            )
+          );
+        })
+      ),
+      e2(
+        "div",
+        { style: { padding: "12px 24px max(24px, env(safe-area-inset-bottom))", borderTop: "1px solid rgba(255,255,255,0.06)" } },
+        error && e2("div", { style: { color: "#c9807a", fontSize: 12, marginBottom: 8 } }, String(error)),
+        e2("button", {
+          onClick: () => !saving && onSave(letters),
+          disabled: saving,
+          style: {
+            width: "100%",
+            background: saving ? "rgba(255,255,255,0.08)" : "linear-gradient(135deg, #d4a846, #c9807a)",
+            color: saving ? "rgba(255,255,255,0.3)" : "#080810",
+            border: "none",
+            borderRadius: 50,
+            padding: "15px 0",
+            fontSize: 14,
+            fontWeight: 700,
+            letterSpacing: "0.5px",
+            cursor: saving ? "default" : "pointer",
+            fontFamily: "inherit"
+          }
+        }, saving ? "Saving\u2026" : "Save side info")
+      )
+    ));
+  }
+
   // app/ios/shazam.js
   function getPlugin() {
     const np = window.Capacitor?.nativePromise;
@@ -324,16 +1167,11 @@
     }
   };
 
-  // app/ios/iap.js
-  function getLiriIAP() {
-    return window.Capacitor?.Plugins?.LiriIAP ?? null;
-  }
-
   // app/src/main.js
   var {
-    useState: useState2,
-    useEffect: useEffect3,
-    useRef: useRef2,
+    useState: useState5,
+    useEffect: useEffect6,
+    useRef: useRef4,
     useCallback
   } = React;
   if (typeof supabase === "undefined") {
@@ -370,22 +1208,8 @@
     }
   };
   var sb = supabase.createClient("https://xjdjpaxgymgbvcwmvorc.supabase.co", "sb_publishable_C-NBnfg0ltAoUi46XQTUjA_ozjZW_Nd", { auth: { storage: liriAuthStorage } });
-  var APP_VERSION = "1.5.2";
-  var plainToLines = (txt) => (txt || "").split("\n").filter((l) => l.trim()).map((text) => ({ time: null, text }));
+  var APP_VERSION = "1.5.6";
   var LYRIC_LEAD_SECONDS = 2;
-  function orderLibrary(lib, recentIds) {
-    const seen = /* @__PURE__ */ new Set();
-    const recent = [];
-    for (const id of recentIds || []) {
-      const a = (lib || []).find((x) => String(x.itunes_collection_id) === String(id));
-      if (a && !seen.has(String(id))) {
-        recent.push(a);
-        seen.add(String(id));
-      }
-    }
-    const rest = (lib || []).filter((x) => !seen.has(String(x.itunes_collection_id))).sort((a, b) => (a.album_name || "").localeCompare(b.album_name || "", void 0, { sensitivity: "base" }));
-    return [...recent, ...rest];
-  }
   var sessionTabId = (() => {
     try {
       let id = sessionStorage.getItem("liri_tab_id");
@@ -398,9 +1222,6 @@
       return String(Math.random());
     }
   })();
-  var IS_IOS = !!window.Capacitor;
-  var TRANSCRIBE_PROXY = window.Capacitor ? "https://www.getliri.com/api/transcribe" : "/api/transcribe";
-  var ITUNES_PROXY = window.Capacitor ? "https://www.getliri.com/api/itunes-lookup" : "/api/itunes-lookup";
   var styleEl = document.createElement("style");
   styleEl.textContent = `
       @keyframes vinyl-spin { to { transform: rotate(360deg); } }
@@ -417,28 +1238,28 @@
     `;
   document.head.appendChild(styleEl);
   function Liri() {
-    const [mode, setMode] = useState2("idle");
-    const [detectedSong, setDetectedSong] = useState2(null);
-    const [identifiedBy, setIdentifiedBy] = useState2(null);
-    const [songDuration, setSongDuration] = useState2(null);
-    const [lyrics, setLyrics] = useState2([]);
-    const [currentIndex, setCurrentIndex] = useState2(0);
-    const [playbackTime, setPlaybackTime] = useState2(0);
-    const [error, setError] = useState2(null);
-    const [listenProgress, setListenProgress] = useState2(0);
-    const [liveTranscript, setLiveTranscript] = useState2("");
-    const [listenAttempt, setListenAttempt] = useState2(0);
-    const [listenSecs, setListenSecs] = useState2(0);
-    const [showSettings, setShowSettings] = useState2(false);
-    const [isWide, setIsWide] = useState2(() => window.innerWidth >= 768);
-    useEffect3(() => {
+    const [mode, setMode] = useState5("idle");
+    const [detectedSong, setDetectedSong] = useState5(null);
+    const [identifiedBy, setIdentifiedBy] = useState5(null);
+    const [songDuration, setSongDuration] = useState5(null);
+    const [lyrics, setLyrics] = useState5([]);
+    const [currentIndex, setCurrentIndex] = useState5(0);
+    const [playbackTime, setPlaybackTime] = useState5(0);
+    const [error, setError] = useState5(null);
+    const [listenProgress, setListenProgress] = useState5(0);
+    const [liveTranscript, setLiveTranscript] = useState5("");
+    const [listenAttempt, setListenAttempt] = useState5(0);
+    const [listenSecs, setListenSecs] = useState5(0);
+    const [showSettings, setShowSettings] = useState5(false);
+    const [isWide, setIsWide] = useState5(() => window.innerWidth >= 768);
+    useEffect6(() => {
       const onResize = () => setIsWide(window.innerWidth >= 768);
       window.addEventListener("resize", onResize);
       return () => window.removeEventListener("resize", onResize);
     }, []);
-    const [isLandscape, setIsLandscape] = useState2(() => window.innerWidth > window.innerHeight && window.innerWidth >= 600);
-    const [winW, setWinW] = useState2(window.innerWidth);
-    useEffect3(() => {
+    const [isLandscape, setIsLandscape] = useState5(() => window.innerWidth > window.innerHeight && window.innerWidth >= 600);
+    const [winW, setWinW] = useState5(window.innerWidth);
+    useEffect6(() => {
       const onResize = () => {
         setIsLandscape(window.innerWidth > window.innerHeight && window.innerWidth >= 600);
         setWinW(window.innerWidth);
@@ -446,117 +1267,134 @@
       window.addEventListener("resize", onResize);
       return () => window.removeEventListener("resize", onResize);
     }, []);
-    const [controlsVisible, setControlsVisible] = useState2(true);
-    const controlsHideTimerRef = useRef2(null);
+    const [controlsVisible, setControlsVisible] = useState5(true);
+    const controlsHideTimerRef = useRef4(null);
     const railW = Math.min(270, Math.max(190, Math.round(winW * 0.26)));
     const menuOpen = isLandscape && controlsVisible;
     const lyricAreaW = menuOpen ? Math.min(760, Math.max(260, winW - railW - 48)) : Math.min(820, winW - 48);
     const lyricAreaLeft = menuOpen ? Math.max(railW + 24, Math.round((winW - lyricAreaW) / 2)) : Math.round((winW - lyricAreaW) / 2);
     const lyricFontScale = menuOpen ? 1.1 * Math.max(0.72, Math.min(1, lyricAreaW / 640)) : 1.25;
-    const [showBugReport, setShowBugReport] = useState2(false);
-    const [bugText, setBugText] = useState2("");
-    const [bugSending, setBugSending] = useState2(false);
-    const [bugSent, setBugSent] = useState2(false);
-    const [showPremiumInfo, setShowPremiumInfo] = useState2(false);
-    const [showDeleteAccount, setShowDeleteAccount] = useState2(false);
-    const [deleteWorking, setDeleteWorking] = useState2(false);
-    const [deleteError, setDeleteError] = useState2(null);
-    const [showChangePw, setShowChangePw] = useState2(false);
-    const [changePwNew, setChangePwNew] = useState2("");
-    const [changePwConfirm, setChangePwConfirm] = useState2("");
-    const [changePwWorking, setChangePwWorking] = useState2(false);
-    const [changePwError, setChangePwError] = useState2(null);
-    const [changePwDone, setChangePwDone] = useState2(false);
-    const [showHistory, setShowHistory] = useState2(false);
-    const [showTrackList, setShowTrackList] = useState2(false);
-    const [showNowPlayingList, setShowNowPlayingList] = useState2(false);
-    const [collapsedSides, setCollapsedSides] = useState2(/* @__PURE__ */ new Set());
+    const [showBugReport, setShowBugReport] = useState5(false);
+    const [bugText, setBugText] = useState5("");
+    const [bugSending, setBugSending] = useState5(false);
+    const [bugSent, setBugSent] = useState5(false);
+    const [showPremiumInfo, setShowPremiumInfo] = useState5(false);
+    const [showDeleteAccount, setShowDeleteAccount] = useState5(false);
+    const [deleteWorking, setDeleteWorking] = useState5(false);
+    const [deleteError, setDeleteError] = useState5(null);
+    const [showChangePw, setShowChangePw] = useState5(false);
+    const [changePwNew, setChangePwNew] = useState5("");
+    const [changePwConfirm, setChangePwConfirm] = useState5("");
+    const [changePwWorking, setChangePwWorking] = useState5(false);
+    const [changePwError, setChangePwError] = useState5(null);
+    const [changePwDone, setChangePwDone] = useState5(false);
+    const [showHistory, setShowHistory] = useState5(false);
+    const [showTrackList, setShowTrackList] = useState5(false);
+    const [showNowPlayingList, setShowNowPlayingList] = useState5(false);
+    const [collapsedSides, setCollapsedSides] = useState5(/* @__PURE__ */ new Set());
     const toggleSideCollapse = (side) => setCollapsedSides((prev) => {
       const n = new Set(prev);
       n.has(side) ? n.delete(side) : n.add(side);
       return n;
     });
-    const [user, setUser] = useState2(null);
-    const [authLoading, setAuthLoading] = useState2(true);
-    const [authMode, setAuthMode] = useState2("signin");
-    const [authEmail, setAuthEmail] = useState2("");
-    const [authPassword, setAuthPassword] = useState2("");
-    const [showPw, setShowPw] = useState2(false);
-    const [authConfirmPw, setAuthConfirmPw] = useState2("");
-    const [authName, setAuthName] = useState2("");
-    const [authError, setAuthError] = useState2(null);
-    const [authWorking, setAuthWorking] = useState2(false);
-    const [authSheet, setAuthSheet] = useState2(null);
-    const [authVerifyPending, setAuthVerifyPending] = useState2(false);
+    const [user, setUser] = useState5(null);
+    const [authLoading, setAuthLoading] = useState5(true);
+    const [authMode, setAuthMode] = useState5("signin");
+    const [authEmail, setAuthEmail] = useState5("");
+    const [authPassword, setAuthPassword] = useState5("");
+    const [showPw, setShowPw] = useState5(false);
+    const [authConfirmPw, setAuthConfirmPw] = useState5("");
+    const [authName, setAuthName] = useState5("");
+    const [authError, setAuthError] = useState5(null);
+    const [authWorking, setAuthWorking] = useState5(false);
+    const [authSheet, setAuthSheet] = useState5(null);
+    const [authVerifyPending, setAuthVerifyPending] = useState5(false);
     const isUnlimited = (u) => true;
-    const [userTier, setUserTier] = useState2("free");
-    const [albumCount, setAlbumCount] = useState2(0);
-    const [upgradeWorking, setUpgradeWorking] = useState2(false);
-    const sessionTokenRef = useRef2(null);
-    const [history, setHistory] = useState2([]);
-    const [historyLoading, setHistoryLoading] = useState2(false);
+    const sessionTokenRef = useRef4(null);
+    const {
+      userTier,
+      setUserTier,
+      albumCount,
+      setAlbumCount,
+      upgradeWorking,
+      iapPrice,
+      premiumPlan,
+      setPremiumPlan,
+      iapWorking,
+      syncAppleSubscription,
+      upgradeWithApple,
+      restoreApplePurchases,
+      upgradeToStripe
+    } = usePayments({ sb, sessionTokenRef });
+    const [history, setHistory] = useState5([]);
+    const [historyLoading, setHistoryLoading] = useState5(false);
     const vinylMode = true;
-    const autoAdvanceFiredRef = useRef2(false);
-    const [turntableAlbum, setTurntableAlbum] = useState2(() => {
+    const autoAdvanceFiredRef = useRef4(false);
+    const [turntableAlbum, setTurntableAlbum] = useState5(() => {
       try {
         return JSON.parse(localStorage.getItem("liri_turntable") || "null");
       } catch {
         return null;
       }
     });
-    const [showAlbumPicker, setShowAlbumPicker] = useState2(false);
-    const [userLibrary, setUserLibrary] = useState2([]);
-    const [libLoading, setLibLoading] = useState2(false);
-    const [recentPlayedIds, setRecentPlayedIds] = useState2([]);
-    const [turntableTracksLoading, setTurntableTracksLoading] = useState2(false);
-    const [turntableTracksProgress, setTurntableTracksProgress] = useState2({ percent: 0, stage: "" });
-    const turntableAlbumRef = useRef2(turntableAlbum);
-    const turntableTracksRef = useRef2([]);
-    const turntableMatchedIdxRef = useRef2(-1);
-    const turntableLyricsCacheRef = useRef2({});
-    const wordsDataRef = useRef2({});
-    const autoRetryCountRef = useRef2(0);
-    const [albumTracks, setAlbumTracks] = useState2([]);
-    const [currentTrackIndex, setCurrentTrackIndex] = useState2(-1);
-    const albumTracksRef = useRef2([]);
-    const currentTrackIndexRef = useRef2(-1);
-    const [isResyncing, setIsResyncing] = useState2(false);
-    const [isNeedleDrop, setIsNeedleDrop] = useState2(false);
-    const [keepScreenAwake, setKeepScreenAwake] = useState2(() => localStorage.getItem("liri_keep_awake") === "true");
-    const wakeLockRef = useRef2(null);
-    const [isPaused, setIsPaused] = useState2(false);
-    const [kbToast, setKbToast] = useState2(null);
-    const kbToastTimerRef = useRef2(null);
-    const [shouldAdvanceTrack, setShouldAdvanceTrack] = useState2(false);
-    const [sideEndReason, setSideEndReason] = useState2("failed");
-    const [sideEndNextDiscInfo, setSideEndNextDiscInfo] = useState2(null);
-    const flipChimeTimersRef = useRef2([]);
-    const flipStartDelayMsRef = useRef2(0);
-    const [albumCollectionId, setAlbumCollectionId] = useState2(null);
-    const albumCollectionIdRef = useRef2(null);
-    const albumTpsRef = useRef2(0);
-    const [vinylDbRelease, setVinylDbRelease] = useState2(null);
-    const vinylDbReleaseRef = useRef2(null);
-    const vinylSidesRef = useRef2([]);
-    const [scrollSpeed, setScrollSpeed] = useState2(() => {
+    const [showAlbumPicker, setShowAlbumPicker] = useState5(false);
+    const [userLibrary, setUserLibrary] = useState5([]);
+    const [libLoading, setLibLoading] = useState5(false);
+    const [recentPlayedIds, setRecentPlayedIds] = useState5([]);
+    const [turntableTracksLoading, setTurntableTracksLoading] = useState5(false);
+    const [turntableTracksProgress, setTurntableTracksProgress] = useState5({ percent: 0, stage: "" });
+    const turntableAlbumRef = useRef4(turntableAlbum);
+    const turntableTracksRef = useRef4([]);
+    const turntableMatchedIdxRef = useRef4(-1);
+    const turntableLyricsCacheRef = useRef4({});
+    const wordsDataRef = useRef4({});
+    const autoRetryCountRef = useRef4(0);
+    const [albumTracks, setAlbumTracks] = useState5([]);
+    const [currentTrackIndex, setCurrentTrackIndex] = useState5(-1);
+    const albumTracksRef = useRef4([]);
+    const currentTrackIndexRef = useRef4(-1);
+    const [isResyncing, setIsResyncing] = useState5(false);
+    const [isNeedleDrop, setIsNeedleDrop] = useState5(false);
+    const [keepScreenAwake, setKeepScreenAwake] = useState5(() => localStorage.getItem("liri_keep_awake") === "true");
+    const wakeLockRef = useRef4(null);
+    const [isPaused, setIsPaused] = useState5(false);
+    const [kbToast, setKbToast] = useState5(null);
+    const kbToastTimerRef = useRef4(null);
+    const [shouldAdvanceTrack, setShouldAdvanceTrack] = useState5(false);
+    const [sideEndReason, setSideEndReason] = useState5("failed");
+    const [sideEndNextDiscInfo, setSideEndNextDiscInfo] = useState5(null);
+    const flipChimeTimersRef = useRef4([]);
+    const flipStartDelayMsRef = useRef4(0);
+    const [albumCollectionId, setAlbumCollectionId] = useState5(null);
+    const albumCollectionIdRef = useRef4(null);
+    const albumTpsRef = useRef4(0);
+    const [vinylDbRelease, setVinylDbRelease] = useState5(null);
+    const vinylDbReleaseRef = useRef4(null);
+    const vinylSidesRef = useRef4([]);
+    const [sideDataMissing, setSideDataMissing] = useState5(false);
+    const [showSideInfoSheet, setShowSideInfoSheet] = useState5(false);
+    const [showLyricsEditor, setShowLyricsEditor] = useState5(false);
+    const [userMetaSaving, setUserMetaSaving] = useState5(false);
+    const [userMetaError, setUserMetaError] = useState5(null);
+    const [scrollSpeed, setScrollSpeed] = useState5(() => {
       const v = parseFloat(localStorage.getItem("liri_scroll_speed"));
       return isNaN(v) ? 1 : Math.min(4, Math.max(0.25, v));
     });
-    const scrollSpeedRef = useRef2(scrollSpeed);
-    const [flipSound, setFlipSound] = useState2(() => localStorage.getItem("liri_flip_sound") !== "false");
-    const [flipNotify, setFlipNotify] = useState2(() => localStorage.getItem("liri_flip_notify") === "true");
-    const [notifyDenied, setNotifyDenied] = useState2(false);
-    const [nudgeMenu, setNudgeMenu] = useState2(null);
-    const nudgeMenuTimerRef = useRef2(null);
-    const [showOnboarding, setShowOnboarding] = useState2(false);
-    const [onboardingStep, setOnboardingStep] = useState2(0);
+    const scrollSpeedRef = useRef4(scrollSpeed);
+    const [flipSound, setFlipSound] = useState5(() => localStorage.getItem("liri_flip_sound") !== "false");
+    const [flipNotify, setFlipNotify] = useState5(() => localStorage.getItem("liri_flip_notify") === "true");
+    const [notifyDenied, setNotifyDenied] = useState5(false);
+    const [nudgeMenu, setNudgeMenu] = useState5(null);
+    const nudgeMenuTimerRef = useRef4(null);
+    const [showOnboarding, setShowOnboarding] = useState5(false);
+    const [onboardingStep, setOnboardingStep] = useState5(0);
     const ONBOARDING_STEPS = 6;
-    const [coachStep, setCoachStep] = useState2(0);
+    const [coachStep, setCoachStep] = useState5(0);
     const dismissOnboarding = () => {
       localStorage.setItem("liri_onboarding_done", "true");
       setShowOnboarding(false);
     };
-    useEffect3(() => {
+    useEffect6(() => {
       if (user && !localStorage.getItem("liri_onboarding_done")) {
         setCoachStep(0);
         setOnboardingStep(0);
@@ -573,52 +1411,52 @@
       }
       return sid;
     }, []);
-    const streamRef = useRef2(null);
-    const speechRecRef = useRef2(null);
-    const analyserNodeRef = useRef2(null);
-    const audioCtxRef = useRef2(null);
-    const chimeCtxRef = useRef2(null);
-    const syncIntervalRef = useRef2(null);
-    const syncStartRef = useRef2(null);
-    const detectedAtRef = useRef2(null);
-    const initialPosRef = useRef2(0);
-    const userNudgeRef = useRef2(0);
-    const syncCalcRef = useRef2(null);
-    const recordingStartRef = useRef2(null);
-    const lyricsRef = useRef2([]);
-    const progressTimerRef = useRef2(null);
-    const currentLineRef = useRef2(null);
-    const creditsRef = useRef2(null);
-    const userScrollingRef = useRef2(false);
-    const [userScrolling, setUserScrolling] = useState2(false);
-    const refollowTimerRef = useRef2(null);
-    const scrollInhibitTimer = useRef2(null);
-    const listenSessionRef = useRef2(0);
-    const attemptLogRef = useRef2([]);
-    const lastRecordingRef = useRef2(null);
-    const recognitionWonRef = useRef2(false);
-    const lastRawMatchRef = useRef2(null);
-    const autoPostVisRef = useRef2("off");
-    const autoPostedAlbumsRef = useRef2(/* @__PURE__ */ new Set());
-    const [audioLevel, setAudioLevel] = useState2(0);
-    const [lastSong, setLastSong] = useState2(null);
-    const [hoverNudge, setHoverNudge] = useState2(null);
-    useEffect3(() => {
+    const streamRef = useRef4(null);
+    const speechRecRef = useRef4(null);
+    const analyserNodeRef = useRef4(null);
+    const audioCtxRef = useRef4(null);
+    const chimeCtxRef = useRef4(null);
+    const syncIntervalRef = useRef4(null);
+    const syncStartRef = useRef4(null);
+    const detectedAtRef = useRef4(null);
+    const initialPosRef = useRef4(0);
+    const userNudgeRef = useRef4(0);
+    const syncCalcRef = useRef4(null);
+    const recordingStartRef = useRef4(null);
+    const lyricsRef = useRef4([]);
+    const progressTimerRef = useRef4(null);
+    const currentLineRef = useRef4(null);
+    const creditsRef = useRef4(null);
+    const userScrollingRef = useRef4(false);
+    const [userScrolling, setUserScrolling] = useState5(false);
+    const refollowTimerRef = useRef4(null);
+    const scrollInhibitTimer = useRef4(null);
+    const listenSessionRef = useRef4(0);
+    const attemptLogRef = useRef4([]);
+    const lastRecordingRef = useRef4(null);
+    const recognitionWonRef = useRef4(false);
+    const lastRawMatchRef = useRef4(null);
+    const autoPostVisRef = useRef4("off");
+    const autoPostedAlbumsRef = useRef4(/* @__PURE__ */ new Set());
+    const [audioLevel, setAudioLevel] = useState5(0);
+    const [lastSong, setLastSong] = useState5(null);
+    const [hoverNudge, setHoverNudge] = useState5(null);
+    useEffect6(() => {
       lyricsRef.current = lyrics;
     }, [lyrics]);
-    useEffect3(() => {
+    useEffect6(() => {
       albumTracksRef.current = albumTracks;
     }, [albumTracks]);
-    useEffect3(() => {
+    useEffect6(() => {
       currentTrackIndexRef.current = currentTrackIndex;
     }, [currentTrackIndex]);
-    useEffect3(() => {
+    useEffect6(() => {
       vinylDbReleaseRef.current = vinylDbRelease;
     }, [vinylDbRelease]);
-    useEffect3(() => {
+    useEffect6(() => {
       albumCollectionIdRef.current = albumCollectionId;
     }, [albumCollectionId]);
-    useEffect3(() => {
+    useEffect6(() => {
       scrollSpeedRef.current = scrollSpeed;
       try {
         localStorage.setItem("liri_scroll_speed", String(scrollSpeed));
@@ -838,7 +1676,7 @@
       try {
         const { data } = await sb.from("profiles").select("auto_post_visibility").eq("id", u.id).maybeSingle();
         autoPostVisRef.current = data?.auto_post_visibility || "off";
-      } catch (e) {
+      } catch (e3) {
       }
     };
     const fetchHistory = async (u) => {
@@ -862,74 +1700,10 @@
         artwork_url: song.artwork || null
       });
     };
-    const logListeningEvent = async (params) => {
-      try {
-        await sb.from("listening_events").insert({
-          user_id: params.userId || null,
-          session_id: sessionId,
-          track_title: params.title,
-          artist_name: params.artist,
-          album_name: params.album || null,
-          artwork_url: params.artwork || null,
-          genre: params.genre || null,
-          itunes_track_id: params.itunesTrackId ? Number(params.itunesTrackId) : null,
-          itunes_collection_id: params.collectionId ? Number(params.collectionId) : null,
-          vinyl_release_id: params.vinylReleaseId || null,
-          vinyl_mode_on: params.vinylModeOn ?? false,
-          source: params.source || "recognition",
-          platform: window.Capacitor ? "ios" : "web",
-          country_code: params.countryCode || null,
-          playback_offset_s: params.offsetSecs != null ? Math.round(params.offsetSecs) : null,
-          track_duration_s: params.durationSecs != null ? Math.round(params.durationSecs) : null,
-          acr_confidence: params.acrScore || null
-        });
-      } catch (e) {
-        console.error("logListeningEvent failed:", e.message);
-      }
-    };
-    const maybeAutoPostPlay = async ({ userId, collectionId, album, artist, artwork: artwork2 }) => {
-      try {
-        const vis = autoPostVisRef.current;
-        if (!userId || vis === "off") return;
-        if (!collectionId) return;
-        const key = String(collectionId);
-        if (autoPostedAlbumsRef.current.has(key)) return;
-        autoPostedAlbumsRef.current.add(key);
-        const since = new Date(Date.now() - 12 * 60 * 60 * 1e3).toISOString();
-        const { data: recent } = await sb.from("posts").select("id").eq("author_id", userId).eq("collection_id", Number(collectionId)).eq("source", "auto").gte("created_at", since).limit(1);
-        if (recent && recent.length) return;
-        await sb.from("posts").insert({
-          author_id: userId,
-          kind: "album",
-          source: "auto",
-          visibility: vis,
-          collection_id: Number(collectionId),
-          album_name: album || null,
-          artist_name: artist || null,
-          artwork_url: artwork2 || null
-        });
-      } catch (e) {
-        console.error("maybeAutoPostPlay failed:", e.message);
-      }
-    };
-    const logFlipEvent = async (params) => {
-      try {
-        await sb.from("flip_events").insert({
-          user_id: params.userId || null,
-          session_id: sessionId,
-          vinyl_release_id: params.vinylReleaseId || null,
-          itunes_collection_id: params.collectionId ? Number(params.collectionId) : null,
-          album_name: params.album || null,
-          artist_name: params.artist || null,
-          from_side: params.fromSide || null,
-          to_side: params.toSide || null,
-          detection_method: params.method || "heuristic"
-        });
-      } catch (e) {
-        console.error("logFlipEvent failed:", e.message);
-      }
-    };
-    useEffect3(() => {
+    const logListeningEvent2 = (params) => logListeningEvent(sb, sessionId, params);
+    const maybeAutoPostPlay2 = (params) => maybeAutoPostPlay(sb, autoPostVisRef, autoPostedAlbumsRef, params);
+    const logFlipEvent2 = (params) => logFlipEvent(sb, sessionId, params);
+    useEffect6(() => {
       sb.auth.getSession().then(({
         data: {
           session
@@ -980,114 +1754,6 @@
       });
       return () => subscription.unsubscribe();
     }, []);
-    const [iapPrice, setIapPrice] = useState2("$2.99/mo");
-    const [premiumPlan, setPremiumPlan] = useState2("monthly");
-    const [iapWorking, setIapWorking] = useState2(false);
-    useEffect3(() => {
-      const iap = getLiriIAP();
-      if (!IS_IOS || !iap) return;
-      iap.fetchProduct().then((p) => {
-        if (p?.displayPrice) setIapPrice(`${p.displayPrice}/mo`);
-      }).catch(() => {
-      });
-    }, []);
-    const syncAppleSubscription = async (token) => {
-      const iap = getLiriIAP();
-      if (!IS_IOS || !iap) return;
-      try {
-        const status = await iap.getSubscriptionStatus();
-        if (status?.isActive && status?.signedTransaction) {
-          const r = await fetch("https://www.getliri.com/api/stripe-checkout", {
-            method: "POST",
-            headers: { "Content-Type": "application/json", "Authorization": `Bearer ${token}` },
-            body: JSON.stringify({ appleTransaction: status.signedTransaction })
-          });
-          if (r.ok) setUserTier("premium");
-        }
-      } catch {
-      }
-    };
-    const upgradeWithApple = async (plan = "monthly") => {
-      const iap = getLiriIAP();
-      if (!iap) {
-        alert("In-app purchases are not available right now. Please try again or contact support.");
-        return;
-      }
-      setIapWorking(true);
-      try {
-        const result = plan === "lifetime" ? await iap.purchaseLifetime() : await iap.purchase();
-        if (result?.signedTransaction) {
-          const token = sessionTokenRef.current;
-          const r = await fetch("https://www.getliri.com/api/stripe-checkout", {
-            method: "POST",
-            headers: { "Content-Type": "application/json", "Authorization": `Bearer ${token}` },
-            body: JSON.stringify({ appleTransaction: result.signedTransaction, plan })
-          });
-          const data = await r.json();
-          if (data.tier === "premium" || data.tier === "lifetime") {
-            setUserTier(data.tier);
-            setAlbumCount((prev) => prev);
-          } else {
-            alert(data.error || "Could not verify purchase. Please contact support.");
-          }
-        }
-      } catch (e) {
-        if (e?.message !== "cancelled") alert("Purchase failed. Please try again.");
-      } finally {
-        setIapWorking(false);
-      }
-    };
-    const restoreApplePurchases = async () => {
-      const iap = getLiriIAP();
-      if (!iap) {
-        alert("Restore is not available right now.");
-        return;
-      }
-      setIapWorking(true);
-      try {
-        const status = await iap.restorePurchases();
-        if (status?.isActive && status?.signedTransaction) {
-          const token = sessionTokenRef.current;
-          const plan = status.isLifetime ? "lifetime" : "monthly";
-          const r = await fetch("https://www.getliri.com/api/stripe-checkout", {
-            method: "POST",
-            headers: { "Content-Type": "application/json", "Authorization": `Bearer ${token}` },
-            body: JSON.stringify({ appleTransaction: status.signedTransaction, plan })
-          });
-          const data = await r.json();
-          if (data.tier === "premium" || data.tier === "lifetime") setUserTier(data.tier);
-          else alert("No active subscription found.");
-        } else {
-          alert("No active subscription found.");
-        }
-      } catch {
-        alert("Restore failed. Please try again.");
-      } finally {
-        setIapWorking(false);
-      }
-    };
-    const upgradeToStripe = async (plan = "monthly") => {
-      setUpgradeWorking(true);
-      try {
-        const { data: { session: s } } = await sb.auth.getSession();
-        const token = s?.access_token || sessionTokenRef.current;
-        const res = await fetch("/api/stripe-checkout", {
-          method: "POST",
-          headers: { "Content-Type": "application/json", "Authorization": `Bearer ${token}` },
-          body: JSON.stringify({ plan })
-        });
-        const json = await res.json().catch(() => ({}));
-        if (json.url) {
-          window.location.href = json.url;
-        } else {
-          alert(json.error || "Could not start checkout. Please try again.");
-          setUpgradeWorking(false);
-        }
-      } catch {
-        alert("Network error \u2014 please try again.");
-        setUpgradeWorking(false);
-      }
-    };
     const handleAuth = async () => {
       setAuthError(null);
       if (authMode === "signup") {
@@ -1146,14 +1812,14 @@
           if (error2) throw error2;
           setAuthSheet(null);
         }
-      } catch (e) {
-        const m = (e?.message || "").toLowerCase();
+      } catch (e3) {
+        const m = (e3?.message || "").toLowerCase();
         if (m.includes("invalid login") || m.includes("invalid credentials")) {
           setAuthError("That email or password doesn't look right. Try again, or reset your password below.");
         } else if (m.includes("email not confirmed")) {
           setAuthError("Please confirm your email first \u2014 check your inbox for the verification link.");
         } else {
-          setAuthError(e?.message || "Something went wrong. Please try again.");
+          setAuthError(e3?.message || "Something went wrong. Please try again.");
         }
       } finally {
         setAuthWorking(false);
@@ -1231,8 +1897,8 @@
         setShowDeleteAccount(false);
         setShowSettings(false);
         reset();
-      } catch (e) {
-        setDeleteError(e.message);
+      } catch (e3) {
+        setDeleteError(e3.message);
         setDeleteWorking(false);
       }
     };
@@ -1259,8 +1925,8 @@
           setShowBugReport(false);
           setBugSent(false);
         }, 2e3);
-      } catch (e) {
-        console.error("bug report failed:", e);
+      } catch (e3) {
+        console.error("bug report failed:", e3);
       }
       setBugSending(false);
     };
@@ -1270,6 +1936,7 @@
       turntableTracksRef.current = [];
       turntableLyricsCacheRef.current = {};
       vinylSidesRef.current = [];
+      setSideDataMissing(false);
       try {
         const alb = turntableAlbumRef.current;
         const artistName = alb?.artist_name || "";
@@ -1346,6 +2013,7 @@
             setVinylDbRelease(null);
             vinylDbReleaseRef.current = null;
           }
+          setSideDataMissing(!vinylSidesRef.current.length && !(dbRelease?.vinyl_tracks?.length > 0));
           setTurntableTracksLoading(false);
           setTurntableTracksProgress({ percent: 100, stage: "" });
           const missingTracks = trackRows.filter((t) => t.itunes_track_id && !cache[String(t.itunes_track_id)]);
@@ -1378,6 +2046,7 @@
                 if (retry?.vinyl_tracks?.length > 0) {
                   setVinylDbRelease(retry);
                   vinylDbReleaseRef.current = retry;
+                  setSideDataMissing(false);
                 }
               } catch {
               }
@@ -1387,14 +2056,14 @@
         } else {
           console.warn("[turntable] no tracks found for:", collectionId);
         }
-      } catch (e) {
+      } catch (e3) {
         turntableTracksRef.current = [];
-        console.error("[turntable] fetch error:", e);
+        console.error("[turntable] fetch error:", e3);
       }
       setTurntableTracksLoading(false);
       setTurntableTracksProgress({ percent: 100, stage: "" });
     };
-    useEffect3(() => {
+    useEffect6(() => {
       turntableAlbumRef.current = turntableAlbum;
       turntableMatchedIdxRef.current = -1;
       if (turntableAlbum) {
@@ -1404,8 +2073,50 @@
         localStorage.removeItem("liri_turntable");
         turntableTracksRef.current = [];
         setTurntableTracksLoading(false);
+        setSideDataMissing(false);
       }
     }, [turntableAlbum]);
+    const lyricsEditorTrack = currentTrackIndex >= 0 ? turntableTracksRef.current[currentTrackIndex] : null;
+    const handleSaveUserLyrics = async (text) => {
+      const track = currentTrackIndex >= 0 ? turntableTracksRef.current[currentTrackIndex] : null;
+      if (!track?.trackId) return;
+      setUserMetaSaving(true);
+      setUserMetaError(null);
+      try {
+        const entry = await saveUserLyrics(sb, track.trackId, text);
+        turntableLyricsCacheRef.current[String(track.trackId)] = entry;
+        const fresh = entry.lrc_raw ? parseLRC(entry.lrc_raw) : plainToLines(entry.lyrics_plain);
+        if (fresh.length) {
+          setLyrics(fresh);
+          lyricsRef.current = fresh;
+        }
+        setShowLyricsEditor(false);
+        logButtonEvent2("user_lyrics_saved");
+      } catch (err) {
+        console.error("[usermeta] lyrics save failed:", err);
+        setUserMetaError(err?.message || "Couldn't save \u2014 try again");
+      }
+      setUserMetaSaving(false);
+    };
+    const handleSaveUserSides = async (letters) => {
+      const alb = turntableAlbumRef.current;
+      const tracks = turntableTracksRef.current;
+      if (!alb?.itunes_collection_id || !tracks.length) return;
+      setUserMetaSaving(true);
+      setUserMetaError(null);
+      try {
+        const rows = buildSideRows(alb.itunes_collection_id, tracks, letters);
+        const sides = await saveUserSides(sb, rows);
+        vinylSidesRef.current = sides;
+        setSideDataMissing(false);
+        setShowSideInfoSheet(false);
+        logButtonEvent2("user_sides_saved");
+      } catch (err) {
+        console.error("[usermeta] sides save failed:", err);
+        setUserMetaError(err?.message || "Couldn't save \u2014 try again");
+      }
+      setUserMetaSaving(false);
+    };
     const fetchUserLibrary = async (uid, autoSelect = false) => {
       setLibLoading(true);
       try {
@@ -1475,10 +2186,10 @@
       }
       setLibLoading(false);
     };
-    useEffect3(() => {
+    useEffect6(() => {
       if (user) fetchUserLibrary(user.id, true);
     }, [user]);
-    useEffect3(() => {
+    useEffect6(() => {
       if (mode !== "listening") {
         setListenSecs(0);
         setShowTrackList(false);
@@ -1487,14 +2198,14 @@
       const id = setInterval(() => setListenSecs((s) => s + 1), 1e3);
       return () => clearInterval(id);
     }, [mode]);
-    useEffect3(() => {
+    useEffect6(() => {
       if (mode === "confirmed" && detectedSong) {
         startSync();
         userScrollingRef.current = false;
         setUserScrolling(false);
       }
     }, [mode, detectedSong]);
-    useEffect3(() => {
+    useEffect6(() => {
       if (!window.Capacitor) return;
       if (mode !== "syncing") return;
       let cancelled = false;
@@ -1509,8 +2220,8 @@
           if (tTracks.length > 0 && tIdx >= 0 && tIdx < tTracks.length - 1) {
             advanceToNextTrack(tTracks, tIdx);
           }
-        } catch (e) {
-          console.warn("[silence] waitForSilence failed:", e);
+        } catch (e3) {
+          console.warn("[silence] waitForSilence failed:", e3);
         }
       }, 2e3);
       return () => {
@@ -1519,85 +2230,28 @@
         Shazam.cancel();
       };
     }, [mode]);
-    const lyricsUnsynced = lyrics.length > 0 && lyrics[0].time == null;
-    const lyricsScrollRef = useRef2(null);
-    useEffect3(() => {
-      if (userScrollingRef.current || lyricsUnsynced) return;
-      if (currentLineRef.current && mode === "syncing") currentLineRef.current.scrollIntoView({
-        behavior: "smooth",
-        block: "center"
-      });
-    }, [currentIndex, mode, lyricsUnsynced]);
-    useEffect3(() => {
-      if (!isLandscape || mode !== "syncing" || lyricsUnsynced) return;
-      let raf, start;
-      const pin = (ts) => {
-        if (start == null) start = ts;
-        if (!userScrollingRef.current) currentLineRef.current?.scrollIntoView({ block: "center" });
-        if (ts - start < 450) raf = requestAnimationFrame(pin);
-      };
-      raf = requestAnimationFrame(pin);
-      return () => cancelAnimationFrame(raf);
-    }, [controlsVisible, isLandscape, mode, lyricsUnsynced]);
-    useEffect3(() => {
-      if (mode !== "syncing" || !lyricsUnsynced || isPaused) return;
-      const el = lyricsScrollRef.current;
-      if (!el) return;
-      const durGuess = songDuration || lyricsRef.current.length * 4.5 || 180;
-      let pos = el.scrollTop;
-      let last = performance.now();
-      let raf;
-      const tick = (now) => {
-        const dt = Math.min(0.2, (now - last) / 1e3);
-        last = now;
-        if (userScrollingRef.current) {
-          pos = el.scrollTop;
-        } else {
-          const total = Math.max(0, el.scrollHeight - el.clientHeight);
-          const base = total / Math.max(45, durGuess);
-          pos = Math.min(total, pos + base * scrollSpeedRef.current * dt);
-          el.scrollTop = pos;
-        }
-        raf = requestAnimationFrame(tick);
-      };
-      raf = requestAnimationFrame(tick);
-      return () => cancelAnimationFrame(raf);
-    }, [mode, lyricsUnsynced, isPaused, songDuration]);
-    const seekToLine = (i) => {
-      const targetTime = lyricsRef.current[i]?.time;
-      if (targetTime == null) return;
-      initialPosRef.current = targetTime;
-      syncStartRef.current = Date.now();
-      setCurrentIndex(i);
-      setPlaybackTime(targetTime);
-      userScrollingRef.current = false;
-      setUserScrolling(false);
-    };
-    const refollow = () => {
-      userScrollingRef.current = false;
-      setUserScrolling(false);
-      clearTimeout(refollowTimerRef.current);
-      if (lyricsRef.current[0]?.time == null) return;
-      currentLineRef.current?.scrollIntoView({
-        behavior: "smooth",
-        block: "center"
-      });
-    };
-    const noteUserScroll = () => {
-      userScrollingRef.current = true;
-      setUserScrolling(true);
-      clearTimeout(refollowTimerRef.current);
-      refollowTimerRef.current = setTimeout(() => refollow(), 1e4);
-    };
-    useEffect3(() => {
-      if (mode !== "syncing" || !lyrics.length || lyricsUnsynced) return;
-      const lastTime = lyrics[lyrics.length - 1].time;
-      if (playbackTime >= lastTime + 6 && creditsRef.current) creditsRef.current.scrollIntoView({
-        behavior: "smooth",
-        block: "center"
-      });
-    }, [Math.floor(playbackTime), mode, lyrics.length]);
-    useEffect3(() => {
+    const { lyricsUnsynced, lyricsScrollRef, seekToLine, refollow, noteUserScroll } = useLyricScroll({
+      mode,
+      lyrics,
+      lyricsRef,
+      songDuration,
+      isPaused,
+      isLandscape,
+      controlsVisible,
+      currentIndex,
+      setCurrentIndex,
+      playbackTime,
+      setPlaybackTime,
+      setUserScrolling,
+      userScrollingRef,
+      refollowTimerRef,
+      currentLineRef,
+      creditsRef,
+      scrollSpeedRef,
+      initialPosRef,
+      syncStartRef
+    });
+    useEffect6(() => {
       if (mode !== "syncing") return;
       if (turntableAlbumRef.current && turntableTracksLoading && turntableTracksRef.current.length === 0) return;
       const lastLyricTime = lyrics.length > 0 ? lyrics[lyrics.length - 1].time : null;
@@ -1610,7 +2264,7 @@
         setShouldAdvanceTrack(true);
       }
     }, [playbackTime, songDuration, lyrics, mode]);
-    useEffect3(() => {
+    useEffect6(() => {
       if (!shouldAdvanceTrack) return;
       setShouldAdvanceTrack(false);
       const tTracks = turntableTracksRef.current;
@@ -1626,13 +2280,13 @@
         setMode("side-end");
       }
     }, [shouldAdvanceTrack]);
-    useEffect3(() => () => {
+    useEffect6(() => () => {
       clearInterval(syncIntervalRef.current);
       clearInterval(progressTimerRef.current);
       clearTimeout(refollowTimerRef.current);
       streamRef.current?.getTracks().forEach((t) => t.stop());
     }, []);
-    useEffect3(() => {
+    useEffect6(() => {
       if (mode !== "side-end") cancelFlipChimes();
     }, [mode]);
     const handleMatch = async (data, isAutoAdvance) => {
@@ -1687,7 +2341,7 @@
         const tIdx = tracks.findIndex((t) => t.trackName?.toLowerCase() === title.toLowerCase());
         setCurrentTrackIndex(tIdx >= 0 ? tIdx : 0);
         const itunesTrack = tIdx >= 0 ? tracks[tIdx] : null;
-        logListeningEvent({
+        logListeningEvent2({
           userId: user?.id,
           title,
           artist,
@@ -1704,7 +2358,7 @@
           durationSecs: duration,
           acrScore
         });
-        maybeAutoPostPlay({ userId: user?.id, collectionId, album: song.album, artist, artwork: song.artwork });
+        maybeAutoPostPlay2({ userId: user?.id, collectionId, album: song.album, artist, artwork: song.artwork });
         if (!collectionId || tracks.length === 0) return;
         const dbRelease = await fetchVinylRelease(collectionId);
         if (dbRelease?.vinyl_tracks?.length > 0) {
@@ -1723,120 +2377,11 @@
       }).catch(() => {
       });
     };
-    const matchTranscriptToTracks = (transcript, tracks, wordsData, logRef) => {
-      const normWord = (w) => w.toLowerCase().replace(/[^a-z0-9']/g, "");
-      const editDist = (a, b) => {
-        if (Math.abs(a.length - b.length) > 2) return 99;
-        const dp = Array.from({ length: a.length + 1 }, (_, i) => i);
-        for (let j = 1; j <= b.length; j++) {
-          let prev = dp[0];
-          dp[0] = j;
-          for (let i = 1; i <= a.length; i++) {
-            const temp = dp[i];
-            dp[i] = a[i - 1] === b[j - 1] ? prev : 1 + Math.min(prev, dp[i], dp[i - 1]);
-            prev = temp;
-          }
-        }
-        return dp[a.length];
-      };
-      const fuzzyEq = (a, b) => {
-        if (a === b) return true;
-        if (!a || !b) return false;
-        if (a.length <= 3 || b.length <= 3) return false;
-        return editDist(a, b) <= (a.length <= 6 ? 1 : 2);
-      };
-      const heardWords = transcript.toLowerCase().split(/\s+/).map(normWord).filter((w) => w.length > 1);
-      if (logRef) logRef.push(`match: ${heardWords.length} words from transcript`);
-      if (!heardWords.length) return null;
-      const baseName = (n) => (n || "").toLowerCase().replace(/\s*[\(\[].*/, "").trim();
-      const seenNames = /* @__PURE__ */ new Set();
-      const tracksWithWords = tracks.map((t) => {
-        const data = wordsData[t.trackId];
-        if (!data?.words?.length) return null;
-        const base = baseName(t.trackName);
-        if (seenNames.has(base)) return null;
-        seenNames.add(base);
-        return {
-          ...t,
-          wordArr: data.words.map((w) => w.word),
-          // already normalised at store time
-          wordTimings: data.words,
-          // [{word, start_ms}] for position lookup
-          lrc_raw: data.lrc_raw,
-          lyrics_plain: data.lyrics_plain
-        };
-      }).filter(Boolean);
-      if (logRef) logRef.push(`match: ${tracksWithWords.length}/${tracks.length} tracks have lyrics`);
-      console.log("[match] tracksWithWords:", tracksWithWords.length, "/", tracks.length, "| heardWords:", heardWords.slice(0, 8).join(" "));
-      if (tracksWithWords.length > 0) console.log("[match] sample track words:", tracksWithWords[0]?.trackName, tracksWithWords[0]?.wordArr?.slice(0, 10));
-      if (!tracksWithWords.length) return null;
-      const MIN_RUN = 3;
-      for (let len = MIN_RUN; len <= heardWords.length; len++) {
-        for (let start = 0; start <= heardWords.length - len; start++) {
-          const phrase = heardWords.slice(start, start + len);
-          const hits = tracksWithWords.filter((t) => {
-            let count = 0;
-            const arr2 = t.wordArr;
-            for (let i = 0; i <= arr2.length - len; i++) {
-              let ok = true;
-              for (let j = 0; j < len; j++) {
-                if (!fuzzyEq(arr2[i + j], phrase[j])) {
-                  ok = false;
-                  break;
-                }
-              }
-              if (ok) {
-                count++;
-                if (count > 1) return false;
-              }
-            }
-            return count === 1;
-          });
-          if (hits.length !== 1) continue;
-          const match = hits[0];
-          let matchWordIdx = -1;
-          const arr = match.wordArr;
-          for (let i = 0; i <= arr.length - len; i++) {
-            let ok = true;
-            for (let j = 0; j < len; j++) {
-              if (!fuzzyEq(arr[i + j], phrase[j])) {
-                ok = false;
-                break;
-              }
-            }
-            if (ok) {
-              matchWordIdx = i;
-              break;
-            }
-          }
-          const startPos = matchWordIdx >= 0 ? match.wordTimings[matchWordIdx].start_ms / 1e3 : 0;
-          const lyrics2 = match.lrc_raw ? parseLRC(match.lrc_raw) : plainToLines(match.lyrics_plain);
-          if (logRef) logRef.push(`match: unique run (${len}w) \u2192 "${match.trackName}" at ${startPos.toFixed(1)}s`);
-          return { track: match, lyrics: lyrics2, startPos, score: len, phraseWordStart: start, totalWords: heardWords.length };
-        }
-      }
-      if (logRef) logRef.push(`match: no unique run yet \u2014 keep listening`);
-      return null;
-    };
-    const logButtonEvent = async (buttonName) => {
-      try {
-        const raw = lastRawMatchRef.current;
-        await sb.from("button_events").insert({
-          user_id: user?.id || null,
-          session_id: sessionId,
-          button_name: buttonName,
-          track_title: detectedSong?.title || null,
-          artist_name: detectedSong?.artist || null,
-          album_name: detectedSong?.album || null,
-          itunes_collection_id: albumCollectionIdRef?.current ? Number(albumCollectionIdRef.current) : null,
-          platform: window.Capacitor ? "ios" : "web",
-          identified_by: raw?.identified_by || null,
-          raw_match_title: raw?.title || null,
-          raw_match_artist: raw?.artist || null
-        });
-      } catch (e) {
-      }
-    };
+    const logButtonEvent2 = (buttonName) => logButtonEvent(
+      sb,
+      { sessionId, user, detectedSong, albumCollectionIdRef, lastRawMatchRef },
+      buttonName
+    );
     const handleNoMatch = (isAutoAdvance, stage = "acr") => {
       if (isAutoAdvance) {
         autoRetryCountRef.current += 1;
@@ -1959,8 +2504,8 @@ Move closer to your speakers and try again.`);
         setMode("confirmed");
         saveToHistory(user, song);
         fetchHistory(user);
-        logListeningEvent({ userId: user?.id, title: track.trackName, artist: track.artistName || ta?.artist_name || "", album: ta?.album_name || "", artwork: ta?.artwork_url || null, itunesTrackId: track.trackId, collectionId: ta?.itunes_collection_id || track.collectionId, vinylReleaseId: null, vinylModeOn: true, source: "shazam", offsetSecs, durationSecs: track.trackTimeMillis ? track.trackTimeMillis / 1e3 : null });
-        maybeAutoPostPlay({ userId: user?.id, collectionId: ta?.itunes_collection_id || track.collectionId, album: ta?.album_name || "", artist: track.artistName || ta?.artist_name || "", artwork: ta?.artwork_url || null });
+        logListeningEvent2({ userId: user?.id, title: track.trackName, artist: track.artistName || ta?.artist_name || "", album: ta?.album_name || "", artwork: ta?.artwork_url || null, itunesTrackId: track.trackId, collectionId: ta?.itunes_collection_id || track.collectionId, vinylReleaseId: null, vinylModeOn: true, source: "shazam", offsetSecs, durationSecs: track.trackTimeMillis ? track.trackTimeMillis / 1e3 : null });
+        maybeAutoPostPlay2({ userId: user?.id, collectionId: ta?.itunes_collection_id || track.collectionId, album: ta?.album_name || "", artist: track.artistName || ta?.artist_name || "", artwork: ta?.artwork_url || null });
         const at = turntableTracksRef.current;
         setAlbumTracks(at);
         setAlbumCollectionId(ta?.itunes_collection_id ? String(ta.itunes_collection_id) : null);
@@ -2082,107 +2627,29 @@ Move closer to your speakers and try again.`);
         setCurrentIndex(idx);
       }, 80);
     }, []);
-    const nowPlayingSnapshotRef = useRef2(null);
-    useEffect3(() => {
-      if (mode === "syncing" || mode === "confirmed") {
-        nowPlayingSnapshotRef.current = {
-          detectedSong,
-          lyrics,
-          songDuration,
-          currentTrackIndex,
-          albumCollectionId,
-          identifiedBy,
-          turntableMatchedIdx: turntableMatchedIdxRef.current
-        };
-        try {
-          const t = syncStartRef.current != null ? initialPosRef.current + (Date.now() - syncStartRef.current) / 1e3 : initialPosRef.current;
-          localStorage.setItem("liri_nowplaying", JSON.stringify({
-            ...nowPlayingSnapshotRef.current,
-            playbackTime: Math.max(0, t),
-            savedAt: Date.now()
-          }));
-        } catch {
-        }
-      } else {
-        nowPlayingSnapshotRef.current = null;
-        if (mode === "idle" || mode === "listening") {
-          try {
-            localStorage.removeItem("liri_nowplaying");
-          } catch {
-          }
-        }
-      }
-    }, [mode, detectedSong, lyrics, songDuration, currentTrackIndex, albumCollectionId, identifiedBy]);
-    useEffect3(() => {
-      const onHide = () => {
-        const snap = nowPlayingSnapshotRef.current;
-        if (!snap || !snap.detectedSong) return;
-        const t = syncStartRef.current != null ? initialPosRef.current + (Date.now() - syncStartRef.current) / 1e3 : initialPosRef.current;
-        const payload = JSON.stringify({ ...snap, playbackTime: Math.max(0, t), savedAt: Date.now() });
-        try {
-          sessionStorage.setItem("liri_nowplaying", payload);
-        } catch {
-        }
-        try {
-          localStorage.setItem("liri_nowplaying", payload);
-        } catch {
-        }
-      };
-      window.addEventListener("pagehide", onHide);
-      return () => window.removeEventListener("pagehide", onHide);
-    }, []);
-    useEffect3(() => {
-      if (mode !== "syncing") return;
-      const beat = () => {
-        try {
-          localStorage.setItem("liri_playing_beat", JSON.stringify({ id: sessionTabId, ts: Date.now() }));
-        } catch {
-        }
-      };
-      beat();
-      const id = setInterval(beat, 5e3);
-      return () => {
-        clearInterval(id);
-        try {
-          const b = JSON.parse(localStorage.getItem("liri_playing_beat") || "null");
-          if (b?.id === sessionTabId) localStorage.removeItem("liri_playing_beat");
-        } catch {
-        }
-      };
-    }, [mode]);
-    useEffect3(() => {
-      let saved = null;
-      try {
-        saved = JSON.parse(sessionStorage.getItem("liri_nowplaying") || "null");
-        sessionStorage.removeItem("liri_nowplaying");
-      } catch {
-      }
-      if (!saved) {
-        try {
-          const b = JSON.parse(localStorage.getItem("liri_playing_beat") || "null");
-          const otherTabPlaying = b && b.id !== sessionTabId && Date.now() - b.ts < 15e3;
-          if (!otherTabPlaying) saved = JSON.parse(localStorage.getItem("liri_nowplaying") || "null");
-        } catch {
-        }
-      }
-      if (!saved || !saved.detectedSong || Date.now() - saved.savedAt > 60 * 60 * 1e3) return;
-      const elapsed = (Date.now() - saved.savedAt) / 1e3;
-      const restoredPos = Math.max(0, saved.playbackTime + elapsed);
-      setDetectedSong(saved.detectedSong);
-      const lrc = saved.lyrics || [];
-      setLyrics(lrc);
-      lyricsRef.current = lrc;
-      setSongDuration(saved.songDuration ?? null);
-      setCurrentTrackIndex(saved.currentTrackIndex ?? 0);
-      turntableMatchedIdxRef.current = saved.turntableMatchedIdx ?? 0;
-      if (saved.albumCollectionId) {
-        setAlbumCollectionId(saved.albumCollectionId);
-        albumCollectionIdRef.current = saved.albumCollectionId;
-      }
-      if (saved.identifiedBy) setIdentifiedBy(saved.identifiedBy);
-      syncCalcRef.current = { startPos: restoredPos, phraseOffset: 0, recStart: Date.now() };
-      setMode("confirmed");
-    }, []);
+    useNowPlaying({
+      sessionTabId,
+      mode,
+      setMode,
+      detectedSong,
+      setDetectedSong,
+      identifiedBy,
+      setIdentifiedBy,
+      songDuration,
+      setSongDuration,
+      lyrics,
+      setLyrics,
+      lyricsRef,
+      currentTrackIndex,
+      setCurrentTrackIndex,
+      albumCollectionId,
+      setAlbumCollectionId,
+      albumCollectionIdRef,
+      turntableMatchedIdxRef,
+      syncStartRef,
+      initialPosRef,
+      syncCalcRef
+    });
     const togglePause = () => {
       if (isPaused) {
         syncStartRef.current = Date.now();
@@ -2243,13 +2710,13 @@ Move closer to your speakers and try again.`);
       setKbToast(msg);
       kbToastTimerRef.current = setTimeout(() => setKbToast(null), 1400);
     };
-    useEffect3(() => {
-      const onKey = (e) => {
+    useEffect6(() => {
+      const onKey = (e3) => {
         if (mode !== "syncing") return;
-        if (e.target.tagName === "INPUT" || e.target.tagName === "TEXTAREA") return;
+        if (e3.target.tagName === "INPUT" || e3.target.tagName === "TEXTAREA") return;
         const unsyncedNow = lyricsRef.current.length > 0 && lyricsRef.current[0].time == null;
-        if (e.key === "ArrowLeft") {
-          e.preventDefault();
+        if (e3.key === "ArrowLeft") {
+          e3.preventDefault();
           if (unsyncedNow) {
             adjustScrollSpeed(-0.25);
             showKbToast("\u2190 slower");
@@ -2257,8 +2724,8 @@ Move closer to your speakers and try again.`);
             nudge(-2);
             showKbToast("\u2190 \u22121s");
           }
-        } else if (e.key === "ArrowRight") {
-          e.preventDefault();
+        } else if (e3.key === "ArrowRight") {
+          e3.preventDefault();
           if (unsyncedNow) {
             adjustScrollSpeed(0.25);
             showKbToast("\u2192 faster");
@@ -2266,8 +2733,8 @@ Move closer to your speakers and try again.`);
             nudge(2);
             showKbToast("\u2192 +1s");
           }
-        } else if (e.key === " ") {
-          e.preventDefault();
+        } else if (e3.key === " ") {
+          e3.preventDefault();
           togglePause();
           showKbToast(isPaused ? "\u25B6 Resume" : "\u23F8 Pause");
         }
@@ -2481,7 +2948,7 @@ Move closer to your speakers and try again.`);
         scheduleFlipChimes(detectedSong);
         const sideIdx = sideEnds.indexOf(idx);
         const method = dbRelease?.vinyl_tracks?.length > 0 ? "db" : albumTpsRef.current > 0 ? "learned" : "heuristic";
-        logFlipEvent({
+        logFlipEvent2({
           userId: user?.id,
           vinylReleaseId: dbRelease?.id || null,
           collectionId: albumCollectionIdRef?.current || null,
@@ -2529,7 +2996,7 @@ Move closer to your speakers and try again.`);
       syncCalcRef.current = { startPos: 0, phraseOffset: 0, recStart: Date.now() };
       saveToHistory(user, nextSong);
       fetchHistory(user);
-      logListeningEvent({
+      logListeningEvent2({
         userId: user?.id,
         title: nextTitle,
         artist: nextArtist,
@@ -2585,7 +3052,7 @@ Move closer to your speakers and try again.`);
       autoAdvanceFiredRef.current = false;
       autoRetryCountRef.current = 0;
       saveToHistory(user, song);
-      maybeAutoPostPlay({ userId: user?.id, collectionId: ta?.itunes_collection_id, album: song.album, artist: song.artist, artwork: song.artwork });
+      maybeAutoPostPlay2({ userId: user?.id, collectionId: ta?.itunes_collection_id, album: song.album, artist: song.artist, artwork: song.artwork });
       setShowTrackList(false);
       setMode("confirmed");
     };
@@ -2780,7 +3247,7 @@ Move closer to your speakers and try again.`);
         setMode("confirmed");
         saveToHistory(user, song);
         fetchHistory(user);
-        logListeningEvent({
+        logListeningEvent2({
           userId: user?.id,
           title: song.title,
           artist: song.artist,
@@ -2793,7 +3260,7 @@ Move closer to your speakers and try again.`);
           source: "turntable_jump",
           durationSecs: duration
         });
-        maybeAutoPostPlay({ userId: user?.id, collectionId: ta.itunes_collection_id, album: song.album, artist: song.artist, artwork: song.artwork });
+        maybeAutoPostPlay2({ userId: user?.id, collectionId: ta.itunes_collection_id, album: song.album, artist: song.artist, artwork: song.artwork });
       } else {
         setDetectedSong(null);
         setIdentifiedBy(null);
@@ -2802,7 +3269,7 @@ Move closer to your speakers and try again.`);
         setTimeout(() => startListening(false), 150);
       }
     };
-    useEffect3(() => {
+    useEffect6(() => {
       const acquire = async () => {
         if (!keepScreenAwake || !("wakeLock" in navigator)) return;
         try {
@@ -2826,7 +3293,7 @@ Move closer to your speakers and try again.`);
         document.removeEventListener("visibilitychange", onVisibility);
       };
     }, [keepScreenAwake]);
-    useEffect3(() => {
+    useEffect6(() => {
       if (mode === "syncing" && (isLandscape || IS_IOS)) {
         bumpControls();
       } else {
@@ -3033,7 +3500,7 @@ Move closer to your speakers and try again.`);
           backdropFilter: "blur(6px)"
         }
       }, /* @__PURE__ */ React.createElement("div", {
-        onClick: (e) => e.stopPropagation(),
+        onClick: (e3) => e3.stopPropagation(),
         style: {
           position: "absolute",
           bottom: 0,
@@ -3164,30 +3631,30 @@ Move closer to your speakers and try again.`);
           type: "text",
           placeholder: "Your name",
           value: authName,
-          onChange: (e) => setAuthName(e.target.value),
-          onKeyDown: (e) => e.key === "Enter" && handleAuth(),
+          onChange: (e3) => setAuthName(e3.target.value),
+          onKeyDown: (e3) => e3.key === "Enter" && handleAuth(),
           style: inp,
           autoFocus: true
         }), /* @__PURE__ */ React.createElement("input", {
           type: "email",
           placeholder: "Email",
           value: authEmail,
-          onChange: (e) => setAuthEmail(e.target.value),
-          onKeyDown: (e) => e.key === "Enter" && handleAuth(),
+          onChange: (e3) => setAuthEmail(e3.target.value),
+          onKeyDown: (e3) => e3.key === "Enter" && handleAuth(),
           style: inp
         }), /* @__PURE__ */ React.createElement("input", {
           type: "password",
           placeholder: "Password (min 8 characters)",
           value: authPassword,
-          onChange: (e) => setAuthPassword(e.target.value),
-          onKeyDown: (e) => e.key === "Enter" && handleAuth(),
+          onChange: (e3) => setAuthPassword(e3.target.value),
+          onKeyDown: (e3) => e3.key === "Enter" && handleAuth(),
           style: inp
         }), /* @__PURE__ */ React.createElement("input", {
           type: "password",
           placeholder: "Confirm password",
           value: authConfirmPw,
-          onChange: (e) => setAuthConfirmPw(e.target.value),
-          onKeyDown: (e) => e.key === "Enter" && handleAuth(),
+          onChange: (e3) => setAuthConfirmPw(e3.target.value),
+          onKeyDown: (e3) => e3.key === "Enter" && handleAuth(),
           style: {
             ...inp,
             borderColor: authConfirmPw && authConfirmPw !== authPassword ? "rgba(232,160,168,0.5)" : inp.borderColor
@@ -3262,8 +3729,8 @@ Move closer to your speakers and try again.`);
           type: "email",
           placeholder: "Email",
           value: authEmail,
-          onChange: (e) => setAuthEmail(e.target.value),
-          onKeyDown: (e) => e.key === "Enter" && handleAuth(),
+          onChange: (e3) => setAuthEmail(e3.target.value),
+          onKeyDown: (e3) => e3.key === "Enter" && handleAuth(),
           style: inp,
           autoFocus: true
         }), /* @__PURE__ */ React.createElement("div", {
@@ -3272,8 +3739,8 @@ Move closer to your speakers and try again.`);
           type: showPw ? "text" : "password",
           placeholder: "Password",
           value: authPassword,
-          onChange: (e) => setAuthPassword(e.target.value),
-          onKeyDown: (e) => e.key === "Enter" && handleAuth(),
+          onChange: (e3) => setAuthPassword(e3.target.value),
+          onKeyDown: (e3) => e3.key === "Enter" && handleAuth(),
           style: { ...inp, paddingRight: "48px" }
         }), /* @__PURE__ */ React.createElement(
           "button",
@@ -3991,8 +4458,8 @@ Move closer to your speakers and try again.`);
           /* @__PURE__ */ React.createElement(
             "div",
             { style: { marginTop: "10px" } },
-            /* @__PURE__ */ React.createElement("button", { onClick: (e) => {
-              e.stopPropagation();
+            /* @__PURE__ */ React.createElement("button", { onClick: (e3) => {
+              e3.stopPropagation();
               setCoachStep(0);
             }, style: { background: "none", border: "none", color: "rgba(255,255,255,0.3)", fontSize: "12px", fontFamily: "inherit", cursor: "pointer" } }, "Skip")
           )
@@ -4015,7 +4482,7 @@ Move closer to your speakers and try again.`);
         justifyContent: "flex-end"
       }
     }, /* @__PURE__ */ React.createElement("div", {
-      onClick: (e) => e.stopPropagation(),
+      onClick: (e3) => e3.stopPropagation(),
       style: {
         width: "100%",
         background: "#0f0f1c",
@@ -4238,11 +4705,25 @@ Move closer to your speakers and try again.`);
         color: "rgba(255,255,255,0.3)",
         textDecoration: "none"
       }
-    }, "+ Add Record"))))), showTrackList && !window.Capacitor && /* @__PURE__ */ React.createElement("div", {
+    }, "+ Add Record"))))), showSideInfoSheet && /* @__PURE__ */ React.createElement(SideInfoSheet, {
+      tracks: turntableTracksRef.current,
+      initialBreaks: null,
+      saving: userMetaSaving,
+      error: userMetaError,
+      onSave: handleSaveUserSides,
+      onClose: () => setShowSideInfoSheet(false)
+    }), showLyricsEditor && lyricsEditorTrack?.trackId && /* @__PURE__ */ React.createElement(LyricsEditorSheet, {
+      track: lyricsEditorTrack,
+      sites: LYRIC_SITES,
+      saving: userMetaSaving,
+      error: userMetaError,
+      onSave: handleSaveUserLyrics,
+      onClose: () => setShowLyricsEditor(false)
+    }), showTrackList && !window.Capacitor && /* @__PURE__ */ React.createElement("div", {
       onClick: () => setShowTrackList(false),
       style: { position: "fixed", inset: 0, zIndex: 201, background: "rgba(0,0,0,0.6)", backdropFilter: "blur(4px)", cursor: "pointer", display: "flex", alignItems: "flex-end", justifyContent: "center" }
     }, /* @__PURE__ */ React.createElement("div", {
-      onClick: (e) => e.stopPropagation(),
+      onClick: (e3) => e3.stopPropagation(),
       style: { width: "100%", maxWidth: "520px", background: "#0f0f1c", borderRadius: "24px 24px 0 0", maxHeight: "80vh", overflow: "hidden", display: "flex", flexDirection: "column", boxShadow: "0 -8px 48px rgba(0,0,0,0.6)", animation: "slide-up 0.3s ease" }
     }, /* @__PURE__ */ React.createElement("div", {
       style: { display: "flex", justifyContent: "center", padding: "12px 0 4px" }
@@ -4292,7 +4773,7 @@ Move closer to your speakers and try again.`);
         cursor: "pointer"
       }
     }, /* @__PURE__ */ React.createElement("div", {
-      onClick: (e) => e.stopPropagation(),
+      onClick: (e3) => e3.stopPropagation(),
       style: isWide ? {
         position: "fixed",
         top: 0,
@@ -4354,11 +4835,11 @@ Move closer to your speakers and try again.`);
       }
     }, "\xD7")) : /* @__PURE__ */ React.createElement("div", {
       onClick: () => setShowSettings(false),
-      onTouchStart: (e) => {
-        e.currentTarget._touchStartY = e.touches[0].clientY;
+      onTouchStart: (e3) => {
+        e3.currentTarget._touchStartY = e3.touches[0].clientY;
       },
-      onTouchEnd: (e) => {
-        if (e.changedTouches[0].clientY - (e.currentTarget._touchStartY || 0) > 60) setShowSettings(false);
+      onTouchEnd: (e3) => {
+        if (e3.changedTouches[0].clientY - (e3.currentTarget._touchStartY || 0) > 60) setShowSettings(false);
       },
       style: {
         padding: "12px 24px 4px",
@@ -4831,7 +5312,7 @@ Move closer to your speakers and try again.`);
         }
       }, "What's going wrong?"), /* @__PURE__ */ React.createElement("textarea", {
         value: bugText,
-        onChange: (e) => setBugText(e.target.value),
+        onChange: (e3) => setBugText(e3.target.value),
         placeholder: "Describe the bug \u2014 what happened, what you expected...",
         rows: 4,
         style: {
@@ -4957,7 +5438,7 @@ Move closer to your speakers and try again.`);
     }, /* @__PURE__ */ React.createElement(
       "div",
       {
-        onClick: (e) => e.stopPropagation(),
+        onClick: (e3) => e3.stopPropagation(),
         style: { background: "#0f0f1c", borderRadius: "24px 24px 0 0", padding: "28px 28px max(40px,calc(env(safe-area-inset-bottom)+28px))", maxWidth: "520px", width: "100%", border: "1px solid rgba(255,255,255,0.07)" }
       },
       /* @__PURE__ */ React.createElement("div", { style: { width: "40px", height: "4px", borderRadius: "2px", background: "rgba(255,255,255,0.12)", margin: "0 auto 24px" } }),
@@ -5042,7 +5523,7 @@ Move closer to your speakers and try again.`);
     }, /* @__PURE__ */ React.createElement(
       "div",
       {
-        onClick: (e) => e.stopPropagation(),
+        onClick: (e3) => e3.stopPropagation(),
         style: { background: "#0f0f1c", borderRadius: "24px 24px 0 0", padding: "28px 28px max(40px,calc(env(safe-area-inset-bottom)+28px))", maxWidth: "520px", width: "100%", border: "1px solid rgba(255,255,255,0.07)" }
       },
       /* @__PURE__ */ React.createElement("div", { style: { width: "40px", height: "4px", borderRadius: "2px", background: "rgba(255,255,255,0.12)", margin: "0 auto 20px" } }),
@@ -5053,8 +5534,8 @@ Move closer to your speakers and try again.`);
         /* @__PURE__ */ React.createElement(
           "div",
           { style: { display: "flex", flexDirection: "column", gap: "10px", marginBottom: "16px" } },
-          /* @__PURE__ */ React.createElement("input", { type: "password", placeholder: "New password (min 8 characters)", value: changePwNew, onChange: (e) => setChangePwNew(e.target.value), onKeyDown: (e) => e.key === "Enter" && handleChangePassword(), autoFocus: true, style: { width: "100%", background: "rgba(255,255,255,0.05)", border: "1px solid rgba(255,255,255,0.1)", color: "#f0e6d3", padding: "16px 18px", borderRadius: "14px", fontSize: "16px", fontFamily: "inherit" } }),
-          /* @__PURE__ */ React.createElement("input", { type: "password", placeholder: "Confirm new password", value: changePwConfirm, onChange: (e) => setChangePwConfirm(e.target.value), onKeyDown: (e) => e.key === "Enter" && handleChangePassword(), style: { width: "100%", background: "rgba(255,255,255,0.05)", border: `1px solid ${changePwConfirm && changePwConfirm !== changePwNew ? "rgba(232,160,168,0.5)" : "rgba(255,255,255,0.1)"}`, color: "#f0e6d3", padding: "16px 18px", borderRadius: "14px", fontSize: "16px", fontFamily: "inherit" } })
+          /* @__PURE__ */ React.createElement("input", { type: "password", placeholder: "New password (min 8 characters)", value: changePwNew, onChange: (e3) => setChangePwNew(e3.target.value), onKeyDown: (e3) => e3.key === "Enter" && handleChangePassword(), autoFocus: true, style: { width: "100%", background: "rgba(255,255,255,0.05)", border: "1px solid rgba(255,255,255,0.1)", color: "#f0e6d3", padding: "16px 18px", borderRadius: "14px", fontSize: "16px", fontFamily: "inherit" } }),
+          /* @__PURE__ */ React.createElement("input", { type: "password", placeholder: "Confirm new password", value: changePwConfirm, onChange: (e3) => setChangePwConfirm(e3.target.value), onKeyDown: (e3) => e3.key === "Enter" && handleChangePassword(), style: { width: "100%", background: "rgba(255,255,255,0.05)", border: `1px solid ${changePwConfirm && changePwConfirm !== changePwNew ? "rgba(232,160,168,0.5)" : "rgba(255,255,255,0.1)"}`, color: "#f0e6d3", padding: "16px 18px", borderRadius: "14px", fontSize: "16px", fontFamily: "inherit" } })
         ),
         changePwError && /* @__PURE__ */ React.createElement("div", { style: { fontSize: "13px", color: "#e8a0a8", textAlign: "center", marginBottom: "12px" } }, changePwError),
         /* @__PURE__ */ React.createElement("button", { onClick: handleChangePassword, disabled: changePwWorking, style: { width: "100%", background: "linear-gradient(135deg,#d4a846,#c9807a)", color: "#080810", border: "none", borderRadius: "14px", padding: "18px", fontSize: "15px", fontWeight: "700", cursor: changePwWorking ? "wait" : "pointer", opacity: changePwWorking ? 0.6 : 1, fontFamily: "inherit" } }, changePwWorking ? "Updating\u2026" : "Update Password")
@@ -5065,7 +5546,7 @@ Move closer to your speakers and try again.`);
       },
       style: { position: "fixed", inset: 0, zIndex: 300, background: "rgba(0,0,0,0.7)", backdropFilter: "blur(4px)", display: "flex", alignItems: "center", justifyContent: "center", padding: "24px" }
     }, /* @__PURE__ */ React.createElement("div", {
-      onClick: (e) => e.stopPropagation(),
+      onClick: (e3) => e3.stopPropagation(),
       style: { background: "#0f0f1c", borderRadius: "20px", padding: "28px 24px", maxWidth: "320px", width: "100%", border: "1px solid rgba(220,80,80,0.2)" }
     }, /* @__PURE__ */ React.createElement("div", {
       style: { fontSize: "18px", fontWeight: "700", color: "#fff", marginBottom: "10px" }
@@ -5097,7 +5578,7 @@ Move closer to your speakers and try again.`);
         justifyContent: "flex-end"
       }
     }, /* @__PURE__ */ React.createElement("div", {
-      onClick: (e) => e.stopPropagation(),
+      onClick: (e3) => e3.stopPropagation(),
       style: {
         width: "100%",
         background: "#0f0f1c",
@@ -5425,10 +5906,10 @@ Move closer to your speakers and try again.`);
         position: "relative",
         display: "block"
       },
-      onClick: (e) => {
+      onClick: (e3) => {
         if (!songDuration) return;
-        const r = e.currentTarget.getBoundingClientRect();
-        const ratio = Math.max(0, Math.min(1, (e.clientX - r.left) / r.width));
+        const r = e3.currentTarget.getBoundingClientRect();
+        const ratio = Math.max(0, Math.min(1, (e3.clientX - r.left) / r.width));
         const targetTime = ratio * songDuration;
         initialPosRef.current = targetTime;
         syncStartRef.current = Date.now();
@@ -5603,7 +6084,26 @@ Move closer to your speakers and try again.`);
         fontSize: "16px",
         paddingTop: "30vh"
       }
-    }, "No lyrics found for this track")), /* @__PURE__ */ React.createElement("div", {
+    }, /* @__PURE__ */ React.createElement("div", null, "No lyrics found for this track"), lyricsEditorTrack?.trackId && /* @__PURE__ */ React.createElement("button", {
+      onClick: () => {
+        setUserMetaError(null);
+        setShowLyricsEditor(true);
+      },
+      style: {
+        marginTop: "18px",
+        background: "rgba(212,168,70,0.1)",
+        border: "1px solid rgba(212,168,70,0.35)",
+        color: "rgba(212,168,70,0.9)",
+        borderRadius: "50px",
+        padding: "12px 28px",
+        fontSize: "13px",
+        fontWeight: 700,
+        cursor: "pointer",
+        fontFamily: "inherit"
+      }
+    }, "Add lyrics"), lyricsEditorTrack?.trackId && /* @__PURE__ */ React.createElement("div", {
+      style: { fontSize: "11px", color: "rgba(255,255,255,0.25)", marginTop: 10, lineHeight: 1.5 }
+    }, "Find them on Genius, AZLyrics, Musixmatch or LRCLIB and paste them in"))), /* @__PURE__ */ React.createElement("div", {
       style: {
         position: "absolute",
         top: 0,
@@ -5626,7 +6126,7 @@ Move closer to your speakers and try again.`);
     })), /* @__PURE__ */ React.createElement("div", {
       // Taps inside the controls panel must NOT bubble to the background
       // dismiss handler, or pressing a button would hide the menu.
-      onTouchStart: (e) => e.stopPropagation(),
+      onTouchStart: (e3) => e3.stopPropagation(),
       style: isLandscape ? {
         // Landscape: the ONLY left panel now — a full-height controls sidebar from
         // just below the top bar (52px) to the bottom. Controls are vertically
@@ -5835,7 +6335,7 @@ Move closer to your speakers and try again.`);
       }
     }, isPaused ? "\u25B6 Resume" : "|| Pause"), IS_IOS && /* @__PURE__ */ React.createElement("button", {
       onClick: () => {
-        logButtonEvent("resync");
+        logButtonEvent2("resync");
         resync();
       },
       disabled: isResyncing,
@@ -5961,7 +6461,7 @@ Move closer to your speakers and try again.`);
         }, /* @__PURE__ */ React.createElement(
           "div",
           {
-            onClick: (e) => e.stopPropagation(),
+            onClick: (e3) => e3.stopPropagation(),
             style: { background: "#0e0e1a", borderRadius: "20px 20px 0 0", border: "1px solid rgba(255,255,255,0.09)", maxHeight: "80vh", overflow: "hidden", display: "flex", flexDirection: "column", paddingBottom: "max(24px, calc(env(safe-area-inset-bottom) + 12px))" }
           },
           /* @__PURE__ */ React.createElement(
@@ -6292,7 +6792,46 @@ Move closer to your speakers and try again.`);
           marginTop: 2
         }
       }, "Tap to choose a record from your library")))
-    )), /* @__PURE__ */ React.createElement("button", {
+    )), !turntableTracksLoading && turntableAlbum && sideDataMissing && /* @__PURE__ */ React.createElement("div", {
+      // No side info for this record — warn before sync so the user can add it
+      // (flip detection would otherwise guess a midpoint A/B split).
+      style: {
+        width: "100%",
+        background: "rgba(212,168,70,0.06)",
+        border: "1px solid rgba(212,168,70,0.25)",
+        borderRadius: "14px",
+        padding: "10px 14px",
+        marginBottom: "12px",
+        display: "flex",
+        alignItems: "center",
+        gap: "10px",
+        textAlign: "left"
+      }
+    }, /* @__PURE__ */ React.createElement("div", {
+      style: { flex: 1, minWidth: 0 }
+    }, /* @__PURE__ */ React.createElement("div", {
+      style: { fontSize: "12px", fontWeight: 600, color: "rgba(212,168,70,0.9)" }
+    }, "No side info for this record"), /* @__PURE__ */ React.createElement("div", {
+      style: { fontSize: "11px", color: "rgba(255,255,255,0.4)", marginTop: 2, lineHeight: 1.4 }
+    }, "Liri is guessing where the sides split, so flip detection may be off.")), /* @__PURE__ */ React.createElement("button", {
+      onClick: () => {
+        setUserMetaError(null);
+        setShowSideInfoSheet(true);
+      },
+      style: {
+        background: "rgba(212,168,70,0.15)",
+        border: "1px solid rgba(212,168,70,0.4)",
+        color: "rgba(212,168,70,0.95)",
+        borderRadius: "50px",
+        padding: "8px 14px",
+        fontSize: "12px",
+        fontWeight: 700,
+        cursor: "pointer",
+        fontFamily: "inherit",
+        flexShrink: 0,
+        whiteSpace: "nowrap"
+      }
+    }, "Add sides")), /* @__PURE__ */ React.createElement("button", {
       id: "liri-listen-cta",
       onClick: () => !turntableTracksLoading && startListening(false),
       style: {

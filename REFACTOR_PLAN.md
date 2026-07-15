@@ -5,6 +5,28 @@ edit, and reason about — without changing behavior. Today `app/src/main.js` is
 **~6,968 lines**: a single `Liri()` React component that owns all state, ~40
 inline functions, and a 503-`createElement` render. That's the #1 bottleneck.
 
+## Progress
+
+- [x] **Phase 0 — Prep.** Branch `refactor/split-main` created.
+- [x] **Phase 1 — Pure helpers.** Done in commit `61d652a`. Created
+  `base/lib/library.js`, `base/lib/match.js`, `base/lib/analytics.js`,
+  `base/lib/config.js`. `main.js` 6968 → 6716 lines. `APP_VERSION` → 1.5.3.
+  Web build verified on Vercel preview + manually smoke-tested (library
+  order, plain-lyrics fallback, button/listening/flip/auto-post logging) —
+  all good. Still owed: `npm run sync` + on-device iOS test (not yet run).
+- [x] **Phase 2 — Feature hooks.** Done in commit `b9170db`. Created
+  `hooks/usePayments.js` (userTier/albumCount/IAP/Stripe),
+  `hooks/useNowPlaying.js` (cross-tab persistence + heartbeat),
+  `hooks/useLyricScroll.js` (auto-scroll/tap-to-seek/re-follow). `main.js`
+  6716 → 6429 lines. `APP_VERSION` → 1.5.4. Not yet build/device-tested —
+  do that before Phase 3.
+- [ ] **Phase 3 — Core playback hooks.** Up next: `useTurntable`,
+  `useListening`, `useTrackAdvance`. Highest-care phase — these share refs
+  across the whole component. Re-locate regions by name search first, the
+  plan's old line numbers (below) are stale.
+- [ ] **Phase 4 — Split the render.**
+- [ ] **Phase 5 — Tab HTML pages.**
+
 ## Principles (non-negotiable)
 
 1. **Zero behavior change.** Pure mechanical extraction. If output/ordering
@@ -56,11 +78,11 @@ app/src/
 
 ## Phases (do in this order — lowest risk first)
 
-### Phase 0 — Prep (no code movement)
+### Phase 0 — Prep (no code movement) ✅ DONE
 - Create branch `refactor/split-main`.
 - Add this file's tree as empty stubs? No — create files as each phase lands.
 
-### Phase 1 — Pure helpers (safest; no React, no state)
+### Phase 1 — Pure helpers (safest; no React, no state) ✅ DONE (commit `61d652a`)
 Extract top-level/near-pure functions to `base/lib`:
 - `orderLibrary` (main.js ~42), `plainToLines` (~34) → `base/lib/library.js`
 - Matching: "Vinyl-aware track matching" + "Unique consecutive-word match"
@@ -70,12 +92,20 @@ Extract top-level/near-pure functions to `base/lib`:
 - Constants block (IS_IOS, proxies, offsets ~63–78) → `base/lib/config.js`
 **Risk: low.** These have clear inputs/outputs. Build + smoke test.
 
-### Phase 2 — Self-contained feature logic → hooks
+> Note: all line numbers below (Phases 2–5) were written against the
+> **pre-Phase-1** 6968-line `main.js` and are now stale (current file is
+> 6716 lines). Re-locate each region by content/name search before editing,
+> don't trust the numbers.
+
+### Phase 2 — Self-contained feature logic → hooks ✅ DONE (commit `b9170db`)
 Move a domain's state + effects into a `use*` hook, return what render needs:
 - `usePayments` — Apple IAP + Stripe upgrade (~788–1032)
 - `useNowPlaying` — persistence + heartbeat (~2170–2336)
 - `useLyricScroll` — scroll effects (~1415–1520, ~2337–2408)
 Do **one hook per commit**; verify playback after each.
+(Landed as one commit with three hooks rather than three separate commits —
+each was diffed line-for-line against the pre-refactor source before moving
+on, so the safety property still held.)
 
 ### Phase 3 — Core playback hooks (highest value, most care)
 - `useTurntable` — album/track/side load (~205–262, ~1078–1274, ~2409–2608)
