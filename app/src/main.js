@@ -42,7 +42,7 @@ const liriAuthStorage = {
   removeItem: k => { try { sessionStorage.removeItem(k); } catch {} try { localStorage.removeItem(k); } catch {} },
 };
 const sb = supabase.createClient("https://xjdjpaxgymgbvcwmvorc.supabase.co", "sb_publishable_C-NBnfg0ltAoUi46XQTUjA_ozjZW_Nd", { auth: { storage: liriAuthStorage } });
-const APP_VERSION = "1.5.8";
+const APP_VERSION = "1.5.9";
 // Lyrics lead the audio clock by this many seconds — the highlighted line
 // switches slightly BEFORE its nominal timestamp. Displayed time / progress bar
 // are unaffected (we only add this to the line-matching comparison). Helps the
@@ -1151,13 +1151,14 @@ function Liri() {
     try {
       const {
         data
-      } = await sb.from("user_library").select("*, catalogue(album_name, artist_name, artwork_url, itunes_collection_id)").eq("user_id", uid).order("added_at", {
+      } = await sb.from("user_library").select("*, catalogue(album_name, artist_name, artist_sort_name, artwork_url, itunes_collection_id)").eq("user_id", uid).order("added_at", {
         ascending: false
       });
       const library = (data || []).map(row => ({
         ...row,
         album_name: row.catalogue?.album_name || row.album_name || "",
         artist_name: row.catalogue?.artist_name || row.artist_name || "",
+        artist_sort_name: row.catalogue?.artist_sort_name || null,
         artwork_url: row.catalogue?.artwork_url || row.artwork_url || null,
       }));
       setUserLibrary(library);

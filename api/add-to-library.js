@@ -140,6 +140,26 @@ async function fetchItunesAlbum(collectionId) {
   };
 }
 
+// ── MusicBrainz ────────────────────────────────────────────────────────────────
+
+// One best-effort lookup per NEW album: MusicBrainz's human-curated sort name
+// ("Bowie, David"; "Rolling Stones, The") drives record-shop ordering in the
+// library. Returns null on any miss or low-confidence match — clients fall
+// back to the plain artist name.
+async function fetchArtistSortName(artistName) {
+  if (!artistName) return null;
+  try {
+    const q = `artist:"${artistName.replace(/"/g, '\\"')}"`;
+    const url = `https://musicbrainz.org/ws/2/artist/?query=${encodeURIComponent(q)}&fmt=json&limit=1`;
+    const { data } = await httpsGet(url, { "User-Agent": "Liri/1.0 +https://getliri.com" });
+    const artist = data?.artists?.[0];
+    return (artist && artist.score >= 90 && artist["sort-name"]) ? artist["sort-name"] : null;
+  } catch (e) {
+    console.warn("[add-to-library] MusicBrainz sort-name lookup failed (non-fatal):", e.message);
+    return null;
+  }
+}
+
 // ── Discogs ─────────────────────────────────────────────────────────────────────
 
 function discogsHeaders() {
@@ -379,10 +399,13 @@ module.exports = async (req, res) => {
       if (!album || !album.tracks.length)
         return res.status(404).json({ error: "Album not found on iTunes" });
 
+      const artistSortName = await fetchArtistSortName(album.artistName);
+
       await upsert("catalogue", {
         itunes_collection_id: collectionId,
         album_name:    album.albumName,
         artist_name:   album.artistName,
+        artist_sort_name: artistSortName,
         artwork_url:   album.artworkUrl,
         release_year:  album.year,
         track_count:   album.tracks.length,
@@ -433,6 +456,7 @@ module.exports = async (req, res) => {
         itunes_collection_id: collectionId,
         album_name:    albumName,
         artist_name:   artistName,
+        artist_sort_name: await fetchArtistSortName(artistName),
         artwork_url:   artworkUrl,
         release_year:  release.year || null,
         track_count:   rawTracks.length,
