@@ -27,6 +27,8 @@
 
   // app/base/lib/library.js
   var plainToLines = (txt) => (txt || "").split("\n").filter((l) => l.trim()).map((text) => ({ time: null, text }));
+  var artistLastName = (name) => (name || "").trim().replace(/^the\s+/i, "").split(/\s+/).pop() || "";
+  var cmp = (a, b) => (a || "").localeCompare(b || "", void 0, { sensitivity: "base" });
   function orderLibrary(lib, recentIds) {
     const seen = /* @__PURE__ */ new Set();
     const recent = [];
@@ -37,7 +39,7 @@
         seen.add(String(id));
       }
     }
-    const rest = (lib || []).filter((x) => !seen.has(String(x.itunes_collection_id))).sort((a, b) => (a.album_name || "").localeCompare(b.album_name || "", void 0, { sensitivity: "base" }));
+    const rest = (lib || []).filter((x) => !seen.has(String(x.itunes_collection_id))).sort((a, b) => cmp(artistLastName(a.artist_name), artistLastName(b.artist_name)) || cmp(a.artist_name, b.artist_name) || cmp(a.album_name, b.album_name));
     return [...recent, ...rest];
   }
 
@@ -1208,7 +1210,7 @@
     }
   };
   var sb = supabase.createClient("https://xjdjpaxgymgbvcwmvorc.supabase.co", "sb_publishable_C-NBnfg0ltAoUi46XQTUjA_ozjZW_Nd", { auth: { storage: liriAuthStorage } });
-  var APP_VERSION = "1.5.6";
+  var APP_VERSION = "1.5.7";
   var LYRIC_LEAD_SECONDS = 2;
   var sessionTabId = (() => {
     try {

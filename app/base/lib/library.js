@@ -4,8 +4,17 @@
 // player renders the flat auto-scroll view instead of pretending to be synced.
 export const plainToLines = txt => (txt || "").split("\n").filter(l => l.trim()).map(text => ({ time: null, text }));
 
+// Record-shop filing key: the artist's last name — last word of the artist
+// name after dropping a leading "The " ("David Bowie" → "Bowie",
+// "The Rolling Stones" → "Stones").
+export const artistLastName = name =>
+  (name || "").trim().replace(/^the\s+/i, "").split(/\s+/).pop() || "";
+
+const cmp = (a, b) => (a || "").localeCompare(b || "", undefined, { sensitivity: "base" });
+
 // Order a record library: the (up to 2) most-recently-played albums first, in
-// recency order, then everything else alphabetically by album name.
+// recency order, then everything else by artist last name (ties broken by
+// full artist name, then album name).
 export function orderLibrary(lib, recentIds) {
   const seen = new Set();
   const recent = [];
@@ -15,6 +24,9 @@ export function orderLibrary(lib, recentIds) {
   }
   const rest = (lib || [])
     .filter(x => !seen.has(String(x.itunes_collection_id)))
-    .sort((a, b) => (a.album_name || "").localeCompare(b.album_name || "", undefined, { sensitivity: "base" }));
+    .sort((a, b) =>
+      cmp(artistLastName(a.artist_name), artistLastName(b.artist_name)) ||
+      cmp(a.artist_name, b.artist_name) ||
+      cmp(a.album_name, b.album_name));
   return [...recent, ...rest];
 }

@@ -36,7 +36,7 @@
   <script type="text/babel">
     const { useState, useEffect, useRef, useCallback } = React;
 
-    const APP_VERSION = "1.5.6";
+    const APP_VERSION = "1.5.7";
 
     // On iOS Capacitor relative URLs don't resolve — route all API calls through the live domain.
     const API_BASE = window.Capacitor ? "https://www.getliri.com" : "";
@@ -386,7 +386,16 @@
       );
     }
 
-    // 2 most-recently-played albums first (recency order), then the rest A→Z.
+    // Record-shop filing key: the artist's last name — last word of the artist
+    // name after dropping a leading "The " ("David Bowie" → "Bowie",
+    // "The Rolling Stones" → "Stones").
+    const artistLastName = name =>
+      (name || "").trim().replace(/^the\s+/i, "").split(/\s+/).pop() || "";
+
+    const cmpBase = (a, b) => (a || "").localeCompare(b || "", undefined, { sensitivity: "base" });
+
+    // 2 most-recently-played albums first (recency order), then the rest by
+    // artist last name (ties: full artist name, then album name).
     function orderLibrary(lib, recentIds) {
       const seen = new Set();
       const recent = [];
@@ -396,7 +405,10 @@
       }
       const rest = (lib || [])
         .filter(x => !seen.has(String(x.itunes_collection_id)))
-        .sort((a, b) => (a.album_name || "").localeCompare(b.album_name || "", undefined, { sensitivity: "base" }));
+        .sort((a, b) =>
+          cmpBase(artistLastName(a.artist_name), artistLastName(b.artist_name)) ||
+          cmpBase(a.artist_name, b.artist_name) ||
+          cmpBase(a.album_name, b.album_name));
       return [...recent, ...rest];
     }
 
