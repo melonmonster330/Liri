@@ -25,6 +25,487 @@
     return `${Math.floor(diff / 86400)}d ago`;
   }
 
+  // app/base/lib/library.js
+  var plainToLines = (txt) => (txt || "").split("\n").filter((l) => l.trim()).map((text) => ({ time: null, text }));
+  function orderLibrary(lib, recentIds) {
+    const seen = /* @__PURE__ */ new Set();
+    const recent = [];
+    for (const id of recentIds || []) {
+      const a = (lib || []).find((x) => String(x.itunes_collection_id) === String(id));
+      if (a && !seen.has(String(id))) {
+        recent.push(a);
+        seen.add(String(id));
+      }
+    }
+    const rest = (lib || []).filter((x) => !seen.has(String(x.itunes_collection_id))).sort((a, b) => (a.album_name || "").localeCompare(b.album_name || "", void 0, { sensitivity: "base" }));
+    return [...recent, ...rest];
+  }
+
+  // app/base/lib/analytics.js
+  async function logListeningEvent(sb2, sessionId, params) {
+    try {
+      await sb2.from("listening_events").insert({
+        user_id: params.userId || null,
+        session_id: sessionId,
+        track_title: params.title,
+        artist_name: params.artist,
+        album_name: params.album || null,
+        artwork_url: params.artwork || null,
+        genre: params.genre || null,
+        itunes_track_id: params.itunesTrackId ? Number(params.itunesTrackId) : null,
+        itunes_collection_id: params.collectionId ? Number(params.collectionId) : null,
+        vinyl_release_id: params.vinylReleaseId || null,
+        vinyl_mode_on: params.vinylModeOn ?? false,
+        source: params.source || "recognition",
+        platform: window.Capacitor ? "ios" : "web",
+        country_code: params.countryCode || null,
+        playback_offset_s: params.offsetSecs != null ? Math.round(params.offsetSecs) : null,
+        track_duration_s: params.durationSecs != null ? Math.round(params.durationSecs) : null,
+        acr_confidence: params.acrScore || null
+      });
+    } catch (e) {
+      console.error("logListeningEvent failed:", e.message);
+    }
+  }
+  async function maybeAutoPostPlay(sb2, autoPostVisRef, autoPostedAlbumsRef, { userId, collectionId, album, artist, artwork }) {
+    try {
+      const vis = autoPostVisRef.current;
+      if (!userId || vis === "off") return;
+      if (!collectionId) return;
+      const key = String(collectionId);
+      if (autoPostedAlbumsRef.current.has(key)) return;
+      autoPostedAlbumsRef.current.add(key);
+      const since = new Date(Date.now() - 12 * 60 * 60 * 1e3).toISOString();
+      const { data: recent } = await sb2.from("posts").select("id").eq("author_id", userId).eq("collection_id", Number(collectionId)).eq("source", "auto").gte("created_at", since).limit(1);
+      if (recent && recent.length) return;
+      await sb2.from("posts").insert({
+        author_id: userId,
+        kind: "album",
+        source: "auto",
+        visibility: vis,
+        collection_id: Number(collectionId),
+        album_name: album || null,
+        artist_name: artist || null,
+        artwork_url: artwork || null
+      });
+    } catch (e) {
+      console.error("maybeAutoPostPlay failed:", e.message);
+    }
+  }
+  async function logFlipEvent(sb2, sessionId, params) {
+    try {
+      await sb2.from("flip_events").insert({
+        user_id: params.userId || null,
+        session_id: sessionId,
+        vinyl_release_id: params.vinylReleaseId || null,
+        itunes_collection_id: params.collectionId ? Number(params.collectionId) : null,
+        album_name: params.album || null,
+        artist_name: params.artist || null,
+        from_side: params.fromSide || null,
+        to_side: params.toSide || null,
+        detection_method: params.method || "heuristic"
+      });
+    } catch (e) {
+      console.error("logFlipEvent failed:", e.message);
+    }
+  }
+  async function logButtonEvent(sb2, ctx, buttonName) {
+    const { sessionId, user, detectedSong, albumCollectionIdRef, lastRawMatchRef } = ctx;
+    try {
+      const raw = lastRawMatchRef.current;
+      await sb2.from("button_events").insert({
+        user_id: user?.id || null,
+        session_id: sessionId,
+        button_name: buttonName,
+        track_title: detectedSong?.title || null,
+        artist_name: detectedSong?.artist || null,
+        album_name: detectedSong?.album || null,
+        itunes_collection_id: albumCollectionIdRef?.current ? Number(albumCollectionIdRef.current) : null,
+        platform: window.Capacitor ? "ios" : "web",
+        identified_by: raw?.identified_by || null,
+        raw_match_title: raw?.title || null,
+        raw_match_artist: raw?.artist || null
+      });
+    } catch (e) {
+    }
+  }
+
+  // app/base/lib/config.js
+  var IS_IOS = !!window.Capacitor;
+  var TRANSCRIBE_PROXY = window.Capacitor ? "https://www.getliri.com/api/transcribe" : "/api/transcribe";
+  var ITUNES_PROXY = window.Capacitor ? "https://www.getliri.com/api/itunes-lookup" : "/api/itunes-lookup";
+
+  // app/ios/iap.js
+  function getLiriIAP() {
+    return window.Capacitor?.Plugins?.LiriIAP ?? null;
+  }
+
+  // app/src/hooks/usePayments.js
+  var { useState, useEffect } = React;
+  function usePayments({ sb: sb2, sessionTokenRef }) {
+    const [userTier, setUserTier] = useState("free");
+    const [albumCount, setAlbumCount] = useState(0);
+    const [upgradeWorking, setUpgradeWorking] = useState(false);
+    const [iapPrice, setIapPrice] = useState("$2.99/mo");
+    const [premiumPlan, setPremiumPlan] = useState("monthly");
+    const [iapWorking, setIapWorking] = useState(false);
+    useEffect(() => {
+      const iap = getLiriIAP();
+      if (!IS_IOS || !iap) return;
+      iap.fetchProduct().then((p) => {
+        if (p?.displayPrice) setIapPrice(`${p.displayPrice}/mo`);
+      }).catch(() => {
+      });
+    }, []);
+    const syncAppleSubscription = async (token) => {
+      const iap = getLiriIAP();
+      if (!IS_IOS || !iap) return;
+      try {
+        const status = await iap.getSubscriptionStatus();
+        if (status?.isActive && status?.signedTransaction) {
+          const r = await fetch("https://www.getliri.com/api/stripe-checkout", {
+            method: "POST",
+            headers: { "Content-Type": "application/json", "Authorization": `Bearer ${token}` },
+            body: JSON.stringify({ appleTransaction: status.signedTransaction })
+          });
+          if (r.ok) setUserTier("premium");
+        }
+      } catch {
+      }
+    };
+    const upgradeWithApple = async (plan = "monthly") => {
+      const iap = getLiriIAP();
+      if (!iap) {
+        alert("In-app purchases are not available right now. Please try again or contact support.");
+        return;
+      }
+      setIapWorking(true);
+      try {
+        const result = plan === "lifetime" ? await iap.purchaseLifetime() : await iap.purchase();
+        if (result?.signedTransaction) {
+          const token = sessionTokenRef.current;
+          const r = await fetch("https://www.getliri.com/api/stripe-checkout", {
+            method: "POST",
+            headers: { "Content-Type": "application/json", "Authorization": `Bearer ${token}` },
+            body: JSON.stringify({ appleTransaction: result.signedTransaction, plan })
+          });
+          const data = await r.json();
+          if (data.tier === "premium" || data.tier === "lifetime") {
+            setUserTier(data.tier);
+            setAlbumCount((prev) => prev);
+          } else {
+            alert(data.error || "Could not verify purchase. Please contact support.");
+          }
+        }
+      } catch (e) {
+        if (e?.message !== "cancelled") alert("Purchase failed. Please try again.");
+      } finally {
+        setIapWorking(false);
+      }
+    };
+    const restoreApplePurchases = async () => {
+      const iap = getLiriIAP();
+      if (!iap) {
+        alert("Restore is not available right now.");
+        return;
+      }
+      setIapWorking(true);
+      try {
+        const status = await iap.restorePurchases();
+        if (status?.isActive && status?.signedTransaction) {
+          const token = sessionTokenRef.current;
+          const plan = status.isLifetime ? "lifetime" : "monthly";
+          const r = await fetch("https://www.getliri.com/api/stripe-checkout", {
+            method: "POST",
+            headers: { "Content-Type": "application/json", "Authorization": `Bearer ${token}` },
+            body: JSON.stringify({ appleTransaction: status.signedTransaction, plan })
+          });
+          const data = await r.json();
+          if (data.tier === "premium" || data.tier === "lifetime") setUserTier(data.tier);
+          else alert("No active subscription found.");
+        } else {
+          alert("No active subscription found.");
+        }
+      } catch {
+        alert("Restore failed. Please try again.");
+      } finally {
+        setIapWorking(false);
+      }
+    };
+    const upgradeToStripe = async (plan = "monthly") => {
+      setUpgradeWorking(true);
+      try {
+        const { data: { session: s } } = await sb2.auth.getSession();
+        const token = s?.access_token || sessionTokenRef.current;
+        const res = await fetch("/api/stripe-checkout", {
+          method: "POST",
+          headers: { "Content-Type": "application/json", "Authorization": `Bearer ${token}` },
+          body: JSON.stringify({ plan })
+        });
+        const json = await res.json().catch(() => ({}));
+        if (json.url) {
+          window.location.href = json.url;
+        } else {
+          alert(json.error || "Could not start checkout. Please try again.");
+          setUpgradeWorking(false);
+        }
+      } catch {
+        alert("Network error \u2014 please try again.");
+        setUpgradeWorking(false);
+      }
+    };
+    return {
+      userTier,
+      setUserTier,
+      albumCount,
+      setAlbumCount,
+      upgradeWorking,
+      setUpgradeWorking,
+      iapPrice,
+      setIapPrice,
+      premiumPlan,
+      setPremiumPlan,
+      iapWorking,
+      setIapWorking,
+      syncAppleSubscription,
+      upgradeWithApple,
+      restoreApplePurchases,
+      upgradeToStripe
+    };
+  }
+
+  // app/src/hooks/useNowPlaying.js
+  var { useRef, useEffect: useEffect2 } = React;
+  function useNowPlaying({
+    sessionTabId: sessionTabId2,
+    mode,
+    setMode,
+    detectedSong,
+    setDetectedSong,
+    identifiedBy,
+    setIdentifiedBy,
+    songDuration,
+    setSongDuration,
+    lyrics,
+    setLyrics,
+    lyricsRef,
+    currentTrackIndex,
+    setCurrentTrackIndex,
+    albumCollectionId,
+    setAlbumCollectionId,
+    albumCollectionIdRef,
+    turntableMatchedIdxRef,
+    syncStartRef,
+    initialPosRef,
+    syncCalcRef
+  }) {
+    const nowPlayingSnapshotRef = useRef(null);
+    useEffect2(() => {
+      if (mode === "syncing" || mode === "confirmed") {
+        nowPlayingSnapshotRef.current = {
+          detectedSong,
+          lyrics,
+          songDuration,
+          currentTrackIndex,
+          albumCollectionId,
+          identifiedBy,
+          turntableMatchedIdx: turntableMatchedIdxRef.current
+        };
+        try {
+          const t = syncStartRef.current != null ? initialPosRef.current + (Date.now() - syncStartRef.current) / 1e3 : initialPosRef.current;
+          localStorage.setItem("liri_nowplaying", JSON.stringify({
+            ...nowPlayingSnapshotRef.current,
+            playbackTime: Math.max(0, t),
+            savedAt: Date.now()
+          }));
+        } catch {
+        }
+      } else {
+        nowPlayingSnapshotRef.current = null;
+        if (mode === "idle" || mode === "listening") {
+          try {
+            localStorage.removeItem("liri_nowplaying");
+          } catch {
+          }
+        }
+      }
+    }, [mode, detectedSong, lyrics, songDuration, currentTrackIndex, albumCollectionId, identifiedBy]);
+    useEffect2(() => {
+      const onHide = () => {
+        const snap = nowPlayingSnapshotRef.current;
+        if (!snap || !snap.detectedSong) return;
+        const t = syncStartRef.current != null ? initialPosRef.current + (Date.now() - syncStartRef.current) / 1e3 : initialPosRef.current;
+        const payload = JSON.stringify({ ...snap, playbackTime: Math.max(0, t), savedAt: Date.now() });
+        try {
+          sessionStorage.setItem("liri_nowplaying", payload);
+        } catch {
+        }
+        try {
+          localStorage.setItem("liri_nowplaying", payload);
+        } catch {
+        }
+      };
+      window.addEventListener("pagehide", onHide);
+      return () => window.removeEventListener("pagehide", onHide);
+    }, []);
+    useEffect2(() => {
+      if (mode !== "syncing") return;
+      const beat = () => {
+        try {
+          localStorage.setItem("liri_playing_beat", JSON.stringify({ id: sessionTabId2, ts: Date.now() }));
+        } catch {
+        }
+      };
+      beat();
+      const id = setInterval(beat, 5e3);
+      return () => {
+        clearInterval(id);
+        try {
+          const b = JSON.parse(localStorage.getItem("liri_playing_beat") || "null");
+          if (b?.id === sessionTabId2) localStorage.removeItem("liri_playing_beat");
+        } catch {
+        }
+      };
+    }, [mode]);
+    useEffect2(() => {
+      let saved = null;
+      try {
+        saved = JSON.parse(sessionStorage.getItem("liri_nowplaying") || "null");
+        sessionStorage.removeItem("liri_nowplaying");
+      } catch {
+      }
+      if (!saved) {
+        try {
+          const b = JSON.parse(localStorage.getItem("liri_playing_beat") || "null");
+          const otherTabPlaying = b && b.id !== sessionTabId2 && Date.now() - b.ts < 15e3;
+          if (!otherTabPlaying) saved = JSON.parse(localStorage.getItem("liri_nowplaying") || "null");
+        } catch {
+        }
+      }
+      if (!saved || !saved.detectedSong || Date.now() - saved.savedAt > 60 * 60 * 1e3) return;
+      const elapsed = (Date.now() - saved.savedAt) / 1e3;
+      const restoredPos = Math.max(0, saved.playbackTime + elapsed);
+      setDetectedSong(saved.detectedSong);
+      const lrc = saved.lyrics || [];
+      setLyrics(lrc);
+      lyricsRef.current = lrc;
+      setSongDuration(saved.songDuration ?? null);
+      setCurrentTrackIndex(saved.currentTrackIndex ?? 0);
+      turntableMatchedIdxRef.current = saved.turntableMatchedIdx ?? 0;
+      if (saved.albumCollectionId) {
+        setAlbumCollectionId(saved.albumCollectionId);
+        albumCollectionIdRef.current = saved.albumCollectionId;
+      }
+      if (saved.identifiedBy) setIdentifiedBy(saved.identifiedBy);
+      syncCalcRef.current = { startPos: restoredPos, phraseOffset: 0, recStart: Date.now() };
+      setMode("confirmed");
+    }, []);
+  }
+
+  // app/src/hooks/useLyricScroll.js
+  var { useRef: useRef2, useEffect: useEffect3 } = React;
+  function useLyricScroll({
+    mode,
+    lyrics,
+    lyricsRef,
+    songDuration,
+    isPaused,
+    isLandscape,
+    controlsVisible,
+    currentIndex,
+    setCurrentIndex,
+    playbackTime,
+    setPlaybackTime,
+    setUserScrolling,
+    userScrollingRef,
+    refollowTimerRef,
+    currentLineRef,
+    creditsRef,
+    scrollSpeedRef,
+    initialPosRef,
+    syncStartRef
+  }) {
+    const lyricsUnsynced = lyrics.length > 0 && lyrics[0].time == null;
+    const lyricsScrollRef = useRef2(null);
+    useEffect3(() => {
+      if (userScrollingRef.current || lyricsUnsynced) return;
+      if (currentLineRef.current && mode === "syncing") currentLineRef.current.scrollIntoView({
+        behavior: "smooth",
+        block: "center"
+      });
+    }, [currentIndex, mode, lyricsUnsynced]);
+    useEffect3(() => {
+      if (!isLandscape || mode !== "syncing" || lyricsUnsynced) return;
+      let raf, start;
+      const pin = (ts) => {
+        if (start == null) start = ts;
+        if (!userScrollingRef.current) currentLineRef.current?.scrollIntoView({ block: "center" });
+        if (ts - start < 450) raf = requestAnimationFrame(pin);
+      };
+      raf = requestAnimationFrame(pin);
+      return () => cancelAnimationFrame(raf);
+    }, [controlsVisible, isLandscape, mode, lyricsUnsynced]);
+    useEffect3(() => {
+      if (mode !== "syncing" || !lyricsUnsynced || isPaused) return;
+      const el = lyricsScrollRef.current;
+      if (!el) return;
+      const durGuess = songDuration || lyricsRef.current.length * 4.5 || 180;
+      let pos = el.scrollTop;
+      let last = performance.now();
+      let raf;
+      const tick = (now) => {
+        const dt = Math.min(0.2, (now - last) / 1e3);
+        last = now;
+        if (userScrollingRef.current) {
+          pos = el.scrollTop;
+        } else {
+          const total = Math.max(0, el.scrollHeight - el.clientHeight);
+          const base = total / Math.max(45, durGuess);
+          pos = Math.min(total, pos + base * scrollSpeedRef.current * dt);
+          el.scrollTop = pos;
+        }
+        raf = requestAnimationFrame(tick);
+      };
+      raf = requestAnimationFrame(tick);
+      return () => cancelAnimationFrame(raf);
+    }, [mode, lyricsUnsynced, isPaused, songDuration]);
+    const seekToLine = (i) => {
+      const targetTime = lyricsRef.current[i]?.time;
+      if (targetTime == null) return;
+      initialPosRef.current = targetTime;
+      syncStartRef.current = Date.now();
+      setCurrentIndex(i);
+      setPlaybackTime(targetTime);
+      userScrollingRef.current = false;
+      setUserScrolling(false);
+    };
+    const refollow = () => {
+      userScrollingRef.current = false;
+      setUserScrolling(false);
+      clearTimeout(refollowTimerRef.current);
+      if (lyricsRef.current[0]?.time == null) return;
+      currentLineRef.current?.scrollIntoView({
+        behavior: "smooth",
+        block: "center"
+      });
+    };
+    const noteUserScroll = () => {
+      userScrollingRef.current = true;
+      setUserScrolling(true);
+      clearTimeout(refollowTimerRef.current);
+      refollowTimerRef.current = setTimeout(() => refollow(), 1e4);
+    };
+    useEffect3(() => {
+      if (mode !== "syncing" || !lyrics.length || lyricsUnsynced) return;
+      const lastTime = lyrics[lyrics.length - 1].time;
+      if (playbackTime >= lastTime + 6 && creditsRef.current) creditsRef.current.scrollIntoView({
+        behavior: "smooth",
+        block: "center"
+      });
+    }, [Math.floor(playbackTime), mode, lyrics.length]);
+    return { lyricsUnsynced, lyricsScrollRef, seekToLine, refollow, noteUserScroll };
+  }
+
   // app/base/lib/whisper.js
   var WHISPER_PROXY = window.Capacitor ? "https://www.getliri.com/api/whisper" : "/api/whisper";
 
@@ -152,14 +633,14 @@
   }
 
   // app/base/components/WaveAnimation.js
-  var { useRef, useEffect } = React;
+  var { useRef: useRef3, useEffect: useEffect4 } = React;
   var BAR_MULTS = [0.55, 0.85, 1, 0.75, 0.95, 0.65, 0.9, 0.7, 1, 0.6, 0.8, 0.5];
   function WaveAnimation({ active, size = 1, analyserRef, level }) {
-    const barRefs = useRef([]);
-    const rafRef = useRef(null);
-    const smoothRef = useRef(new Float32Array(BAR_MULTS.length));
-    const histRef = useRef([]);
-    useEffect(() => {
+    const barRefs = useRef3([]);
+    const rafRef = useRef3(null);
+    const smoothRef = useRef3(new Float32Array(BAR_MULTS.length));
+    const histRef = useRef3([]);
+    useEffect4(() => {
       if (!level || level <= 0) {
         histRef.current = [];
         return;
@@ -168,7 +649,7 @@
       histRef.current.push({ t: now, v: level });
       histRef.current = histRef.current.filter((e) => now - e.t < 3e3);
     }, [level]);
-    useEffect(() => {
+    useEffect4(() => {
       if (!active) {
         cancelAnimationFrame(rafRef.current);
         return;
@@ -243,12 +724,12 @@
   }
 
   // app/base/components/ProgressRing.js
-  var { useState, useEffect: useEffect2 } = React;
+  var { useState: useState2, useEffect: useEffect5 } = React;
   function ProgressRing({ size = 96 }) {
     const r = size / 2 - 5;
     const circ = 2 * Math.PI * r;
-    const [t, setT] = useState(0);
-    useEffect2(() => {
+    const [t, setT] = useState2(0);
+    useEffect5(() => {
       const start = Date.now();
       const id = setInterval(() => setT((Date.now() - start) % 3e4 / 3e4), 50);
       return () => clearInterval(id);
@@ -324,16 +805,11 @@
     }
   };
 
-  // app/ios/iap.js
-  function getLiriIAP() {
-    return window.Capacitor?.Plugins?.LiriIAP ?? null;
-  }
-
   // app/src/main.js
   var {
-    useState: useState2,
-    useEffect: useEffect3,
-    useRef: useRef2,
+    useState: useState3,
+    useEffect: useEffect6,
+    useRef: useRef4,
     useCallback
   } = React;
   if (typeof supabase === "undefined") {
@@ -370,22 +846,8 @@
     }
   };
   var sb = supabase.createClient("https://xjdjpaxgymgbvcwmvorc.supabase.co", "sb_publishable_C-NBnfg0ltAoUi46XQTUjA_ozjZW_Nd", { auth: { storage: liriAuthStorage } });
-  var APP_VERSION = "1.5.2";
-  var plainToLines = (txt) => (txt || "").split("\n").filter((l) => l.trim()).map((text) => ({ time: null, text }));
+  var APP_VERSION = "1.5.5";
   var LYRIC_LEAD_SECONDS = 2;
-  function orderLibrary(lib, recentIds) {
-    const seen = /* @__PURE__ */ new Set();
-    const recent = [];
-    for (const id of recentIds || []) {
-      const a = (lib || []).find((x) => String(x.itunes_collection_id) === String(id));
-      if (a && !seen.has(String(id))) {
-        recent.push(a);
-        seen.add(String(id));
-      }
-    }
-    const rest = (lib || []).filter((x) => !seen.has(String(x.itunes_collection_id))).sort((a, b) => (a.album_name || "").localeCompare(b.album_name || "", void 0, { sensitivity: "base" }));
-    return [...recent, ...rest];
-  }
   var sessionTabId = (() => {
     try {
       let id = sessionStorage.getItem("liri_tab_id");
@@ -398,9 +860,6 @@
       return String(Math.random());
     }
   })();
-  var IS_IOS = !!window.Capacitor;
-  var TRANSCRIBE_PROXY = window.Capacitor ? "https://www.getliri.com/api/transcribe" : "/api/transcribe";
-  var ITUNES_PROXY = window.Capacitor ? "https://www.getliri.com/api/itunes-lookup" : "/api/itunes-lookup";
   var styleEl = document.createElement("style");
   styleEl.textContent = `
       @keyframes vinyl-spin { to { transform: rotate(360deg); } }
@@ -417,28 +876,28 @@
     `;
   document.head.appendChild(styleEl);
   function Liri() {
-    const [mode, setMode] = useState2("idle");
-    const [detectedSong, setDetectedSong] = useState2(null);
-    const [identifiedBy, setIdentifiedBy] = useState2(null);
-    const [songDuration, setSongDuration] = useState2(null);
-    const [lyrics, setLyrics] = useState2([]);
-    const [currentIndex, setCurrentIndex] = useState2(0);
-    const [playbackTime, setPlaybackTime] = useState2(0);
-    const [error, setError] = useState2(null);
-    const [listenProgress, setListenProgress] = useState2(0);
-    const [liveTranscript, setLiveTranscript] = useState2("");
-    const [listenAttempt, setListenAttempt] = useState2(0);
-    const [listenSecs, setListenSecs] = useState2(0);
-    const [showSettings, setShowSettings] = useState2(false);
-    const [isWide, setIsWide] = useState2(() => window.innerWidth >= 768);
-    useEffect3(() => {
+    const [mode, setMode] = useState3("idle");
+    const [detectedSong, setDetectedSong] = useState3(null);
+    const [identifiedBy, setIdentifiedBy] = useState3(null);
+    const [songDuration, setSongDuration] = useState3(null);
+    const [lyrics, setLyrics] = useState3([]);
+    const [currentIndex, setCurrentIndex] = useState3(0);
+    const [playbackTime, setPlaybackTime] = useState3(0);
+    const [error, setError] = useState3(null);
+    const [listenProgress, setListenProgress] = useState3(0);
+    const [liveTranscript, setLiveTranscript] = useState3("");
+    const [listenAttempt, setListenAttempt] = useState3(0);
+    const [listenSecs, setListenSecs] = useState3(0);
+    const [showSettings, setShowSettings] = useState3(false);
+    const [isWide, setIsWide] = useState3(() => window.innerWidth >= 768);
+    useEffect6(() => {
       const onResize = () => setIsWide(window.innerWidth >= 768);
       window.addEventListener("resize", onResize);
       return () => window.removeEventListener("resize", onResize);
     }, []);
-    const [isLandscape, setIsLandscape] = useState2(() => window.innerWidth > window.innerHeight && window.innerWidth >= 600);
-    const [winW, setWinW] = useState2(window.innerWidth);
-    useEffect3(() => {
+    const [isLandscape, setIsLandscape] = useState3(() => window.innerWidth > window.innerHeight && window.innerWidth >= 600);
+    const [winW, setWinW] = useState3(window.innerWidth);
+    useEffect6(() => {
       const onResize = () => {
         setIsLandscape(window.innerWidth > window.innerHeight && window.innerWidth >= 600);
         setWinW(window.innerWidth);
@@ -446,117 +905,129 @@
       window.addEventListener("resize", onResize);
       return () => window.removeEventListener("resize", onResize);
     }, []);
-    const [controlsVisible, setControlsVisible] = useState2(true);
-    const controlsHideTimerRef = useRef2(null);
+    const [controlsVisible, setControlsVisible] = useState3(true);
+    const controlsHideTimerRef = useRef4(null);
     const railW = Math.min(270, Math.max(190, Math.round(winW * 0.26)));
     const menuOpen = isLandscape && controlsVisible;
     const lyricAreaW = menuOpen ? Math.min(760, Math.max(260, winW - railW - 48)) : Math.min(820, winW - 48);
     const lyricAreaLeft = menuOpen ? Math.max(railW + 24, Math.round((winW - lyricAreaW) / 2)) : Math.round((winW - lyricAreaW) / 2);
     const lyricFontScale = menuOpen ? 1.1 * Math.max(0.72, Math.min(1, lyricAreaW / 640)) : 1.25;
-    const [showBugReport, setShowBugReport] = useState2(false);
-    const [bugText, setBugText] = useState2("");
-    const [bugSending, setBugSending] = useState2(false);
-    const [bugSent, setBugSent] = useState2(false);
-    const [showPremiumInfo, setShowPremiumInfo] = useState2(false);
-    const [showDeleteAccount, setShowDeleteAccount] = useState2(false);
-    const [deleteWorking, setDeleteWorking] = useState2(false);
-    const [deleteError, setDeleteError] = useState2(null);
-    const [showChangePw, setShowChangePw] = useState2(false);
-    const [changePwNew, setChangePwNew] = useState2("");
-    const [changePwConfirm, setChangePwConfirm] = useState2("");
-    const [changePwWorking, setChangePwWorking] = useState2(false);
-    const [changePwError, setChangePwError] = useState2(null);
-    const [changePwDone, setChangePwDone] = useState2(false);
-    const [showHistory, setShowHistory] = useState2(false);
-    const [showTrackList, setShowTrackList] = useState2(false);
-    const [showNowPlayingList, setShowNowPlayingList] = useState2(false);
-    const [collapsedSides, setCollapsedSides] = useState2(/* @__PURE__ */ new Set());
+    const [showBugReport, setShowBugReport] = useState3(false);
+    const [bugText, setBugText] = useState3("");
+    const [bugSending, setBugSending] = useState3(false);
+    const [bugSent, setBugSent] = useState3(false);
+    const [showPremiumInfo, setShowPremiumInfo] = useState3(false);
+    const [showDeleteAccount, setShowDeleteAccount] = useState3(false);
+    const [deleteWorking, setDeleteWorking] = useState3(false);
+    const [deleteError, setDeleteError] = useState3(null);
+    const [showChangePw, setShowChangePw] = useState3(false);
+    const [changePwNew, setChangePwNew] = useState3("");
+    const [changePwConfirm, setChangePwConfirm] = useState3("");
+    const [changePwWorking, setChangePwWorking] = useState3(false);
+    const [changePwError, setChangePwError] = useState3(null);
+    const [changePwDone, setChangePwDone] = useState3(false);
+    const [showHistory, setShowHistory] = useState3(false);
+    const [showTrackList, setShowTrackList] = useState3(false);
+    const [showNowPlayingList, setShowNowPlayingList] = useState3(false);
+    const [collapsedSides, setCollapsedSides] = useState3(/* @__PURE__ */ new Set());
     const toggleSideCollapse = (side) => setCollapsedSides((prev) => {
       const n = new Set(prev);
       n.has(side) ? n.delete(side) : n.add(side);
       return n;
     });
-    const [user, setUser] = useState2(null);
-    const [authLoading, setAuthLoading] = useState2(true);
-    const [authMode, setAuthMode] = useState2("signin");
-    const [authEmail, setAuthEmail] = useState2("");
-    const [authPassword, setAuthPassword] = useState2("");
-    const [showPw, setShowPw] = useState2(false);
-    const [authConfirmPw, setAuthConfirmPw] = useState2("");
-    const [authName, setAuthName] = useState2("");
-    const [authError, setAuthError] = useState2(null);
-    const [authWorking, setAuthWorking] = useState2(false);
-    const [authSheet, setAuthSheet] = useState2(null);
-    const [authVerifyPending, setAuthVerifyPending] = useState2(false);
+    const [user, setUser] = useState3(null);
+    const [authLoading, setAuthLoading] = useState3(true);
+    const [authMode, setAuthMode] = useState3("signin");
+    const [authEmail, setAuthEmail] = useState3("");
+    const [authPassword, setAuthPassword] = useState3("");
+    const [showPw, setShowPw] = useState3(false);
+    const [authConfirmPw, setAuthConfirmPw] = useState3("");
+    const [authName, setAuthName] = useState3("");
+    const [authError, setAuthError] = useState3(null);
+    const [authWorking, setAuthWorking] = useState3(false);
+    const [authSheet, setAuthSheet] = useState3(null);
+    const [authVerifyPending, setAuthVerifyPending] = useState3(false);
     const isUnlimited = (u) => true;
-    const [userTier, setUserTier] = useState2("free");
-    const [albumCount, setAlbumCount] = useState2(0);
-    const [upgradeWorking, setUpgradeWorking] = useState2(false);
-    const sessionTokenRef = useRef2(null);
-    const [history, setHistory] = useState2([]);
-    const [historyLoading, setHistoryLoading] = useState2(false);
+    const sessionTokenRef = useRef4(null);
+    const {
+      userTier,
+      setUserTier,
+      albumCount,
+      setAlbumCount,
+      upgradeWorking,
+      iapPrice,
+      premiumPlan,
+      setPremiumPlan,
+      iapWorking,
+      syncAppleSubscription,
+      upgradeWithApple,
+      restoreApplePurchases,
+      upgradeToStripe
+    } = usePayments({ sb, sessionTokenRef });
+    const [history, setHistory] = useState3([]);
+    const [historyLoading, setHistoryLoading] = useState3(false);
     const vinylMode = true;
-    const autoAdvanceFiredRef = useRef2(false);
-    const [turntableAlbum, setTurntableAlbum] = useState2(() => {
+    const autoAdvanceFiredRef = useRef4(false);
+    const [turntableAlbum, setTurntableAlbum] = useState3(() => {
       try {
         return JSON.parse(localStorage.getItem("liri_turntable") || "null");
       } catch {
         return null;
       }
     });
-    const [showAlbumPicker, setShowAlbumPicker] = useState2(false);
-    const [userLibrary, setUserLibrary] = useState2([]);
-    const [libLoading, setLibLoading] = useState2(false);
-    const [recentPlayedIds, setRecentPlayedIds] = useState2([]);
-    const [turntableTracksLoading, setTurntableTracksLoading] = useState2(false);
-    const [turntableTracksProgress, setTurntableTracksProgress] = useState2({ percent: 0, stage: "" });
-    const turntableAlbumRef = useRef2(turntableAlbum);
-    const turntableTracksRef = useRef2([]);
-    const turntableMatchedIdxRef = useRef2(-1);
-    const turntableLyricsCacheRef = useRef2({});
-    const wordsDataRef = useRef2({});
-    const autoRetryCountRef = useRef2(0);
-    const [albumTracks, setAlbumTracks] = useState2([]);
-    const [currentTrackIndex, setCurrentTrackIndex] = useState2(-1);
-    const albumTracksRef = useRef2([]);
-    const currentTrackIndexRef = useRef2(-1);
-    const [isResyncing, setIsResyncing] = useState2(false);
-    const [isNeedleDrop, setIsNeedleDrop] = useState2(false);
-    const [keepScreenAwake, setKeepScreenAwake] = useState2(() => localStorage.getItem("liri_keep_awake") === "true");
-    const wakeLockRef = useRef2(null);
-    const [isPaused, setIsPaused] = useState2(false);
-    const [kbToast, setKbToast] = useState2(null);
-    const kbToastTimerRef = useRef2(null);
-    const [shouldAdvanceTrack, setShouldAdvanceTrack] = useState2(false);
-    const [sideEndReason, setSideEndReason] = useState2("failed");
-    const [sideEndNextDiscInfo, setSideEndNextDiscInfo] = useState2(null);
-    const flipChimeTimersRef = useRef2([]);
-    const flipStartDelayMsRef = useRef2(0);
-    const [albumCollectionId, setAlbumCollectionId] = useState2(null);
-    const albumCollectionIdRef = useRef2(null);
-    const albumTpsRef = useRef2(0);
-    const [vinylDbRelease, setVinylDbRelease] = useState2(null);
-    const vinylDbReleaseRef = useRef2(null);
-    const vinylSidesRef = useRef2([]);
-    const [scrollSpeed, setScrollSpeed] = useState2(() => {
+    const [showAlbumPicker, setShowAlbumPicker] = useState3(false);
+    const [userLibrary, setUserLibrary] = useState3([]);
+    const [libLoading, setLibLoading] = useState3(false);
+    const [recentPlayedIds, setRecentPlayedIds] = useState3([]);
+    const [turntableTracksLoading, setTurntableTracksLoading] = useState3(false);
+    const [turntableTracksProgress, setTurntableTracksProgress] = useState3({ percent: 0, stage: "" });
+    const turntableAlbumRef = useRef4(turntableAlbum);
+    const turntableTracksRef = useRef4([]);
+    const turntableMatchedIdxRef = useRef4(-1);
+    const turntableLyricsCacheRef = useRef4({});
+    const wordsDataRef = useRef4({});
+    const autoRetryCountRef = useRef4(0);
+    const [albumTracks, setAlbumTracks] = useState3([]);
+    const [currentTrackIndex, setCurrentTrackIndex] = useState3(-1);
+    const albumTracksRef = useRef4([]);
+    const currentTrackIndexRef = useRef4(-1);
+    const [isResyncing, setIsResyncing] = useState3(false);
+    const [isNeedleDrop, setIsNeedleDrop] = useState3(false);
+    const [keepScreenAwake, setKeepScreenAwake] = useState3(() => localStorage.getItem("liri_keep_awake") === "true");
+    const wakeLockRef = useRef4(null);
+    const [isPaused, setIsPaused] = useState3(false);
+    const [kbToast, setKbToast] = useState3(null);
+    const kbToastTimerRef = useRef4(null);
+    const [shouldAdvanceTrack, setShouldAdvanceTrack] = useState3(false);
+    const [sideEndReason, setSideEndReason] = useState3("failed");
+    const [sideEndNextDiscInfo, setSideEndNextDiscInfo] = useState3(null);
+    const flipChimeTimersRef = useRef4([]);
+    const flipStartDelayMsRef = useRef4(0);
+    const [albumCollectionId, setAlbumCollectionId] = useState3(null);
+    const albumCollectionIdRef = useRef4(null);
+    const albumTpsRef = useRef4(0);
+    const [vinylDbRelease, setVinylDbRelease] = useState3(null);
+    const vinylDbReleaseRef = useRef4(null);
+    const vinylSidesRef = useRef4([]);
+    const [scrollSpeed, setScrollSpeed] = useState3(() => {
       const v = parseFloat(localStorage.getItem("liri_scroll_speed"));
       return isNaN(v) ? 1 : Math.min(4, Math.max(0.25, v));
     });
-    const scrollSpeedRef = useRef2(scrollSpeed);
-    const [flipSound, setFlipSound] = useState2(() => localStorage.getItem("liri_flip_sound") !== "false");
-    const [flipNotify, setFlipNotify] = useState2(() => localStorage.getItem("liri_flip_notify") === "true");
-    const [notifyDenied, setNotifyDenied] = useState2(false);
-    const [nudgeMenu, setNudgeMenu] = useState2(null);
-    const nudgeMenuTimerRef = useRef2(null);
-    const [showOnboarding, setShowOnboarding] = useState2(false);
-    const [onboardingStep, setOnboardingStep] = useState2(0);
+    const scrollSpeedRef = useRef4(scrollSpeed);
+    const [flipSound, setFlipSound] = useState3(() => localStorage.getItem("liri_flip_sound") !== "false");
+    const [flipNotify, setFlipNotify] = useState3(() => localStorage.getItem("liri_flip_notify") === "true");
+    const [notifyDenied, setNotifyDenied] = useState3(false);
+    const [nudgeMenu, setNudgeMenu] = useState3(null);
+    const nudgeMenuTimerRef = useRef4(null);
+    const [showOnboarding, setShowOnboarding] = useState3(false);
+    const [onboardingStep, setOnboardingStep] = useState3(0);
     const ONBOARDING_STEPS = 6;
-    const [coachStep, setCoachStep] = useState2(0);
+    const [coachStep, setCoachStep] = useState3(0);
     const dismissOnboarding = () => {
       localStorage.setItem("liri_onboarding_done", "true");
       setShowOnboarding(false);
     };
-    useEffect3(() => {
+    useEffect6(() => {
       if (user && !localStorage.getItem("liri_onboarding_done")) {
         setCoachStep(0);
         setOnboardingStep(0);
@@ -573,52 +1044,52 @@
       }
       return sid;
     }, []);
-    const streamRef = useRef2(null);
-    const speechRecRef = useRef2(null);
-    const analyserNodeRef = useRef2(null);
-    const audioCtxRef = useRef2(null);
-    const chimeCtxRef = useRef2(null);
-    const syncIntervalRef = useRef2(null);
-    const syncStartRef = useRef2(null);
-    const detectedAtRef = useRef2(null);
-    const initialPosRef = useRef2(0);
-    const userNudgeRef = useRef2(0);
-    const syncCalcRef = useRef2(null);
-    const recordingStartRef = useRef2(null);
-    const lyricsRef = useRef2([]);
-    const progressTimerRef = useRef2(null);
-    const currentLineRef = useRef2(null);
-    const creditsRef = useRef2(null);
-    const userScrollingRef = useRef2(false);
-    const [userScrolling, setUserScrolling] = useState2(false);
-    const refollowTimerRef = useRef2(null);
-    const scrollInhibitTimer = useRef2(null);
-    const listenSessionRef = useRef2(0);
-    const attemptLogRef = useRef2([]);
-    const lastRecordingRef = useRef2(null);
-    const recognitionWonRef = useRef2(false);
-    const lastRawMatchRef = useRef2(null);
-    const autoPostVisRef = useRef2("off");
-    const autoPostedAlbumsRef = useRef2(/* @__PURE__ */ new Set());
-    const [audioLevel, setAudioLevel] = useState2(0);
-    const [lastSong, setLastSong] = useState2(null);
-    const [hoverNudge, setHoverNudge] = useState2(null);
-    useEffect3(() => {
+    const streamRef = useRef4(null);
+    const speechRecRef = useRef4(null);
+    const analyserNodeRef = useRef4(null);
+    const audioCtxRef = useRef4(null);
+    const chimeCtxRef = useRef4(null);
+    const syncIntervalRef = useRef4(null);
+    const syncStartRef = useRef4(null);
+    const detectedAtRef = useRef4(null);
+    const initialPosRef = useRef4(0);
+    const userNudgeRef = useRef4(0);
+    const syncCalcRef = useRef4(null);
+    const recordingStartRef = useRef4(null);
+    const lyricsRef = useRef4([]);
+    const progressTimerRef = useRef4(null);
+    const currentLineRef = useRef4(null);
+    const creditsRef = useRef4(null);
+    const userScrollingRef = useRef4(false);
+    const [userScrolling, setUserScrolling] = useState3(false);
+    const refollowTimerRef = useRef4(null);
+    const scrollInhibitTimer = useRef4(null);
+    const listenSessionRef = useRef4(0);
+    const attemptLogRef = useRef4([]);
+    const lastRecordingRef = useRef4(null);
+    const recognitionWonRef = useRef4(false);
+    const lastRawMatchRef = useRef4(null);
+    const autoPostVisRef = useRef4("off");
+    const autoPostedAlbumsRef = useRef4(/* @__PURE__ */ new Set());
+    const [audioLevel, setAudioLevel] = useState3(0);
+    const [lastSong, setLastSong] = useState3(null);
+    const [hoverNudge, setHoverNudge] = useState3(null);
+    useEffect6(() => {
       lyricsRef.current = lyrics;
     }, [lyrics]);
-    useEffect3(() => {
+    useEffect6(() => {
       albumTracksRef.current = albumTracks;
     }, [albumTracks]);
-    useEffect3(() => {
+    useEffect6(() => {
       currentTrackIndexRef.current = currentTrackIndex;
     }, [currentTrackIndex]);
-    useEffect3(() => {
+    useEffect6(() => {
       vinylDbReleaseRef.current = vinylDbRelease;
     }, [vinylDbRelease]);
-    useEffect3(() => {
+    useEffect6(() => {
       albumCollectionIdRef.current = albumCollectionId;
     }, [albumCollectionId]);
-    useEffect3(() => {
+    useEffect6(() => {
       scrollSpeedRef.current = scrollSpeed;
       try {
         localStorage.setItem("liri_scroll_speed", String(scrollSpeed));
@@ -862,74 +1333,10 @@
         artwork_url: song.artwork || null
       });
     };
-    const logListeningEvent = async (params) => {
-      try {
-        await sb.from("listening_events").insert({
-          user_id: params.userId || null,
-          session_id: sessionId,
-          track_title: params.title,
-          artist_name: params.artist,
-          album_name: params.album || null,
-          artwork_url: params.artwork || null,
-          genre: params.genre || null,
-          itunes_track_id: params.itunesTrackId ? Number(params.itunesTrackId) : null,
-          itunes_collection_id: params.collectionId ? Number(params.collectionId) : null,
-          vinyl_release_id: params.vinylReleaseId || null,
-          vinyl_mode_on: params.vinylModeOn ?? false,
-          source: params.source || "recognition",
-          platform: window.Capacitor ? "ios" : "web",
-          country_code: params.countryCode || null,
-          playback_offset_s: params.offsetSecs != null ? Math.round(params.offsetSecs) : null,
-          track_duration_s: params.durationSecs != null ? Math.round(params.durationSecs) : null,
-          acr_confidence: params.acrScore || null
-        });
-      } catch (e) {
-        console.error("logListeningEvent failed:", e.message);
-      }
-    };
-    const maybeAutoPostPlay = async ({ userId, collectionId, album, artist, artwork: artwork2 }) => {
-      try {
-        const vis = autoPostVisRef.current;
-        if (!userId || vis === "off") return;
-        if (!collectionId) return;
-        const key = String(collectionId);
-        if (autoPostedAlbumsRef.current.has(key)) return;
-        autoPostedAlbumsRef.current.add(key);
-        const since = new Date(Date.now() - 12 * 60 * 60 * 1e3).toISOString();
-        const { data: recent } = await sb.from("posts").select("id").eq("author_id", userId).eq("collection_id", Number(collectionId)).eq("source", "auto").gte("created_at", since).limit(1);
-        if (recent && recent.length) return;
-        await sb.from("posts").insert({
-          author_id: userId,
-          kind: "album",
-          source: "auto",
-          visibility: vis,
-          collection_id: Number(collectionId),
-          album_name: album || null,
-          artist_name: artist || null,
-          artwork_url: artwork2 || null
-        });
-      } catch (e) {
-        console.error("maybeAutoPostPlay failed:", e.message);
-      }
-    };
-    const logFlipEvent = async (params) => {
-      try {
-        await sb.from("flip_events").insert({
-          user_id: params.userId || null,
-          session_id: sessionId,
-          vinyl_release_id: params.vinylReleaseId || null,
-          itunes_collection_id: params.collectionId ? Number(params.collectionId) : null,
-          album_name: params.album || null,
-          artist_name: params.artist || null,
-          from_side: params.fromSide || null,
-          to_side: params.toSide || null,
-          detection_method: params.method || "heuristic"
-        });
-      } catch (e) {
-        console.error("logFlipEvent failed:", e.message);
-      }
-    };
-    useEffect3(() => {
+    const logListeningEvent2 = (params) => logListeningEvent(sb, sessionId, params);
+    const maybeAutoPostPlay2 = (params) => maybeAutoPostPlay(sb, autoPostVisRef, autoPostedAlbumsRef, params);
+    const logFlipEvent2 = (params) => logFlipEvent(sb, sessionId, params);
+    useEffect6(() => {
       sb.auth.getSession().then(({
         data: {
           session
@@ -980,114 +1387,6 @@
       });
       return () => subscription.unsubscribe();
     }, []);
-    const [iapPrice, setIapPrice] = useState2("$2.99/mo");
-    const [premiumPlan, setPremiumPlan] = useState2("monthly");
-    const [iapWorking, setIapWorking] = useState2(false);
-    useEffect3(() => {
-      const iap = getLiriIAP();
-      if (!IS_IOS || !iap) return;
-      iap.fetchProduct().then((p) => {
-        if (p?.displayPrice) setIapPrice(`${p.displayPrice}/mo`);
-      }).catch(() => {
-      });
-    }, []);
-    const syncAppleSubscription = async (token) => {
-      const iap = getLiriIAP();
-      if (!IS_IOS || !iap) return;
-      try {
-        const status = await iap.getSubscriptionStatus();
-        if (status?.isActive && status?.signedTransaction) {
-          const r = await fetch("https://www.getliri.com/api/stripe-checkout", {
-            method: "POST",
-            headers: { "Content-Type": "application/json", "Authorization": `Bearer ${token}` },
-            body: JSON.stringify({ appleTransaction: status.signedTransaction })
-          });
-          if (r.ok) setUserTier("premium");
-        }
-      } catch {
-      }
-    };
-    const upgradeWithApple = async (plan = "monthly") => {
-      const iap = getLiriIAP();
-      if (!iap) {
-        alert("In-app purchases are not available right now. Please try again or contact support.");
-        return;
-      }
-      setIapWorking(true);
-      try {
-        const result = plan === "lifetime" ? await iap.purchaseLifetime() : await iap.purchase();
-        if (result?.signedTransaction) {
-          const token = sessionTokenRef.current;
-          const r = await fetch("https://www.getliri.com/api/stripe-checkout", {
-            method: "POST",
-            headers: { "Content-Type": "application/json", "Authorization": `Bearer ${token}` },
-            body: JSON.stringify({ appleTransaction: result.signedTransaction, plan })
-          });
-          const data = await r.json();
-          if (data.tier === "premium" || data.tier === "lifetime") {
-            setUserTier(data.tier);
-            setAlbumCount((prev) => prev);
-          } else {
-            alert(data.error || "Could not verify purchase. Please contact support.");
-          }
-        }
-      } catch (e) {
-        if (e?.message !== "cancelled") alert("Purchase failed. Please try again.");
-      } finally {
-        setIapWorking(false);
-      }
-    };
-    const restoreApplePurchases = async () => {
-      const iap = getLiriIAP();
-      if (!iap) {
-        alert("Restore is not available right now.");
-        return;
-      }
-      setIapWorking(true);
-      try {
-        const status = await iap.restorePurchases();
-        if (status?.isActive && status?.signedTransaction) {
-          const token = sessionTokenRef.current;
-          const plan = status.isLifetime ? "lifetime" : "monthly";
-          const r = await fetch("https://www.getliri.com/api/stripe-checkout", {
-            method: "POST",
-            headers: { "Content-Type": "application/json", "Authorization": `Bearer ${token}` },
-            body: JSON.stringify({ appleTransaction: status.signedTransaction, plan })
-          });
-          const data = await r.json();
-          if (data.tier === "premium" || data.tier === "lifetime") setUserTier(data.tier);
-          else alert("No active subscription found.");
-        } else {
-          alert("No active subscription found.");
-        }
-      } catch {
-        alert("Restore failed. Please try again.");
-      } finally {
-        setIapWorking(false);
-      }
-    };
-    const upgradeToStripe = async (plan = "monthly") => {
-      setUpgradeWorking(true);
-      try {
-        const { data: { session: s } } = await sb.auth.getSession();
-        const token = s?.access_token || sessionTokenRef.current;
-        const res = await fetch("/api/stripe-checkout", {
-          method: "POST",
-          headers: { "Content-Type": "application/json", "Authorization": `Bearer ${token}` },
-          body: JSON.stringify({ plan })
-        });
-        const json = await res.json().catch(() => ({}));
-        if (json.url) {
-          window.location.href = json.url;
-        } else {
-          alert(json.error || "Could not start checkout. Please try again.");
-          setUpgradeWorking(false);
-        }
-      } catch {
-        alert("Network error \u2014 please try again.");
-        setUpgradeWorking(false);
-      }
-    };
     const handleAuth = async () => {
       setAuthError(null);
       if (authMode === "signup") {
@@ -1394,7 +1693,7 @@
       setTurntableTracksLoading(false);
       setTurntableTracksProgress({ percent: 100, stage: "" });
     };
-    useEffect3(() => {
+    useEffect6(() => {
       turntableAlbumRef.current = turntableAlbum;
       turntableMatchedIdxRef.current = -1;
       if (turntableAlbum) {
@@ -1475,10 +1774,10 @@
       }
       setLibLoading(false);
     };
-    useEffect3(() => {
+    useEffect6(() => {
       if (user) fetchUserLibrary(user.id, true);
     }, [user]);
-    useEffect3(() => {
+    useEffect6(() => {
       if (mode !== "listening") {
         setListenSecs(0);
         setShowTrackList(false);
@@ -1487,14 +1786,14 @@
       const id = setInterval(() => setListenSecs((s) => s + 1), 1e3);
       return () => clearInterval(id);
     }, [mode]);
-    useEffect3(() => {
+    useEffect6(() => {
       if (mode === "confirmed" && detectedSong) {
         startSync();
         userScrollingRef.current = false;
         setUserScrolling(false);
       }
     }, [mode, detectedSong]);
-    useEffect3(() => {
+    useEffect6(() => {
       if (!window.Capacitor) return;
       if (mode !== "syncing") return;
       let cancelled = false;
@@ -1519,85 +1818,28 @@
         Shazam.cancel();
       };
     }, [mode]);
-    const lyricsUnsynced = lyrics.length > 0 && lyrics[0].time == null;
-    const lyricsScrollRef = useRef2(null);
-    useEffect3(() => {
-      if (userScrollingRef.current || lyricsUnsynced) return;
-      if (currentLineRef.current && mode === "syncing") currentLineRef.current.scrollIntoView({
-        behavior: "smooth",
-        block: "center"
-      });
-    }, [currentIndex, mode, lyricsUnsynced]);
-    useEffect3(() => {
-      if (!isLandscape || mode !== "syncing" || lyricsUnsynced) return;
-      let raf, start;
-      const pin = (ts) => {
-        if (start == null) start = ts;
-        if (!userScrollingRef.current) currentLineRef.current?.scrollIntoView({ block: "center" });
-        if (ts - start < 450) raf = requestAnimationFrame(pin);
-      };
-      raf = requestAnimationFrame(pin);
-      return () => cancelAnimationFrame(raf);
-    }, [controlsVisible, isLandscape, mode, lyricsUnsynced]);
-    useEffect3(() => {
-      if (mode !== "syncing" || !lyricsUnsynced || isPaused) return;
-      const el = lyricsScrollRef.current;
-      if (!el) return;
-      const durGuess = songDuration || lyricsRef.current.length * 4.5 || 180;
-      let pos = el.scrollTop;
-      let last = performance.now();
-      let raf;
-      const tick = (now) => {
-        const dt = Math.min(0.2, (now - last) / 1e3);
-        last = now;
-        if (userScrollingRef.current) {
-          pos = el.scrollTop;
-        } else {
-          const total = Math.max(0, el.scrollHeight - el.clientHeight);
-          const base = total / Math.max(45, durGuess);
-          pos = Math.min(total, pos + base * scrollSpeedRef.current * dt);
-          el.scrollTop = pos;
-        }
-        raf = requestAnimationFrame(tick);
-      };
-      raf = requestAnimationFrame(tick);
-      return () => cancelAnimationFrame(raf);
-    }, [mode, lyricsUnsynced, isPaused, songDuration]);
-    const seekToLine = (i) => {
-      const targetTime = lyricsRef.current[i]?.time;
-      if (targetTime == null) return;
-      initialPosRef.current = targetTime;
-      syncStartRef.current = Date.now();
-      setCurrentIndex(i);
-      setPlaybackTime(targetTime);
-      userScrollingRef.current = false;
-      setUserScrolling(false);
-    };
-    const refollow = () => {
-      userScrollingRef.current = false;
-      setUserScrolling(false);
-      clearTimeout(refollowTimerRef.current);
-      if (lyricsRef.current[0]?.time == null) return;
-      currentLineRef.current?.scrollIntoView({
-        behavior: "smooth",
-        block: "center"
-      });
-    };
-    const noteUserScroll = () => {
-      userScrollingRef.current = true;
-      setUserScrolling(true);
-      clearTimeout(refollowTimerRef.current);
-      refollowTimerRef.current = setTimeout(() => refollow(), 1e4);
-    };
-    useEffect3(() => {
-      if (mode !== "syncing" || !lyrics.length || lyricsUnsynced) return;
-      const lastTime = lyrics[lyrics.length - 1].time;
-      if (playbackTime >= lastTime + 6 && creditsRef.current) creditsRef.current.scrollIntoView({
-        behavior: "smooth",
-        block: "center"
-      });
-    }, [Math.floor(playbackTime), mode, lyrics.length]);
-    useEffect3(() => {
+    const { lyricsUnsynced, lyricsScrollRef, seekToLine, refollow, noteUserScroll } = useLyricScroll({
+      mode,
+      lyrics,
+      lyricsRef,
+      songDuration,
+      isPaused,
+      isLandscape,
+      controlsVisible,
+      currentIndex,
+      setCurrentIndex,
+      playbackTime,
+      setPlaybackTime,
+      setUserScrolling,
+      userScrollingRef,
+      refollowTimerRef,
+      currentLineRef,
+      creditsRef,
+      scrollSpeedRef,
+      initialPosRef,
+      syncStartRef
+    });
+    useEffect6(() => {
       if (mode !== "syncing") return;
       if (turntableAlbumRef.current && turntableTracksLoading && turntableTracksRef.current.length === 0) return;
       const lastLyricTime = lyrics.length > 0 ? lyrics[lyrics.length - 1].time : null;
@@ -1610,7 +1852,7 @@
         setShouldAdvanceTrack(true);
       }
     }, [playbackTime, songDuration, lyrics, mode]);
-    useEffect3(() => {
+    useEffect6(() => {
       if (!shouldAdvanceTrack) return;
       setShouldAdvanceTrack(false);
       const tTracks = turntableTracksRef.current;
@@ -1626,13 +1868,13 @@
         setMode("side-end");
       }
     }, [shouldAdvanceTrack]);
-    useEffect3(() => () => {
+    useEffect6(() => () => {
       clearInterval(syncIntervalRef.current);
       clearInterval(progressTimerRef.current);
       clearTimeout(refollowTimerRef.current);
       streamRef.current?.getTracks().forEach((t) => t.stop());
     }, []);
-    useEffect3(() => {
+    useEffect6(() => {
       if (mode !== "side-end") cancelFlipChimes();
     }, [mode]);
     const handleMatch = async (data, isAutoAdvance) => {
@@ -1687,7 +1929,7 @@
         const tIdx = tracks.findIndex((t) => t.trackName?.toLowerCase() === title.toLowerCase());
         setCurrentTrackIndex(tIdx >= 0 ? tIdx : 0);
         const itunesTrack = tIdx >= 0 ? tracks[tIdx] : null;
-        logListeningEvent({
+        logListeningEvent2({
           userId: user?.id,
           title,
           artist,
@@ -1704,7 +1946,7 @@
           durationSecs: duration,
           acrScore
         });
-        maybeAutoPostPlay({ userId: user?.id, collectionId, album: song.album, artist, artwork: song.artwork });
+        maybeAutoPostPlay2({ userId: user?.id, collectionId, album: song.album, artist, artwork: song.artwork });
         if (!collectionId || tracks.length === 0) return;
         const dbRelease = await fetchVinylRelease(collectionId);
         if (dbRelease?.vinyl_tracks?.length > 0) {
@@ -1723,120 +1965,11 @@
       }).catch(() => {
       });
     };
-    const matchTranscriptToTracks = (transcript, tracks, wordsData, logRef) => {
-      const normWord = (w) => w.toLowerCase().replace(/[^a-z0-9']/g, "");
-      const editDist = (a, b) => {
-        if (Math.abs(a.length - b.length) > 2) return 99;
-        const dp = Array.from({ length: a.length + 1 }, (_, i) => i);
-        for (let j = 1; j <= b.length; j++) {
-          let prev = dp[0];
-          dp[0] = j;
-          for (let i = 1; i <= a.length; i++) {
-            const temp = dp[i];
-            dp[i] = a[i - 1] === b[j - 1] ? prev : 1 + Math.min(prev, dp[i], dp[i - 1]);
-            prev = temp;
-          }
-        }
-        return dp[a.length];
-      };
-      const fuzzyEq = (a, b) => {
-        if (a === b) return true;
-        if (!a || !b) return false;
-        if (a.length <= 3 || b.length <= 3) return false;
-        return editDist(a, b) <= (a.length <= 6 ? 1 : 2);
-      };
-      const heardWords = transcript.toLowerCase().split(/\s+/).map(normWord).filter((w) => w.length > 1);
-      if (logRef) logRef.push(`match: ${heardWords.length} words from transcript`);
-      if (!heardWords.length) return null;
-      const baseName = (n) => (n || "").toLowerCase().replace(/\s*[\(\[].*/, "").trim();
-      const seenNames = /* @__PURE__ */ new Set();
-      const tracksWithWords = tracks.map((t) => {
-        const data = wordsData[t.trackId];
-        if (!data?.words?.length) return null;
-        const base = baseName(t.trackName);
-        if (seenNames.has(base)) return null;
-        seenNames.add(base);
-        return {
-          ...t,
-          wordArr: data.words.map((w) => w.word),
-          // already normalised at store time
-          wordTimings: data.words,
-          // [{word, start_ms}] for position lookup
-          lrc_raw: data.lrc_raw,
-          lyrics_plain: data.lyrics_plain
-        };
-      }).filter(Boolean);
-      if (logRef) logRef.push(`match: ${tracksWithWords.length}/${tracks.length} tracks have lyrics`);
-      console.log("[match] tracksWithWords:", tracksWithWords.length, "/", tracks.length, "| heardWords:", heardWords.slice(0, 8).join(" "));
-      if (tracksWithWords.length > 0) console.log("[match] sample track words:", tracksWithWords[0]?.trackName, tracksWithWords[0]?.wordArr?.slice(0, 10));
-      if (!tracksWithWords.length) return null;
-      const MIN_RUN = 3;
-      for (let len = MIN_RUN; len <= heardWords.length; len++) {
-        for (let start = 0; start <= heardWords.length - len; start++) {
-          const phrase = heardWords.slice(start, start + len);
-          const hits = tracksWithWords.filter((t) => {
-            let count = 0;
-            const arr2 = t.wordArr;
-            for (let i = 0; i <= arr2.length - len; i++) {
-              let ok = true;
-              for (let j = 0; j < len; j++) {
-                if (!fuzzyEq(arr2[i + j], phrase[j])) {
-                  ok = false;
-                  break;
-                }
-              }
-              if (ok) {
-                count++;
-                if (count > 1) return false;
-              }
-            }
-            return count === 1;
-          });
-          if (hits.length !== 1) continue;
-          const match = hits[0];
-          let matchWordIdx = -1;
-          const arr = match.wordArr;
-          for (let i = 0; i <= arr.length - len; i++) {
-            let ok = true;
-            for (let j = 0; j < len; j++) {
-              if (!fuzzyEq(arr[i + j], phrase[j])) {
-                ok = false;
-                break;
-              }
-            }
-            if (ok) {
-              matchWordIdx = i;
-              break;
-            }
-          }
-          const startPos = matchWordIdx >= 0 ? match.wordTimings[matchWordIdx].start_ms / 1e3 : 0;
-          const lyrics2 = match.lrc_raw ? parseLRC(match.lrc_raw) : plainToLines(match.lyrics_plain);
-          if (logRef) logRef.push(`match: unique run (${len}w) \u2192 "${match.trackName}" at ${startPos.toFixed(1)}s`);
-          return { track: match, lyrics: lyrics2, startPos, score: len, phraseWordStart: start, totalWords: heardWords.length };
-        }
-      }
-      if (logRef) logRef.push(`match: no unique run yet \u2014 keep listening`);
-      return null;
-    };
-    const logButtonEvent = async (buttonName) => {
-      try {
-        const raw = lastRawMatchRef.current;
-        await sb.from("button_events").insert({
-          user_id: user?.id || null,
-          session_id: sessionId,
-          button_name: buttonName,
-          track_title: detectedSong?.title || null,
-          artist_name: detectedSong?.artist || null,
-          album_name: detectedSong?.album || null,
-          itunes_collection_id: albumCollectionIdRef?.current ? Number(albumCollectionIdRef.current) : null,
-          platform: window.Capacitor ? "ios" : "web",
-          identified_by: raw?.identified_by || null,
-          raw_match_title: raw?.title || null,
-          raw_match_artist: raw?.artist || null
-        });
-      } catch (e) {
-      }
-    };
+    const logButtonEvent2 = (buttonName) => logButtonEvent(
+      sb,
+      { sessionId, user, detectedSong, albumCollectionIdRef, lastRawMatchRef },
+      buttonName
+    );
     const handleNoMatch = (isAutoAdvance, stage = "acr") => {
       if (isAutoAdvance) {
         autoRetryCountRef.current += 1;
@@ -1959,8 +2092,8 @@ Move closer to your speakers and try again.`);
         setMode("confirmed");
         saveToHistory(user, song);
         fetchHistory(user);
-        logListeningEvent({ userId: user?.id, title: track.trackName, artist: track.artistName || ta?.artist_name || "", album: ta?.album_name || "", artwork: ta?.artwork_url || null, itunesTrackId: track.trackId, collectionId: ta?.itunes_collection_id || track.collectionId, vinylReleaseId: null, vinylModeOn: true, source: "shazam", offsetSecs, durationSecs: track.trackTimeMillis ? track.trackTimeMillis / 1e3 : null });
-        maybeAutoPostPlay({ userId: user?.id, collectionId: ta?.itunes_collection_id || track.collectionId, album: ta?.album_name || "", artist: track.artistName || ta?.artist_name || "", artwork: ta?.artwork_url || null });
+        logListeningEvent2({ userId: user?.id, title: track.trackName, artist: track.artistName || ta?.artist_name || "", album: ta?.album_name || "", artwork: ta?.artwork_url || null, itunesTrackId: track.trackId, collectionId: ta?.itunes_collection_id || track.collectionId, vinylReleaseId: null, vinylModeOn: true, source: "shazam", offsetSecs, durationSecs: track.trackTimeMillis ? track.trackTimeMillis / 1e3 : null });
+        maybeAutoPostPlay2({ userId: user?.id, collectionId: ta?.itunes_collection_id || track.collectionId, album: ta?.album_name || "", artist: track.artistName || ta?.artist_name || "", artwork: ta?.artwork_url || null });
         const at = turntableTracksRef.current;
         setAlbumTracks(at);
         setAlbumCollectionId(ta?.itunes_collection_id ? String(ta.itunes_collection_id) : null);
@@ -2082,107 +2215,29 @@ Move closer to your speakers and try again.`);
         setCurrentIndex(idx);
       }, 80);
     }, []);
-    const nowPlayingSnapshotRef = useRef2(null);
-    useEffect3(() => {
-      if (mode === "syncing" || mode === "confirmed") {
-        nowPlayingSnapshotRef.current = {
-          detectedSong,
-          lyrics,
-          songDuration,
-          currentTrackIndex,
-          albumCollectionId,
-          identifiedBy,
-          turntableMatchedIdx: turntableMatchedIdxRef.current
-        };
-        try {
-          const t = syncStartRef.current != null ? initialPosRef.current + (Date.now() - syncStartRef.current) / 1e3 : initialPosRef.current;
-          localStorage.setItem("liri_nowplaying", JSON.stringify({
-            ...nowPlayingSnapshotRef.current,
-            playbackTime: Math.max(0, t),
-            savedAt: Date.now()
-          }));
-        } catch {
-        }
-      } else {
-        nowPlayingSnapshotRef.current = null;
-        if (mode === "idle" || mode === "listening") {
-          try {
-            localStorage.removeItem("liri_nowplaying");
-          } catch {
-          }
-        }
-      }
-    }, [mode, detectedSong, lyrics, songDuration, currentTrackIndex, albumCollectionId, identifiedBy]);
-    useEffect3(() => {
-      const onHide = () => {
-        const snap = nowPlayingSnapshotRef.current;
-        if (!snap || !snap.detectedSong) return;
-        const t = syncStartRef.current != null ? initialPosRef.current + (Date.now() - syncStartRef.current) / 1e3 : initialPosRef.current;
-        const payload = JSON.stringify({ ...snap, playbackTime: Math.max(0, t), savedAt: Date.now() });
-        try {
-          sessionStorage.setItem("liri_nowplaying", payload);
-        } catch {
-        }
-        try {
-          localStorage.setItem("liri_nowplaying", payload);
-        } catch {
-        }
-      };
-      window.addEventListener("pagehide", onHide);
-      return () => window.removeEventListener("pagehide", onHide);
-    }, []);
-    useEffect3(() => {
-      if (mode !== "syncing") return;
-      const beat = () => {
-        try {
-          localStorage.setItem("liri_playing_beat", JSON.stringify({ id: sessionTabId, ts: Date.now() }));
-        } catch {
-        }
-      };
-      beat();
-      const id = setInterval(beat, 5e3);
-      return () => {
-        clearInterval(id);
-        try {
-          const b = JSON.parse(localStorage.getItem("liri_playing_beat") || "null");
-          if (b?.id === sessionTabId) localStorage.removeItem("liri_playing_beat");
-        } catch {
-        }
-      };
-    }, [mode]);
-    useEffect3(() => {
-      let saved = null;
-      try {
-        saved = JSON.parse(sessionStorage.getItem("liri_nowplaying") || "null");
-        sessionStorage.removeItem("liri_nowplaying");
-      } catch {
-      }
-      if (!saved) {
-        try {
-          const b = JSON.parse(localStorage.getItem("liri_playing_beat") || "null");
-          const otherTabPlaying = b && b.id !== sessionTabId && Date.now() - b.ts < 15e3;
-          if (!otherTabPlaying) saved = JSON.parse(localStorage.getItem("liri_nowplaying") || "null");
-        } catch {
-        }
-      }
-      if (!saved || !saved.detectedSong || Date.now() - saved.savedAt > 60 * 60 * 1e3) return;
-      const elapsed = (Date.now() - saved.savedAt) / 1e3;
-      const restoredPos = Math.max(0, saved.playbackTime + elapsed);
-      setDetectedSong(saved.detectedSong);
-      const lrc = saved.lyrics || [];
-      setLyrics(lrc);
-      lyricsRef.current = lrc;
-      setSongDuration(saved.songDuration ?? null);
-      setCurrentTrackIndex(saved.currentTrackIndex ?? 0);
-      turntableMatchedIdxRef.current = saved.turntableMatchedIdx ?? 0;
-      if (saved.albumCollectionId) {
-        setAlbumCollectionId(saved.albumCollectionId);
-        albumCollectionIdRef.current = saved.albumCollectionId;
-      }
-      if (saved.identifiedBy) setIdentifiedBy(saved.identifiedBy);
-      syncCalcRef.current = { startPos: restoredPos, phraseOffset: 0, recStart: Date.now() };
-      setMode("confirmed");
-    }, []);
+    useNowPlaying({
+      sessionTabId,
+      mode,
+      setMode,
+      detectedSong,
+      setDetectedSong,
+      identifiedBy,
+      setIdentifiedBy,
+      songDuration,
+      setSongDuration,
+      lyrics,
+      setLyrics,
+      lyricsRef,
+      currentTrackIndex,
+      setCurrentTrackIndex,
+      albumCollectionId,
+      setAlbumCollectionId,
+      albumCollectionIdRef,
+      turntableMatchedIdxRef,
+      syncStartRef,
+      initialPosRef,
+      syncCalcRef
+    });
     const togglePause = () => {
       if (isPaused) {
         syncStartRef.current = Date.now();
@@ -2243,7 +2298,7 @@ Move closer to your speakers and try again.`);
       setKbToast(msg);
       kbToastTimerRef.current = setTimeout(() => setKbToast(null), 1400);
     };
-    useEffect3(() => {
+    useEffect6(() => {
       const onKey = (e) => {
         if (mode !== "syncing") return;
         if (e.target.tagName === "INPUT" || e.target.tagName === "TEXTAREA") return;
@@ -2481,7 +2536,7 @@ Move closer to your speakers and try again.`);
         scheduleFlipChimes(detectedSong);
         const sideIdx = sideEnds.indexOf(idx);
         const method = dbRelease?.vinyl_tracks?.length > 0 ? "db" : albumTpsRef.current > 0 ? "learned" : "heuristic";
-        logFlipEvent({
+        logFlipEvent2({
           userId: user?.id,
           vinylReleaseId: dbRelease?.id || null,
           collectionId: albumCollectionIdRef?.current || null,
@@ -2529,7 +2584,7 @@ Move closer to your speakers and try again.`);
       syncCalcRef.current = { startPos: 0, phraseOffset: 0, recStart: Date.now() };
       saveToHistory(user, nextSong);
       fetchHistory(user);
-      logListeningEvent({
+      logListeningEvent2({
         userId: user?.id,
         title: nextTitle,
         artist: nextArtist,
@@ -2585,7 +2640,7 @@ Move closer to your speakers and try again.`);
       autoAdvanceFiredRef.current = false;
       autoRetryCountRef.current = 0;
       saveToHistory(user, song);
-      maybeAutoPostPlay({ userId: user?.id, collectionId: ta?.itunes_collection_id, album: song.album, artist: song.artist, artwork: song.artwork });
+      maybeAutoPostPlay2({ userId: user?.id, collectionId: ta?.itunes_collection_id, album: song.album, artist: song.artist, artwork: song.artwork });
       setShowTrackList(false);
       setMode("confirmed");
     };
@@ -2780,7 +2835,7 @@ Move closer to your speakers and try again.`);
         setMode("confirmed");
         saveToHistory(user, song);
         fetchHistory(user);
-        logListeningEvent({
+        logListeningEvent2({
           userId: user?.id,
           title: song.title,
           artist: song.artist,
@@ -2793,7 +2848,7 @@ Move closer to your speakers and try again.`);
           source: "turntable_jump",
           durationSecs: duration
         });
-        maybeAutoPostPlay({ userId: user?.id, collectionId: ta.itunes_collection_id, album: song.album, artist: song.artist, artwork: song.artwork });
+        maybeAutoPostPlay2({ userId: user?.id, collectionId: ta.itunes_collection_id, album: song.album, artist: song.artist, artwork: song.artwork });
       } else {
         setDetectedSong(null);
         setIdentifiedBy(null);
@@ -2802,7 +2857,7 @@ Move closer to your speakers and try again.`);
         setTimeout(() => startListening(false), 150);
       }
     };
-    useEffect3(() => {
+    useEffect6(() => {
       const acquire = async () => {
         if (!keepScreenAwake || !("wakeLock" in navigator)) return;
         try {
@@ -2826,7 +2881,7 @@ Move closer to your speakers and try again.`);
         document.removeEventListener("visibilitychange", onVisibility);
       };
     }, [keepScreenAwake]);
-    useEffect3(() => {
+    useEffect6(() => {
       if (mode === "syncing" && (isLandscape || IS_IOS)) {
         bumpControls();
       } else {
@@ -5835,7 +5890,7 @@ Move closer to your speakers and try again.`);
       }
     }, isPaused ? "\u25B6 Resume" : "|| Pause"), IS_IOS && /* @__PURE__ */ React.createElement("button", {
       onClick: () => {
-        logButtonEvent("resync");
+        logButtonEvent2("resync");
         resync();
       },
       disabled: isResyncing,
