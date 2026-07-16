@@ -1211,7 +1211,7 @@
     }
   };
   var sb = supabase.createClient("https://xjdjpaxgymgbvcwmvorc.supabase.co", "sb_publishable_C-NBnfg0ltAoUi46XQTUjA_ozjZW_Nd", { auth: { storage: liriAuthStorage } });
-  var APP_VERSION = "1.5.13";
+  var APP_VERSION = "1.5.14";
   var LYRIC_LEAD_SECONDS = 2;
   var sessionTabId = (() => {
     try {
@@ -2165,10 +2165,13 @@
         if (autoSelect && !localStorage.getItem("liri_turntable") && library.length > 0) {
           const {
             data: plays
-          } = await sb.from("listening_events").select("itunes_collection_id").eq("user_id", uid).not("itunes_collection_id", "is", null);
+          } = await sb.from("listening_events").select("itunes_collection_id,source").eq("user_id", uid).not("itunes_collection_id", "is", null);
           if (plays?.length > 0) {
             const counts = {};
-            for (const row of plays) counts[row.itunes_collection_id] = (counts[row.itunes_collection_id] || 0) + 1;
+            for (const row of plays) {
+              if (row.source === "auto_advance") continue;
+              counts[row.itunes_collection_id] = (counts[row.itunes_collection_id] || 0) + 1;
+            }
             const topId = Object.entries(counts).sort((a, b) => b[1] - a[1])[0]?.[0];
             const topAlbum = library.find((a) => String(a.itunes_collection_id) === String(topId));
             if (topAlbum) setTurntableAlbum({

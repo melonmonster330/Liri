@@ -350,19 +350,23 @@ async function getAdminStats(days = 3) {
   const plays7d     = parseInt(plays7dResp.headers?.["content-range"]?.split("/")[1] || "0", 10);
   const totalSongs  = parseInt(totalSongsResp.headers?.["content-range"]?.split("/")[1] || "0", 10);
 
-  // Platform / source split from recent-events sample (filtered to selected window)
+  // Platform / source split from recent-events sample (filtered to selected window).
+  // A "play" = an album load, so plays exclude auto_advance rows (the per-track
+  // continuations of a side). isPlay is null-safe: legacy rows with a null source
+  // still count. recognition/auto splits stay per-source by definition.
+  const isPlay     = e => e.source == null || e.source !== "auto_advance";
   const allEvents  = Array.isArray(eventsResp.body) ? eventsResp.body : [];
   const events     = dWin ? allEvents.filter(e => e.listened_at >= dWin) : allEvents;
-  const webPlays   = events.filter(e => e.platform === "web").length;
-  const iosPlays   = events.filter(e => e.platform === "ios").length;
+  const webPlays   = events.filter(e => e.platform === "web" && isPlay(e)).length;
+  const iosPlays   = events.filter(e => e.platform === "ios" && isPlay(e)).length;
   const recogPlays = events.filter(e => e.source === "recognition").length;
   const autoPlays  = events.filter(e => e.source === "auto_advance").length;
 
-  // Top albums — filtered to selected window
+  // Top albums — album loads only, filtered to selected window
   const recentEvents = dWin ? allEvents.filter(e => e.listened_at >= dWin) : allEvents;
   const albumCounts  = {};
   for (const e of recentEvents) {
-    if (!e.album_name) continue;
+    if (!e.album_name || !isPlay(e)) continue;
     const key = `${e.album_name}|||${e.artist_name || ""}`;
     albumCounts[key] = (albumCounts[key] || 0) + 1;
   }
@@ -371,11 +375,11 @@ async function getAdminStats(days = 3) {
     .slice(0, 8)
     .map(([key, count]) => { const [album, artist] = key.split("|||"); return { album, artist, count }; });
 
-  // Top users by play count (from sample)
+  // Top users by play count (album loads, from sample)
   const emailById      = Object.fromEntries(allUsers.map(u => [u.id, u.email]));
   const userPlayCounts = {};
   for (const e of events) {
-    if (!e.user_id) continue;
+    if (!e.user_id || !isPlay(e)) continue;
     userPlayCounts[e.user_id] = (userPlayCounts[e.user_id] || 0) + 1;
   }
   const topUsers = Object.entries(userPlayCounts)
@@ -445,15 +449,19 @@ async function getUsersList() {
   }
   const [libRows, eventRows] = await Promise.all([
     sbGetAll("user_library?select=user_id"),
-    sbGetAll("listening_events?select=user_id,platform"),
+    sbGetAll("listening_events?select=user_id,platform,source"),
   ]);
   const albumByUid = {};
   for (const r of libRows) albumByUid[r.user_id] = (albumByUid[r.user_id] || 0) + 1;
+  // A "play" = an album load, so exclude auto_advance (per-track continuations).
+  // Null-safe: legacy rows with a null source still count.
   const playByUid = {};
   const platByUid = {}; // uid → Set of platforms seen (fallback when no signup metadata)
   for (const r of eventRows) {
     if (!r.user_id) continue;
-    playByUid[r.user_id] = (playByUid[r.user_id] || 0) + 1;
+    if (r.source == null || r.source !== "auto_advance") {
+      playByUid[r.user_id] = (playByUid[r.user_id] || 0) + 1;
+    }
     (platByUid[r.user_id] = platByUid[r.user_id] || new Set()).add(r.platform || null);
   }
   const inferPlatform = (uid) => {
@@ -501,9 +509,12 @@ async function getUserDetail(userId) {
     ? await sbGetAll(`catalogue?itunes_collection_id=in.(${collectionIds.join(",")})&select=itunes_collection_id,album_name,artist_name,artwork_url,release_year`)
     : [];
   const catById  = new Map(catRows.map(c => [c.itunes_collection_id, c]));
+  // A "play" = an album load, so exclude auto_advance (per-track continuations).
+  // Null-safe: legacy rows with a null source still count.
+  const isPlay = e => e.source == null || e.source !== "auto_advance";
   const playsPerAlbum = {};
   for (const e of eventRows) {
-    if (e.itunes_collection_id != null) {
+    if (e.itunes_collection_id != null && isPlay(e)) {
       playsPerAlbum[e.itunes_collection_id] = (playsPerAlbum[e.itunes_collection_id] || 0) + 1;
     }
   }
@@ -522,16 +533,21 @@ async function getUserDetail(userId) {
       };
     });
 
-  // Plays breakdowns
+  // Plays breakdowns.
+  // byPlatform counts album loads (plays); bySource is the per-event source
+  // breakdown so it necessarily counts every row, auto_advance included.
   const byPlatform = { ios: 0, web: 0, other: 0 };
   const bySource   = { recognition: 0, shazam: 0, auto_advance: 0, turntable_jump: 0, other: 0 };
   // Engagement: active = user chose this track (recognized / shazamed / jumped),
   // passive = turntable just rolled to it (auto_advance).
   const ACTIVE_SOURCES = new Set(["recognition", "shazam", "turntable_jump"]);
-  let active = 0, passive = 0;
+  let active = 0, passive = 0, playTotal = 0;
   for (const e of eventRows) {
-    const p = e.platform || "other";
-    byPlatform[p === "ios" || p === "web" ? p : "other"]++;
+    if (isPlay(e)) {
+      playTotal++;
+      const p = e.platform || "other";
+      byPlatform[p === "ios" || p === "web" ? p : "other"]++;
+    }
     const s = e.source || "other";
     bySource[s in bySource ? s : "other"]++;
     if (s === "auto_advance") passive++;
@@ -564,7 +580,7 @@ async function getUserDetail(userId) {
     },
     albums,
     plays: {
-      total:       eventRows.length,
+      total:       playTotal,
       byPlatform,
       bySource,
       engagement: { active, passive },
@@ -583,16 +599,21 @@ async function getAlbumsList() {
   const [catRows, libRows, eventRows] = await Promise.all([
     sbGetAll("catalogue?select=itunes_collection_id,album_name,artist_name,artwork_url,release_year,track_count"),
     sbGetAll("user_library?select=itunes_collection_id"),
-    sbGetAll("listening_events?select=itunes_collection_id&itunes_collection_id=not.is.null"),
+    sbGetAll("listening_events?select=itunes_collection_id,source&itunes_collection_id=not.is.null"),
   ]);
 
   // count library adds per album
   const libCount = {};
   for (const r of libRows) libCount[r.itunes_collection_id] = (libCount[r.itunes_collection_id] || 0) + 1;
 
-  // count plays per album (lifetime)
+  // count plays per album (lifetime). A "play" = an album load, so exclude
+  // auto_advance (per-track continuations). Null-safe on legacy null sources.
   const playCount = {};
-  for (const r of eventRows) playCount[r.itunes_collection_id] = (playCount[r.itunes_collection_id] || 0) + 1;
+  for (const r of eventRows) {
+    if (r.source == null || r.source !== "auto_advance") {
+      playCount[r.itunes_collection_id] = (playCount[r.itunes_collection_id] || 0) + 1;
+    }
+  }
 
   return {
     albums: catRows.map(c => ({

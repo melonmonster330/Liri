@@ -166,6 +166,8 @@ LIMIT 20;
 
 
 -- Top 20 albums — last 30 days
+-- A "play" = an album load, so exclude auto_advance rows (the per-track
+-- continuations of a side). Null-safe: legacy rows with a null source count.
 CREATE OR REPLACE VIEW v_top_albums_30d AS
 SELECT
   album_name,
@@ -175,6 +177,7 @@ SELECT
 FROM listening_events
 WHERE listened_at >= now() - interval '30 days'
   AND album_name IS NOT NULL
+  AND source IS DISTINCT FROM 'auto_advance'
 GROUP BY 1, 2
 ORDER BY plays DESC
 LIMIT 20;
@@ -291,13 +294,14 @@ BEGIN
       ) sub
     ),
 
-    -- Top album
+    -- Top album — by album loads (exclude auto_advance per-track continuations)
     'top_album', (
       SELECT jsonb_build_object('album', album_name, 'artist', artist_name, 'plays', COUNT(*))
       FROM listening_events
       WHERE user_id = p_user_id
         AND EXTRACT(YEAR FROM listened_at) = p_year
         AND album_name IS NOT NULL
+        AND source IS DISTINCT FROM 'auto_advance'
       GROUP BY album_name, artist_name
       ORDER BY COUNT(*) DESC
       LIMIT 1

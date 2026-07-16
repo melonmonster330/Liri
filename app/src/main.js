@@ -42,7 +42,7 @@ const liriAuthStorage = {
   removeItem: k => { try { sessionStorage.removeItem(k); } catch {} try { localStorage.removeItem(k); } catch {} },
 };
 const sb = supabase.createClient("https://xjdjpaxgymgbvcwmvorc.supabase.co", "sb_publishable_C-NBnfg0ltAoUi46XQTUjA_ozjZW_Nd", { auth: { storage: liriAuthStorage } });
-const APP_VERSION = "1.5.13";
+const APP_VERSION = "1.5.14";
 // Lyrics lead the audio clock by this many seconds — the highlighted line
 // switches slightly BEFORE its nominal timestamp. Displayed time / progress bar
 // are unaffected (we only add this to the line-matching comparison). Helps the
@@ -1198,14 +1198,19 @@ function Liri() {
         }
       }
 
-      // Auto-select most-played album when no album is set (first load only)
+      // Auto-select most-played album when no album is set (first load only).
+      // "Most-played" = most album loads, not most songs — so ignore auto_advance
+      // rows (the per-track continuations of a side; null source still counts).
       if (autoSelect && !localStorage.getItem("liri_turntable") && library.length > 0) {
         const {
           data: plays
-        } = await sb.from("listening_events").select("itunes_collection_id").eq("user_id", uid).not("itunes_collection_id", "is", null);
+        } = await sb.from("listening_events").select("itunes_collection_id,source").eq("user_id", uid).not("itunes_collection_id", "is", null);
         if (plays?.length > 0) {
           const counts = {};
-          for (const row of plays) counts[row.itunes_collection_id] = (counts[row.itunes_collection_id] || 0) + 1;
+          for (const row of plays) {
+            if (row.source === "auto_advance") continue;
+            counts[row.itunes_collection_id] = (counts[row.itunes_collection_id] || 0) + 1;
+          }
           const topId = Object.entries(counts).sort((a, b) => b[1] - a[1])[0]?.[0];
           const topAlbum = library.find(a => String(a.itunes_collection_id) === String(topId));
           if (topAlbum) setTurntableAlbum({

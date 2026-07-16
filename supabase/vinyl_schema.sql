@@ -324,6 +324,11 @@ CREATE POLICY "Auth update cast sessions"
 -- RPC: get_collection_play_counts
 -- Returns play counts per itunes_collection_id from listening_events.
 -- Used by vinyl.html to sort a user's library by most-played.
+--
+-- A "play" = an album load, not a song. Dropping a record on fires one
+-- recognition/shazam/turntable_jump event; the rest of the side plays through
+-- as auto_advance rows. So we count only the non-auto_advance events (null-safe:
+-- legacy rows with a null source still count as a play).
 -- -----------------------------------------------------------
 CREATE OR REPLACE FUNCTION get_collection_play_counts()
 RETURNS TABLE(collection_id text, play_count bigint)
@@ -331,7 +336,7 @@ LANGUAGE sql STABLE SECURITY INVOKER
 AS $$
   SELECT
     itunes_collection_id::text AS collection_id,
-    COUNT(*)                   AS play_count
+    COUNT(*) FILTER (WHERE source IS DISTINCT FROM 'auto_advance') AS play_count
   FROM listening_events
   WHERE itunes_collection_id IS NOT NULL
     AND user_id = auth.uid()
