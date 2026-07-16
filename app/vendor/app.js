@@ -1211,7 +1211,7 @@
     }
   };
   var sb = supabase.createClient("https://xjdjpaxgymgbvcwmvorc.supabase.co", "sb_publishable_C-NBnfg0ltAoUi46XQTUjA_ozjZW_Nd", { auth: { storage: liriAuthStorage } });
-  var APP_VERSION = "1.5.12";
+  var APP_VERSION = "1.5.13";
   var LYRIC_LEAD_SECONDS = 2;
   var sessionTabId = (() => {
     try {
@@ -4637,83 +4637,31 @@ Move closer to your speakers and try again.`);
         marginBottom: 20,
         lineHeight: 1.6
       }
-    }, "Head to My Records to add your first album.")) : orderLibrary(userLibrary, recentPlayedIds).map((album) => {
-      const isSelected = turntableAlbum?.itunes_collection_id === album.itunes_collection_id;
-      return /* @__PURE__ */ React.createElement("button", {
-        key: album.id,
-        onClick: () => {
-          setTurntableAlbum({
-            itunes_collection_id: album.itunes_collection_id,
-            album_name: album.album_name,
-            artist_name: album.artist_name,
-            artwork_url: album.artwork_url
-          });
-          setShowAlbumPicker(false);
-        },
-        style: {
-          width: "100%",
-          display: "flex",
-          alignItems: "center",
-          gap: 12,
-          padding: "12px 0",
-          background: "none",
-          border: "none",
-          borderBottom: "1px solid rgba(255,255,255,0.04)",
-          cursor: "pointer",
-          fontFamily: "inherit",
-          textAlign: "left"
-        }
-      }, album.artwork_url ? /* @__PURE__ */ React.createElement("img", {
-        src: album.artwork_url,
-        alt: "",
-        style: {
-          width: 44,
-          height: 44,
-          borderRadius: 7,
-          objectFit: "cover",
-          flexShrink: 0,
-          opacity: isSelected ? 1 : 0.85
-        }
-      }) : /* @__PURE__ */ React.createElement("div", {
-        style: {
-          width: 44,
-          height: 44,
-          borderRadius: 7,
-          background: "rgba(255,255,255,0.04)",
-          display: "flex",
-          alignItems: "center",
-          justifyContent: "center",
-          fontSize: 20,
-          flexShrink: 0
-        }
-      }, /* @__PURE__ */ React.createElement("svg", { width: "1em", height: "1em", viewBox: "0 0 24 24", fill: "none", stroke: "currentColor", strokeWidth: "1.5", strokeLinecap: "round" }, /* @__PURE__ */ React.createElement("circle", { cx: "12", cy: "12", r: "10" }), /* @__PURE__ */ React.createElement("circle", { cx: "12", cy: "12", r: "3" }))), /* @__PURE__ */ React.createElement("div", {
-        style: {
-          flex: 1,
-          minWidth: 0
-        }
-      }, /* @__PURE__ */ React.createElement("div", {
-        style: {
-          fontSize: 14,
-          fontWeight: isSelected ? 700 : 500,
-          color: isSelected ? "#d4a846" : "#f0e6d3",
-          overflow: "hidden",
-          textOverflow: "ellipsis",
-          whiteSpace: "nowrap"
-        }
-      }, album.album_name), /* @__PURE__ */ React.createElement("div", {
-        style: {
-          fontSize: 12,
-          color: "rgba(255,255,255,0.4)",
-          marginTop: 2
-        }
-      }, album.artist_name)), isSelected && /* @__PURE__ */ React.createElement("span", {
-        style: {
-          fontSize: 14,
-          color: "#d4a846",
-          flexShrink: 0
-        }
-      }, "\u2713"));
-    }), /* @__PURE__ */ React.createElement("div", {
+    }, "Head to My Records to add your first album.")) : (() => {
+      const visible = orderLibrary(userLibrary, recentPlayedIds);
+      const recentSet = new Set((recentPlayedIds || []).map(String));
+      const recent = visible.filter((a) => recentSet.has(String(a.itunes_collection_id)));
+      const rest = visible.filter((a) => !recentSet.has(String(a.itunes_collection_id)));
+      const showHeaders = recent.length > 0 && rest.length > 0;
+      const header = (label, gold) => /* @__PURE__ */ React.createElement("div", { key: "hdr-" + label, style: { fontSize: 11, fontWeight: 700, letterSpacing: 0.7, textTransform: "uppercase", color: gold ? "rgba(212,168,70,0.8)" : "rgba(255,255,255,0.3)", padding: "14px 2px 6px", display: "flex", alignItems: "center", gap: 6 } }, gold ? /* @__PURE__ */ React.createElement("svg", { width: "11", height: "11", viewBox: "0 0 24 24", fill: "none", stroke: "currentColor", strokeWidth: "2.5", strokeLinecap: "round", strokeLinejoin: "round" }, /* @__PURE__ */ React.createElement("circle", { cx: "12", cy: "12", r: "9" }), /* @__PURE__ */ React.createElement("path", { d: "M12 7v5l3 2" })) : null, label);
+      const row = (album, isRecent) => {
+        const isSelected = turntableAlbum?.itunes_collection_id === album.itunes_collection_id;
+        return /* @__PURE__ */ React.createElement("button", {
+          key: album.id,
+          onClick: () => {
+            setTurntableAlbum({ itunes_collection_id: album.itunes_collection_id, album_name: album.album_name, artist_name: album.artist_name, artwork_url: album.artwork_url });
+            setShowAlbumPicker(false);
+          },
+          style: { width: "100%", display: "flex", alignItems: "center", gap: 12, padding: "12px 0", background: isRecent ? "rgba(212,168,70,0.06)" : "none", borderRadius: isRecent ? 12 : 0, border: "none", borderBottom: isRecent ? "1px solid transparent" : "1px solid rgba(255,255,255,0.04)", cursor: "pointer", fontFamily: "inherit", textAlign: "left" }
+        }, album.artwork_url ? /* @__PURE__ */ React.createElement("img", { src: album.artwork_url, alt: "", style: { width: 44, height: 44, borderRadius: 7, objectFit: "cover", flexShrink: 0, opacity: isSelected ? 1 : 0.85 } }) : /* @__PURE__ */ React.createElement("div", { style: { width: 44, height: 44, borderRadius: 7, background: "rgba(255,255,255,0.04)", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 20, flexShrink: 0 } }, /* @__PURE__ */ React.createElement("svg", { width: "1em", height: "1em", viewBox: "0 0 24 24", fill: "none", stroke: "currentColor", strokeWidth: "1.5", strokeLinecap: "round" }, /* @__PURE__ */ React.createElement("circle", { cx: "12", cy: "12", r: "10" }), /* @__PURE__ */ React.createElement("circle", { cx: "12", cy: "12", r: "3" }))), /* @__PURE__ */ React.createElement("div", { style: { flex: 1, minWidth: 0 } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 14, fontWeight: isSelected ? 700 : 500, color: isSelected ? "#d4a846" : "#f0e6d3", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" } }, album.album_name), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12, color: "rgba(255,255,255,0.4)", marginTop: 2 } }, album.artist_name)), isSelected && /* @__PURE__ */ React.createElement("span", { style: { fontSize: 14, color: "#d4a846", flexShrink: 0 } }, "\u2713"));
+      };
+      const out = [];
+      if (showHeaders) out.push(header("Recently played", true));
+      recent.forEach((a) => out.push(row(a, true)));
+      if (showHeaders) out.push(header("By artist", false));
+      rest.forEach((a) => out.push(row(a, false)));
+      return out;
+    })(), /* @__PURE__ */ React.createElement("div", {
       style: {
         textAlign: "center",
         padding: "20px 0 4px"
