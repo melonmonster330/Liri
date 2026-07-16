@@ -5662,11 +5662,36 @@ Move closer to your speakers and try again.`);
       },
       // Tap the background (outside the controls panel, which stops propagation)
       // to close the ☰ controls. Touching or scrolling the lyrics never opens
-      // them — only the ☰ button in the header does.
+      // them — only the floating ☰ button does.
       onTouchStart: () => {
         if (controlsVisible) setControlsVisible(false);
       }
-    }, kbToast && /* @__PURE__ */ React.createElement("div", {
+    }, !controlsVisible && /* @__PURE__ */ React.createElement("button", {
+      onClick: () => setControlsVisible(true),
+      // Don't let the touch bubble to the background handler.
+      onTouchStart: (e3) => e3.stopPropagation(),
+      title: "Sync controls",
+      style: {
+        position: "fixed",
+        // Sits at the left edge of the lyric column itself (not the header) so
+        // it reads as part of the lyric window, not the top bar.
+        top: isLandscape ? "64px" : "calc(env(safe-area-inset-top) + 66px)",
+        left: isLandscape ? Math.max(12, lyricAreaLeft + 4) + "px" : "14px",
+        zIndex: 25,
+        background: "rgba(255,255,255,0.06)",
+        border: "1px solid rgba(255,255,255,0.1)",
+        borderRadius: "50%",
+        width: "34px",
+        height: "34px",
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+        color: "rgba(255,255,255,0.5)",
+        fontSize: "15px",
+        cursor: "pointer",
+        padding: 0
+      }
+    }, "\u2630"), kbToast && /* @__PURE__ */ React.createElement("div", {
       style: {
         position: "fixed",
         top: "50%",
@@ -5725,14 +5750,6 @@ Move closer to your speakers and try again.`);
       songDuration && /* @__PURE__ */ React.createElement("div", {
         style: { fontSize: "11px", color: "rgba(255,255,255,0.3)", flexShrink: 0, fontVariantNumeric: "tabular-nums" }
       }, formatTime(playbackTime) + " / " + formatTime(songDuration)),
-      /* @__PURE__ */ React.createElement("button", {
-        onClick: () => setControlsVisible((v) => !v),
-        // Don't let the touch bubble to the background handler, which would close
-        // the menu this tap is trying to toggle.
-        onTouchStart: (e3) => e3.stopPropagation(),
-        title: "Sync controls",
-        style: { background: "none", border: "none", color: controlsVisible ? "#d4a846" : "rgba(255,255,255,0.45)", fontSize: "18px", cursor: "pointer", padding: "4px 6px", lineHeight: 1, flexShrink: 0 }
-      }, "\u2630"),
       /* @__PURE__ */ React.createElement("button", {
         onClick: () => setShowSettings(!showSettings),
         style: { background: "linear-gradient(135deg,#d4a846,#c9807a)", border: "none", borderRadius: "50%", width: "28px", height: "28px", display: "flex", alignItems: "center", justifyContent: "center", fontSize: "11px", fontWeight: "700", color: "#080810", cursor: "pointer", flexShrink: 0, padding: 0 }
@@ -5834,22 +5851,6 @@ Move closer to your speakers and try again.`);
         fontVariantNumeric: "tabular-nums"
       }
     }, formatTime(playbackTime)), /* @__PURE__ */ React.createElement("button", {
-      onClick: () => setControlsVisible((v) => !v),
-      // Don't let the touch bubble to the background handler, which would close
-      // the menu this tap is trying to toggle.
-      onTouchStart: (e3) => e3.stopPropagation(),
-      title: "Sync controls",
-      style: {
-        background: "none",
-        border: "none",
-        color: controlsVisible ? "#d4a846" : "rgba(255,255,255,0.45)",
-        fontSize: "20px",
-        cursor: "pointer",
-        padding: "4px 6px",
-        lineHeight: 1,
-        flexShrink: 0
-      }
-    }, "\u2630"), /* @__PURE__ */ React.createElement("button", {
       onClick: () => setShowSettings(!showSettings),
       style: {
         background: "linear-gradient(135deg, #d4a846, #c9807a)",
@@ -6145,7 +6146,7 @@ Move closer to your speakers and try again.`);
         // Closed: collapse the controls (nudge / skip / etc.) to zero height so
         // the lyrics reclaim the space. The header and tab bar stay put — only
         // this control block folds away. box-sizing:border-box means maxHeight:0
-        // swallows the padding too. Only the ☰ header button re-expands it.
+        // swallows the padding too. Only the floating ☰ button re-expands it.
         maxHeight: !controlsVisible ? "0px" : "460px",
         opacity: !controlsVisible ? 0 : 1,
         transition: "max-height 0.35s ease, opacity 0.35s ease",
