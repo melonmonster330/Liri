@@ -42,7 +42,7 @@ const liriAuthStorage = {
   removeItem: k => { try { sessionStorage.removeItem(k); } catch {} try { localStorage.removeItem(k); } catch {} },
 };
 const sb = supabase.createClient("https://xjdjpaxgymgbvcwmvorc.supabase.co", "sb_publishable_C-NBnfg0ltAoUi46XQTUjA_ozjZW_Nd", { auth: { storage: liriAuthStorage } });
-const APP_VERSION = "1.5.11";
+const APP_VERSION = "1.5.12";
 // Lyrics lead the audio clock by this many seconds — the highlighted line
 // switches slightly BEFORE its nominal timestamp. Displayed time / progress bar
 // are unaffected (we only add this to the line-matching comparison). Helps the

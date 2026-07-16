@@ -36,7 +36,7 @@
   <script type="text/babel">
     const { useState, useEffect, useRef, useCallback } = React;
 
-    const APP_VERSION = "1.5.11";
+    const APP_VERSION = "1.5.12";
 
     // On iOS Capacitor relative URLs don't resolve — route all API calls through the live domain.
     const API_BASE = window.Capacitor ? "https://www.getliri.com" : "";
@@ -1520,54 +1520,85 @@
                     {q.status === "adding" ? <Spinner size={18} /> : <div style={{ width: 18, height: 18, borderRadius: "50%", border: "2px solid rgba(255,255,255,0.12)" }} />}
                   </div>
                 ))}
-                {orderLibrary(library, recentPlayedIds)
-                  .filter(album => !needsInfoOnly || metaFlags[String(album.itunes_collection_id)])
-                  .map((album, i) => {
-                  const plays = playCounts[album.itunes_collection_id] || 0;
-                  const isRemoving = removing === album.itunes_collection_id;
-                  const flags = metaFlags[String(album.itunes_collection_id)];
-                  const flagText = flags
-                    ? [flags.sidesMissing ? "side info" : null,
-                       flags.lyricsMissing > 0 ? `${flags.lyricsMissing} lyric${flags.lyricsMissing !== 1 ? "s" : ""}` : null]
-                        .filter(Boolean).join(" · ")
-                    : null;
-                  return (
-                    <div key={album.id}
-                      style={{ display: "flex", alignItems: "center", gap: 14, padding: "12px 0", borderBottom: "1px solid rgba(255,255,255,0.04)", animation: "fade-up 0.3s ease both", animationDelay: `${i * 30}ms` }}>
+                {(() => {
+                  const visible = orderLibrary(library, recentPlayedIds)
+                    .filter(album => !needsInfoOnly || metaFlags[String(album.itunes_collection_id)]);
+                  const recentSet = new Set((recentPlayedIds || []).map(String));
+                  const recent = visible.filter(a => recentSet.has(String(a.itunes_collection_id)));
+                  const rest   = visible.filter(a => !recentSet.has(String(a.itunes_collection_id)));
+                  // Only label the groups when both exist — the headers explain
+                  // why the top rows sit outside the by-artist ordering.
+                  const showHeaders = recent.length > 0 && rest.length > 0;
 
-                      {/* Tappable area → album detail */}
-                      <div onClick={() => setSelectedAlbum(album)}
-                        style={{ display: "flex", alignItems: "center", gap: 14, flex: 1, minWidth: 0, cursor: "pointer" }}>
-                        <AlbumArt src={album.artwork_url} size={56} radius={8} />
-                        <div style={{ flex: 1, minWidth: 0 }}>
-                          <div style={{ fontSize: 14, fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{album.album_name}</div>
-                          <div style={{ fontSize: 12, color: "rgba(255,255,255,0.4)", marginTop: 2, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{album.artist_name}</div>
-                          {plays > 0 && (
-                            <div style={{ fontSize: 10, color: "rgba(212,168,70,0.6)", marginTop: 4 }}>{plays} play{plays !== 1 ? "s" : ""} on Liri</div>
-                          )}
-                          {flagText && (
-                            <div style={{ fontSize: 10, color: "rgba(212,168,70,0.75)", marginTop: 4, display: "flex", alignItems: "center", gap: 4 }}>
-                              <svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round"><path d="M12 9v4"/><path d="M12 17h.01"/><circle cx="12" cy="12" r="10"/></svg>
-                              missing {flagText}
-                            </div>
-                          )}
-                        </div>
-                      </div>
-
-                      {/* Action buttons */}
-                      <div style={{ display: "flex", gap: 8, flexShrink: 0 }}>
-                        <button onClick={() => listenTo(album)}
-                          style={{ background: "linear-gradient(135deg,#d4a846,#c9807a)", color: "#080810", border: "none", borderRadius: 50, padding: "8px 16px", fontSize: 12, fontWeight: 700, cursor: "pointer", fontFamily: "inherit", whiteSpace: "nowrap" }}>
-                          Sync →
-                        </button>
-                        <button onClick={() => removeAlbum(album.itunes_collection_id)} disabled={isRemoving}
-                          style={{ background: "rgba(255,255,255,0.05)", border: "1px solid rgba(255,255,255,0.08)", color: "rgba(255,255,255,0.3)", borderRadius: 50, padding: "8px 12px", fontSize: 12, cursor: isRemoving ? "wait" : "pointer", fontFamily: "inherit", opacity: isRemoving ? 0.4 : 1 }}>
-                          {isRemoving ? "…" : <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>}
-                        </button>
-                      </div>
+                  const sectionHeader = (label, gold) => (
+                    <div key={`hdr-${label}`} style={{ fontSize: 11, fontWeight: 700, letterSpacing: 0.7, textTransform: "uppercase", color: gold ? "rgba(212,168,70,0.8)" : "rgba(255,255,255,0.3)", padding: "16px 2px 6px", display: "flex", alignItems: "center", gap: 6 }}>
+                      {gold && <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg>}
+                      {label}
                     </div>
                   );
-                })}
+
+                  const renderRow = (album, i, isRecent) => {
+                    const plays = playCounts[album.itunes_collection_id] || 0;
+                    const isRemoving = removing === album.itunes_collection_id;
+                    const flags = metaFlags[String(album.itunes_collection_id)];
+                    const flagText = flags
+                      ? [flags.sidesMissing ? "side info" : null,
+                         flags.lyricsMissing > 0 ? `${flags.lyricsMissing} lyric${flags.lyricsMissing !== 1 ? "s" : ""}` : null]
+                          .filter(Boolean).join(" · ")
+                      : null;
+                    return (
+                      <div key={album.id}
+                        style={{ display: "flex", alignItems: "center", gap: 14, padding: isRecent ? "12px" : "12px 0", margin: isRecent ? "0 -12px" : 0, background: isRecent ? "rgba(212,168,70,0.06)" : "transparent", borderRadius: isRecent ? 12 : 0, borderBottom: isRecent ? "1px solid transparent" : "1px solid rgba(255,255,255,0.04)", animation: "fade-up 0.3s ease both", animationDelay: `${i * 30}ms` }}>
+
+                        {/* Tappable area → album detail */}
+                        <div onClick={() => setSelectedAlbum(album)}
+                          style={{ display: "flex", alignItems: "center", gap: 14, flex: 1, minWidth: 0, cursor: "pointer" }}>
+                          <AlbumArt src={album.artwork_url} size={56} radius={8} />
+                          <div style={{ flex: 1, minWidth: 0 }}>
+                            <div style={{ fontSize: 14, fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{album.album_name}</div>
+                            <div style={{ fontSize: 12, color: "rgba(255,255,255,0.4)", marginTop: 2, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{album.artist_name}</div>
+                            {isRecent && (
+                              <div style={{ fontSize: 10, color: "rgba(212,168,70,0.85)", marginTop: 4, fontWeight: 600, display: "flex", alignItems: "center", gap: 4 }}>
+                                <svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg>
+                                Recently played{plays > 0 ? ` · ${plays} play${plays !== 1 ? "s" : ""}` : ""}
+                              </div>
+                            )}
+                            {!isRecent && plays > 0 && (
+                              <div style={{ fontSize: 10, color: "rgba(212,168,70,0.6)", marginTop: 4 }}>{plays} play{plays !== 1 ? "s" : ""} on Liri</div>
+                            )}
+                            {flagText && (
+                              <div style={{ fontSize: 10, color: "rgba(212,168,70,0.75)", marginTop: 4, display: "flex", alignItems: "center", gap: 4 }}>
+                                <svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round"><path d="M12 9v4"/><path d="M12 17h.01"/><circle cx="12" cy="12" r="10"/></svg>
+                                missing {flagText}
+                              </div>
+                            )}
+                          </div>
+                        </div>
+
+                        {/* Action buttons */}
+                        <div style={{ display: "flex", gap: 8, flexShrink: 0 }}>
+                          <button onClick={() => listenTo(album)}
+                            style={{ background: "linear-gradient(135deg,#d4a846,#c9807a)", color: "#080810", border: "none", borderRadius: 50, padding: "8px 16px", fontSize: 12, fontWeight: 700, cursor: "pointer", fontFamily: "inherit", whiteSpace: "nowrap" }}>
+                            Sync →
+                          </button>
+                          <button onClick={() => removeAlbum(album.itunes_collection_id)} disabled={isRemoving}
+                            style={{ background: "rgba(255,255,255,0.05)", border: "1px solid rgba(255,255,255,0.08)", color: "rgba(255,255,255,0.3)", borderRadius: 50, padding: "8px 12px", fontSize: 12, cursor: isRemoving ? "wait" : "pointer", fontFamily: "inherit", opacity: isRemoving ? 0.4 : 1 }}>
+                            {isRemoving ? "…" : <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>}
+                          </button>
+                        </div>
+                      </div>
+                    );
+                  };
+
+                  return (
+                    <>
+                      {showHeaders && sectionHeader("Recently played", true)}
+                      {recent.map((a, i) => renderRow(a, i, true))}
+                      {showHeaders && sectionHeader("By artist", false)}
+                      {rest.map((a, i) => renderRow(a, recent.length + i, false))}
+                    </>
+                  );
+                })()}
               </div>
             )}
           </div>
