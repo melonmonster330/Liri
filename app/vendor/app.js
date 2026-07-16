@@ -1270,8 +1270,7 @@
       window.addEventListener("resize", onResize);
       return () => window.removeEventListener("resize", onResize);
     }, []);
-    const [controlsVisible, setControlsVisible] = useState5(true);
-    const controlsHideTimerRef = useRef4(null);
+    const [controlsVisible, setControlsVisible] = useState5(false);
     const railW = Math.min(270, Math.max(190, Math.round(winW * 0.26)));
     const menuOpen = isLandscape && controlsVisible;
     const lyricAreaW = menuOpen ? Math.min(760, Math.max(260, winW - railW - 48)) : Math.min(820, winW - 48);
@@ -1638,11 +1637,6 @@
       } catch {
       }
       if (!v) cancelFlipChimes();
-    };
-    const bumpControls = () => {
-      setControlsVisible(true);
-      clearTimeout(controlsHideTimerRef.current);
-      controlsHideTimerRef.current = setTimeout(() => setControlsVisible(false), 3500);
     };
     const enableFlipNotify = async () => {
       if (window.Capacitor) {
@@ -3317,13 +3311,8 @@ Move closer to your speakers and try again.`);
       };
     }, [keepScreenAwake]);
     useEffect6(() => {
-      if (mode === "syncing" && (isLandscape || IS_IOS)) {
-        bumpControls();
-      } else {
-        clearTimeout(controlsHideTimerRef.current);
-        setControlsVisible(true);
-      }
-    }, [mode, isLandscape]);
+      if (mode === "syncing") setControlsVisible(false);
+    }, [mode]);
     if (authLoading) return /* @__PURE__ */ React.createElement("div", {
       style: {
         minHeight: "100vh",
@@ -5671,15 +5660,12 @@ Move closer to your speakers and try again.`);
         display: "flex",
         flexDirection: "column"
       },
-      onPointerMove: isLandscape ? bumpControls : void 0,
       // Tap the background (outside the controls panel, which stops propagation)
-      // to dismiss the menu immediately instead of waiting for the auto-hide.
-      onTouchStart: isLandscape || IS_IOS ? (() => {
-        if (controlsVisible) {
-          clearTimeout(controlsHideTimerRef.current);
-          setControlsVisible(false);
-        } else bumpControls();
-      }) : void 0
+      // to close the ☰ controls. Touching or scrolling the lyrics never opens
+      // them — only the ☰ button in the header does.
+      onTouchStart: () => {
+        if (controlsVisible) setControlsVisible(false);
+      }
     }, kbToast && /* @__PURE__ */ React.createElement("div", {
       style: {
         position: "fixed",
@@ -5739,6 +5725,14 @@ Move closer to your speakers and try again.`);
       songDuration && /* @__PURE__ */ React.createElement("div", {
         style: { fontSize: "11px", color: "rgba(255,255,255,0.3)", flexShrink: 0, fontVariantNumeric: "tabular-nums" }
       }, formatTime(playbackTime) + " / " + formatTime(songDuration)),
+      /* @__PURE__ */ React.createElement("button", {
+        onClick: () => setControlsVisible((v) => !v),
+        // Don't let the touch bubble to the background handler, which would close
+        // the menu this tap is trying to toggle.
+        onTouchStart: (e3) => e3.stopPropagation(),
+        title: "Sync controls",
+        style: { background: "none", border: "none", color: controlsVisible ? "#d4a846" : "rgba(255,255,255,0.45)", fontSize: "18px", cursor: "pointer", padding: "4px 6px", lineHeight: 1, flexShrink: 0 }
+      }, "\u2630"),
       /* @__PURE__ */ React.createElement("button", {
         onClick: () => setShowSettings(!showSettings),
         style: { background: "linear-gradient(135deg,#d4a846,#c9807a)", border: "none", borderRadius: "50%", width: "28px", height: "28px", display: "flex", alignItems: "center", justifyContent: "center", fontSize: "11px", fontWeight: "700", color: "#080810", cursor: "pointer", flexShrink: 0, padding: 0 }
@@ -5840,6 +5834,22 @@ Move closer to your speakers and try again.`);
         fontVariantNumeric: "tabular-nums"
       }
     }, formatTime(playbackTime)), /* @__PURE__ */ React.createElement("button", {
+      onClick: () => setControlsVisible((v) => !v),
+      // Don't let the touch bubble to the background handler, which would close
+      // the menu this tap is trying to toggle.
+      onTouchStart: (e3) => e3.stopPropagation(),
+      title: "Sync controls",
+      style: {
+        background: "none",
+        border: "none",
+        color: controlsVisible ? "#d4a846" : "rgba(255,255,255,0.45)",
+        fontSize: "20px",
+        cursor: "pointer",
+        padding: "4px 6px",
+        lineHeight: 1,
+        flexShrink: 0
+      }
+    }, "\u2630"), /* @__PURE__ */ React.createElement("button", {
       onClick: () => setShowSettings(!showSettings),
       style: {
         background: "linear-gradient(135deg, #d4a846, #c9807a)",
@@ -6132,14 +6142,14 @@ Move closer to your speakers and try again.`);
         paddingBottom: IS_IOS ? "calc(env(safe-area-inset-bottom) + 98px)" : "calc(env(safe-area-inset-bottom) + 120px)",
         flexShrink: 0,
         overflow: "hidden",
-        // iOS idle: collapse the controls (nudge / skip / etc.) to zero height so
+        // Closed: collapse the controls (nudge / skip / etc.) to zero height so
         // the lyrics reclaim the space. The header and tab bar stay put — only
         // this control block folds away. box-sizing:border-box means maxHeight:0
-        // swallows the padding too. Any tap re-expands via bumpControls.
-        maxHeight: IS_IOS && !controlsVisible ? "0px" : "460px",
-        opacity: IS_IOS && !controlsVisible ? 0 : 1,
+        // swallows the padding too. Only the ☰ header button re-expands it.
+        maxHeight: !controlsVisible ? "0px" : "460px",
+        opacity: !controlsVisible ? 0 : 1,
         transition: "max-height 0.35s ease, opacity 0.35s ease",
-        pointerEvents: IS_IOS && !controlsVisible ? "none" : "auto"
+        pointerEvents: !controlsVisible ? "none" : "auto"
       }
     }, /* @__PURE__ */ React.createElement("div", {
       style: {
