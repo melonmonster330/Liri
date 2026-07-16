@@ -561,12 +561,12 @@ function Liri() {
   // Schedule flip chimes: every 10s for the first 30s, then one more 30s
   // later. Delays are measured from song end (the side-end card itself
   // appears 4s in). First fire also surfaces the push notification.
-  const scheduleFlipChimes = (song) => {
+  const scheduleFlipChimes = (song, discInfo) => {
     flipChimeTimersRef.current.forEach(clearTimeout);
     flipChimeTimersRef.current = [10000, 20000, 30000, 60000].map((delay, i) =>
       setTimeout(() => {
         playFlipChime();
-        if (i === 0) showFlipPushNotification(song);
+        if (i === 0) showFlipPushNotification(song, discInfo);
       }, delay)
     );
   };
@@ -1342,7 +1342,8 @@ function Liri() {
       advanceToNextTrack(tracks, idx);
     } else {
       setSideEndReason("flip");
-      scheduleFlipChimes(detectedSong);
+      const discInfo = getNextDiscInfo();
+      scheduleFlipChimes(detectedSong, discInfo);
       if (detectedSong) setLastSong(detectedSong);
       setMode("side-end");
     }
@@ -2166,10 +2167,11 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
       return;
     }
     if (isSideEnd) {
-      setSideEndNextDiscInfo(getNextDiscInfo());
+      const discInfo = getNextDiscInfo();
+      setSideEndNextDiscInfo(discInfo);
       setSideEndReason("flip");
       // Chime ~3s after the flip card appears (≈7s from song end).
-      scheduleFlipChimes(detectedSong);
+      scheduleFlipChimes(detectedSong, discInfo);
 
       // ── Log the flip event to analytics ──
       const sideIdx = sideEnds.indexOf(idx); // 0 = first flip (A→B), 1 = B→C, etc.

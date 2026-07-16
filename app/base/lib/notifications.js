@@ -18,9 +18,12 @@ function userOptedIn() {
 }
 
 // Schedule a "flip the record" reminder. Called from the side-end handler.
-export function showFlipPushNotification(song) {
+export function showFlipPushNotification(song, discInfo) {
   if (!userOptedIn()) return;
-  const title = "Time to flip! 💿";
+  let title = "Time to flip! 💿";
+  if (discInfo?.isNewDisc) {
+    title = `Time for LP ${discInfo.nextDisc}! 💿`;
+  }
   const body  = song ? `${song.artist} — ${song.album || "Side A done"}` : "Your side has ended — flip the record";
 
   if (window.Capacitor) {

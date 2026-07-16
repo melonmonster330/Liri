@@ -612,9 +612,12 @@
   function userOptedIn() {
     return localStorage.getItem("liri_flip_notify") === "true";
   }
-  function showFlipPushNotification(song) {
+  function showFlipPushNotification(song, discInfo) {
     if (!userOptedIn()) return;
-    const title = "Time to flip! \u{1F4BF}";
+    let title = "Time to flip! \u{1F4BF}";
+    if (discInfo?.isNewDisc) {
+      title = `Time for LP ${discInfo.nextDisc}! \u{1F4BF}`;
+    }
     const body = song ? `${song.artist} \u2014 ${song.album || "Side A done"}` : "Your side has ended \u2014 flip the record";
     if (window.Capacitor) {
       try {
@@ -1616,12 +1619,12 @@
       } catch {
       }
     };
-    const scheduleFlipChimes = (song) => {
+    const scheduleFlipChimes = (song, discInfo) => {
       flipChimeTimersRef.current.forEach(clearTimeout);
       flipChimeTimersRef.current = [1e4, 2e4, 3e4, 6e4].map(
         (delay, i) => setTimeout(() => {
           playFlipChime();
-          if (i === 0) showFlipPushNotification(song);
+          if (i === 0) showFlipPushNotification(song, discInfo);
         }, delay)
       );
     };
@@ -2277,7 +2280,8 @@
         advanceToNextTrack(tracks, idx);
       } else {
         setSideEndReason("flip");
-        scheduleFlipChimes(detectedSong);
+        const discInfo = getNextDiscInfo();
+        scheduleFlipChimes(detectedSong, discInfo);
         if (detectedSong) setLastSong(detectedSong);
         setMode("side-end");
       }
@@ -2945,9 +2949,10 @@ Move closer to your speakers and try again.`);
         return;
       }
       if (isSideEnd) {
-        setSideEndNextDiscInfo(getNextDiscInfo());
+        const discInfo = getNextDiscInfo();
+        setSideEndNextDiscInfo(discInfo);
         setSideEndReason("flip");
-        scheduleFlipChimes(detectedSong);
+        scheduleFlipChimes(detectedSong, discInfo);
         const sideIdx = sideEnds.indexOf(idx);
         const method = dbRelease?.vinyl_tracks?.length > 0 ? "db" : albumTpsRef.current > 0 ? "learned" : "heuristic";
         logFlipEvent2({
