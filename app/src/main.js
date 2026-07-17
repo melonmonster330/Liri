@@ -47,7 +47,10 @@ const APP_VERSION = "1.5.14";
 // switches slightly BEFORE its nominal timestamp. Displayed time / progress bar
 // are unaffected (we only add this to the line-matching comparison). Helps the
 // perceived sync since reading slightly ahead feels more in-time than behind.
-const LYRIC_LEAD_SECONDS = 2;
+// Back to 1s (was bumped to 2s in v1.5.2 when lyrics "felt late" — that
+// lateness was actually the clock-drift bug, fixed on this branch; with an
+// honest clock the 2s lead made every line feel rushed).
+const LYRIC_LEAD_SECONDS = 1;
 // ── Turntable speed trim ──
 // Real turntables rarely spin at exactly the speed the digital track timings
 // assume (belt wear alone is commonly 1–3% slow), so a wall-clock lyric timer
@@ -56,7 +59,8 @@ const LYRIC_LEAD_SECONDS = 2;
 // track), persist it, and scale the clock by (1 + trim) everywhere.
 // trim < 0 → turntable slower than digital → slow the lyrics down.
 const SPEED_TRIM_MAX = 0.06; // ±6% — beyond this something else is wrong
-const SPEED_TRIM_LEARN_MIN_SECS = 40; // nudges earlier than this are initial-sync fixes, not drift
+const SPEED_TRIM_LEARN_MIN_SECS = 45; // nudges earlier than this are initial-sync fixes, not drift
+const SPEED_TRIM_MAX_STEP = 0.015; // max trim movement per learning update — bounds the damage from a mislabeled position fix
 // Vinyl has a physical groove gap between tracks that digital durations don't
 // include — park the lyric clock at 0 for this long on auto-advance so the
 // next track's lyrics don't start ahead of the needle.
@@ -1926,7 +1930,13 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
         if (Math.abs(dl.nudgeTotal) >= NUDGE_STEP_SECS - 0.01) {
           const est = dl.appliedTrim + dl.nudgeTotal / elapsedPlay;
           const prev = speedTrimRef.current;
-          const next = Math.max(-SPEED_TRIM_MAX, Math.min(SPEED_TRIM_MAX, prev * 0.5 + est * 0.5));
+          // Blend 50/50 with the stored value, then cap how far one update can
+          // move the trim — a big one-time position fix (late needle drop)
+          // implies a wildly wrong rate, and without the cap a single song
+          // could poison the trim badly enough to CAUSE constant drift.
+          let next = prev * 0.5 + est * 0.5;
+          next = Math.max(prev - SPEED_TRIM_MAX_STEP, Math.min(prev + SPEED_TRIM_MAX_STEP, next));
+          next = Math.max(-SPEED_TRIM_MAX, Math.min(SPEED_TRIM_MAX, next));
           speedTrimRef.current = next;
           try { localStorage.setItem("liri_speed_trim", String(next)); } catch {}
           // Rebase the clock anchor using the OLD trim so the rate change only
@@ -5411,7 +5421,34 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
       fontVariantNumeric: "tabular-nums",
       marginBottom: "6px"
     }
-  }, formatTime(playbackTime) + (songDuration ? " / " + formatTime(songDuration) : "")), /*#__PURE__*/React.createElement("div", {
+  }, formatTime(playbackTime) + (songDuration ? " / " + formatTime(songDuration) : "")), speedTrimRef.current !== 0 && /*#__PURE__*/React.createElement("button", {
+    // Learned turntable speed trim, visible for debugging/trust. Tap resets
+    // to 0 (e.g. if a bad session poisoned the learned rate).
+    onClick: () => {
+      // Fold elapsed time at the old rate into the anchor first so zeroing
+      // the trim doesn't jump the current position.
+      if (syncStartRef.current != null && !isPaused) {
+        initialPosRef.current = initialPosRef.current + (Date.now() - syncStartRef.current) / 1000 * (1 + speedTrimRef.current);
+        syncStartRef.current = Date.now();
+      }
+      speedTrimRef.current = 0;
+      driftLearnRef.current = { startPos: Math.max(0, playbackTime), appliedTrim: 0, nudgeTotal: 0 };
+      try { localStorage.removeItem("liri_speed_trim"); } catch {}
+      showKbToast("speed trim reset");
+    },
+    style: {
+      display: "block",
+      margin: "0 auto 6px",
+      background: "none",
+      border: "none",
+      color: "rgba(255,255,255,0.3)",
+      fontSize: "10px",
+      letterSpacing: "1px",
+      cursor: "pointer",
+      fontFamily: "inherit",
+      padding: "2px 6px"
+    }
+  }, "speed trim " + (speedTrimRef.current > 0 ? "+" : "") + (speedTrimRef.current * 100).toFixed(1) + "% · tap to reset"), /*#__PURE__*/React.createElement("div", {
     style: {
       textAlign: "center",
       fontSize: "10px",

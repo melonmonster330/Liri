@@ -1216,9 +1216,10 @@
   };
   var sb = supabase.createClient("https://xjdjpaxgymgbvcwmvorc.supabase.co", "sb_publishable_C-NBnfg0ltAoUi46XQTUjA_ozjZW_Nd", { auth: { storage: liriAuthStorage } });
   var APP_VERSION = "1.5.14";
-  var LYRIC_LEAD_SECONDS = 2;
+  var LYRIC_LEAD_SECONDS = 1;
   var SPEED_TRIM_MAX = 0.06;
-  var SPEED_TRIM_LEARN_MIN_SECS = 40;
+  var SPEED_TRIM_LEARN_MIN_SECS = 45;
+  var SPEED_TRIM_MAX_STEP = 0.015;
   var TRACK_GAP_MS = 1500;
   var FLIP_NEEDLE_DROP_MS = 1e4;
   var NUDGE_STEP_SECS = 1.4;
@@ -2730,7 +2731,9 @@ Move closer to your speakers and try again.`);
           if (Math.abs(dl.nudgeTotal) >= NUDGE_STEP_SECS - 0.01) {
             const est = dl.appliedTrim + dl.nudgeTotal / elapsedPlay;
             const prev = speedTrimRef.current;
-            const next = Math.max(-SPEED_TRIM_MAX, Math.min(SPEED_TRIM_MAX, prev * 0.5 + est * 0.5));
+            let next = prev * 0.5 + est * 0.5;
+            next = Math.max(prev - SPEED_TRIM_MAX_STEP, Math.min(prev + SPEED_TRIM_MAX_STEP, next));
+            next = Math.max(-SPEED_TRIM_MAX, Math.min(SPEED_TRIM_MAX, next));
             speedTrimRef.current = next;
             try {
               localStorage.setItem("liri_speed_trim", String(next));
@@ -6210,7 +6213,35 @@ Move closer to your speakers and try again.`);
         fontVariantNumeric: "tabular-nums",
         marginBottom: "6px"
       }
-    }, formatTime(playbackTime) + (songDuration ? " / " + formatTime(songDuration) : "")), /* @__PURE__ */ React.createElement("div", {
+    }, formatTime(playbackTime) + (songDuration ? " / " + formatTime(songDuration) : "")), speedTrimRef.current !== 0 && /* @__PURE__ */ React.createElement("button", {
+      // Learned turntable speed trim, visible for debugging/trust. Tap resets
+      // to 0 (e.g. if a bad session poisoned the learned rate).
+      onClick: () => {
+        if (syncStartRef.current != null && !isPaused) {
+          initialPosRef.current = initialPosRef.current + (Date.now() - syncStartRef.current) / 1e3 * (1 + speedTrimRef.current);
+          syncStartRef.current = Date.now();
+        }
+        speedTrimRef.current = 0;
+        driftLearnRef.current = { startPos: Math.max(0, playbackTime), appliedTrim: 0, nudgeTotal: 0 };
+        try {
+          localStorage.removeItem("liri_speed_trim");
+        } catch {
+        }
+        showKbToast("speed trim reset");
+      },
+      style: {
+        display: "block",
+        margin: "0 auto 6px",
+        background: "none",
+        border: "none",
+        color: "rgba(255,255,255,0.3)",
+        fontSize: "10px",
+        letterSpacing: "1px",
+        cursor: "pointer",
+        fontFamily: "inherit",
+        padding: "2px 6px"
+      }
+    }, "speed trim " + (speedTrimRef.current > 0 ? "+" : "") + (speedTrimRef.current * 100).toFixed(1) + "% \xB7 tap to reset"), /* @__PURE__ */ React.createElement("div", {
       style: {
         textAlign: "center",
         fontSize: "10px",
