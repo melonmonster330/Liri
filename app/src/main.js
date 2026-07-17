@@ -63,8 +63,9 @@ const SPEED_TRIM_LEARN_MIN_SECS = 45; // nudges earlier than this are initial-sy
 const SPEED_TRIM_MAX_STEP = 0.015; // max trim movement per learning update — bounds the damage from a mislabeled position fix
 // Vinyl has a physical groove gap between tracks that digital durations don't
 // include — park the lyric clock at 0 for this long on auto-advance so the
-// next track's lyrics don't start ahead of the needle.
-const TRACK_GAP_MS = 1500;
+// next track's lyrics don't start ahead of the needle. (Reduced from 1500ms;
+// if she's nudging forward constantly the gap is too long for her vinyl.)
+const TRACK_GAP_MS = 300;
 // How long the lyric clock parks at 0 after a manual flip / side pick while
 // the user physically flips the record and drops the needle.
 const FLIP_NEEDLE_DROP_MS = 10000;
