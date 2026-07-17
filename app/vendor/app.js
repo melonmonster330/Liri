@@ -2703,10 +2703,13 @@ Move closer to your speakers and try again.`);
     };
     const nudge = (s) => {
       userNudgeRef.current += s;
-      initialPosRef.current = Math.max(0, initialPosRef.current + s);
-      setPlaybackTime((p) => Math.max(0, p + s));
       const running = !isPaused && syncStartRef.current != null;
-      const base = running ? initialPosRef.current + (Date.now() - syncStartRef.current) / 1e3 * (1 + speedTrimRef.current) : initialPosRef.current;
+      const elapsedScaled = running ? (Date.now() - syncStartRef.current) / 1e3 * (1 + speedTrimRef.current) : 0;
+      const curPos = initialPosRef.current + elapsedScaled;
+      const newPos = curPos < 0 ? curPos + s : Math.max(0, curPos + s);
+      initialPosRef.current = newPos - elapsedScaled;
+      setPlaybackTime(Math.max(0, newPos));
+      const base = newPos;
       const lrc = lyricsRef.current;
       if (lrc.length > 0 && lrc[0].time != null) {
         const t = Math.max(0, base) + LYRIC_LEAD_SECONDS;

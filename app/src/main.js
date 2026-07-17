@@ -1882,14 +1882,21 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
   };
   const nudge = s => {
     userNudgeRef.current += s;
-    initialPosRef.current = Math.max(0, initialPosRef.current + s);
+    // Apply the nudge to the playback POSITION, not the raw anchor. The anchor
+    // (initialPosRef) is ~0 at the start of auto-advanced tracks, so clamping
+    // Math.max(0, anchor + s) silently ate backward nudges until enough clock
+    // time had been folded into the anchor. Clamp the resulting position
+    // instead: it can't go below 0 — except while parked (negative position =
+    // needle-drop countdown), where a nudge shifts the countdown itself.
+    const running = !isPaused && syncStartRef.current != null;
+    const elapsedScaled = running ? (Date.now() - syncStartRef.current) / 1000 * (1 + speedTrimRef.current) : 0;
+    const curPos = initialPosRef.current + elapsedScaled;
+    const newPos = curPos < 0 ? curPos + s : Math.max(0, curPos + s);
+    initialPosRef.current = newPos - elapsedScaled;
     // Shift the displayed time immediately (the 80ms tick would also do this
     // while playing, but the interval is stopped while paused).
-    setPlaybackTime(p => Math.max(0, p + s));
-    const running = !isPaused && syncStartRef.current != null;
-    const base = running
-      ? initialPosRef.current + (Date.now() - syncStartRef.current) / 1000 * (1 + speedTrimRef.current)
-      : initialPosRef.current;
+    setPlaybackTime(Math.max(0, newPos));
+    const base = newPos;
     // Re-pick the highlighted line right away — playing OR paused — so the
     // nudge visibly jumps to a new line instead of looking like "nothing moved."
     const lrc = lyricsRef.current;
