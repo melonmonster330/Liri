@@ -48,6 +48,22 @@ const APP_VERSION = "1.5.14";
 // are unaffected (we only add this to the line-matching comparison). Helps the
 // perceived sync since reading slightly ahead feels more in-time than behind.
 const LYRIC_LEAD_SECONDS = 2;
+// ── Turntable speed trim ──
+// Real turntables rarely spin at exactly the speed the digital track timings
+// assume (belt wear alone is commonly 1–3% slow), so a wall-clock lyric timer
+// drifts ahead/behind at a constant rate on EVERY song. We learn the actual
+// rate from the user's drift-correcting nudges (any nudge made 40s+ into a
+// track), persist it, and scale the clock by (1 + trim) everywhere.
+// trim < 0 → turntable slower than digital → slow the lyrics down.
+const SPEED_TRIM_MAX = 0.06; // ±6% — beyond this something else is wrong
+const SPEED_TRIM_LEARN_MIN_SECS = 40; // nudges earlier than this are initial-sync fixes, not drift
+// Vinyl has a physical groove gap between tracks that digital durations don't
+// include — park the lyric clock at 0 for this long on auto-advance so the
+// next track's lyrics don't start ahead of the needle.
+const TRACK_GAP_MS = 1500;
+// How long the lyric clock parks at 0 after a manual flip / side pick while
+// the user physically flips the record and drops the needle.
+const FLIP_NEEDLE_DROP_MS = 10000;
 // Stable per-tab id (survives refresh via sessionStorage) — used by the
 // playing-tab heartbeat so multiple Liri tabs don't double-run one session.
 const sessionTabId = (() => {
@@ -338,6 +354,17 @@ function Liri() {
   const detectedAtRef = useRef(null);
   const initialPosRef = useRef(0);
   const userNudgeRef = useRef(0); // cumulative nudge applied by user this session
+  // Learned turntable speed trim (fraction; negative = table runs slower than
+  // the digital timings). Loaded once from localStorage, written back on learn.
+  const speedTrimRef = useRef(undefined);
+  if (speedTrimRef.current === undefined) {
+    let v = NaN;
+    try { v = parseFloat(localStorage.getItem("liri_speed_trim") ?? ""); } catch {}
+    speedTrimRef.current = Number.isFinite(v) ? Math.max(-SPEED_TRIM_MAX, Math.min(SPEED_TRIM_MAX, v)) : 0;
+  }
+  // Per-track drift-learning state: { startPos, appliedTrim, nudgeTotal }.
+  // Reset by startSync on each new detection; consumed by nudge().
+  const driftLearnRef = useRef(null);
   // Deferred timing: identification paths store { startPos, phraseOffset, recStart } here.
   // startSync reads it to compute initialPos at the last possible moment — capturing the
   // full elapsed time from recording start through Whisper API + React render.
@@ -1743,13 +1770,18 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
       } = syncCalcRef.current;
       syncCalcRef.current = null;
       initialPosRef.current = Math.max(0, startPos - phraseOffset + (Date.now() - recStart) / 1000);
+      // New track/detection — reset drift learning to this track's baseline.
+      driftLearnRef.current = { startPos: initialPosRef.current, appliedTrim: speedTrimRef.current, nudgeTotal: 0 };
     } else if (syncStartRef.current !== null) {
       // Sync is already running and no new timing data is available.
       // This happens when detectedSong is updated for a non-song reason (e.g. artwork
       // loading from iTunes a few seconds after detection), which re-triggers this
       // useEffect. Carry the current running position forward so we don't silently
       // reset the anchor back to the original startPos and cause the lyrics to lag.
-      initialPosRef.current = Math.max(0, initialPosRef.current + (Date.now() - syncStartRef.current) / 1000);
+      // NO Math.max(0) here: a negative position is the flip/track-gap park still
+      // counting down. Clamping it to 0 was silently cancelling the needle-drop
+      // window whenever detectedSong updated (e.g. artwork arriving) mid-park.
+      initialPosRef.current = initialPosRef.current + (Date.now() - syncStartRef.current) / 1000 * (1 + speedTrimRef.current);
     }
     // Manual flip: park playbackTime at 0 while the user drops the needle.
     // We start the clock in the "past" so (Date.now() - syncStart)/1000 is
@@ -1778,7 +1810,9 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
     setIsPaused(false);
     clearInterval(syncIntervalRef.current);
     syncIntervalRef.current = setInterval(() => {
-      const t = initialPosRef.current + (Date.now() - syncStartRef.current) / 1000;
+      // Elapsed wall time is scaled by the learned turntable speed trim so the
+      // lyric clock tracks the actual vinyl, not the digital timings.
+      const t = initialPosRef.current + (Date.now() - syncStartRef.current) / 1000 * (1 + speedTrimRef.current);
       // Clamp displayed time to 0 during the manual-flip pause window.
       setPlaybackTime(t < 0 ? 0 : t);
       const lrc = lyricsRef.current;
@@ -1810,7 +1844,7 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
     currentTrackIndex, setCurrentTrackIndex,
     albumCollectionId, setAlbumCollectionId, albumCollectionIdRef,
     turntableMatchedIdxRef,
-    syncStartRef, initialPosRef, syncCalcRef,
+    syncStartRef, initialPosRef, syncCalcRef, speedTrimRef,
   });
 
   const togglePause = () => {
@@ -1821,7 +1855,7 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
       syncStartRef.current = Date.now();
       clearInterval(syncIntervalRef.current); // never leak a second interval
       syncIntervalRef.current = setInterval(() => {
-        const t = initialPosRef.current + (Date.now() - syncStartRef.current) / 1000;
+        const t = initialPosRef.current + (Date.now() - syncStartRef.current) / 1000 * (1 + speedTrimRef.current);
         setPlaybackTime(t);
         const lrc = lyricsRef.current;
         if (!lrc.length || lrc[0].time == null) return;
@@ -1852,20 +1886,45 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
     // Shift the displayed time immediately (the 80ms tick would also do this
     // while playing, but the interval is stopped while paused).
     setPlaybackTime(p => Math.max(0, p + s));
+    const running = !isPaused && syncStartRef.current != null;
+    const base = running
+      ? initialPosRef.current + (Date.now() - syncStartRef.current) / 1000 * (1 + speedTrimRef.current)
+      : initialPosRef.current;
     // Re-pick the highlighted line right away — playing OR paused — so the
     // nudge visibly jumps to a new line instead of looking like "nothing moved."
     const lrc = lyricsRef.current;
     if (lrc.length > 0 && lrc[0].time != null) {
-      const running = !isPaused && syncStartRef.current != null;
-      const base = running
-        ? initialPosRef.current + (Date.now() - syncStartRef.current) / 1000
-        : initialPosRef.current;
       const t = Math.max(0, base) + LYRIC_LEAD_SECONDS;
       let idx = -1;
       for (let i = 0; i < lrc.length; i++) {
         if (lrc[i].time <= t) idx = i;else break;
       }
       setCurrentIndex(idx);
+    }
+    // ── Learn the turntable speed trim from this nudge ──
+    // A nudge made well into a track is correcting accumulated drift, i.e. it
+    // directly measures how far off our clock rate is: the correction applied
+    // per second of playback IS the residual rate error. Add it to the trim
+    // that was already in effect this track, blend 50/50 with the stored value
+    // (converges over a few songs, resists one-off fiddling), clamp, persist.
+    const dl = driftLearnRef.current;
+    if (dl && running) {
+      const elapsedPlay = base - dl.startPos;
+      if (elapsedPlay >= SPEED_TRIM_LEARN_MIN_SECS) {
+        dl.nudgeTotal += s;
+        if (Math.abs(dl.nudgeTotal) >= 2) {
+          const est = dl.appliedTrim + dl.nudgeTotal / elapsedPlay;
+          const prev = speedTrimRef.current;
+          const next = Math.max(-SPEED_TRIM_MAX, Math.min(SPEED_TRIM_MAX, prev * 0.5 + est * 0.5));
+          speedTrimRef.current = next;
+          try { localStorage.setItem("liri_speed_trim", String(next)); } catch {}
+          // Rebase the clock anchor using the OLD trim so the rate change only
+          // applies going forward — otherwise the whole elapsed window gets
+          // re-scaled and the lyrics visibly jump a second time post-nudge.
+          initialPosRef.current = Math.max(0, initialPosRef.current + (Date.now() - syncStartRef.current) / 1000 * (1 + prev));
+          syncStartRef.current = Date.now();
+        }
+      }
     }
   };
 
@@ -2231,6 +2290,9 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
     userNudgeRef.current = 0;
     initialPosRef.current = 0;
     syncCalcRef.current = { startPos: 0, phraseOffset: 0, recStart: Date.now() };
+    // Park briefly at 0: the vinyl groove gap between tracks isn't part of the
+    // digital duration, so without this the next lyrics start ahead of the needle.
+    flipStartDelayMsRef.current = TRACK_GAP_MS;
     saveToHistory(user, nextSong);
     fetchHistory(user);
     // cast removed
@@ -2333,10 +2395,10 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
           setMode("side-end");
           return;
         }
-        // Hop straight into the lyrics page; song progression is paused for
-        // 10s while the user actually drops the needle on the new side.
+        // Hop straight into the lyrics page; song progression is parked while
+        // the user actually drops the needle on the new side.
         cancelFlipChimes();
-        flipStartDelayMsRef.current = 10000;
+        flipStartDelayMsRef.current = FLIP_NEEDLE_DROP_MS;
         jumpToTrackIdx(nextFirst);
         return;
       }
@@ -2348,7 +2410,7 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
 
   // ── Manual side pick: start any side from the side-end screen ──
   // Same contract as manualFlipToNextSide: the user is physically moving the
-  // needle, so hold playback at 0 for 10s while they drop it on the new side.
+  // needle, so hold playback at 0 while they drop it on the new side.
   const startSideAtIdx = (idx) => {
     try {
       if (!chimeCtxRef.current) {
@@ -2358,7 +2420,7 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
       }
     } catch {}
     cancelFlipChimes();
-    flipStartDelayMsRef.current = 10000;
+    flipStartDelayMsRef.current = FLIP_NEEDLE_DROP_MS;
     jumpToTrackIdx(idx);
   };
 

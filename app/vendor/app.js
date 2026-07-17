@@ -300,7 +300,8 @@
     turntableMatchedIdxRef,
     syncStartRef,
     initialPosRef,
-    syncCalcRef
+    syncCalcRef,
+    speedTrimRef
   }) {
     const nowPlayingSnapshotRef = useRef(null);
     useEffect2(() => {
@@ -315,7 +316,7 @@
           turntableMatchedIdx: turntableMatchedIdxRef.current
         };
         try {
-          const t = syncStartRef.current != null ? initialPosRef.current + (Date.now() - syncStartRef.current) / 1e3 : initialPosRef.current;
+          const t = syncStartRef.current != null ? initialPosRef.current + (Date.now() - syncStartRef.current) / 1e3 * (1 + (speedTrimRef?.current || 0)) : initialPosRef.current;
           localStorage.setItem("liri_nowplaying", JSON.stringify({
             ...nowPlayingSnapshotRef.current,
             playbackTime: Math.max(0, t),
@@ -337,7 +338,7 @@
       const onHide = () => {
         const snap = nowPlayingSnapshotRef.current;
         if (!snap || !snap.detectedSong) return;
-        const t = syncStartRef.current != null ? initialPosRef.current + (Date.now() - syncStartRef.current) / 1e3 : initialPosRef.current;
+        const t = syncStartRef.current != null ? initialPosRef.current + (Date.now() - syncStartRef.current) / 1e3 * (1 + (speedTrimRef?.current || 0)) : initialPosRef.current;
         const payload = JSON.stringify({ ...snap, playbackTime: Math.max(0, t), savedAt: Date.now() });
         try {
           sessionStorage.setItem("liri_nowplaying", payload);
@@ -1216,6 +1217,10 @@
   var sb = supabase.createClient("https://xjdjpaxgymgbvcwmvorc.supabase.co", "sb_publishable_C-NBnfg0ltAoUi46XQTUjA_ozjZW_Nd", { auth: { storage: liriAuthStorage } });
   var APP_VERSION = "1.5.14";
   var LYRIC_LEAD_SECONDS = 2;
+  var SPEED_TRIM_MAX = 0.06;
+  var SPEED_TRIM_LEARN_MIN_SECS = 40;
+  var TRACK_GAP_MS = 1500;
+  var FLIP_NEEDLE_DROP_MS = 1e4;
   var sessionTabId = (() => {
     try {
       let id = sessionStorage.getItem("liri_tab_id");
@@ -1427,6 +1432,16 @@
     const detectedAtRef = useRef4(null);
     const initialPosRef = useRef4(0);
     const userNudgeRef = useRef4(0);
+    const speedTrimRef = useRef4(void 0);
+    if (speedTrimRef.current === void 0) {
+      let v = NaN;
+      try {
+        v = parseFloat(localStorage.getItem("liri_speed_trim") ?? "");
+      } catch {
+      }
+      speedTrimRef.current = Number.isFinite(v) ? Math.max(-SPEED_TRIM_MAX, Math.min(SPEED_TRIM_MAX, v)) : 0;
+    }
+    const driftLearnRef = useRef4(null);
     const syncCalcRef = useRef4(null);
     const recordingStartRef = useRef4(null);
     const lyricsRef = useRef4([]);
@@ -2593,8 +2608,9 @@ Move closer to your speakers and try again.`);
         } = syncCalcRef.current;
         syncCalcRef.current = null;
         initialPosRef.current = Math.max(0, startPos - phraseOffset + (Date.now() - recStart) / 1e3);
+        driftLearnRef.current = { startPos: initialPosRef.current, appliedTrim: speedTrimRef.current, nudgeTotal: 0 };
       } else if (syncStartRef.current !== null) {
-        initialPosRef.current = Math.max(0, initialPosRef.current + (Date.now() - syncStartRef.current) / 1e3);
+        initialPosRef.current = initialPosRef.current + (Date.now() - syncStartRef.current) / 1e3 * (1 + speedTrimRef.current);
       }
       if (flipStartDelayMsRef.current > 0) {
         initialPosRef.current = -flipStartDelayMsRef.current / 1e3;
@@ -2616,7 +2632,7 @@ Move closer to your speakers and try again.`);
       setIsPaused(false);
       clearInterval(syncIntervalRef.current);
       syncIntervalRef.current = setInterval(() => {
-        const t = initialPosRef.current + (Date.now() - syncStartRef.current) / 1e3;
+        const t = initialPosRef.current + (Date.now() - syncStartRef.current) / 1e3 * (1 + speedTrimRef.current);
         setPlaybackTime(t < 0 ? 0 : t);
         const lrc = lyricsRef.current;
         if (!lrc.length || lrc[0].time == null) return;
@@ -2654,14 +2670,15 @@ Move closer to your speakers and try again.`);
       turntableMatchedIdxRef,
       syncStartRef,
       initialPosRef,
-      syncCalcRef
+      syncCalcRef,
+      speedTrimRef
     });
     const togglePause = () => {
       if (isPaused) {
         syncStartRef.current = Date.now();
         clearInterval(syncIntervalRef.current);
         syncIntervalRef.current = setInterval(() => {
-          const t = initialPosRef.current + (Date.now() - syncStartRef.current) / 1e3;
+          const t = initialPosRef.current + (Date.now() - syncStartRef.current) / 1e3 * (1 + speedTrimRef.current);
           setPlaybackTime(t);
           const lrc = lyricsRef.current;
           if (!lrc.length || lrc[0].time == null) return;
@@ -2688,10 +2705,10 @@ Move closer to your speakers and try again.`);
       userNudgeRef.current += s;
       initialPosRef.current = Math.max(0, initialPosRef.current + s);
       setPlaybackTime((p) => Math.max(0, p + s));
+      const running = !isPaused && syncStartRef.current != null;
+      const base = running ? initialPosRef.current + (Date.now() - syncStartRef.current) / 1e3 * (1 + speedTrimRef.current) : initialPosRef.current;
       const lrc = lyricsRef.current;
       if (lrc.length > 0 && lrc[0].time != null) {
-        const running = !isPaused && syncStartRef.current != null;
-        const base = running ? initialPosRef.current + (Date.now() - syncStartRef.current) / 1e3 : initialPosRef.current;
         const t = Math.max(0, base) + LYRIC_LEAD_SECONDS;
         let idx = -1;
         for (let i = 0; i < lrc.length; i++) {
@@ -2699,6 +2716,25 @@ Move closer to your speakers and try again.`);
           else break;
         }
         setCurrentIndex(idx);
+      }
+      const dl = driftLearnRef.current;
+      if (dl && running) {
+        const elapsedPlay = base - dl.startPos;
+        if (elapsedPlay >= SPEED_TRIM_LEARN_MIN_SECS) {
+          dl.nudgeTotal += s;
+          if (Math.abs(dl.nudgeTotal) >= 2) {
+            const est = dl.appliedTrim + dl.nudgeTotal / elapsedPlay;
+            const prev = speedTrimRef.current;
+            const next = Math.max(-SPEED_TRIM_MAX, Math.min(SPEED_TRIM_MAX, prev * 0.5 + est * 0.5));
+            speedTrimRef.current = next;
+            try {
+              localStorage.setItem("liri_speed_trim", String(next));
+            } catch {
+            }
+            initialPosRef.current = Math.max(0, initialPosRef.current + (Date.now() - syncStartRef.current) / 1e3 * (1 + prev));
+            syncStartRef.current = Date.now();
+          }
+        }
       }
     };
     const adjustScrollSpeed = (delta) => {
@@ -3001,6 +3037,7 @@ Move closer to your speakers and try again.`);
       userNudgeRef.current = 0;
       initialPosRef.current = 0;
       syncCalcRef.current = { startPos: 0, phraseOffset: 0, recStart: Date.now() };
+      flipStartDelayMsRef.current = TRACK_GAP_MS;
       saveToHistory(user, nextSong);
       fetchHistory(user);
       logListeningEvent2({
@@ -3088,7 +3125,7 @@ Move closer to your speakers and try again.`);
             return;
           }
           cancelFlipChimes();
-          flipStartDelayMsRef.current = 1e4;
+          flipStartDelayMsRef.current = FLIP_NEEDLE_DROP_MS;
           jumpToTrackIdx(nextFirst);
           return;
         }
@@ -3106,7 +3143,7 @@ Move closer to your speakers and try again.`);
       } catch {
       }
       cancelFlipChimes();
-      flipStartDelayMsRef.current = 1e4;
+      flipStartDelayMsRef.current = FLIP_NEEDLE_DROP_MS;
       jumpToTrackIdx(idx);
     };
     const getNextSideLetter = () => {
