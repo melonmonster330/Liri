@@ -70,8 +70,8 @@ const TRACK_GAP_MS = 1500;
 const FLIP_NEEDLE_DROP_MS = 10000;
 // Seconds moved per nudge press (buttons + arrow keys) and per fine-step
 // press (the hover buttons under the main ones). Labels show the real values.
-const NUDGE_STEP_SECS = 1.4;
-const NUDGE_FINE_SECS = 0.7;
+const NUDGE_STEP_SECS = 1.0;
+const NUDGE_FINE_SECS = 0.5;
 // Stable per-tab id (survives refresh via sessionStorage) — used by the
 // playing-tab heartbeat so multiple Liri tabs don't double-run one session.
 const sessionTabId = (() => {

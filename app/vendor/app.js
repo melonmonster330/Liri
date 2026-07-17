@@ -1222,8 +1222,8 @@
   var SPEED_TRIM_MAX_STEP = 0.015;
   var TRACK_GAP_MS = 1500;
   var FLIP_NEEDLE_DROP_MS = 1e4;
-  var NUDGE_STEP_SECS = 1.4;
-  var NUDGE_FINE_SECS = 0.7;
+  var NUDGE_STEP_SECS = 1;
+  var NUDGE_FINE_SECS = 0.5;
   var sessionTabId = (() => {
     try {
       let id = sessionStorage.getItem("liri_tab_id");
