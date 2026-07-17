@@ -64,6 +64,10 @@ const TRACK_GAP_MS = 1500;
 // How long the lyric clock parks at 0 after a manual flip / side pick while
 // the user physically flips the record and drops the needle.
 const FLIP_NEEDLE_DROP_MS = 10000;
+// Seconds moved per nudge press (buttons + arrow keys) and per fine-step
+// press (the hover buttons under the main ones). Labels show the real values.
+const NUDGE_STEP_SECS = 1.4;
+const NUDGE_FINE_SECS = 0.7;
 // Stable per-tab id (survives refresh via sessionStorage) — used by the
 // playing-tab heartbeat so multiple Liri tabs don't double-run one session.
 const sessionTabId = (() => {
@@ -1919,7 +1923,7 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
       const elapsedPlay = base - dl.startPos;
       if (elapsedPlay >= SPEED_TRIM_LEARN_MIN_SECS) {
         dl.nudgeTotal += s;
-        if (Math.abs(dl.nudgeTotal) >= 2) {
+        if (Math.abs(dl.nudgeTotal) >= NUDGE_STEP_SECS - 0.01) {
           const est = dl.appliedTrim + dl.nudgeTotal / elapsedPlay;
           const prev = speedTrimRef.current;
           const next = Math.max(-SPEED_TRIM_MAX, Math.min(SPEED_TRIM_MAX, prev * 0.5 + est * 0.5));
@@ -1961,11 +1965,11 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
       if (e.key === "ArrowLeft") {
         e.preventDefault();
         if (unsyncedNow) { adjustScrollSpeed(-0.25); showKbToast("← slower"); }
-        else { nudge(-2); showKbToast("← −1s"); }
+        else { nudge(-NUDGE_STEP_SECS); showKbToast("← −" + NUDGE_STEP_SECS + "s"); }
       } else if (e.key === "ArrowRight") {
         e.preventDefault();
         if (unsyncedNow) { adjustScrollSpeed(0.25); showKbToast("→ faster"); }
-        else { nudge(2); showKbToast("→ +1s"); }
+        else { nudge(NUDGE_STEP_SECS); showKbToast("→ +" + NUDGE_STEP_SECS + "s"); }
       } else if (e.key === " ") {
         e.preventDefault();
         togglePause();
@@ -5397,6 +5401,17 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
       pointerEvents: !controlsVisible ? "none" : "auto"
     }
   }, /*#__PURE__*/React.createElement("div", {
+    // Time / duration readout — lives WITH the nudge controls so you can see
+    // exactly where in the song you are while adjusting sync.
+    style: {
+      textAlign: "center",
+      fontSize: "14px",
+      fontWeight: "600",
+      color: "rgba(255,255,255,0.6)",
+      fontVariantNumeric: "tabular-nums",
+      marginBottom: "6px"
+    }
+  }, formatTime(playbackTime) + (songDuration ? " / " + formatTime(songDuration) : "")), /*#__PURE__*/React.createElement("div", {
     style: {
       textAlign: "center",
       fontSize: "10px",
@@ -5450,7 +5465,7 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
     onPointerEnter: () => setHoverNudge("left"),
     onPointerLeave: () => setHoverNudge(null)
   }, /*#__PURE__*/React.createElement("button", {
-    onClick: () => handleNudge(-2), // moves 2s per press (label says 1s — a nudge that actually lands)
+    onClick: () => handleNudge(-NUDGE_STEP_SECS),
     style: {
       background: "rgba(255,255,255,0.07)",
       border: "1px solid rgba(255,255,255,0.15)",
@@ -5462,8 +5477,8 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
       fontFamily: "inherit",
       fontWeight: "600"
     }
-  }, "\u22121s"), hoverNudge === "left" && /*#__PURE__*/React.createElement("button", {
-    onClick: () => handleNudge(-1), // fine step: moves 1s (label says 0.5s)
+  }, "\u2212" + NUDGE_STEP_SECS + "s"), hoverNudge === "left" && /*#__PURE__*/React.createElement("button", {
+    onClick: () => handleNudge(-NUDGE_FINE_SECS),
     style: {
       position: "absolute",
       top: "calc(100% + 6px)",
@@ -5482,14 +5497,14 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
       animation: "fade-up 0.12s ease",
       boxShadow: "0 4px 16px rgba(0,0,0,0.5)"
     }
-  }, "\u22120.5s")), /*#__PURE__*/React.createElement("div", {
+  }, "\u2212" + NUDGE_FINE_SECS + "s")), /*#__PURE__*/React.createElement("div", {
     style: {
       position: "relative"
     },
     onPointerEnter: () => setHoverNudge("right"),
     onPointerLeave: () => setHoverNudge(null)
   }, /*#__PURE__*/React.createElement("button", {
-    onClick: () => handleNudge(2), // moves 2s per press (label says 1s — a nudge that actually lands)
+    onClick: () => handleNudge(NUDGE_STEP_SECS),
     style: {
       background: "rgba(255,255,255,0.07)",
       border: "1px solid rgba(255,255,255,0.15)",
@@ -5501,8 +5516,8 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
       fontFamily: "inherit",
       fontWeight: "600"
     }
-  }, "+1s"), hoverNudge === "right" && /*#__PURE__*/React.createElement("button", {
-    onClick: () => handleNudge(1), // fine step: moves 1s (label says 0.5s)
+  }, "+" + NUDGE_STEP_SECS + "s"), hoverNudge === "right" && /*#__PURE__*/React.createElement("button", {
+    onClick: () => handleNudge(NUDGE_FINE_SECS),
     style: {
       position: "absolute",
       top: "calc(100% + 6px)",
@@ -5521,7 +5536,7 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
       animation: "fade-up 0.12s ease",
       boxShadow: "0 4px 16px rgba(0,0,0,0.5)"
     }
-  }, "+0.5s")))), /*#__PURE__*/React.createElement("div", {
+  }, "+" + NUDGE_FINE_SECS + "s")))), /*#__PURE__*/React.createElement("div", {
     style: {
       display: "flex",
       justifyContent: "center",
