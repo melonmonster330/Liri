@@ -40,18 +40,3 @@ Namespace: `urn:x-cast:com.getliri.lyrics`
 - `SESSION_END`: clears the lyrics and returns the receiver to its waiting state.
 
 iOS/Capacitor sender integration is intentionally out of scope for this version.
-
-## Samsung Smart TV browser
-
-Samsung support uses the TV's built-in browser rather than the legacy Smart View
-SDK:
-
-1. Open the same deployment's `/tv` URL in the Samsung browser.
-2. The TV displays a four-digit pairing code.
-3. Start lyrics in web Liri, select the TV icon, and enter that code under
-   **Samsung Smart TV**.
-4. The browser and TV exchange live lyric state through a private-by-code
-   Supabase Realtime channel. No screen mirroring or audio casting is involved.
-
-The TV sends a readiness heartbeat every three seconds. Liri sends a complete
-state anchor once per second, including pause and manual nudge corrections.

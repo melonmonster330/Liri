@@ -23,12 +23,8 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Liri — TV</title>
 
-  <!-- Cast Receiver SDK — Samsung/browser mode must not initialize CAF. -->
-  <script>
-    if (/CrKey/i.test(navigator.userAgent)) {
-      document.write('<script src="//www.gstatic.com/cast/sdk/libs/caf_receiver/v3/cast_receiver_framework.js"><\\/script>');
-    }
-  </script>
+  <!-- Cast Receiver SDK — only loads when running on a Chromecast -->
+  <script src="//www.gstatic.com/cast/sdk/libs/caf_receiver/v3/cast_receiver_framework.js"></script>
   <!-- Supabase (used for browser-mode fallback only) -->
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
 
@@ -255,12 +251,10 @@
     }
 
     // ── MODE DETECTION ─────────────────────────────────────────────────────────
-    // The receiver SDK also creates cast.framework in ordinary browsers, so use
-    // the Cast receiver user agent to distinguish a real receiver from a Samsung
-    // TV browser opening /tv directly.
-    const IS_CAST_RECEIVER = /CrKey/i.test(navigator.userAgent);
+    // The Cast Receiver SDK sets up `cast.framework` on the window.
+    // If it's present, we're running inside a Chromecast. Otherwise, browser mode.
 
-    if (IS_CAST_RECEIVER && typeof cast !== "undefined" && cast.framework) {
+    if (typeof cast !== "undefined" && cast.framework) {
       initCastReceiverMode();
     } else {
       initBrowserMode();
@@ -315,17 +309,7 @@
       document.getElementById("room-badge").textContent = "liri.tv · " + code;
 
       // Subscribe to cast_sessions for this code
-      realtimeChannel = sb.channel("cast:" + code, {
-        config: { broadcast: { ack: true, self: false } }
-      })
-        .on("broadcast", { event: "state" }, message => {
-          if (message.payload) showSession(message.payload);
-        })
-        .on("broadcast", { event: "session-end" }, () => {
-          clearInterval(syncInterval);
-          document.getElementById("lyrics-screen").classList.remove("visible");
-          document.getElementById("waiting").classList.remove("hidden");
-        })
+      realtimeChannel = sb.channel("cast:" + code)
         .on("postgres_changes", {
           event: "*", schema: "public", table: "cast_sessions",
           filter: "room_code=eq." + code
@@ -333,12 +317,6 @@
           if (payload.new?.is_active) showSession(payload.new);
         })
         .subscribe(status => {
-          if (status === "SUBSCRIBED") {
-            realtimeChannel.send({ type: "broadcast", event: "receiver-ready", payload: { code } });
-            setInterval(() => realtimeChannel.send({
-              type: "broadcast", event: "receiver-ready", payload: { code }
-            }), 3000);
-          }
           if (status === "CHANNEL_ERROR" || status === "TIMED_OUT") {
             document.getElementById("code-hint").textContent = "Connection error — refresh to try again.";
           }

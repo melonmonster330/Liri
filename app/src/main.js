@@ -12,7 +12,6 @@ import { usePayments } from "./hooks/usePayments.js";
 import { useNowPlaying } from "./hooks/useNowPlaying.js";
 import { useLyricScroll } from "./hooks/useLyricScroll.js";
 import { useCast } from "./hooks/useCast.js";
-import { useTvRoom } from "./hooks/useTvRoom.js";
 import { startWhisperChunks } from "../base/lib/whisper.js";
 import { getSideGroups, hasSideData } from "../base/lib/sides.js";
 import { LYRIC_SITES, saveUserLyrics, buildSideRows, saveUserSides } from "../base/lib/usermeta.js";
@@ -283,9 +282,7 @@ function Liri() {
   const wakeLockRef = useRef(null);
   const [isPaused, setIsPaused] = useState(false);
   const [showCast, setShowCast] = useState(false);
-  const [tvCodeInput, setTvCodeInput] = useState("");
   const cast = useCast({ mode, song: detectedSong, lyrics, playbackTime, isPaused });
-  const tvRoom = useTvRoom({ sb, mode, song: detectedSong, lyrics, playbackTime, isPaused });
   const [kbToast, setKbToast] = useState(null);
   const kbToastTimerRef = useRef(null);
   const [shouldAdvanceTrack, setShouldAdvanceTrack] = useState(false);
@@ -3197,47 +3194,25 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
     style: { position: "fixed", inset: 0, zIndex: 450, display: "flex", alignItems: "center", justifyContent: "center", padding: "24px", background: "rgba(0,0,0,0.68)", backdropFilter: "blur(10px)" }
   }, /*#__PURE__*/React.createElement("div", {
     onClick: e => e.stopPropagation(),
-    style: { width: "100%", maxWidth: "420px", maxHeight: "90vh", overflowY: "auto", padding: "30px", borderRadius: "24px", background: "#0f0f1c", border: "1px solid rgba(255,255,255,0.08)", boxShadow: "0 24px 80px rgba(0,0,0,0.65)", textAlign: "center" }
+    style: { width: "100%", maxWidth: "420px", padding: "30px", borderRadius: "24px", background: "#0f0f1c", border: "1px solid rgba(255,255,255,0.08)", boxShadow: "0 24px 80px rgba(0,0,0,0.65)", textAlign: "center" }
   }, /*#__PURE__*/React.createElement("div", {
-    style: { display: "flex", justifyContent: "center", marginBottom: "18px", color: cast.connected || tvRoom.connected ? "#d4a846" : "rgba(240,230,211,0.55)" }
-  }, /*#__PURE__*/React.createElement(CastGlyph, { connected: cast.connected || tvRoom.connected })), /*#__PURE__*/React.createElement("div", {
+    style: { display: "flex", justifyContent: "center", marginBottom: "18px", color: cast.connected ? "#d4a846" : "rgba(240,230,211,0.55)" }
+  }, /*#__PURE__*/React.createElement(CastGlyph, { connected: cast.connected })), /*#__PURE__*/React.createElement("div", {
     style: { fontSize: "11px", letterSpacing: "3px", textTransform: "uppercase", color: "#d4a846", marginBottom: "8px" }
   }, "Cast lyrics"), /*#__PURE__*/React.createElement("div", {
     style: { fontSize: "22px", fontWeight: "700", color: "#f0e6d3", marginBottom: "10px" }
-  }, cast.connected ? `Playing on ${cast.deviceName || "your TV"}` : tvRoom.connected ? `Connected to Samsung TV · ${tvRoom.roomCode}` : "Put Liri on the big screen"), /*#__PURE__*/React.createElement("div", {
-    style: { fontSize: "14px", lineHeight: "1.65", color: "rgba(255,255,255,0.38)", marginBottom: "22px" }
-  }, cast.connected || tvRoom.connected ? "The TV follows the same lyric clock. Pauses, nudges, and track changes update automatically." : "Your record keeps playing normally; only the lyric experience goes to the TV."), (cast.error || tvRoom.error) && /*#__PURE__*/React.createElement("div", {
+  }, cast.connected ? `Playing on ${cast.deviceName || "your TV"}` : "Put Liri on the big screen"), /*#__PURE__*/React.createElement("div", {
+    style: { fontSize: "14px", lineHeight: "1.65", color: "rgba(255,255,255,0.38)", marginBottom: "24px" }
+  }, cast.connected ? "The TV follows the same lyric clock. Pauses, nudges, and track changes update automatically." : "Choose a Chromecast or Google TV on this Wi-Fi network. Your record keeps playing normally; only the lyric experience goes to the TV."), cast.error && /*#__PURE__*/React.createElement("div", {
     style: { padding: "10px 12px", marginBottom: "16px", borderRadius: "10px", background: "rgba(201,128,122,0.1)", color: "#c9807a", fontSize: "12px" }
-  }, cast.error || tvRoom.error), cast.supported && /*#__PURE__*/React.createElement("div", {
-    style: { paddingBottom: "22px", marginBottom: "22px", borderBottom: "1px solid rgba(255,255,255,0.08)" }
-  }, /*#__PURE__*/React.createElement("div", {
-    style: { fontSize: "12px", fontWeight: "700", color: "rgba(255,255,255,0.65)", marginBottom: "10px" }
-  }, "Chromecast or Google TV"), cast.connected ? /*#__PURE__*/React.createElement("button", {
+  }, cast.error), cast.connected ? /*#__PURE__*/React.createElement("button", {
     onClick: cast.stopSession,
     style: { width: "100%", border: "1px solid rgba(201,128,122,0.3)", borderRadius: "14px", padding: "14px", background: "rgba(201,128,122,0.08)", color: "#c9807a", fontSize: "14px", fontWeight: "700", fontFamily: "inherit" }
   }, "Stop casting") : /*#__PURE__*/React.createElement("button", {
     onClick: cast.requestSession,
     disabled: !cast.ready,
     style: { width: "100%", border: "none", borderRadius: "14px", padding: "15px", background: cast.ready ? "linear-gradient(135deg,#d4a846,#c9807a)" : "rgba(255,255,255,0.07)", color: cast.ready ? "#080810" : "rgba(255,255,255,0.25)", fontSize: "14px", fontWeight: "800", fontFamily: "inherit", cursor: cast.ready ? "pointer" : "default" }
-  }, cast.ready ? "Choose a TV" : "Looking for Cast devices…")), /*#__PURE__*/React.createElement("div", {
-    style: { fontSize: "12px", fontWeight: "700", color: "rgba(255,255,255,0.65)", marginBottom: "6px" }
-  }, "Samsung Smart TV"), /*#__PURE__*/React.createElement("div", {
-    style: { fontSize: "12px", lineHeight: "1.55", color: "rgba(255,255,255,0.3)", marginBottom: "12px" }
-  }, `Open ${location.host}/tv in the Samsung browser, then enter its code here.`), tvRoom.status !== "idle" ? /*#__PURE__*/React.createElement("button", {
-    onClick: tvRoom.disconnect,
-    style: { width: "100%", border: "1px solid rgba(201,128,122,0.3)", borderRadius: "14px", padding: "14px", background: "rgba(201,128,122,0.08)", color: "#c9807a", fontSize: "14px", fontWeight: "700", fontFamily: "inherit" }
-  }, tvRoom.connected ? `Disconnect ${tvRoom.roomCode}` : `Waiting for TV ${tvRoom.roomCode}…`) : /*#__PURE__*/React.createElement("div", {
-    style: { display: "flex", gap: "10px" }
-  }, /*#__PURE__*/React.createElement("input", {
-    value: tvCodeInput,
-    onChange: e => setTvCodeInput(e.target.value.replace(/\D/g, "").slice(0, 4)),
-    onKeyDown: e => { if (e.key === "Enter") tvRoom.connect(tvCodeInput); },
-    inputMode: "numeric", placeholder: "4-digit code", "aria-label": "Samsung TV code",
-    style: { minWidth: 0, flex: 1, border: "1px solid rgba(255,255,255,0.12)", borderRadius: "14px", padding: "14px", background: "rgba(255,255,255,0.05)", color: "#f0e6d3", textAlign: "center", fontSize: "17px", letterSpacing: "3px", fontFamily: "inherit" }
-  }), /*#__PURE__*/React.createElement("button", {
-    onClick: () => tvRoom.connect(tvCodeInput), disabled: tvCodeInput.length !== 4,
-    style: { border: "none", borderRadius: "14px", padding: "0 18px", background: tvCodeInput.length === 4 ? "#d4a846" : "rgba(255,255,255,0.07)", color: tvCodeInput.length === 4 ? "#080810" : "rgba(255,255,255,0.25)", fontSize: "13px", fontWeight: "800", fontFamily: "inherit" }
-  }, "Connect")), /*#__PURE__*/React.createElement("button", {
+  }, cast.ready ? "Choose a TV" : "Looking for Cast devices…"), /*#__PURE__*/React.createElement("button", {
     onClick: () => setShowCast(false),
     style: { marginTop: "12px", border: "none", background: "none", color: "rgba(255,255,255,0.3)", padding: "8px 16px", fontSize: "13px", fontFamily: "inherit" }
   }, "Close"))), showOnboarding && /*#__PURE__*/React.createElement("div", {
@@ -5026,7 +5001,7 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
     /*#__PURE__*/React.createElement("div", { style: { fontSize: "11px", color: "rgba(255,255,255,0.35)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" } }, detectedSong?.artist)
   ),
   (() => { const si = getSideInfo(); return si ? /*#__PURE__*/React.createElement("div", { style: { fontSize: "10px", fontWeight: "700", letterSpacing: "2px", color: "rgba(212,168,70,0.85)", textTransform: "uppercase", flexShrink: 0 } }, si.side ? `Side ${si.side} \xB7 ${si.track}` : `Track ${si.track}`) : null; })(),
-  !IS_IOS && /*#__PURE__*/React.createElement("button", {
+  cast.supported && /*#__PURE__*/React.createElement("button", {
     onClick: () => setShowCast(true),
     title: cast.connected ? `Casting to ${cast.deviceName || "TV"}` : "Cast lyrics to TV",
     "aria-label": "Cast lyrics to TV",
@@ -5124,7 +5099,7 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
       marginLeft: "12px",
       flexShrink: 0
     }
-  }, !IS_IOS && /*#__PURE__*/React.createElement("button", {
+  }, cast.supported && /*#__PURE__*/React.createElement("button", {
     onClick: () => setShowCast(true),
     title: cast.connected ? `Casting to ${cast.deviceName || "TV"}` : "Cast lyrics to TV",
     "aria-label": "Cast lyrics to TV",
