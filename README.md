@@ -142,9 +142,10 @@ The app ID is `com.getliri.app`. The web root is the `app/` folder.
 
 ## TV cast
 
-Navigate to `getliri.com/tv?room=ROOMCODE` on any browser. While Liri is syncing
-on your phone, tap the 📺 icon to get your room code and QR link. Supabase real-time
-keeps the TV view in sync automatically.
+Desktop Chrome can launch Liri's custom Google Cast receiver and send the
+current song, artwork, lyrics, playback position, pauses, nudges, and track
+changes directly to a Chromecast or Google TV. See `docs/CASTING.md` for setup
+and physical-device testing.
 
 ---
 

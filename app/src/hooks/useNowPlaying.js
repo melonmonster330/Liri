@@ -24,7 +24,7 @@ export function useNowPlaying({
   currentTrackIndex, setCurrentTrackIndex,
   albumCollectionId, setAlbumCollectionId, albumCollectionIdRef,
   turntableMatchedIdxRef,
-  syncStartRef, initialPosRef, syncCalcRef, speedTrimRef,
+  syncStartRef, initialPosRef, syncCalcRef,
 }) {
   // ── Now-playing state persistence across tab navigation ──────────────────
   // A ref captures the latest snapshot each time key state changes, so the
@@ -40,7 +40,7 @@ export function useNowPlaying({
       // Also persist to localStorage continuously so a page refresh never loses state
       try {
         const t = syncStartRef.current != null
-          ? initialPosRef.current + (Date.now() - syncStartRef.current) / 1000 * (1 + (speedTrimRef?.current || 0))
+          ? initialPosRef.current + (Date.now() - syncStartRef.current) / 1000
           : initialPosRef.current;
         localStorage.setItem("liri_nowplaying", JSON.stringify({
           ...nowPlayingSnapshotRef.current,
@@ -63,7 +63,7 @@ export function useNowPlaying({
       const snap = nowPlayingSnapshotRef.current;
       if (!snap || !snap.detectedSong) return;
       const t = syncStartRef.current != null
-        ? initialPosRef.current + (Date.now() - syncStartRef.current) / 1000 * (1 + (speedTrimRef?.current || 0))
+        ? initialPosRef.current + (Date.now() - syncStartRef.current) / 1000
         : initialPosRef.current;
       const payload = JSON.stringify({ ...snap, playbackTime: Math.max(0, t), savedAt: Date.now() });
       try { sessionStorage.setItem("liri_nowplaying", payload); } catch {}

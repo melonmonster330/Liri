@@ -11,6 +11,7 @@ import { IS_IOS, TRANSCRIBE_PROXY, ITUNES_PROXY, PLAYBACK_OFFSET_CORRECTION, AUT
 import { usePayments } from "./hooks/usePayments.js";
 import { useNowPlaying } from "./hooks/useNowPlaying.js";
 import { useLyricScroll } from "./hooks/useLyricScroll.js";
+import { useCast } from "./hooks/useCast.js";
 import { startWhisperChunks } from "../base/lib/whisper.js";
 import { getSideGroups, hasSideData } from "../base/lib/sides.js";
 import { LYRIC_SITES, saveUserLyrics, buildSideRows, saveUserSides } from "../base/lib/usermeta.js";
@@ -51,16 +52,6 @@ const APP_VERSION = "1.5.14";
 // lateness was actually the clock-drift bug, fixed on this branch; with an
 // honest clock the 2s lead made every line feel rushed).
 const LYRIC_LEAD_SECONDS = 1;
-// ── Turntable speed trim ──
-// Real turntables rarely spin at exactly the speed the digital track timings
-// assume (belt wear alone is commonly 1–3% slow), so a wall-clock lyric timer
-// drifts ahead/behind at a constant rate on EVERY song. We learn the actual
-// rate from the user's drift-correcting nudges (any nudge made 40s+ into a
-// track), persist it, and scale the clock by (1 + trim) everywhere.
-// trim < 0 → turntable slower than digital → slow the lyrics down.
-const SPEED_TRIM_MAX = 0.06; // ±6% — beyond this something else is wrong
-const SPEED_TRIM_LEARN_MIN_SECS = 45; // nudges earlier than this are initial-sync fixes, not drift
-const SPEED_TRIM_MAX_STEP = 0.015; // max trim movement per learning update — bounds the damage from a mislabeled position fix
 // Vinyl has a physical groove gap between tracks that digital durations don't
 // include — park the lyric clock at 0 for this long on auto-advance so the
 // next track's lyrics don't start ahead of the needle. (Reduced from 1500ms;
@@ -105,6 +96,18 @@ styleEl.textContent = `
       .safe-bottom { padding-bottom: max(72px, calc(env(safe-area-inset-bottom) + 64px)) !important; }
     `;
 document.head.appendChild(styleEl);
+
+function CastGlyph({ connected = false }) {
+  return /*#__PURE__*/React.createElement("svg", {
+    width: "20", height: "20", viewBox: "0 0 24 24", fill: "none",
+    stroke: connected ? "#d4a846" : "currentColor", strokeWidth: "1.7",
+    strokeLinecap: "round", strokeLinejoin: "round", "aria-hidden": "true"
+  }, /*#__PURE__*/React.createElement("path", { d: "M4 18.5a1.5 1.5 0 0 1 1.5 1.5" }),
+  /*#__PURE__*/React.createElement("path", { d: "M4 14a6 6 0 0 1 6 6" }),
+  /*#__PURE__*/React.createElement("path", { d: "M4 9.5A10.5 10.5 0 0 1 14.5 20" }),
+  /*#__PURE__*/React.createElement("path", { d: "M8 4h10a2 2 0 0 1 2 2v12" }));
+}
+
 function Liri() {
   // ── Core state ──
   const [mode, setMode] = useState("idle");
@@ -278,6 +281,8 @@ function Liri() {
   const [keepScreenAwake, setKeepScreenAwake] = useState(() => localStorage.getItem("liri_keep_awake") === "true");
   const wakeLockRef = useRef(null);
   const [isPaused, setIsPaused] = useState(false);
+  const [showCast, setShowCast] = useState(false);
+  const cast = useCast({ mode, song: detectedSong, lyrics, playbackTime, isPaused });
   const [kbToast, setKbToast] = useState(null);
   const kbToastTimerRef = useRef(null);
   const [shouldAdvanceTrack, setShouldAdvanceTrack] = useState(false);
@@ -368,17 +373,6 @@ function Liri() {
   const detectedAtRef = useRef(null);
   const initialPosRef = useRef(0);
   const userNudgeRef = useRef(0); // cumulative nudge applied by user this session
-  // Learned turntable speed trim (fraction; negative = table runs slower than
-  // the digital timings). Loaded once from localStorage, written back on learn.
-  const speedTrimRef = useRef(undefined);
-  if (speedTrimRef.current === undefined) {
-    let v = NaN;
-    try { v = parseFloat(localStorage.getItem("liri_speed_trim") ?? ""); } catch {}
-    speedTrimRef.current = Number.isFinite(v) ? Math.max(-SPEED_TRIM_MAX, Math.min(SPEED_TRIM_MAX, v)) : 0;
-  }
-  // Per-track drift-learning state: { startPos, appliedTrim, nudgeTotal }.
-  // Reset by startSync on each new detection; consumed by nudge().
-  const driftLearnRef = useRef(null);
   // Deferred timing: identification paths store { startPos, phraseOffset, recStart } here.
   // startSync reads it to compute initialPos at the last possible moment — capturing the
   // full elapsed time from recording start through Whisper API + React render.
@@ -1454,7 +1448,6 @@ function Liri() {
 
     saveToHistory(user, song);
     fetchHistory(user);
-    // cast removed
     fetchAlbumTracks(title, artist).then(async ({
       tracks,
       collectionId
@@ -1784,8 +1777,6 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
       } = syncCalcRef.current;
       syncCalcRef.current = null;
       initialPosRef.current = Math.max(0, startPos - phraseOffset + (Date.now() - recStart) / 1000);
-      // New track/detection — reset drift learning to this track's baseline.
-      driftLearnRef.current = { startPos: initialPosRef.current, appliedTrim: speedTrimRef.current, nudgeTotal: 0 };
     } else if (syncStartRef.current !== null) {
       // Sync is already running and no new timing data is available.
       // This happens when detectedSong is updated for a non-song reason (e.g. artwork
@@ -1795,7 +1786,7 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
       // NO Math.max(0) here: a negative position is the flip/track-gap park still
       // counting down. Clamping it to 0 was silently cancelling the needle-drop
       // window whenever detectedSong updated (e.g. artwork arriving) mid-park.
-      initialPosRef.current = initialPosRef.current + (Date.now() - syncStartRef.current) / 1000 * (1 + speedTrimRef.current);
+      initialPosRef.current = initialPosRef.current + (Date.now() - syncStartRef.current) / 1000;
     }
     // Manual flip: park playbackTime at 0 while the user drops the needle.
     // We start the clock in the "past" so (Date.now() - syncStart)/1000 is
@@ -1824,9 +1815,7 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
     setIsPaused(false);
     clearInterval(syncIntervalRef.current);
     syncIntervalRef.current = setInterval(() => {
-      // Elapsed wall time is scaled by the learned turntable speed trim so the
-      // lyric clock tracks the actual vinyl, not the digital timings.
-      const t = initialPosRef.current + (Date.now() - syncStartRef.current) / 1000 * (1 + speedTrimRef.current);
+      const t = initialPosRef.current + (Date.now() - syncStartRef.current) / 1000;
       // Clamp displayed time to 0 during the manual-flip pause window.
       setPlaybackTime(t < 0 ? 0 : t);
       const lrc = lyricsRef.current;
@@ -1858,7 +1847,7 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
     currentTrackIndex, setCurrentTrackIndex,
     albumCollectionId, setAlbumCollectionId, albumCollectionIdRef,
     turntableMatchedIdxRef,
-    syncStartRef, initialPosRef, syncCalcRef, speedTrimRef,
+    syncStartRef, initialPosRef, syncCalcRef,
   });
 
   const togglePause = () => {
@@ -1869,7 +1858,7 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
       syncStartRef.current = Date.now();
       clearInterval(syncIntervalRef.current); // never leak a second interval
       syncIntervalRef.current = setInterval(() => {
-        const t = initialPosRef.current + (Date.now() - syncStartRef.current) / 1000 * (1 + speedTrimRef.current);
+        const t = initialPosRef.current + (Date.now() - syncStartRef.current) / 1000;
         setPlaybackTime(t);
         const lrc = lyricsRef.current;
         if (!lrc.length || lrc[0].time == null) return;
@@ -1903,7 +1892,7 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
     // instead: it can't go below 0 — except while parked (negative position =
     // needle-drop countdown), where a nudge shifts the countdown itself.
     const running = !isPaused && syncStartRef.current != null;
-    const elapsedScaled = running ? (Date.now() - syncStartRef.current) / 1000 * (1 + speedTrimRef.current) : 0;
+    const elapsedScaled = running ? (Date.now() - syncStartRef.current) / 1000 : 0;
     const curPos = initialPosRef.current + elapsedScaled;
     const newPos = curPos < 0 ? curPos + s : Math.max(0, curPos + s);
     initialPosRef.current = newPos - elapsedScaled;
@@ -1921,37 +1910,6 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
         if (lrc[i].time <= t) idx = i;else break;
       }
       setCurrentIndex(idx);
-    }
-    // ── Learn the turntable speed trim from this nudge ──
-    // A nudge made well into a track is correcting accumulated drift, i.e. it
-    // directly measures how far off our clock rate is: the correction applied
-    // per second of playback IS the residual rate error. Add it to the trim
-    // that was already in effect this track, blend 50/50 with the stored value
-    // (converges over a few songs, resists one-off fiddling), clamp, persist.
-    const dl = driftLearnRef.current;
-    if (dl && running) {
-      const elapsedPlay = base - dl.startPos;
-      if (elapsedPlay >= SPEED_TRIM_LEARN_MIN_SECS) {
-        dl.nudgeTotal += s;
-        if (Math.abs(dl.nudgeTotal) >= NUDGE_STEP_SECS - 0.01) {
-          const est = dl.appliedTrim + dl.nudgeTotal / elapsedPlay;
-          const prev = speedTrimRef.current;
-          // Blend 50/50 with the stored value, then cap how far one update can
-          // move the trim — a big one-time position fix (late needle drop)
-          // implies a wildly wrong rate, and without the cap a single song
-          // could poison the trim badly enough to CAUSE constant drift.
-          let next = prev * 0.5 + est * 0.5;
-          next = Math.max(prev - SPEED_TRIM_MAX_STEP, Math.min(prev + SPEED_TRIM_MAX_STEP, next));
-          next = Math.max(-SPEED_TRIM_MAX, Math.min(SPEED_TRIM_MAX, next));
-          speedTrimRef.current = next;
-          try { localStorage.setItem("liri_speed_trim", String(next)); } catch {}
-          // Rebase the clock anchor using the OLD trim so the rate change only
-          // applies going forward — otherwise the whole elapsed window gets
-          // re-scaled and the lyrics visibly jump a second time post-nudge.
-          initialPosRef.current = Math.max(0, initialPosRef.current + (Date.now() - syncStartRef.current) / 1000 * (1 + prev));
-          syncStartRef.current = Date.now();
-        }
-      }
     }
   };
 
@@ -2322,7 +2280,6 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
     flipStartDelayMsRef.current = TRACK_GAP_MS;
     saveToHistory(user, nextSong);
     fetchHistory(user);
-    // cast removed
 
     // ── Log auto-advance to analytics ──
     logListeningEvent({
@@ -3232,7 +3189,33 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
       background: "linear-gradient(to bottom, rgba(8,8,16,0.6) 0%, rgba(8,8,16,0.3) 40%, rgba(8,8,16,0.7) 100%)",
       pointerEvents: "none"
     }
-  }), showOnboarding && /*#__PURE__*/React.createElement("div", {
+  }), showCast && /*#__PURE__*/React.createElement("div", {
+    onClick: () => setShowCast(false),
+    style: { position: "fixed", inset: 0, zIndex: 450, display: "flex", alignItems: "center", justifyContent: "center", padding: "24px", background: "rgba(0,0,0,0.68)", backdropFilter: "blur(10px)" }
+  }, /*#__PURE__*/React.createElement("div", {
+    onClick: e => e.stopPropagation(),
+    style: { width: "100%", maxWidth: "420px", padding: "30px", borderRadius: "24px", background: "#0f0f1c", border: "1px solid rgba(255,255,255,0.08)", boxShadow: "0 24px 80px rgba(0,0,0,0.65)", textAlign: "center" }
+  }, /*#__PURE__*/React.createElement("div", {
+    style: { display: "flex", justifyContent: "center", marginBottom: "18px", color: cast.connected ? "#d4a846" : "rgba(240,230,211,0.55)" }
+  }, /*#__PURE__*/React.createElement(CastGlyph, { connected: cast.connected })), /*#__PURE__*/React.createElement("div", {
+    style: { fontSize: "11px", letterSpacing: "3px", textTransform: "uppercase", color: "#d4a846", marginBottom: "8px" }
+  }, "Cast lyrics"), /*#__PURE__*/React.createElement("div", {
+    style: { fontSize: "22px", fontWeight: "700", color: "#f0e6d3", marginBottom: "10px" }
+  }, cast.connected ? `Playing on ${cast.deviceName || "your TV"}` : "Put Liri on the big screen"), /*#__PURE__*/React.createElement("div", {
+    style: { fontSize: "14px", lineHeight: "1.65", color: "rgba(255,255,255,0.38)", marginBottom: "24px" }
+  }, cast.connected ? "The TV follows the same lyric clock. Pauses, nudges, and track changes update automatically." : "Choose a Chromecast or Google TV on this Wi-Fi network. Your record keeps playing normally; only the lyric experience goes to the TV."), cast.error && /*#__PURE__*/React.createElement("div", {
+    style: { padding: "10px 12px", marginBottom: "16px", borderRadius: "10px", background: "rgba(201,128,122,0.1)", color: "#c9807a", fontSize: "12px" }
+  }, cast.error), cast.connected ? /*#__PURE__*/React.createElement("button", {
+    onClick: cast.stopSession,
+    style: { width: "100%", border: "1px solid rgba(201,128,122,0.3)", borderRadius: "14px", padding: "14px", background: "rgba(201,128,122,0.08)", color: "#c9807a", fontSize: "14px", fontWeight: "700", fontFamily: "inherit" }
+  }, "Stop casting") : /*#__PURE__*/React.createElement("button", {
+    onClick: cast.requestSession,
+    disabled: !cast.ready,
+    style: { width: "100%", border: "none", borderRadius: "14px", padding: "15px", background: cast.ready ? "linear-gradient(135deg,#d4a846,#c9807a)" : "rgba(255,255,255,0.07)", color: cast.ready ? "#080810" : "rgba(255,255,255,0.25)", fontSize: "14px", fontWeight: "800", fontFamily: "inherit", cursor: cast.ready ? "pointer" : "default" }
+  }, cast.ready ? "Choose a TV" : "Looking for Cast devices…"), /*#__PURE__*/React.createElement("button", {
+    onClick: () => setShowCast(false),
+    style: { marginTop: "12px", border: "none", background: "none", color: "rgba(255,255,255,0.3)", padding: "8px 16px", fontSize: "13px", fontFamily: "inherit" }
+  }, "Close"))), showOnboarding && /*#__PURE__*/React.createElement("div", {
     style: {
       position: "fixed",
       inset: 0,
@@ -5018,6 +5001,14 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
     /*#__PURE__*/React.createElement("div", { style: { fontSize: "11px", color: "rgba(255,255,255,0.35)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" } }, detectedSong?.artist)
   ),
   (() => { const si = getSideInfo(); return si ? /*#__PURE__*/React.createElement("div", { style: { fontSize: "10px", fontWeight: "700", letterSpacing: "2px", color: "rgba(212,168,70,0.85)", textTransform: "uppercase", flexShrink: 0 } }, si.side ? `Side ${si.side} \xB7 ${si.track}` : `Track ${si.track}`) : null; })(),
+  cast.supported && /*#__PURE__*/React.createElement("button", {
+    onClick: () => setShowCast(true),
+    title: cast.connected ? `Casting to ${cast.deviceName || "TV"}` : "Cast lyrics to TV",
+    "aria-label": "Cast lyrics to TV",
+    style: { position: "relative", width: "30px", height: "30px", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0, padding: 0, border: "none", background: "none", color: cast.connected ? "#d4a846" : "rgba(255,255,255,0.45)" }
+  }, /*#__PURE__*/React.createElement(CastGlyph, { connected: cast.connected }), cast.connected && /*#__PURE__*/React.createElement("span", {
+    style: { position: "absolute", top: "2px", right: "1px", width: "5px", height: "5px", borderRadius: "50%", background: "#d4a846", boxShadow: "0 0 7px rgba(212,168,70,0.9)" }
+  })),
   /*#__PURE__*/React.createElement("button", {
     onClick: () => setShowSettings(!showSettings),
     style: { background: "linear-gradient(135deg,#d4a846,#c9807a)", border: "none", borderRadius: "50%", width: "28px", height: "28px", display: "flex", alignItems: "center", justifyContent: "center", fontSize: "11px", fontWeight: "700", color: "#080810", cursor: "pointer", flexShrink: 0, padding: 0 }
@@ -5108,7 +5099,14 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
       marginLeft: "12px",
       flexShrink: 0
     }
-  }, /*#__PURE__*/React.createElement("button", {
+  }, cast.supported && /*#__PURE__*/React.createElement("button", {
+    onClick: () => setShowCast(true),
+    title: cast.connected ? `Casting to ${cast.deviceName || "TV"}` : "Cast lyrics to TV",
+    "aria-label": "Cast lyrics to TV",
+    style: { position: "relative", width: "30px", height: "30px", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0, padding: 0, border: "none", background: "none", color: cast.connected ? "#d4a846" : "rgba(255,255,255,0.45)" }
+  }, /*#__PURE__*/React.createElement(CastGlyph, { connected: cast.connected }), cast.connected && /*#__PURE__*/React.createElement("span", {
+    style: { position: "absolute", top: "2px", right: "1px", width: "5px", height: "5px", borderRadius: "50%", background: "#d4a846", boxShadow: "0 0 7px rgba(212,168,70,0.9)" }
+  })), /*#__PURE__*/React.createElement("button", {
     onClick: () => setShowSettings(!showSettings),
     style: {
       background: "linear-gradient(135deg, #d4a846, #c9807a)",
@@ -5458,34 +5456,7 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
       transition: "max-height 0.35s ease, opacity 0.35s ease",
       pointerEvents: !controlsVisible ? "none" : "auto"
     }
-  }, speedTrimRef.current !== 0 && /*#__PURE__*/React.createElement("button", {
-    // Learned turntable speed trim, visible for debugging/trust. Tap resets
-    // to 0 (e.g. if a bad session poisoned the learned rate).
-    onClick: () => {
-      // Fold elapsed time at the old rate into the anchor first so zeroing
-      // the trim doesn't jump the current position.
-      if (syncStartRef.current != null && !isPaused) {
-        initialPosRef.current = initialPosRef.current + (Date.now() - syncStartRef.current) / 1000 * (1 + speedTrimRef.current);
-        syncStartRef.current = Date.now();
-      }
-      speedTrimRef.current = 0;
-      driftLearnRef.current = { startPos: Math.max(0, playbackTime), appliedTrim: 0, nudgeTotal: 0 };
-      try { localStorage.removeItem("liri_speed_trim"); } catch {}
-      showKbToast("speed trim reset");
-    },
-    style: {
-      display: "block",
-      margin: "0 auto 6px",
-      background: "none",
-      border: "none",
-      color: "rgba(255,255,255,0.3)",
-      fontSize: "10px",
-      letterSpacing: "1px",
-      cursor: "pointer",
-      fontFamily: "inherit",
-      padding: "2px 6px"
-    }
-  }, "speed trim " + (speedTrimRef.current > 0 ? "+" : "") + (speedTrimRef.current * 100).toFixed(1) + "% · tap to reset"), /*#__PURE__*/React.createElement("div", {
+  }, /*#__PURE__*/React.createElement("div", {
     style: {
       textAlign: "center",
       fontSize: "10px",

@@ -15,7 +15,7 @@
     Same display, different transport layer.
 
   Cast message namespace: urn:x-cast:com.getliri.lyrics
-  Messages: SESSION_START | TRACK_ADVANCE | SESSION_END
+  Messages: STATE | SESSION_END
 -->
 <html lang="en">
 <head>
@@ -163,12 +163,20 @@
     function showSession(data) {
       clearInterval(syncInterval);
 
-      const detectedAt = typeof data.detectedAt === "number" ? data.detectedAt : new Date(data.detected_at || data.detectedAt).getTime();
-      const initialPos = data.initialPos ?? data.initial_position ?? 0;
+      const sentAt      = Number(data.sentAt) || Date.now();
+      const paused      = !!data.paused;
+      const initialPos = data.playbackTime ?? data.initialPos ?? data.initial_position ?? 0;
+      // Compensate for the sender-to-receiver trip, then let the TV interpolate
+      // locally. Periodic STATE anchors correct nudges and timer drift.
+      const anchorPos   = initialPos + (paused ? 0 : Math.max(0, Date.now() - sentAt) / 1000);
+      const anchorAt    = Date.now();
       const lyrics     = data.lyrics ?? data.lyrics_json ?? [];
-      const artwork    = data.artworkUrl ?? data.artwork_url ?? null;
-      const title      = data.songTitle  ?? data.song_title  ?? "";
-      const artist     = data.songArtist ?? data.song_artist ?? "";
+      const song        = data.song || {};
+      const artwork    = song.artwork ?? data.artworkUrl ?? data.artwork_url ?? null;
+      const title      = song.title ?? data.songTitle ?? data.song_title ?? "";
+      const artist     = song.artist ?? data.songArtist ?? data.song_artist ?? "";
+
+      if (!title && !lyrics.length) return;
 
       if (artwork) {
         const bd = document.getElementById("backdrop");
@@ -194,10 +202,15 @@
       }
       document.getElementById("no-lyrics").classList.remove("show");
 
-      let lastIdx = -1;
+      if (lyrics[0]?.time == null) {
+        renderUnsyncedLyrics(lyrics);
+        return;
+      }
+
+      let lastIdx = -2;
       syncInterval = setInterval(() => {
-        const t   = initialPos + (Date.now() - detectedAt) / 1000;
-        let idx   = 0;
+        const t   = anchorPos + (paused ? 0 : (Date.now() - anchorAt) / 1000);
+        let idx   = -1;
         for (let i = 0; i < lyrics.length; i++) {
           if (lyrics[i].time <= t) idx = i; else break;
         }
@@ -205,6 +218,17 @@
         lastIdx = idx;
         renderLyrics(lyrics, idx);
       }, 80);
+    }
+
+    function renderUnsyncedLyrics(lyrics) {
+      const container = document.getElementById("lyrics-container");
+      container.innerHTML = "";
+      lyrics.slice(0, 6).forEach((line, i) => {
+        const div = document.createElement("div");
+        div.className = "lyric-line " + (i === 0 ? "current" : i < 3 ? "near" : "far");
+        div.textContent = line.text;
+        container.appendChild(div);
+      });
     }
 
     function renderLyrics(lyrics, currentIdx) {
@@ -251,7 +275,7 @@
         const msg = event.data;
         if (!msg || !msg.type) return;
 
-        if (msg.type === "SESSION_START" || msg.type === "TRACK_ADVANCE") {
+        if (msg.type === "STATE" || msg.type === "SESSION_START" || msg.type === "TRACK_ADVANCE") {
           showSession(msg);
         } else if (msg.type === "SESSION_END") {
           clearInterval(syncInterval);
