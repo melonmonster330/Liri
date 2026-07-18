@@ -5820,9 +5820,6 @@ Move closer to your speakers and try again.`);
         const si = getSideInfo();
         return si ? /* @__PURE__ */ React.createElement("div", { style: { fontSize: "10px", fontWeight: "700", letterSpacing: "2px", color: "rgba(212,168,70,0.85)", textTransform: "uppercase", flexShrink: 0 } }, si.side ? `Side ${si.side} \xB7 ${si.track}` : `Track ${si.track}`) : null;
       })(),
-      /* @__PURE__ */ React.createElement("div", {
-        style: { fontSize: "11px", color: "rgba(255,255,255,0.3)", flexShrink: 0, fontVariantNumeric: "tabular-nums" }
-      }, formatTime(playbackTime) + (songDuration ? " / " + formatTime(songDuration) : "")),
       /* @__PURE__ */ React.createElement("button", {
         onClick: () => setShowSettings(!showSettings),
         style: { background: "linear-gradient(135deg,#d4a846,#c9807a)", border: "none", borderRadius: "50%", width: "28px", height: "28px", display: "flex", alignItems: "center", justifyContent: "center", fontSize: "11px", fontWeight: "700", color: "#080810", cursor: "pointer", flexShrink: 0, padding: 0 }
@@ -5912,18 +5909,7 @@ Move closer to your speakers and try again.`);
         marginLeft: "12px",
         flexShrink: 0
       }
-    }, songDuration && /* @__PURE__ */ React.createElement("div", {
-      style: {
-        fontSize: "11px",
-        color: "rgba(255,255,255,0.2)"
-      }
-    }, formatTime(playbackTime), " / ", formatTime(songDuration)), !songDuration && /* @__PURE__ */ React.createElement("div", {
-      style: {
-        fontSize: "12px",
-        color: "rgba(255,255,255,0.3)",
-        fontVariantNumeric: "tabular-nums"
-      }
-    }, formatTime(playbackTime)), /* @__PURE__ */ React.createElement("button", {
+    }, /* @__PURE__ */ React.createElement("button", {
       onClick: () => setShowSettings(!showSettings),
       style: {
         background: "linear-gradient(135deg, #d4a846, #c9807a)",
@@ -5945,21 +5931,34 @@ Move closer to your speakers and try again.`);
       title: "Account"
     }, user?.email?.[0]?.toUpperCase() || "?"))), /* @__PURE__ */ React.createElement("div", {
       style: isLandscape ? {
-        height: "5px",
-        background: "rgba(255,255,255,0.1)",
-        cursor: "pointer",
         position: "fixed",
         top: "52px",
         left: 0,
         right: 0,
-        zIndex: 19
+        height: "24px",
+        zIndex: 19,
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+        gap: "8px"
       } : {
-        height: "3px",
-        background: "rgba(255,255,255,0.1)",
+        height: "22px",
         flexShrink: 0,
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+        gap: "8px"
+      }
+    }, /* @__PURE__ */ React.createElement("div", {
+      style: {
+        width: isLandscape ? "min(62vw, 520px)" : "68vw",
+        maxWidth: "520px",
+        height: isLandscape ? "5px" : "3px",
+        background: "rgba(255,255,255,0.1)",
         cursor: songDuration ? "pointer" : "default",
-        position: "relative",
-        display: "block"
+        borderRadius: "3px",
+        overflow: "hidden",
+        flexShrink: 0
       },
       onClick: (e3) => {
         if (!songDuration) return;
@@ -5978,15 +5977,23 @@ Move closer to your speakers and try again.`);
           background: "linear-gradient(to right, #d4a846, #c9807a)",
           width: `${Math.min(playbackTime / effDur * 100, 100)}%`,
           transition: "width 1s linear",
-          borderRadius: "0 2px 2px 0"
+          borderRadius: "3px"
         }
       }) : null;
     })()), /* @__PURE__ */ React.createElement("div", {
       style: {
+        fontSize: "11px",
+        color: "rgba(255,255,255,0.3)",
+        fontVariantNumeric: "tabular-nums",
+        whiteSpace: "nowrap",
+        flexShrink: 0
+      }
+    }, formatTime(playbackTime) + (songDuration ? " / " + formatTime(songDuration) : ""))), /* @__PURE__ */ React.createElement("div", {
+      style: {
         flex: 1,
         overflow: "hidden",
         position: "relative",
-        paddingTop: isLandscape ? "57px" : 0
+        paddingTop: isLandscape ? "76px" : 0
       }
     }, isResyncing && /* @__PURE__ */ React.createElement("div", {
       style: {
