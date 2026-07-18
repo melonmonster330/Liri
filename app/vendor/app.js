@@ -1445,7 +1445,6 @@
       speedTrimRef.current = Number.isFinite(v) ? Math.max(-SPEED_TRIM_MAX, Math.min(SPEED_TRIM_MAX, v)) : 0;
     }
     const driftLearnRef = useRef4(null);
-    const speedTrimLoadedRef = useRef4(false);
     const syncCalcRef = useRef4(null);
     const recordingStartRef = useRef4(null);
     const lyricsRef = useRef4([]);
@@ -1488,37 +1487,6 @@
       } catch {
       }
     }, [scrollSpeed]);
-    const loadSpeedTrimFromAccount = async (u) => {
-      if (!u || speedTrimLoadedRef.current) return;
-      try {
-        const { data, error: error2 } = await sb.from("user_preferences").select("speed_trim").eq("user_id", u.id).single();
-        if (!error2 && data?.speed_trim != null) {
-          const v = parseFloat(data.speed_trim);
-          if (Number.isFinite(v)) {
-            speedTrimRef.current = Math.max(-SPEED_TRIM_MAX, Math.min(SPEED_TRIM_MAX, v));
-            try {
-              localStorage.setItem("liri_speed_trim", String(speedTrimRef.current));
-            } catch {
-            }
-          }
-        }
-        speedTrimLoadedRef.current = true;
-      } catch (err) {
-        console.error("[speed-trim] load from account failed:", err);
-        speedTrimLoadedRef.current = true;
-      }
-    };
-    const saveSpeedTrimToAccount = async (u, trim) => {
-      if (!u) return;
-      try {
-        await sb.from("user_preferences").upsert(
-          { user_id: u.id, speed_trim: trim, updated_at: (/* @__PURE__ */ new Date()).toISOString() },
-          { onConflict: "user_id" }
-        );
-      } catch (err) {
-        console.error("[speed-trim] save to account failed:", err);
-      }
-    };
     const getAlbumSideData = (cid) => {
       if (!cid) return null;
       try {
@@ -1765,7 +1733,6 @@
         setUser(u);
         setAuthLoading(false);
         if (u) {
-          loadSpeedTrimFromAccount(u);
           fetchUsage(u);
           fetchHistory(u);
           fetchAutoPostPref(u);
@@ -1795,7 +1762,6 @@
         sessionTokenRef.current = s?.access_token || null;
         setUser(u);
         if (u) {
-          loadSpeedTrimFromAccount(u);
           fetchUsage(u);
           fetchHistory(u);
           fetchAutoPostPref(u);
