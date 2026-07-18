@@ -5734,26 +5734,26 @@ Move closer to your speakers and try again.`);
       style: {
         position: "fixed",
         // Stay physically attached to the viewport edge at every window size.
-        top: isLandscape ? "64px" : "calc(env(safe-area-inset-top) + 66px)",
-        left: 0,
+        top: isLandscape ? "68px" : "calc(env(safe-area-inset-top) + 70px)",
+        left: "5px",
         zIndex: 25,
         background: "none",
         border: "none",
         borderRadius: 0,
-        width: "36px",
-        height: "36px",
+        width: "38px",
+        height: "38px",
         display: "flex",
         alignItems: "center",
         justifyContent: "center",
         color: "rgba(240,230,211,0.62)",
         cursor: "pointer",
-        padding: "0 3px 0 1px"
+        padding: 0
       }
     }, /* @__PURE__ */ React.createElement(
       "svg",
       {
-        width: "20",
-        height: "20",
+        width: "23",
+        height: "23",
         viewBox: "0 0 24 24",
         fill: "none",
         stroke: "currentColor",
