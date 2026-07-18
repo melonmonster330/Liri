@@ -145,7 +145,8 @@ The app ID is `com.getliri.app`. The web root is the `app/` folder.
 Desktop Chrome can launch Liri's custom Google Cast receiver and send the
 current song, artwork, lyrics, playback position, pauses, nudges, and track
 changes directly to a Chromecast or Google TV. See `docs/CASTING.md` for setup
-and physical-device testing.
+and physical-device testing. Samsung TVs can open `/tv` in their built-in
+browser and pair to web Liri with the four-digit code shown on screen.
 
 ---
 
