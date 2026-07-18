@@ -5712,8 +5712,8 @@ Move closer to your speakers and try again.`);
         flexDirection: "column"
       },
       // Tap the background (outside the controls panel, which stops propagation)
-      // to close the ☰ controls. Touching or scrolling the lyrics never opens
-      // them — only the floating ☰ button does.
+      // to close the sync controls. Touching or scrolling the lyrics never opens
+      // them — only the edge-mounted vinyl button does.
       onPointerDown: () => {
         if (controlsVisible) {
           menuWasOpenRef.current = true;
@@ -5730,27 +5730,45 @@ Move closer to your speakers and try again.`);
       // Don't let the pointer gesture bubble to the background handler.
       onPointerDown: (e3) => e3.stopPropagation(),
       title: "Sync controls",
+      "aria-label": "Open sync controls",
       style: {
         position: "fixed",
-        // Sits at the left edge of the lyric column itself (not the header) so
-        // it reads as part of the lyric window, not the top bar.
+        // Stay physically attached to the viewport edge at every window size.
         top: isLandscape ? "64px" : "calc(env(safe-area-inset-top) + 66px)",
-        left: isLandscape ? Math.max(12, lyricAreaLeft + 4) + "px" : "14px",
+        right: 0,
         zIndex: 25,
-        background: "rgba(255,255,255,0.06)",
+        background: "rgba(8,8,16,0.82)",
         border: "1px solid rgba(255,255,255,0.1)",
-        borderRadius: "50%",
-        width: "34px",
-        height: "34px",
+        borderRight: "none",
+        borderRadius: "18px 0 0 18px",
+        width: "38px",
+        height: "36px",
         display: "flex",
         alignItems: "center",
         justifyContent: "center",
-        color: "rgba(255,255,255,0.5)",
-        fontSize: "15px",
+        color: "rgba(240,230,211,0.62)",
         cursor: "pointer",
-        padding: 0
+        padding: "0 1px 0 3px",
+        backdropFilter: "blur(8px)",
+        WebkitBackdropFilter: "blur(8px)"
       }
-    }, "\u2630"), kbToast && /* @__PURE__ */ React.createElement("div", {
+    }, /* @__PURE__ */ React.createElement(
+      "svg",
+      {
+        width: "20",
+        height: "20",
+        viewBox: "0 0 24 24",
+        fill: "none",
+        stroke: "currentColor",
+        strokeWidth: "1.4",
+        strokeLinecap: "round",
+        "aria-hidden": "true"
+      },
+      /* @__PURE__ */ React.createElement("circle", { cx: "12", cy: "12", r: "9" }),
+      /* @__PURE__ */ React.createElement("circle", { cx: "12", cy: "12", r: "5.8", opacity: "0.55" }),
+      /* @__PURE__ */ React.createElement("circle", { cx: "12", cy: "12", r: "2.5" }),
+      /* @__PURE__ */ React.createElement("circle", { cx: "12", cy: "12", r: "0.7", fill: "currentColor", stroke: "none" })
+    )), kbToast && /* @__PURE__ */ React.createElement("div", {
       style: {
         position: "fixed",
         top: "50%",
@@ -6220,7 +6238,7 @@ Move closer to your speakers and try again.`);
         // Closed: collapse the controls (nudge / skip / etc.) to zero height so
         // the lyrics reclaim the space. The header and tab bar stay put — only
         // this control block folds away. box-sizing:border-box means maxHeight:0
-        // swallows the padding too. Only the floating ☰ button re-expands it.
+        // swallows the padding too. Only the edge-mounted vinyl button re-expands it.
         maxHeight: !controlsVisible ? "0px" : "460px",
         opacity: !controlsVisible ? 0 : 1,
         transition: "max-height 0.35s ease, opacity 0.35s ease",
