@@ -5169,13 +5169,16 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
       setPlaybackTime(targetTime);
     }
   }, (() => {
-    const effDur = songDuration ?? (lyrics.length > 0 ? lyrics[lyrics.length - 1].time + 30 : null);
+    // Keep the progress bar on the same clock as auto-advance. The playback
+    // state updates every 80ms, so a long transition would perpetually trail
+    // the actual song position and never appear full before track advance.
+    const effDur = songDuration ?? (lyrics.length > 0 ? lyrics[lyrics.length - 1].time + 3 : null);
     return effDur ? /*#__PURE__*/React.createElement("div", {
       style: {
         height: "100%",
         background: "linear-gradient(to right, #d4a846, #c9807a)",
-        width: `${Math.min(playbackTime / effDur * 100, 100)}%`,
-        transition: "width 1s linear",
+        width: `${Math.max(0, Math.min(playbackTime / effDur * 100, 100))}%`,
+        transition: "width 80ms linear",
         borderRadius: "3px"
       }
     }) : null;

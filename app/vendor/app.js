@@ -5970,13 +5970,13 @@ Move closer to your speakers and try again.`);
         setPlaybackTime(targetTime);
       }
     }, (() => {
-      const effDur = songDuration ?? (lyrics.length > 0 ? lyrics[lyrics.length - 1].time + 30 : null);
+      const effDur = songDuration ?? (lyrics.length > 0 ? lyrics[lyrics.length - 1].time + 3 : null);
       return effDur ? /* @__PURE__ */ React.createElement("div", {
         style: {
           height: "100%",
           background: "linear-gradient(to right, #d4a846, #c9807a)",
-          width: `${Math.min(playbackTime / effDur * 100, 100)}%`,
-          transition: "width 1s linear",
+          width: `${Math.max(0, Math.min(playbackTime / effDur * 100, 100))}%`,
+          transition: "width 80ms linear",
           borderRadius: "3px"
         }
       }) : null;
