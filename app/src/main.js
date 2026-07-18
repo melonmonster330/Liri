@@ -374,6 +374,8 @@ function Liri() {
   // Per-track drift-learning state: { startPos, appliedTrim, nudgeTotal }.
   // Reset by startSync on each new detection; consumed by nudge().
   const driftLearnRef = useRef(null);
+  // Track whether speed trim has been loaded from the account to avoid re-loading
+  const speedTrimLoadedRef = useRef(false);
   // Deferred timing: identification paths store { startPos, phraseOffset, recStart } here.
   // startSync reads it to compute initialPos at the last possible moment — capturing the
   // full elapsed time from recording start through Whisper API + React render.
@@ -420,6 +422,36 @@ function Liri() {
     try { localStorage.setItem("liri_scroll_speed", String(scrollSpeed)); } catch {}
   }, [scrollSpeed]);
 
+  // ── Speed trim persistence to user account ──
+  const loadSpeedTrimFromAccount = async (u) => {
+    if (!u || speedTrimLoadedRef.current) return;
+    try {
+      const { data, error } = await sb.from("user_preferences").select("speed_trim").eq("user_id", u.id).single();
+      if (!error && data?.speed_trim != null) {
+        const v = parseFloat(data.speed_trim);
+        if (Number.isFinite(v)) {
+          speedTrimRef.current = Math.max(-SPEED_TRIM_MAX, Math.min(SPEED_TRIM_MAX, v));
+          // Sync device localStorage with account value
+          try { localStorage.setItem("liri_speed_trim", String(speedTrimRef.current)); } catch {}
+        }
+      }
+      speedTrimLoadedRef.current = true;
+    } catch (err) {
+      console.error("[speed-trim] load from account failed:", err);
+      speedTrimLoadedRef.current = true;
+    }
+  };
+  const saveSpeedTrimToAccount = async (u, trim) => {
+    if (!u) return;
+    try {
+      await sb.from("user_preferences").upsert(
+        { user_id: u.id, speed_trim: trim, updated_at: new Date().toISOString() },
+        { onConflict: "user_id" }
+      );
+    } catch (err) {
+      console.error("[speed-trim] save to account failed:", err);
+    }
+  };
   // ── Per-album side data (localStorage, keyed by iTunes collectionId) ──
   const getAlbumSideData = cid => {
     if (!cid) return null;
@@ -710,6 +742,7 @@ function Liri() {
       setUser(u);
       setAuthLoading(false);
       if (u) {
+        loadSpeedTrimFromAccount(u);
         fetchUsage(u);
         fetchHistory(u);
         fetchAutoPostPref(u);
@@ -734,6 +767,7 @@ function Liri() {
       sessionTokenRef.current = s?.access_token || null;
       setUser(u);
       if (u) {
+        loadSpeedTrimFromAccount(u);
         fetchUsage(u);
         fetchHistory(u);
         fetchAutoPostPref(u);
