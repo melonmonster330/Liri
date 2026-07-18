@@ -4955,22 +4955,19 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
       position: "fixed",
       // Stay physically attached to the viewport edge at every window size.
       top: isLandscape ? "64px" : "calc(env(safe-area-inset-top) + 66px)",
-      right: 0,
+      left: 0,
       zIndex: 25,
-      background: "rgba(8,8,16,0.82)",
-      border: "1px solid rgba(255,255,255,0.1)",
-      borderRight: "none",
-      borderRadius: "18px 0 0 18px",
-      width: "38px",
+      background: "none",
+      border: "none",
+      borderRadius: 0,
+      width: "36px",
       height: "36px",
       display: "flex",
       alignItems: "center",
       justifyContent: "center",
       color: "rgba(240,230,211,0.62)",
       cursor: "pointer",
-      padding: "0 1px 0 3px",
-      backdropFilter: "blur(8px)",
-      WebkitBackdropFilter: "blur(8px)"
+      padding: "0 3px 0 1px"
     }
   }, /*#__PURE__*/React.createElement("svg", {
     width: "20",
@@ -4978,11 +4975,10 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
     viewBox: "0 0 24 24",
     fill: "none",
     stroke: "currentColor",
-    strokeWidth: "1.4",
+    strokeWidth: "0.9",
     strokeLinecap: "round",
     "aria-hidden": "true"
   }, /*#__PURE__*/React.createElement("circle", { cx: "12", cy: "12", r: "9" }),
-  /*#__PURE__*/React.createElement("circle", { cx: "12", cy: "12", r: "5.8", opacity: "0.55" }),
   /*#__PURE__*/React.createElement("circle", { cx: "12", cy: "12", r: "2.5" }),
   /*#__PURE__*/React.createElement("circle", { cx: "12", cy: "12", r: "0.7", fill: "currentColor", stroke: "none" }))), kbToast && /*#__PURE__*/React.createElement("div", {
     style: {
