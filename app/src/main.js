@@ -4970,8 +4970,8 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
       padding: 0
     }
   }, /*#__PURE__*/React.createElement("svg", {
-    width: "23",
-    height: "23",
+    width: "25",
+    height: "25",
     viewBox: "0 0 24 24",
     fill: "none",
     stroke: "currentColor",
