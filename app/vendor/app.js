@@ -1282,6 +1282,7 @@
       return () => window.removeEventListener("resize", onResize);
     }, []);
     const [controlsVisible, setControlsVisible] = useState5(false);
+    const menuWasOpenRef = useRef4(false);
     const railW = Math.min(270, Math.max(190, Math.round(winW * 0.26)));
     const menuOpen = isLandscape && controlsVisible;
     const lyricAreaW = menuOpen ? Math.min(760, Math.max(260, winW - railW - 48)) : Math.min(820, winW - 48);
@@ -5713,13 +5714,21 @@ Move closer to your speakers and try again.`);
       // Tap the background (outside the controls panel, which stops propagation)
       // to close the ☰ controls. Touching or scrolling the lyrics never opens
       // them — only the floating ☰ button does.
-      onTouchStart: () => {
-        if (controlsVisible) setControlsVisible(false);
+      onPointerDown: () => {
+        if (controlsVisible) {
+          menuWasOpenRef.current = true;
+          setControlsVisible(false);
+        } else menuWasOpenRef.current = false;
+      },
+      // If the dismissing gesture landed on empty space, no lyric handler consumes
+      // the flag. Clear it at the end of that same click so the next tap works.
+      onClick: () => {
+        menuWasOpenRef.current = false;
       }
     }, !controlsVisible && /* @__PURE__ */ React.createElement("button", {
       onClick: () => setControlsVisible(true),
-      // Don't let the touch bubble to the background handler.
-      onTouchStart: (e3) => e3.stopPropagation(),
+      // Don't let the pointer gesture bubble to the background handler.
+      onPointerDown: (e3) => e3.stopPropagation(),
       title: "Sync controls",
       style: {
         position: "fixed",
@@ -6092,7 +6101,6 @@ Move closer to your speakers and try again.`);
         return /* @__PURE__ */ React.createElement("div", {
           key: i,
           ref: cur ? currentLineRef : i === lyrics.length ? creditsRef : null,
-          onClick: () => cur ? refollow() : !isCredit && seekToLine(i),
           style: {
             textAlign: "center",
             padding: near ? "6px 0" : "3px 0",
@@ -6102,12 +6110,28 @@ Move closer to your speakers and try again.`);
             lineHeight: "1.4",
             transition: near ? transition : "none",
             textShadow: cur && !isCredit ? "0 0 60px rgba(212,168,70,0.4), 0 2px 20px rgba(0,0,0,0.8)" : "none",
-            cursor: isCredit ? "default" : "pointer",
+            cursor: "default",
             letterSpacing: isCredit ? "0.2px" : "normal",
             maxWidth: isCredit ? "260px" : "none",
             margin: isCredit ? "0 auto" : "0"
           }
-        }, line.text);
+        }, /* @__PURE__ */ React.createElement("span", {
+          // Seek only fires when the tap lands on the words themselves — not the
+          // padding or empty width of the row. Credits aren't seekable.
+          onClick: () => {
+            if (menuWasOpenRef.current || controlsVisible) {
+              menuWasOpenRef.current = false;
+              if (controlsVisible) setControlsVisible(false);
+              return;
+            }
+            if (cur) return refollow();
+            if (!isCredit) seekToLine(i);
+          },
+          style: {
+            display: "inline-block",
+            cursor: isCredit ? "default" : "pointer"
+          }
+        }, line.text));
       });
     })(), /* @__PURE__ */ React.createElement("div", { style: { paddingBottom: "30vh" } })) : /* @__PURE__ */ React.createElement("div", {
       style: {
@@ -6158,7 +6182,7 @@ Move closer to your speakers and try again.`);
     })), /* @__PURE__ */ React.createElement("div", {
       // Taps inside the controls panel must NOT bubble to the background
       // dismiss handler, or pressing a button would hide the menu.
-      onTouchStart: (e3) => e3.stopPropagation(),
+      onPointerDown: (e3) => e3.stopPropagation(),
       style: isLandscape ? {
         // Landscape: the ONLY left panel now — a full-height controls sidebar from
         // just below the top bar (52px) to the bottom. Controls are vertically

@@ -143,6 +143,11 @@ function Liri() {
   // only by an explicit tap — never by touching or scrolling the lyrics.
   // Tapping the lyrics background closes them.
   const [controlsVisible, setControlsVisible] = useState(false);
+  // When the side menu is open, the tap that dismisses it must NOT also seek a
+  // lyric. The background's pointerdown runs before the synthesized click and
+  // closes the menu, so by the time the lyric's click fires controlsVisible is
+  // already false. Record that the gesture was a dismissal so click can bail.
+  const menuWasOpenRef = useRef(false);
   // ── Landscape player geometry — every dynamic size lives here, in one place ──
   // Keep all related sizing together so a tweak to one dimension sits next to the
   // others it interacts with. No fixed breakpoints — everything scales off winW.
@@ -4933,11 +4938,17 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
     // Tap the background (outside the controls panel, which stops propagation)
     // to close the ☰ controls. Touching or scrolling the lyrics never opens
     // them — only the floating ☰ button does.
-    onTouchStart: () => { if (controlsVisible) setControlsVisible(false); }
+    onPointerDown: () => {
+      if (controlsVisible) { menuWasOpenRef.current = true; setControlsVisible(false); }
+      else menuWasOpenRef.current = false;
+    },
+    // If the dismissing gesture landed on empty space, no lyric handler consumes
+    // the flag. Clear it at the end of that same click so the next tap works.
+    onClick: () => { menuWasOpenRef.current = false; }
   }, !controlsVisible && /*#__PURE__*/React.createElement("button", {
     onClick: () => setControlsVisible(true),
-    // Don't let the touch bubble to the background handler.
-    onTouchStart: e => e.stopPropagation(),
+    // Don't let the pointer gesture bubble to the background handler.
+    onPointerDown: e => e.stopPropagation(),
     title: "Sync controls",
     style: {
       position: "fixed",
@@ -5299,7 +5310,6 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
       return /*#__PURE__*/React.createElement("div", {
         key: i,
         ref: cur ? currentLineRef : i === lyrics.length ? creditsRef : null,
-        onClick: () => cur ? refollow() : (!isCredit && seekToLine(i)),
         style: {
           textAlign: "center",
           padding: near ? "6px 0" : "3px 0",
@@ -5315,12 +5325,29 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
           lineHeight: "1.4",
           transition: near ? transition : "none",
           textShadow: cur && !isCredit ? "0 0 60px rgba(212,168,70,0.4), 0 2px 20px rgba(0,0,0,0.8)" : "none",
-          cursor: isCredit ? "default" : "pointer",
+          cursor: "default",
           letterSpacing: isCredit ? "0.2px" : "normal",
           maxWidth: isCredit ? "260px" : "none",
           margin: isCredit ? "0 auto" : "0",
         }
-      }, line.text);
+      }, /*#__PURE__*/React.createElement("span", {
+        // Seek only fires when the tap lands on the words themselves — not the
+        // padding or empty width of the row. Credits aren't seekable.
+        onClick: () => {
+          // A tap while the side menu is open just dismisses it; never seeks.
+          if (menuWasOpenRef.current || controlsVisible) {
+            menuWasOpenRef.current = false;
+            if (controlsVisible) setControlsVisible(false);
+            return;
+          }
+          if (cur) return refollow();
+          if (!isCredit) seekToLine(i);
+        },
+        style: {
+          display: "inline-block",
+          cursor: isCredit ? "default" : "pointer",
+        }
+      }, line.text));
     });
   })(), /*#__PURE__*/React.createElement("div", { style: { paddingBottom: "30vh" } }))) : /*#__PURE__*/React.createElement("div", {
     style: {
@@ -5368,7 +5395,7 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
   })), /*#__PURE__*/React.createElement("div", {
     // Taps inside the controls panel must NOT bubble to the background
     // dismiss handler, or pressing a button would hide the menu.
-    onTouchStart: e => e.stopPropagation(),
+    onPointerDown: e => e.stopPropagation(),
     style: isLandscape ? {
       // Landscape: the ONLY left panel now — a full-height controls sidebar from
       // just below the top bar (52px) to the bottom. Controls are vertically
