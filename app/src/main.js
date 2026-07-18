@@ -5018,9 +5018,9 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
     /*#__PURE__*/React.createElement("div", { style: { fontSize: "11px", color: "rgba(255,255,255,0.35)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" } }, detectedSong?.artist)
   ),
   (() => { const si = getSideInfo(); return si ? /*#__PURE__*/React.createElement("div", { style: { fontSize: "10px", fontWeight: "700", letterSpacing: "2px", color: "rgba(212,168,70,0.85)", textTransform: "uppercase", flexShrink: 0 } }, si.side ? `Side ${si.side} \xB7 ${si.track}` : `Track ${si.track}`) : null; })(),
-  songDuration && /*#__PURE__*/React.createElement("div", {
+  /*#__PURE__*/React.createElement("div", {
     style: { fontSize: "11px", color: "rgba(255,255,255,0.3)", flexShrink: 0, fontVariantNumeric: "tabular-nums" }
-  }, formatTime(playbackTime) + " / " + formatTime(songDuration)),
+  }, formatTime(playbackTime) + (songDuration ? " / " + formatTime(songDuration) : "")),
   /*#__PURE__*/React.createElement("button", {
     onClick: () => setShowSettings(!showSettings),
     style: { background: "linear-gradient(135deg,#d4a846,#c9807a)", border: "none", borderRadius: "50%", width: "28px", height: "28px", display: "flex", alignItems: "center", justifyContent: "center", fontSize: "11px", fontWeight: "700", color: "#080810", cursor: "pointer", flexShrink: 0, padding: 0 }
@@ -5448,18 +5448,7 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
       transition: "max-height 0.35s ease, opacity 0.35s ease",
       pointerEvents: !controlsVisible ? "none" : "auto"
     }
-  }, /*#__PURE__*/React.createElement("div", {
-    // Time / duration readout — lives WITH the nudge controls so you can see
-    // exactly where in the song you are while adjusting sync.
-    style: {
-      textAlign: "center",
-      fontSize: "14px",
-      fontWeight: "600",
-      color: "rgba(255,255,255,0.6)",
-      fontVariantNumeric: "tabular-nums",
-      marginBottom: "6px"
-    }
-  }, formatTime(playbackTime) + (songDuration ? " / " + formatTime(songDuration) : "")), speedTrimRef.current !== 0 && /*#__PURE__*/React.createElement("button", {
+  }, speedTrimRef.current !== 0 && /*#__PURE__*/React.createElement("button", {
     // Learned turntable speed trim, visible for debugging/trust. Tap resets
     // to 0 (e.g. if a bad session poisoned the learned rate).
     onClick: () => {
