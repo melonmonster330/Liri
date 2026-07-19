@@ -909,9 +909,10 @@
     }
     return null;
   }
-  function getSideGroups(tracks, vinylSides, dbTracks) {
+  function getSideGroups(tracks, vinylSides, dbTracks, reverse = false) {
     if (!tracks?.length) return [];
     const sides = tracks.map((t, i) => getSideForIndex(i, t, vinylSides, dbTracks));
+    const finish = (groups) => reverse ? [...groups].reverse() : groups;
     const haveAnyReal = sides.some((s) => !!s);
     if (haveAnyReal) {
       const map = {};
@@ -920,13 +921,31 @@
         if (!map[s]) map[s] = [];
         map[s].push({ track: t, idx: i });
       });
-      return Object.entries(map).sort(([a], [b]) => a.localeCompare(b)).map(([side, group]) => ({ side, tracks: group }));
+      return finish(Object.entries(map).sort(([a], [b]) => a.localeCompare(b)).map(([side, group]) => ({ side, tracks: group })));
     }
     const mid = Math.ceil(tracks.length / 2);
-    return [
+    return finish([
       { side: "A", tracks: tracks.slice(0, mid).map((t, i) => ({ track: t, idx: i })) },
       { side: "B", tracks: tracks.slice(mid).map((t, i) => ({ track: t, idx: mid + i })) }
-    ].filter((g) => g.tracks.length > 0);
+    ].filter((g) => g.tracks.length > 0));
+  }
+  function getReverseSideOrder(tracks, vinylSides, dbTracks) {
+    const groups = getSideGroups(
+      tracks,
+      vinylSides,
+      dbTracks,
+      /* reverse */
+      true
+    );
+    const order = [];
+    const sides = [];
+    for (const g of groups) {
+      for (const { idx } of g.tracks) {
+        order.push(idx);
+        sides.push(g.side);
+      }
+    }
+    return { order, sides };
   }
 
   // app/base/lib/usermeta.js
@@ -1775,6 +1794,10 @@
     const [turntableTracksProgress, setTurntableTracksProgress] = useState7({ percent: 0, stage: "" });
     const turntableAlbumRef = useRef6(turntableAlbum);
     const turntableTracksRef = useRef6([]);
+    const [reverseMode, setReverseMode] = useState7(false);
+    const reverseModeRef = useRef6(false);
+    const turntableTracksOrigRef = useRef6([]);
+    const vinylSidesOrigRef = useRef6([]);
     const turntableMatchedIdxRef = useRef6(-1);
     const turntableLyricsCacheRef = useRef6({});
     const wordsDataRef = useRef6({});
@@ -2363,12 +2386,38 @@
       }
       setBugSending(false);
     };
+    const applyPlayDirection = () => {
+      const origT = turntableTracksOrigRef.current;
+      const origS = vinylSidesOrigRef.current;
+      if (reverseModeRef.current && origT.length) {
+        const { order, sides } = getReverseSideOrder(origT, origS, vinylDbReleaseRef.current?.vinyl_tracks);
+        turntableTracksRef.current = order.map((i) => origT[i]);
+        vinylSidesRef.current = sides.map((s) => ({ side: s }));
+      } else {
+        turntableTracksRef.current = origT;
+        vinylSidesRef.current = origS;
+      }
+    };
+    const toggleReverseMode = () => {
+      const next = !reverseModeRef.current;
+      reverseModeRef.current = next;
+      turntableMatchedIdxRef.current = -1;
+      applyPlayDirection();
+      setCollapsedSides(/* @__PURE__ */ new Set());
+      setReverseMode(next);
+    };
+    const getLastSideLetter = () => {
+      const groups = getSideGroups(turntableTracksOrigRef.current, vinylSidesOrigRef.current, vinylDbReleaseRef.current?.vinyl_tracks);
+      return groups.length ? groups[groups.length - 1].side : null;
+    };
     const fetchTurntableTracks = async (collectionId) => {
       setTurntableTracksLoading(true);
       setTurntableTracksProgress({ percent: 0, stage: "Loading tracks\u2026" });
       turntableTracksRef.current = [];
+      turntableTracksOrigRef.current = [];
       turntableLyricsCacheRef.current = {};
       vinylSidesRef.current = [];
+      vinylSidesOrigRef.current = [];
       setSideDataMissing(false);
       try {
         const alb = turntableAlbumRef.current;
@@ -2376,7 +2425,7 @@
         const albumName = alb?.album_name || "";
         const { data: trackRows } = await sb.from("album_tracks").select("itunes_track_id, track_name, artist_name, track_number, disc_number, duration_ms").eq("itunes_collection_id", collectionId).order("disc_number", { ascending: true }).order("track_number", { ascending: true });
         if (trackRows?.length > 0) {
-          turntableTracksRef.current = trackRows.map((t) => ({
+          turntableTracksOrigRef.current = trackRows.map((t) => ({
             trackName: t.track_name,
             artistName: t.artist_name || artistName,
             collectionName: albumName,
@@ -2385,6 +2434,7 @@
             trackNumber: t.track_number || 1,
             discNumber: t.disc_number || 1
           }));
+          applyPlayDirection();
           setTurntableTracksProgress({ percent: 60, stage: "Loading lyrics\u2026" });
           const { data: lrcRows } = await sb.from("track_lyrics").select("itunes_track_id, lrc_raw, words_json, lyrics_plain").in("itunes_track_id", trackRows.map((t) => t.itunes_track_id).filter(Boolean));
           const cache = {};
@@ -2424,7 +2474,7 @@
           };
           refreshCurrentLyrics();
           setTurntableTracksProgress({ percent: 90, stage: "Loading side data\u2026" });
-          vinylSidesRef.current = [];
+          vinylSidesOrigRef.current = [];
           {
             const { data: sidesRows } = await sb.from("vinyl_sides").select("side, side_track_number, position").eq("itunes_collection_id", collectionId).order("side", { ascending: true }).order("side_track_number", { ascending: true });
             const seen = /* @__PURE__ */ new Set();
@@ -2436,7 +2486,7 @@
                 sorted.push(s);
               }
             }
-            if (sorted.length >= trackRows.length) vinylSidesRef.current = sorted;
+            if (sorted.length >= trackRows.length) vinylSidesOrigRef.current = sorted;
           }
           const dbRelease = await fetchVinylRelease(collectionId);
           if (dbRelease?.vinyl_tracks?.length > 0) {
@@ -2446,7 +2496,8 @@
             setVinylDbRelease(null);
             vinylDbReleaseRef.current = null;
           }
-          setSideDataMissing(!vinylSidesRef.current.length && !(dbRelease?.vinyl_tracks?.length > 0));
+          applyPlayDirection();
+          setSideDataMissing(!vinylSidesOrigRef.current.length && !(dbRelease?.vinyl_tracks?.length > 0));
           setTurntableTracksLoading(false);
           setTurntableTracksProgress({ percent: 100, stage: "" });
           const missingTracks = trackRows.filter((t) => t.itunes_track_id && !cache[String(t.itunes_track_id)]);
@@ -2472,7 +2523,7 @@
               }));
               refreshCurrentLyrics();
             }
-            if (!vinylDbReleaseRef.current?.vinyl_tracks?.length && !vinylSidesRef.current.length) {
+            if (!vinylDbReleaseRef.current?.vinyl_tracks?.length && !vinylSidesOrigRef.current.length) {
               try {
                 await autoPopulateVinylSides(collectionId, albumName, artistName);
                 const retry = await fetchVinylRelease(collectionId);
@@ -2480,6 +2531,7 @@
                   setVinylDbRelease(retry);
                   vinylDbReleaseRef.current = retry;
                   setSideDataMissing(false);
+                  applyPlayDirection();
                 }
               } catch {
               }
@@ -2491,6 +2543,7 @@
         }
       } catch (e3) {
         turntableTracksRef.current = [];
+        turntableTracksOrigRef.current = [];
         console.error("[turntable] fetch error:", e3);
       }
       setTurntableTracksLoading(false);
@@ -2499,12 +2552,17 @@
     useEffect8(() => {
       turntableAlbumRef.current = turntableAlbum;
       turntableMatchedIdxRef.current = -1;
+      reverseModeRef.current = false;
+      setReverseMode(false);
       if (turntableAlbum) {
         localStorage.setItem("liri_turntable", JSON.stringify(turntableAlbum));
         fetchTurntableTracks(turntableAlbum.itunes_collection_id);
       } else {
         localStorage.removeItem("liri_turntable");
         turntableTracksRef.current = [];
+        turntableTracksOrigRef.current = [];
+        vinylSidesRef.current = [];
+        vinylSidesOrigRef.current = [];
         setTurntableTracksLoading(false);
         setSideDataMissing(false);
       }
@@ -3409,7 +3467,6 @@ Move closer to your speakers and try again.`);
         setSideEndNextDiscInfo(discInfo);
         setSideEndReason("flip");
         scheduleFlipChimes(detectedSong, discInfo);
-        const sideIdx = sideEnds.indexOf(idx);
         const method = dbRelease?.vinyl_tracks?.length > 0 ? "db" : albumTpsRef.current > 0 ? "learned" : "heuristic";
         logFlipEvent2({
           userId: user?.id,
@@ -3417,8 +3474,8 @@ Move closer to your speakers and try again.`);
           collectionId: albumCollectionIdRef?.current || null,
           album: detectedSong?.album,
           artist: detectedSong?.artist,
-          fromSide: "ABCDEFGH"[sideIdx] || null,
-          toSide: "ABCDEFGH"[sideIdx + 1] || null,
+          fromSide: vinylSidesRef.current[idx]?.side || null,
+          toSide: vinylSidesRef.current[idx + 1]?.side || null,
           method
         });
         if (detectedSong) setLastSong(detectedSong);
@@ -3575,7 +3632,7 @@ Move closer to your speakers and try again.`);
       const sideEnds = getSideEndsFromSidesMap(tracks, vinylSidesRef.current) ?? (dbRelease?.vinyl_tracks?.length > 0 ? getDbSideEndIndices(tracks, dbRelease.vinyl_tracks) : getSideEndIndices(tracks, effectiveTps));
       for (let s = 0; s < sideEnds.length; s++) {
         if (curIdx <= sideEnds[s] && sideEnds[s] + 1 < tracks.length) {
-          return "ABCDEFGH"[s + 1] || null;
+          return vinylSidesRef.current[sideEnds[s] + 1]?.side || "ABCDEFGH"[s + 1] || null;
         }
       }
       return null;
@@ -3591,7 +3648,7 @@ Move closer to your speakers and try again.`);
         if (curIdx <= sideEnds[s] && sideEnds[s] + 1 < tracks.length) {
           const curDisc = tracks[curIdx] ? tracks[curIdx].discNumber || 1 : 1;
           const nextDisc = tracks[sideEnds[s] + 1] ? tracks[sideEnds[s] + 1].discNumber || 1 : 1;
-          const nextSide = "ABCDEFGH"[s + 1] || null;
+          const nextSide = vinylSidesRef.current[sideEnds[s] + 1]?.side || "ABCDEFGH"[s + 1] || null;
           return { isNewDisc: nextDisc !== curDisc, nextDisc, nextSide };
         }
       }
@@ -7681,7 +7738,7 @@ Move closer to your speakers and try again.`);
       /* ── Manual track picker with side grouping ── */
       turntableAlbum && turntableTracksRef.current.length > 0 && (() => {
         const allTracks = turntableTracksRef.current;
-        const groups = getSideGroups(allTracks, vinylSidesRef.current, vinylDbRelease?.vinyl_tracks);
+        const groups = getSideGroups(allTracks, vinylSidesRef.current, vinylDbRelease?.vinyl_tracks, reverseMode);
         const isWeb = !window.Capacitor;
         return /* @__PURE__ */ React.createElement(
           "div",
@@ -7738,7 +7795,38 @@ Move closer to your speakers and try again.`);
                 )
               ))
             )
-          ))
+          )),
+          // ── "Play backwards" toggle — reverse side order (last side first) ──
+          // Only meaningful with 2+ sides. Sits at the very bottom of the picker.
+          (isWeb || showTrackList) && groups.length > 1 && (() => {
+            const lastSide = getLastSideLetter();
+            return /* @__PURE__ */ React.createElement(
+              "button",
+              {
+                onClick: toggleReverseMode,
+                style: {
+                  marginTop: "14px",
+                  width: "100%",
+                  background: reverseMode ? "rgba(212,168,70,0.14)" : "rgba(255,255,255,0.03)",
+                  border: reverseMode ? "1px solid rgba(212,168,70,0.45)" : "1px solid rgba(255,255,255,0.08)",
+                  borderRadius: "12px",
+                  padding: "11px 14px",
+                  color: reverseMode ? "rgba(212,168,70,0.95)" : "rgba(255,255,255,0.55)",
+                  fontSize: "12px",
+                  fontWeight: "600",
+                  letterSpacing: "0.3px",
+                  cursor: "pointer",
+                  fontFamily: "inherit",
+                  textAlign: "center",
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  gap: "8px"
+                }
+              },
+              reverseMode ? `\u21A9 Playing backwards${lastSide ? ` \u2014 from Side ${lastSide}` : ""}` : `\u21C4 Play backwards${lastSide ? ` \u2014 start at Side ${lastSide}` : ""}`
+            );
+          })()
         );
       })(),
       /* @__PURE__ */ React.createElement("div", {
@@ -8145,7 +8233,7 @@ Move closer to your speakers and try again.`);
       }, "\u2190 Back"))),
       /* \u2500\u2500 "Or select another side" \u2014 quiet picker under the main flip CTA \u2500\u2500 */
       (sideEndReason === "flip" || sideEndReason === "failed") && !isNeedleDrop && turntableTracksRef.current.length > 0 && (() => {
-        const groups = getSideGroups(turntableTracksRef.current, vinylSidesRef.current, vinylDbRelease?.vinyl_tracks);
+        const groups = getSideGroups(turntableTracksRef.current, vinylSidesRef.current, vinylDbRelease?.vinyl_tracks, reverseMode);
         if (!groups.length) return null;
         return /* @__PURE__ */ React.createElement(
           "div",

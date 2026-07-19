@@ -58,11 +58,16 @@ export function getSideForIndex(idx, track, vinylSides, dbTracks) {
 // `tracks` is the iTunes/library track list (turntableTracksRef.current).
 // `vinylSides` is vinylSidesRef.current.
 // `dbTracks` is vinylDbRelease?.vinyl_tracks (the Discogs fallback).
-export function getSideGroups(tracks, vinylSides, dbTracks) {
+// `reverse` (optional): reverse the returned group ORDER only — last side first,
+//   tracks within each side untouched. Display concern only; used by the
+//   "play backwards" mode so the picker matches the reversed playback order.
+export function getSideGroups(tracks, vinylSides, dbTracks, reverse = false) {
   if (!tracks?.length) return [];
 
   // Resolve a side for every index using the canonical priority.
   const sides = tracks.map((t, i) => getSideForIndex(i, t, vinylSides, dbTracks));
+
+  const finish = groups => (reverse ? [...groups].reverse() : groups);
 
   // If we got real data for at least one track, group accordingly. Tracks
   // without a side fall into "?" so they're still visible.
@@ -74,17 +79,38 @@ export function getSideGroups(tracks, vinylSides, dbTracks) {
       if (!map[s]) map[s] = [];
       map[s].push({ track: t, idx: i });
     });
-    return Object.entries(map)
+    return finish(Object.entries(map)
       .sort(([a], [b]) => a.localeCompare(b))
-      .map(([side, group]) => ({ side, tracks: group }));
+      .map(([side, group]) => ({ side, tracks: group })));
   }
 
   // Last resort — no side data at all. Split at midpoint into A and B so the
   // UI doesn't render one monster list. This is intentionally only used when
   // BOTH vinyl_sides and dbTracks are empty.
   const mid = Math.ceil(tracks.length / 2);
-  return [
+  return finish([
     { side: "A", tracks: tracks.slice(0, mid).map((t, i) => ({ track: t, idx: i })) },
     { side: "B", tracks: tracks.slice(mid).map((t, i) => ({ track: t, idx: mid + i })) },
-  ].filter(g => g.tracks.length > 0);
+  ].filter(g => g.tracks.length > 0));
+}
+
+// Build a reverse-SIDE-ORDER permutation of track indices: last side first,
+// each side's tracks kept in forward order (you flip the record to the final
+// side and drop the needle at its first track). Returns:
+//   { order, sides }
+//     order[k]  — original track index that plays in effective position k
+//     sides[k]  — side letter for effective position k
+// Reuses getSideGroups so every side-data source (vinyl_sides / Discogs /
+// A-B fallback) is resolved the same way the picker resolves it.
+export function getReverseSideOrder(tracks, vinylSides, dbTracks) {
+  const groups = getSideGroups(tracks, vinylSides, dbTracks, /* reverse */ true);
+  const order = [];
+  const sides = [];
+  for (const g of groups) {
+    for (const { idx } of g.tracks) {
+      order.push(idx);
+      sides.push(g.side);
+    }
+  }
+  return { order, sides };
 }

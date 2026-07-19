@@ -14,7 +14,7 @@ import { useLyricScroll } from "./hooks/useLyricScroll.js";
 import { useCast } from "./hooks/useCast.js";
 import { useDeviceSession } from "./hooks/useDeviceSession.js";
 import { startWhisperChunks } from "../base/lib/whisper.js";
-import { getSideGroups, hasSideData } from "../base/lib/sides.js";
+import { getSideGroups, hasSideData, getReverseSideOrder } from "../base/lib/sides.js";
 import { LYRIC_SITES, saveUserLyrics, buildSideRows, saveUserSides } from "../base/lib/usermeta.js";
 import { showFlipPushNotification, showAlbumEndPushNotification, getLocalNotif } from "../base/lib/notifications.js";
 import { Vinyl }          from "../base/components/Vinyl.js";
@@ -260,6 +260,15 @@ function Liri() {
   const [turntableTracksProgress, setTurntableTracksProgress] = useState({ percent: 0, stage: "" });
   const turntableAlbumRef = useRef(turntableAlbum);
   const turntableTracksRef = useRef([]); // iTunes tracks for selected album (pre-fetched)
+  // ── "Play backwards" (reverse-side) mode ──
+  // When on, the *effective* turntableTracksRef/vinylSidesRef arrays are reordered
+  // into reverse-side order (last side first, forward within each side) so all the
+  // positional forward-playback logic works unchanged. The pristine originals are
+  // kept in the *OrigRef arrays so the toggle is reversible.
+  const [reverseMode, setReverseMode] = useState(false);
+  const reverseModeRef = useRef(false);
+  const turntableTracksOrigRef = useRef([]);
+  const vinylSidesOrigRef = useRef([]);
   const turntableMatchedIdxRef = useRef(-1); // 0-based index of last vinyl-matched track
   // turntableLyricsCacheRef: raw DB rows fetched once per album in fetchTurntableTracks.
   //   Shape: { [String(itunes_track_id)]: { lrc_raw, words_json, lyrics_plain } }
@@ -947,6 +956,44 @@ function Liri() {
     setBugSending(false);
   };
 
+  // Recompute the effective turntableTracksRef/vinylSidesRef from the pristine
+  // originals according to reverseModeRef. Forward mode is the identity (effective
+  // === original), so nothing downstream changes when the toggle is off. In reverse
+  // mode we reorder BOTH parallel arrays into reverse-side order and synthesise the
+  // side array from the resolved letters, so getSideEndsFromSidesMap is the single
+  // consistent side-boundary source and all positional navigation "just works".
+  const applyPlayDirection = () => {
+    const origT = turntableTracksOrigRef.current;
+    const origS = vinylSidesOrigRef.current;
+    if (reverseModeRef.current && origT.length) {
+      const { order, sides } = getReverseSideOrder(origT, origS, vinylDbReleaseRef.current?.vinyl_tracks);
+      turntableTracksRef.current = order.map(i => origT[i]);
+      vinylSidesRef.current = sides.map(s => ({ side: s }));
+    } else {
+      turntableTracksRef.current = origT;
+      vinylSidesRef.current = origS;
+    }
+  };
+
+  // Toggle "play backwards" from the pre-listen track picker. Reorders the
+  // effective arrays and re-renders the picker. Only meant for the pick screen
+  // (nothing mid-song), so we also drop any stale matched index and side collapse.
+  const toggleReverseMode = () => {
+    const next = !reverseModeRef.current;
+    reverseModeRef.current = next;
+    turntableMatchedIdxRef.current = -1;
+    applyPlayDirection();
+    setCollapsedSides(new Set());
+    setReverseMode(next);
+  };
+
+  // Side letter of the last side (the one "play backwards" starts from), read
+  // from the pristine forward-order side grouping. Null when no album/sides yet.
+  const getLastSideLetter = () => {
+    const groups = getSideGroups(turntableTracksOrigRef.current, vinylSidesOrigRef.current, vinylDbReleaseRef.current?.vinyl_tracks);
+    return groups.length ? groups[groups.length - 1].side : null;
+  };
+
   // ── Turntable album: sync to ref + localStorage, fetch tracks ──
   const fetchTurntableTracks = async collectionId => {
     setTurntableTracksLoading(true);
@@ -957,8 +1004,10 @@ function Liri() {
     // Without this a stale turntableTracksRef could cause matchTranscriptToTracks
     // to score against the wrong album's word list.
     turntableTracksRef.current = [];
+    turntableTracksOrigRef.current = [];
     turntableLyricsCacheRef.current = {};
     vinylSidesRef.current = [];
+    vinylSidesOrigRef.current = [];
     setSideDataMissing(false); // recomputed once this album's side data loads
     try {
       const alb = turntableAlbumRef.current;
@@ -979,7 +1028,7 @@ function Liri() {
         .order("track_number", { ascending: true });
 
       if (trackRows?.length > 0) {
-        turntableTracksRef.current = trackRows.map(t => ({
+        turntableTracksOrigRef.current = trackRows.map(t => ({
           trackName: t.track_name,
           artistName: t.artist_name || artistName,
           collectionName: albumName,
@@ -988,6 +1037,9 @@ function Liri() {
           trackNumber: t.track_number || 1,
           discNumber: t.disc_number || 1,
         }));
+        // Effective playback array — recomputed once side data lands (below).
+        // Until then this is the forward order (reverse needs side data anyway).
+        applyPlayDirection();
 
         setTurntableTracksProgress({ percent: 60, stage: "Loading lyrics…" });
         const { data: lrcRows } = await sb
@@ -1048,7 +1100,7 @@ function Liri() {
         // Primary: vinyl_sides — query by collection only, assign to tracks by sorted position index.
         // Track IDs in vinyl_sides may be synthetic Discogs values that don't match album_tracks IDs,
         // so we match positionally (sorted A1, A2…B1, B2…) rather than by ID.
-        vinylSidesRef.current = []; // array indexed by track position, same order as trackRows
+        vinylSidesOrigRef.current = []; // array indexed by track position, same order as trackRows
         {
           const { data: sidesRows } = await sb
             .from("vinyl_sides")
@@ -1063,7 +1115,7 @@ function Liri() {
             if (!seen.has(key)) { seen.add(key); sorted.push(s); }
           }
           // Only use if we have at least as many side rows as tracks (otherwise incomplete data)
-          if (sorted.length >= trackRows.length) vinylSidesRef.current = sorted;
+          if (sorted.length >= trackRows.length) vinylSidesOrigRef.current = sorted;
         }
 
         const dbRelease = await fetchVinylRelease(collectionId);
@@ -1074,10 +1126,13 @@ function Liri() {
           setVinylDbRelease(null);
           vinylDbReleaseRef.current = null;
         }
+        // Side data is final — recompute the effective arrays (identity in forward
+        // mode; reverse-side reorder if "play backwards" is already on).
+        applyPlayDirection();
         // Surface the "no side info" warning on the idle screen (user can add
         // it manually). May flip back to false below if the background Discogs
         // auto-populate finds a pressing.
-        setSideDataMissing(!vinylSidesRef.current.length && !(dbRelease?.vinyl_tracks?.length > 0));
+        setSideDataMissing(!vinylSidesOrigRef.current.length && !(dbRelease?.vinyl_tracks?.length > 0));
 
         // ── The record is now playable — everything below is background enrichment ──
         // (lyric gap-fill over the network + Discogs side auto-populate). These used
@@ -1117,11 +1172,11 @@ function Liri() {
           }
           // If we still have no side data, try the Discogs auto-populate (slow —
           // sequential Discogs calls). Backgrounded so it never blocks listening.
-          if (!vinylDbReleaseRef.current?.vinyl_tracks?.length && !vinylSidesRef.current.length) {
+          if (!vinylDbReleaseRef.current?.vinyl_tracks?.length && !vinylSidesOrigRef.current.length) {
             try {
               await autoPopulateVinylSides(collectionId, albumName, artistName);
               const retry = await fetchVinylRelease(collectionId);
-              if (retry?.vinyl_tracks?.length > 0) { setVinylDbRelease(retry); vinylDbReleaseRef.current = retry; setSideDataMissing(false); }
+              if (retry?.vinyl_tracks?.length > 0) { setVinylDbRelease(retry); vinylDbReleaseRef.current = retry; setSideDataMissing(false); applyPlayDirection(); }
             } catch {}
           }
         })();
@@ -1131,6 +1186,7 @@ function Liri() {
       }
     } catch (e) {
       turntableTracksRef.current = [];
+      turntableTracksOrigRef.current = [];
       console.error("[turntable] fetch error:", e);
     }
     setTurntableTracksLoading(false);
@@ -1139,12 +1195,18 @@ function Liri() {
   useEffect(() => {
     turntableAlbumRef.current = turntableAlbum;
     turntableMatchedIdxRef.current = -1; // reset stale match when album changes
+    // Every new record starts forward — "play backwards" is a per-album choice.
+    reverseModeRef.current = false;
+    setReverseMode(false);
     if (turntableAlbum) {
       localStorage.setItem("liri_turntable", JSON.stringify(turntableAlbum));
       fetchTurntableTracks(turntableAlbum.itunes_collection_id);
     } else {
       localStorage.removeItem("liri_turntable");
       turntableTracksRef.current = [];
+      turntableTracksOrigRef.current = [];
+      vinylSidesRef.current = [];
+      vinylSidesOrigRef.current = [];
       setTurntableTracksLoading(false);
       setSideDataMissing(false);
     }
@@ -2265,7 +2327,9 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
       scheduleFlipChimes(detectedSong, discInfo);
 
       // ── Log the flip event to analytics ──
-      const sideIdx = sideEnds.indexOf(idx); // 0 = first flip (A→B), 1 = B→C, etc.
+      // Read the actual side letters from the effective side array (correct in
+      // both play directions and for non-A/B/C pressings) rather than the
+      // positional alphabet.
       const method = dbRelease?.vinyl_tracks?.length > 0 ? "db" : albumTpsRef.current > 0 ? "learned" : "heuristic";
       logFlipEvent({
         userId: user?.id,
@@ -2273,8 +2337,8 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
         collectionId: albumCollectionIdRef?.current || null,
         album: detectedSong?.album,
         artist: detectedSong?.artist,
-        fromSide: "ABCDEFGH"[sideIdx] || null,
-        toSide: "ABCDEFGH"[sideIdx + 1] || null,
+        fromSide: vinylSidesRef.current[idx]?.side || null,
+        toSide: vinylSidesRef.current[idx + 1]?.side || null,
         method
       });
       if (detectedSong) setLastSong(detectedSong);
@@ -2468,7 +2532,9 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
       ?? (dbRelease?.vinyl_tracks?.length > 0 ? getDbSideEndIndices(tracks, dbRelease.vinyl_tracks) : getSideEndIndices(tracks, effectiveTps));
     for (let s = 0; s < sideEnds.length; s++) {
       if (curIdx <= sideEnds[s] && sideEnds[s] + 1 < tracks.length) {
-        return "ABCDEFGH"[s + 1] || null;
+        // Actual letter of the side that plays next — correct in reverse mode
+        // and for pressings whose sides aren't A/B/C/D.
+        return vinylSidesRef.current[sideEnds[s] + 1]?.side || "ABCDEFGH"[s + 1] || null;
       }
     }
     return null;
@@ -2488,7 +2554,7 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
       if (curIdx <= sideEnds[s] && sideEnds[s] + 1 < tracks.length) {
         const curDisc = tracks[curIdx] ? (tracks[curIdx].discNumber || 1) : 1;
         const nextDisc = tracks[sideEnds[s] + 1] ? (tracks[sideEnds[s] + 1].discNumber || 1) : 1;
-        const nextSide = "ABCDEFGH"[s + 1] || null;
+        const nextSide = vinylSidesRef.current[sideEnds[s] + 1]?.side || "ABCDEFGH"[s + 1] || null;
         return { isNewDisc: nextDisc !== curDisc, nextDisc: nextDisc, nextSide: nextSide };
       }
     }
@@ -6439,7 +6505,7 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
   /* ── Manual track picker with side grouping ── */
   turntableAlbum && turntableTracksRef.current.length > 0 && (() => {
     const allTracks = turntableTracksRef.current;
-    const groups = getSideGroups(allTracks, vinylSidesRef.current, vinylDbRelease?.vinyl_tracks);
+    const groups = getSideGroups(allTracks, vinylSidesRef.current, vinylDbRelease?.vinyl_tracks, reverseMode);
     const isWeb = !window.Capacitor;
     return /*#__PURE__*/React.createElement("div", {
       style: { marginTop: isWeb ? "8px" : "24px", width: "100%", maxWidth: "360px", textAlign: "left" }
@@ -6489,7 +6555,29 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
             )
           ))
         )
-      ))
+      )),
+      // ── "Play backwards" toggle — reverse side order (last side first) ──
+      // Only meaningful with 2+ sides. Sits at the very bottom of the picker.
+      (isWeb || showTrackList) && groups.length > 1 && (() => {
+        const lastSide = getLastSideLetter();
+        return /*#__PURE__*/React.createElement("button", {
+          onClick: toggleReverseMode,
+          style: {
+            marginTop: "14px", width: "100%",
+            background: reverseMode ? "rgba(212,168,70,0.14)" : "rgba(255,255,255,0.03)",
+            border: reverseMode ? "1px solid rgba(212,168,70,0.45)" : "1px solid rgba(255,255,255,0.08)",
+            borderRadius: "12px", padding: "11px 14px",
+            color: reverseMode ? "rgba(212,168,70,0.95)" : "rgba(255,255,255,0.55)",
+            fontSize: "12px", fontWeight: "600", letterSpacing: "0.3px",
+            cursor: "pointer", fontFamily: "inherit", textAlign: "center",
+            display: "flex", alignItems: "center", justifyContent: "center", gap: "8px"
+          }
+        },
+          reverseMode
+            ? `↩ Playing backwards${lastSide ? ` — from Side ${lastSide}` : ""}`
+            : `⇄ Play backwards${lastSide ? ` — start at Side ${lastSide}` : ""}`
+        );
+      })()
     );
   })(),
 
@@ -6875,7 +6963,7 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
   }, "\u2190 Back"))),
   /* \u2500\u2500 "Or select another side" \u2014 quiet picker under the main flip CTA \u2500\u2500 */
   (sideEndReason === "flip" || sideEndReason === "failed") && !isNeedleDrop && turntableTracksRef.current.length > 0 && (() => {
-    const groups = getSideGroups(turntableTracksRef.current, vinylSidesRef.current, vinylDbRelease?.vinyl_tracks);
+    const groups = getSideGroups(turntableTracksRef.current, vinylSidesRef.current, vinylDbRelease?.vinyl_tracks, reverseMode);
     if (!groups.length) return null;
     return /*#__PURE__*/React.createElement("div", {
       style: { marginTop: "20px", width: "100%" }
