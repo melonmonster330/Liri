@@ -5,7 +5,7 @@ import CapApp_SPM
 // Force-reference local SPM plugin classes so the linker keeps them in the binary.
 // Capacitor discovers CAPBridgedPlugin subclasses via ObjC runtime scanning at launch —
 // without this, the classes get dead-stripped and window.Capacitor.Plugins.X is undefined.
-private let _retainPlugins: [AnyClass] = [NativeAudioPlugin.self, ShazamPlugin.self]
+private let _retainPlugins: [AnyClass] = [KeepAwakePlugin.self, NativeAudioPlugin.self, ShazamPlugin.self]
 
 @UIApplicationMain
 class AppDelegate: UIResponder, UIApplicationDelegate {

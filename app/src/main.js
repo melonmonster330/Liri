@@ -23,6 +23,7 @@ import { LyricsEditorSheet } from "../base/components/LyricsEditorSheet.js";
 import { SideInfoSheet }     from "../base/components/SideInfoSheet.js";
 import { Shazam }         from "../ios/shazam.js";
 import { getNativeAudio } from "../ios/audio.js";
+import { getKeepAwake }   from "../ios/keep-awake.js";
 
 const {
   useState,
@@ -334,6 +335,7 @@ function Liri() {
   const [flipSound, setFlipSound] = useState(() => localStorage.getItem("liri_flip_sound") !== "false");
   const [flipNotify, setFlipNotify] = useState(() => localStorage.getItem("liri_flip_notify") === "true");
   const [notifyDenied, setNotifyDenied] = useState(false);
+  const [keepAwakeError, setKeepAwakeError] = useState(false);
 
   // ── Nudge expand ──
   const [nudgeMenu, setNudgeMenu] = useState(null); // null | "left" | "right"
@@ -586,6 +588,15 @@ function Liri() {
   // ── Flip notifications ──
   const playFlipChime = () => {
     if (localStorage.getItem("liri_flip_sound") === "false") return;
+    // Native playback uses an iOS audio session and remains reliable when the
+    // WKWebView WebAudio context is suspended or the hardware switch is muted.
+    if (IS_IOS) {
+      const nativeAudio = getNativeAudio();
+      if (nativeAudio?.chime) {
+        nativeAudio.chime().catch(() => {});
+        return;
+      }
+    }
     try {
       const ctx = chimeCtxRef.current || new (window.AudioContext || window.webkitAudioContext)();
       const play = () => {
@@ -625,18 +636,17 @@ function Liri() {
   };
 
   // Mute toggle on the flip screen. Drives the same liri_flip_sound flag as the
-  // Settings switch; muting also cancels any dings already queued for this flip
-  // (playFlipChime re-checks the flag at fire time, so this is belt-and-braces).
+  // Settings switch. Keep reminder timers alive when muted: playFlipChime
+  // re-checks the flag, while the independent push notification still fires.
   const toggleFlipDings = () => {
     const v = !flipSound;
     setFlipSound(v);
     try { localStorage.setItem("liri_flip_sound", String(v)); } catch {}
-    if (!v) cancelFlipChimes();
   };
 
   // Notification helpers are imported from base/lib/notifications.js.
   const enableFlipNotify = async () => {
-    if (window.Capacitor) {
+    if (IS_IOS) {
       try {
         const { display } = await (getLocalNotif()?.requestPermissions() ?? Promise.resolve({ display: "denied" }));
         if (display === "granted") {
@@ -651,19 +661,21 @@ function Liri() {
       } catch {
         setNotifyDenied(true);
       }
-    } else {
-      const perm = await Notification.requestPermission();
-      if (perm === "granted") {
-        setFlipNotify(true);
-        localStorage.setItem("liri_flip_notify", "true");
-        setNotifyDenied(false);
-      } else {
-        setNotifyDenied(true);
-        setFlipNotify(false);
-        localStorage.setItem("liri_flip_notify", "false");
-      }
     }
   };
+
+  // Keep the toggle honest if notification permission was revoked in iOS
+  // Settings since the last launch.
+  useEffect(() => {
+    if (!IS_IOS || !flipNotify) return;
+    getLocalNotif()?.checkPermissions?.().then(({ display }) => {
+      if (display !== "granted") {
+        setFlipNotify(false);
+        localStorage.setItem("liri_flip_notify", "false");
+        setNotifyDenied(display === "denied");
+      }
+    }).catch(() => {});
+  }, []);
 
   // ── Usage fetch — removed (no API costs at listen time, no free limit) ──
   const fetchUsage = async () => {};
@@ -2672,10 +2684,26 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
   // ── Screen wake lock ──
   useEffect(() => {
     const acquire = async () => {
-      if (!keepScreenAwake || !("wakeLock" in navigator)) return;
-      try { wakeLockRef.current = await navigator.wakeLock.request("screen"); } catch {}
+      if (!keepScreenAwake) return;
+      setKeepAwakeError(false);
+      try {
+        if (IS_IOS) {
+          const plugin = getKeepAwake();
+          if (!plugin?.setEnabled) throw new Error("Native keep-awake unavailable");
+          await plugin.setEnabled({ enabled: true });
+        } else {
+          if (!("wakeLock" in navigator)) throw new Error("Wake Lock unavailable");
+          wakeLockRef.current = await navigator.wakeLock.request("screen");
+        }
+      } catch {
+        setKeepAwakeError(true);
+      }
     };
-    const release = () => { wakeLockRef.current?.release(); wakeLockRef.current = null; };
+    const release = () => {
+      wakeLockRef.current?.release?.();
+      wakeLockRef.current = null;
+      if (IS_IOS) getKeepAwake()?.setEnabled?.({ enabled: false }).catch(() => {});
+    };
     const onVisibility = () => { if (document.visibilityState === "visible" && keepScreenAwake) acquire(); };
     if (keepScreenAwake) { acquire(); document.addEventListener("visibilitychange", onVisibility); }
     else release();
@@ -4367,11 +4395,7 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
       marginTop: "2px"
     }
   }, "Plays a tone when it's time to flip")), /*#__PURE__*/React.createElement("div", {
-    onClick: () => {
-      const v = !flipSound;
-      setFlipSound(v);
-      localStorage.setItem("liri_flip_sound", String(v));
-    },
+    onClick: toggleFlipDings,
     style: {
       width: "40px",
       height: "24px",
@@ -4394,7 +4418,7 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
       transition: "left 0.2s",
       boxShadow: "0 1px 4px rgba(0,0,0,0.3)"
     }
-  }))), /*#__PURE__*/React.createElement("div", {
+  }))), IS_IOS && /*#__PURE__*/React.createElement("div", {
     style: {
       display: "flex",
       alignItems: "center",
@@ -4450,7 +4474,7 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
       marginTop: "8px",
       lineHeight: "1.5"
     }
-  }, "Notifications were blocked. Enable them in your browser settings.")), /*#__PURE__*/React.createElement("div", {
+  }, "Notifications were blocked. Enable them in iOS Settings.")), /*#__PURE__*/React.createElement("div", {
     style: {
       background: "rgba(255,255,255,0.03)",
       border: "1px solid rgba(255,255,255,0.07)",
@@ -4531,7 +4555,9 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
   style: {fontSize: "14px", color: "rgba(255,255,255,0.85)", fontWeight: "500"}
 }, "Keep screen on"), /*#__PURE__*/React.createElement("div", {
   style: {fontSize: "11px", color: "rgba(255,255,255,0.35)", marginTop: "2px"}
-}, "Prevent display from sleeping"))), /*#__PURE__*/React.createElement("div", {
+}, "Prevent display from sleeping"), keepAwakeError && /*#__PURE__*/React.createElement("div", {
+  style: {fontSize: "11px", color: "#e8a0a8", marginTop: "3px"}
+}, IS_IOS ? "Could not change the iOS display setting" : "Not supported by this browser"))), /*#__PURE__*/React.createElement("div", {
   style: {
     width: "44px",
     height: "26px",

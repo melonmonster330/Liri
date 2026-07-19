@@ -21,6 +21,7 @@
 	},
 	"packageClassList": [
 		"LocalNotificationsPlugin",
+		"KeepAwakePlugin",
 		"NativeAudioPlugin",
 		"ShazamPlugin"
 	]

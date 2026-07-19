@@ -8,7 +8,7 @@ const path = require('path');
 const configPath = path.resolve(__dirname, '../ios/App/App/capacitor.config.json');
 const config = JSON.parse(fs.readFileSync(configPath, 'utf8'));
 
-const localPlugins = ['NativeAudioPlugin', 'ShazamPlugin'];
+const localPlugins = ['KeepAwakePlugin', 'NativeAudioPlugin', 'ShazamPlugin'];
 const existing = config.packageClassList || [];
 const merged = [...new Set([...existing, ...localPlugins])];
 config.packageClassList = merged;

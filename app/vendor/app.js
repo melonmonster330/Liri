@@ -771,34 +771,20 @@
       title = `Time for LP ${discInfo.nextDisc}! \u{1F4BF}`;
     }
     const body = song ? `${song.artist} \u2014 ${song.album || "Side A done"}` : "Your side has ended \u2014 flip the record";
-    if (window.Capacitor) {
-      try {
-        getLocalNotif()?.schedule({ notifications: [{ id: 1001, title, body }] });
-      } catch {
-      }
-    } else {
-      if (Notification.permission !== "granted") return;
-      try {
-        new Notification(title, { body, icon: song?.artwork || void 0, tag: "liri-flip" });
-      } catch {
-      }
+    if (!window.Capacitor) return;
+    try {
+      getLocalNotif()?.schedule({ notifications: [{ id: 1001, title, body }] });
+    } catch {
     }
   }
   function showAlbumEndPushNotification(song) {
     if (!userOptedIn()) return;
     const title = "That's the album! \u{1F3B6}";
     const body = song ? `${song.artist} \u2014 ${song.album || "Album complete"}` : "Put on your next record to keep going";
-    if (window.Capacitor) {
-      try {
-        getLocalNotif()?.schedule({ notifications: [{ id: 1002, title, body }] });
-      } catch {
-      }
-    } else {
-      if (Notification.permission !== "granted") return;
-      try {
-        new Notification(title, { body, icon: song?.artwork || void 0, tag: "liri-album-end" });
-      } catch {
-      }
+    if (!window.Capacitor) return;
+    try {
+      getLocalNotif()?.schedule({ notifications: [{ id: 1002, title, body }] });
+    } catch {
     }
   }
 
@@ -1325,6 +1311,18 @@
     }
   };
 
+  // app/ios/audio.js
+  function getNativeAudio() {
+    if (!window.Capacitor) return null;
+    return window.Capacitor.Plugins?.NativeAudio ?? window.Capacitor.registerPlugin?.("NativeAudio") ?? null;
+  }
+
+  // app/ios/keep-awake.js
+  function getKeepAwake() {
+    if (!window.Capacitor) return null;
+    return window.Capacitor.Plugins?.KeepAwake ?? window.Capacitor.registerPlugin?.("KeepAwake") ?? null;
+  }
+
   // app/src/main.js
   var {
     useState: useState6,
@@ -1575,6 +1573,7 @@
     const [flipSound, setFlipSound] = useState6(() => localStorage.getItem("liri_flip_sound") !== "false");
     const [flipNotify, setFlipNotify] = useState6(() => localStorage.getItem("liri_flip_notify") === "true");
     const [notifyDenied, setNotifyDenied] = useState6(false);
+    const [keepAwakeError, setKeepAwakeError] = useState6(false);
     const [nudgeMenu, setNudgeMenu] = useState6(null);
     const nudgeMenuTimerRef = useRef5(null);
     const [showOnboarding, setShowOnboarding] = useState6(false);
@@ -1785,6 +1784,14 @@
     };
     const playFlipChime = () => {
       if (localStorage.getItem("liri_flip_sound") === "false") return;
+      if (IS_IOS) {
+        const nativeAudio = getNativeAudio();
+        if (nativeAudio?.chime) {
+          nativeAudio.chime().catch(() => {
+          });
+          return;
+        }
+      }
       try {
         const ctx = chimeCtxRef.current || new (window.AudioContext || window.webkitAudioContext)();
         const play = () => {
@@ -1830,10 +1837,9 @@
         localStorage.setItem("liri_flip_sound", String(v));
       } catch {
       }
-      if (!v) cancelFlipChimes();
     };
     const enableFlipNotify = async () => {
-      if (window.Capacitor) {
+      if (IS_IOS) {
         try {
           const { display } = await (getLocalNotif()?.requestPermissions() ?? Promise.resolve({ display: "denied" }));
           if (display === "granted") {
@@ -1848,19 +1854,19 @@
         } catch {
           setNotifyDenied(true);
         }
-      } else {
-        const perm = await Notification.requestPermission();
-        if (perm === "granted") {
-          setFlipNotify(true);
-          localStorage.setItem("liri_flip_notify", "true");
-          setNotifyDenied(false);
-        } else {
-          setNotifyDenied(true);
-          setFlipNotify(false);
-          localStorage.setItem("liri_flip_notify", "false");
-        }
       }
     };
+    useEffect7(() => {
+      if (!IS_IOS || !flipNotify) return;
+      getLocalNotif()?.checkPermissions?.().then(({ display }) => {
+        if (display !== "granted") {
+          setFlipNotify(false);
+          localStorage.setItem("liri_flip_notify", "false");
+          setNotifyDenied(display === "denied");
+        }
+      }).catch(() => {
+      });
+    }, []);
     const fetchUsage = async () => {
     };
     const fetchAutoPostPref = async (u) => {
@@ -3523,15 +3529,26 @@ Move closer to your speakers and try again.`);
     };
     useEffect7(() => {
       const acquire = async () => {
-        if (!keepScreenAwake || !("wakeLock" in navigator)) return;
+        if (!keepScreenAwake) return;
+        setKeepAwakeError(false);
         try {
-          wakeLockRef.current = await navigator.wakeLock.request("screen");
+          if (IS_IOS) {
+            const plugin = getKeepAwake();
+            if (!plugin?.setEnabled) throw new Error("Native keep-awake unavailable");
+            await plugin.setEnabled({ enabled: true });
+          } else {
+            if (!("wakeLock" in navigator)) throw new Error("Wake Lock unavailable");
+            wakeLockRef.current = await navigator.wakeLock.request("screen");
+          }
         } catch {
+          setKeepAwakeError(true);
         }
       };
       const release = () => {
-        wakeLockRef.current?.release();
+        wakeLockRef.current?.release?.();
         wakeLockRef.current = null;
+        if (IS_IOS) getKeepAwake()?.setEnabled?.({ enabled: false }).catch(() => {
+        });
       };
       const onVisibility = () => {
         if (document.visibilityState === "visible" && keepScreenAwake) acquire();
@@ -5257,11 +5274,7 @@ Move closer to your speakers and try again.`);
           marginTop: "2px"
         }
       }, "Plays a tone when it's time to flip")), /* @__PURE__ */ React.createElement("div", {
-        onClick: () => {
-          const v = !flipSound;
-          setFlipSound(v);
-          localStorage.setItem("liri_flip_sound", String(v));
-        },
+        onClick: toggleFlipDings,
         style: {
           width: "40px",
           height: "24px",
@@ -5284,7 +5297,7 @@ Move closer to your speakers and try again.`);
           transition: "left 0.2s",
           boxShadow: "0 1px 4px rgba(0,0,0,0.3)"
         }
-      }))), /* @__PURE__ */ React.createElement("div", {
+      }))), IS_IOS && /* @__PURE__ */ React.createElement("div", {
         style: {
           display: "flex",
           alignItems: "center",
@@ -5340,7 +5353,7 @@ Move closer to your speakers and try again.`);
           marginTop: "8px",
           lineHeight: "1.5"
         }
-      }, "Notifications were blocked. Enable them in your browser settings.")),
+      }, "Notifications were blocked. Enable them in iOS Settings.")),
       /* @__PURE__ */ React.createElement("div", {
         style: {
           background: "rgba(255,255,255,0.03)",
@@ -5427,7 +5440,9 @@ Move closer to your speakers and try again.`);
         style: { fontSize: "14px", color: "rgba(255,255,255,0.85)", fontWeight: "500" }
       }, "Keep screen on"), /* @__PURE__ */ React.createElement("div", {
         style: { fontSize: "11px", color: "rgba(255,255,255,0.35)", marginTop: "2px" }
-      }, "Prevent display from sleeping"))), /* @__PURE__ */ React.createElement("div", {
+      }, "Prevent display from sleeping"), keepAwakeError && /* @__PURE__ */ React.createElement("div", {
+        style: { fontSize: "11px", color: "#e8a0a8", marginTop: "3px" }
+      }, IS_IOS ? "Could not change the iOS display setting" : "Not supported by this browser"))), /* @__PURE__ */ React.createElement("div", {
         style: {
           width: "44px",
           height: "26px",

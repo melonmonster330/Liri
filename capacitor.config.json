@@ -19,5 +19,5 @@
       "enabled": true
     }
   },
-  "packageClassList": ["NativeAudioPlugin", "ShazamPlugin"]
+  "packageClassList": ["KeepAwakePlugin", "NativeAudioPlugin", "ShazamPlugin"]
 }
