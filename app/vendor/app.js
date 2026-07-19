@@ -6265,14 +6265,21 @@ Move closer to your speakers and try again.`);
       style: isLandscape ? {
         position: "fixed",
         top: "52px",
-        left: 0,
-        right: 0,
+        // Follow the lyric column when the side controls claim the left rail.
+        // This keeps both the bar and timestamp centered above the lyrics rather
+        // than centered across the full window behind the open menu.
+        left: menuOpen ? lyricAreaLeft + "px" : 0,
+        right: menuOpen ? "auto" : 0,
+        width: menuOpen ? lyricAreaW + "px" : "auto",
         height: "24px",
         zIndex: 19,
         display: "flex",
         alignItems: "center",
         justifyContent: "center",
-        gap: "8px"
+        gap: "8px",
+        padding: menuOpen ? "0 12px" : 0,
+        boxSizing: "border-box",
+        transition: "left 0.35s ease, width 0.35s ease, padding 0.35s ease"
       } : {
         height: "22px",
         flexShrink: 0,
@@ -6283,8 +6290,9 @@ Move closer to your speakers and try again.`);
       }
     }, /* @__PURE__ */ React.createElement("div", {
       style: {
-        width: isLandscape ? "min(62vw, 520px)" : "68vw",
-        maxWidth: "520px",
+        width: isLandscape ? menuOpen ? "calc(100% - 92px)" : "min(62vw, 520px)" : "68vw",
+        maxWidth: menuOpen ? "460px" : "520px",
+        minWidth: menuOpen ? "80px" : 0,
         height: isLandscape ? "5px" : "3px",
         background: "rgba(255,255,255,0.1)",
         cursor: songDuration ? "pointer" : "default",
