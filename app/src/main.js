@@ -58,11 +58,6 @@ const LYRIC_LEAD_SECONDS = 1;
 // next track's lyrics don't start ahead of the needle. (Reduced from 1500ms;
 // if she's nudging forward constantly the gap is too long for her vinyl.)
 const TRACK_GAP_MS = 300;
-// Digital track durations commonly include a few seconds of tail that are not
-// useful for a vinyl song-to-song handoff. Move to the next song slightly
-// before that metadata endpoint so its intro is not spent on the prior screen.
-// Side endings deliberately do not use this lead; flip timing remains exact.
-const TRACK_TRANSITION_LEAD_SECONDS = 3;
 // How long the lyric clock parks at 0 after a manual flip / side pick while
 // the user physically flips the record and drops the needle.
 const FLIP_NEEDLE_DROP_MS = 10000;
@@ -387,8 +382,9 @@ function Liri() {
   const chimeCtxRef = useRef(null); // Persistent AudioContext unlocked on first Listen tap
   const syncIntervalRef = useRef(null);
   const syncStartRef = useRef(null);
-  // Physical 1× song clock, deliberately separate from the corrected lyric
-  // clock. Drives track/side transitions without inheriting lyric speed-up.
+  // Song-ending clock, deliberately separate from lyric highlighting so
+  // nudges and the visual lead cannot trigger track/side transitions. It uses
+  // the same measured playback-rate correction as the record itself.
   const endClockPosRef = useRef(0);
   const endClockStartRef = useRef(null);
   const detectedAtRef = useRef(null);
@@ -1433,18 +1429,14 @@ function Liri() {
     }
     if (!effectiveDuration) return;
 
-    // The lyric clock intentionally runs faster than 1×, but physical record
-    // transitions do not. Comparing accelerated playbackTime to the real track
-    // duration advanced every next song by ~3% of the outgoing track. Use a
-    // separate 1× end clock anchored by the same recognition/seek position.
+    // Keep transitions isolated from lyric nudges/lead, but advance this clock
+    // at the measured record rate. Leaving it at 1× made a five-minute song's
+    // transition arrive roughly ten seconds after the record had already ended.
     const endClockElapsed = !isPaused && endClockStartRef.current != null
-      ? (Date.now() - endClockStartRef.current) / 1000
+      ? (Date.now() - endClockStartRef.current) / 1000 * SYNC_PLAYBACK_RATE
       : 0;
     const endPlaybackTime = Math.max(0, endClockPosRef.current + endClockElapsed);
-    const transitionAt = Math.max(0,
-      effectiveDuration - (isKnownSideEnd ? 0 : TRACK_TRANSITION_LEAD_SECONDS)
-    );
-    if (endPlaybackTime >= transitionAt && !autoAdvanceFiredRef.current) {
+    if (endPlaybackTime >= effectiveDuration && !autoAdvanceFiredRef.current) {
       autoAdvanceFiredRef.current = true;
       setShouldAdvanceTrack(true);
     }
@@ -1868,7 +1860,7 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
       syncCalcRef.current = null;
       const elapsed = (Date.now() - recStart) / 1000;
       initialPosRef.current = Math.max(0, startPos - phraseOffset + elapsed * SYNC_PLAYBACK_RATE);
-      endClockPosRef.current = Math.max(0, startPos - phraseOffset + elapsed);
+      endClockPosRef.current = Math.max(0, startPos - phraseOffset + elapsed * SYNC_PLAYBACK_RATE);
     } else if (syncStartRef.current !== null) {
       // Sync is already running and no new timing data is available.
       // This happens when detectedSong is updated for a non-song reason (e.g. artwork
@@ -1880,7 +1872,7 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
       // window whenever detectedSong updated (e.g. artwork arriving) mid-park.
       initialPosRef.current = initialPosRef.current + (Date.now() - syncStartRef.current) / 1000 * SYNC_PLAYBACK_RATE;
       if (endClockStartRef.current != null) {
-        endClockPosRef.current += (Date.now() - endClockStartRef.current) / 1000;
+        endClockPosRef.current += (Date.now() - endClockStartRef.current) / 1000 * SYNC_PLAYBACK_RATE;
       }
     } else {
       endClockPosRef.current = initialPosRef.current;
@@ -1980,7 +1972,7 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
       // nudges shift it, and resume restarts the clock from it.
       initialPosRef.current = Math.max(0, playbackTime);
       if (endClockStartRef.current != null) {
-        endClockPosRef.current += (Date.now() - endClockStartRef.current) / 1000;
+        endClockPosRef.current += (Date.now() - endClockStartRef.current) / 1000 * SYNC_PLAYBACK_RATE;
       }
       clearInterval(syncIntervalRef.current);
       setIsPaused(true);
@@ -4046,6 +4038,10 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
   }, /*#__PURE__*/React.createElement("svg", {width:"12",height:"12",viewBox:"0 0 24 24",fill:"none",stroke:"currentColor",strokeWidth:"2.5",strokeLinecap:"round"}, /*#__PURE__*/React.createElement("line",{x1:"18",y1:"6",x2:"6",y2:"18"}), /*#__PURE__*/React.createElement("line",{x1:"6",y1:"6",x2:"18",y2:"18"})))), /*#__PURE__*/React.createElement("div", {
     style: {
       overflowY: "auto",
+      // Active lyrics use a composited scale for flicker-free emphasis. Clip
+      // its harmless horizontal overhang so WebKit never adds a scrollbar or
+      // changes the lyric viewport width mid-transition.
+      overflowX: "hidden",
       padding: "0 24px",
       flex: 1,
       minHeight: 0,
@@ -5322,8 +5318,8 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
       setPlaybackTime(targetTime);
     }
   }, (() => {
-    // The progress bar intentionally reflects the corrected lyric position.
-    // Physical auto-advance uses the separate 1× end clock above.
+    // The progress bar reflects the corrected lyric position. Auto-advance
+    // uses its separate, nudge-isolated ending clock at the same measured rate.
     const effDur = songDuration ?? (lyrics.length > 0 ? lyrics[lyrics.length - 1].time + 3 : null);
     return effDur ? /*#__PURE__*/React.createElement("div", {
       style: {
@@ -5455,16 +5451,6 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
       transition: "height 650ms ease-in-out, min-height 650ms ease-in-out"
     }
   }), (() => {
-    // Keep the visual emphasis in step with the 650ms scroll roll. The old
-    // adaptive transition could shrink to 100ms on fast lyrics, making the
-    // text flash to a new size while the list was still moving.
-    const transition = [
-      "font-size 650ms ease-in-out",
-      "font-weight 650ms ease-in-out",
-      "padding 650ms ease-in-out",
-      "color 500ms ease-in-out",
-      "text-shadow 500ms ease-in-out"
-    ].join(", ");
     // Append credit lines after the last lyric so they scroll + highlight naturally
     const lastLyricTime = lyrics.length > 0 ? lyrics[lyrics.length - 1].time : 0;
     const creditLines = [
@@ -5485,10 +5471,7 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
     const NEAR = 4;
     // iOS portrait runs a touch smaller so more lines fit on the phone screen.
     const iosPortrait = IS_IOS && !isLandscape;
-    const curFontBase = iosPortrait ? 26 : 30;
-    const near1Font   = iosPortrait ? 16 : 18;
-    const nearFont    = iosPortrait ? 13 : 15;
-    const farFont     = iosPortrait ? 11 : 12;
+    const previewFont = iosPortrait ? 16 : 18;
     const aheadBase  = isLandscape ? 0.55 : 0.32;
     const behindBase = isLandscape ? 0.38 : 0.22;
     // The active font is intentionally larger, but it used to keep the same
@@ -5511,25 +5494,29 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
         ref: cur ? currentLineRef : i === lyrics.length ? creditsRef : null,
         style: {
           textAlign: "center",
-          padding: near ? "6px 0" : "3px 0",
+          // Keep glyph layout completely stable. iOS WebKit flashes when it
+          // has to rasterize changing font sizes/weights during a scroll. The
+          // active emphasis is now a composited transform, which also means
+          // preview and active rows retain exactly the same word wrapping.
+          padding: "7px 0",
           fontSize: isCredit
-            ? (cur ? "15px" : adist <= 1 ? "13px" : "11px")
-            : (cur
-              ? Math.round(curFontBase * (isLandscape ? effectiveLyricFontScale : lyricFontScale)) + "px"
-              : adist === 1
-                ? Math.round(near1Font * (isLandscape ? effectiveLyricFontScale : lyricFontScale)) + "px"
-                : near
-                  ? Math.round(nearFont * (isLandscape ? effectiveLyricFontScale : lyricFontScale)) + "px"
-                  : Math.round(farFont * (isLandscape ? effectiveLyricFontScale : lyricFontScale)) + "px"),
-          fontWeight: cur && !isCredit ? "700" : "400",
-          color: cur
-            ? (isCredit ? "rgba(255,255,255,0.55)" : "#ffffff")
-            : dist > 0
-              ? `rgba(255,255,255,${aheadOpacity})`
-              : `rgba(255,255,255,${behindOpacity})`,
+            ? "13px"
+            : Math.round(previewFont * (isLandscape ? effectiveLyricFontScale : lyricFontScale)) + "px",
+          fontWeight: isCredit ? "400" : "600",
+          color: "#ffffff",
+          opacity: cur
+            ? (isCredit ? 0.55 : 1)
+            : dist > 0 ? aheadOpacity : behindOpacity,
           lineHeight: "1.4",
-          transition: adist <= NEAR + 1 ? transition : "none",
-          textShadow: cur && !isCredit ? "0 0 60px rgba(212,168,70,0.4), 0 2px 20px rgba(0,0,0,0.8)" : "none",
+          transform: cur
+            ? `scale(${isCredit ? 1.08 : 1.45})`
+            : "scale(1)",
+          transformOrigin: "center center",
+          transition: adist <= NEAR + 1
+            ? "transform 650ms ease-in-out, opacity 500ms ease-in-out"
+            : "none",
+          willChange: near ? "transform, opacity" : "auto",
+          textShadow: "none",
           cursor: "default",
           letterSpacing: isCredit ? "0.2px" : "normal",
           maxWidth: isCredit ? "260px" : "none",

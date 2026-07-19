@@ -1409,7 +1409,6 @@
   var APP_VERSION = "1.5.14";
   var LYRIC_LEAD_SECONDS = 1;
   var TRACK_GAP_MS = 300;
-  var TRACK_TRANSITION_LEAD_SECONDS = 3;
   var FLIP_NEEDLE_DROP_MS = 1e4;
   var NUDGE_STEP_SECS = 1;
   var NUDGE_FINE_SECS = 0.5;
@@ -2527,13 +2526,9 @@
         effectiveDuration = effectiveDuration == null ? lyricOutroLimit : Math.min(effectiveDuration, lyricOutroLimit);
       }
       if (!effectiveDuration) return;
-      const endClockElapsed = !isPaused && endClockStartRef.current != null ? (Date.now() - endClockStartRef.current) / 1e3 : 0;
+      const endClockElapsed = !isPaused && endClockStartRef.current != null ? (Date.now() - endClockStartRef.current) / 1e3 * SYNC_PLAYBACK_RATE : 0;
       const endPlaybackTime = Math.max(0, endClockPosRef.current + endClockElapsed);
-      const transitionAt = Math.max(
-        0,
-        effectiveDuration - (isKnownSideEnd ? 0 : TRACK_TRANSITION_LEAD_SECONDS)
-      );
-      if (endPlaybackTime >= transitionAt && !autoAdvanceFiredRef.current) {
+      if (endPlaybackTime >= effectiveDuration && !autoAdvanceFiredRef.current) {
         autoAdvanceFiredRef.current = true;
         setShouldAdvanceTrack(true);
       }
@@ -2866,11 +2861,11 @@ Move closer to your speakers and try again.`);
         syncCalcRef.current = null;
         const elapsed = (Date.now() - recStart) / 1e3;
         initialPosRef.current = Math.max(0, startPos - phraseOffset + elapsed * SYNC_PLAYBACK_RATE);
-        endClockPosRef.current = Math.max(0, startPos - phraseOffset + elapsed);
+        endClockPosRef.current = Math.max(0, startPos - phraseOffset + elapsed * SYNC_PLAYBACK_RATE);
       } else if (syncStartRef.current !== null) {
         initialPosRef.current = initialPosRef.current + (Date.now() - syncStartRef.current) / 1e3 * SYNC_PLAYBACK_RATE;
         if (endClockStartRef.current != null) {
-          endClockPosRef.current += (Date.now() - endClockStartRef.current) / 1e3;
+          endClockPosRef.current += (Date.now() - endClockStartRef.current) / 1e3 * SYNC_PLAYBACK_RATE;
         }
       } else {
         endClockPosRef.current = initialPosRef.current;
@@ -2963,7 +2958,7 @@ Move closer to your speakers and try again.`);
       } else {
         initialPosRef.current = Math.max(0, playbackTime);
         if (endClockStartRef.current != null) {
-          endClockPosRef.current += (Date.now() - endClockStartRef.current) / 1e3;
+          endClockPosRef.current += (Date.now() - endClockStartRef.current) / 1e3 * SYNC_PLAYBACK_RATE;
         }
         clearInterval(syncIntervalRef.current);
         setIsPaused(true);
@@ -4908,6 +4903,10 @@ Move closer to your speakers and try again.`);
     }, /* @__PURE__ */ React.createElement("svg", { width: "12", height: "12", viewBox: "0 0 24 24", fill: "none", stroke: "currentColor", strokeWidth: "2.5", strokeLinecap: "round" }, /* @__PURE__ */ React.createElement("line", { x1: "18", y1: "6", x2: "6", y2: "18" }), /* @__PURE__ */ React.createElement("line", { x1: "6", y1: "6", x2: "18", y2: "18" })))), /* @__PURE__ */ React.createElement("div", {
       style: {
         overflowY: "auto",
+        // Active lyrics use a composited scale for flicker-free emphasis. Clip
+        // its harmless horizontal overhang so WebKit never adds a scrollbar or
+        // changes the lyric viewport width mid-transition.
+        overflowX: "hidden",
         padding: "0 24px",
         flex: 1,
         minHeight: 0,
@@ -6434,13 +6433,6 @@ Move closer to your speakers and try again.`);
         }
       }),
       (() => {
-        const transition = [
-          "font-size 650ms ease-in-out",
-          "font-weight 650ms ease-in-out",
-          "padding 650ms ease-in-out",
-          "color 500ms ease-in-out",
-          "text-shadow 500ms ease-in-out"
-        ].join(", ");
         const lastLyricTime = lyrics.length > 0 ? lyrics[lyrics.length - 1].time : 0;
         const creditLines = [
           ...detectedSong?.title ? [{ text: detectedSong.title, time: lastLyricTime + 5, isCredit: true }] : [],
@@ -6454,10 +6446,7 @@ Move closer to your speakers and try again.`);
         const effectiveIndex = pastLastLyric ? lyrics.length - 1 + creditLines.reduce((best, cl, ci) => playbackTime >= cl.time ? ci + 1 : best, 0) : currentIndex;
         const NEAR = 4;
         const iosPortrait = IS_IOS && !isLandscape;
-        const curFontBase = iosPortrait ? 26 : 30;
-        const near1Font = iosPortrait ? 16 : 18;
-        const nearFont = iosPortrait ? 13 : 15;
-        const farFont = iosPortrait ? 11 : 12;
+        const previewFont = iosPortrait ? 16 : 18;
         const aheadBase = isLandscape ? 0.55 : 0.32;
         const behindBase = isLandscape ? 0.38 : 0.22;
         const activeGutterExpansion = isLandscape ? lyricAreaW < 500 ? 14 : 30 : 20;
@@ -6474,13 +6463,21 @@ Move closer to your speakers and try again.`);
             ref: cur ? currentLineRef : i === lyrics.length ? creditsRef : null,
             style: {
               textAlign: "center",
-              padding: near ? "6px 0" : "3px 0",
-              fontSize: isCredit ? cur ? "15px" : adist <= 1 ? "13px" : "11px" : cur ? Math.round(curFontBase * (isLandscape ? effectiveLyricFontScale : lyricFontScale)) + "px" : adist === 1 ? Math.round(near1Font * (isLandscape ? effectiveLyricFontScale : lyricFontScale)) + "px" : near ? Math.round(nearFont * (isLandscape ? effectiveLyricFontScale : lyricFontScale)) + "px" : Math.round(farFont * (isLandscape ? effectiveLyricFontScale : lyricFontScale)) + "px",
-              fontWeight: cur && !isCredit ? "700" : "400",
-              color: cur ? isCredit ? "rgba(255,255,255,0.55)" : "#ffffff" : dist > 0 ? `rgba(255,255,255,${aheadOpacity})` : `rgba(255,255,255,${behindOpacity})`,
+              // Keep glyph layout completely stable. iOS WebKit flashes when it
+              // has to rasterize changing font sizes/weights during a scroll. The
+              // active emphasis is now a composited transform, which also means
+              // preview and active rows retain exactly the same word wrapping.
+              padding: "7px 0",
+              fontSize: isCredit ? "13px" : Math.round(previewFont * (isLandscape ? effectiveLyricFontScale : lyricFontScale)) + "px",
+              fontWeight: isCredit ? "400" : "600",
+              color: "#ffffff",
+              opacity: cur ? isCredit ? 0.55 : 1 : dist > 0 ? aheadOpacity : behindOpacity,
               lineHeight: "1.4",
-              transition: adist <= NEAR + 1 ? transition : "none",
-              textShadow: cur && !isCredit ? "0 0 60px rgba(212,168,70,0.4), 0 2px 20px rgba(0,0,0,0.8)" : "none",
+              transform: cur ? `scale(${isCredit ? 1.08 : 1.45})` : "scale(1)",
+              transformOrigin: "center center",
+              transition: adist <= NEAR + 1 ? "transform 650ms ease-in-out, opacity 500ms ease-in-out" : "none",
+              willChange: near ? "transform, opacity" : "auto",
+              textShadow: "none",
               cursor: "default",
               letterSpacing: isCredit ? "0.2px" : "normal",
               maxWidth: isCredit ? "260px" : "none",
