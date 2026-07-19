@@ -51,15 +51,22 @@ export function useLyricScroll({
   };
 
   // Roll the newly highlighted line into place instead of snapping the list.
-  // Recalculate the destination on every frame because the active/inactive
-  // font-size transition changes both rows' heights during the same motion.
+  // Keep the roll shorter than the lyric interval so fast sections cannot
+  // repeatedly restart an unfinished animation and appear jittery.
   const rollActiveLineToCenter = () => {
     const container = lyricsScrollRef.current;
     if (!container || !currentLineRef.current) return;
     cancelAnimationFrame(rollRafRef.current);
     const from = container.scrollTop;
     const startedAt = performance.now();
-    const duration = 650;
+    const currentTime = lyricsRef.current[currentIndex]?.time;
+    const nextTime = lyricsRef.current[currentIndex + 1]?.time;
+    const lineGapMs = Number.isFinite(currentTime) && Number.isFinite(nextTime)
+      ? Math.max(0, (nextTime - currentTime) * 1000)
+      : null;
+    const duration = lineGapMs == null
+      ? 360
+      : Math.min(420, Math.max(180, lineGapMs * 0.45));
     const frame = now => {
       const line = currentLineRef.current;
       if (!line || !lyricsScrollRef.current) return;

@@ -452,7 +452,10 @@
       cancelAnimationFrame(rollRafRef.current);
       const from = container.scrollTop;
       const startedAt = performance.now();
-      const duration = 650;
+      const currentTime = lyricsRef.current[currentIndex]?.time;
+      const nextTime = lyricsRef.current[currentIndex + 1]?.time;
+      const lineGapMs = Number.isFinite(currentTime) && Number.isFinite(nextTime) ? Math.max(0, (nextTime - currentTime) * 1e3) : null;
+      const duration = lineGapMs == null ? 360 : Math.min(420, Math.max(180, lineGapMs * 0.45));
       const frame = (now) => {
         const line = currentLineRef.current;
         if (!line || !lyricsScrollRef.current) return;
@@ -6468,15 +6471,6 @@ Move closer to your speakers and try again.`);
         const behindBase = isLandscape ? 0.38 : 0.22;
         const activeGutterExpansion = isLandscape ? lyricAreaW < 500 ? 14 : 30 : 20;
         const renderedPreviewFontPx = previewFont * (isLandscape ? effectiveLyricFontScale : responsiveLyricFontScale);
-        const maxActiveFontPx = Math.min(
-          32,
-          Math.max(22, 22 + (lyricPanelWidth - 320) * 0.025)
-        );
-        const activeLyricScale = Math.max(
-          1,
-          Math.min(1.45, maxActiveFontPx / Math.max(1, renderedPreviewFontPx))
-        );
-        const activeVisualFontPx = renderedPreviewFontPx * activeLyricScale;
         return allLines.map((line, i) => {
           const dist = i - effectiveIndex;
           const adist = Math.abs(dist);
@@ -6486,7 +6480,6 @@ Move closer to your speakers and try again.`);
           const aheadOpacity = Math.max(isLandscape ? 0.12 : 0.06, aheadBase - adist * (aheadBase / (NEAR + 1)));
           const behindOpacity = Math.max(isLandscape ? 0.08 : 0.04, behindBase - adist * (behindBase / (NEAR + 1)));
           const inactiveOpacity = dist > 0 ? aheadOpacity : behindOpacity;
-          const centerSeparationY = dist === -1 ? -9 : dist === 1 ? 9 : 0;
           const handleLineClick = () => {
             if (menuWasOpenRef.current || controlsVisible) {
               menuWasOpenRef.current = false;
@@ -6501,26 +6494,23 @@ Move closer to your speakers and try again.`);
             ref: cur ? currentLineRef : i === lyrics.length ? creditsRef : null,
             style: {
               textAlign: "center",
-              // Keep glyph layout completely stable. iOS WebKit flashes when it
-              // has to rasterize changing font sizes/weights during a scroll. The
-              // active emphasis is now a composited transform; the inner text box
-              // handles any wrapping needed to keep that transform on-screen.
-              padding: "7px 0",
+              // One stable text layer per lyric: no resizing, duplicate crossfade,
+              // or transform ownership changes. Extra fixed padding gives the
+              // centered line breathing room without moving neighboring rows.
+              padding: "11px 0",
               fontSize: isCredit ? "13px" : Math.round(renderedPreviewFontPx) + "px",
               fontWeight: isCredit ? "400" : "600",
               color: "#ffffff",
-              opacity: isCredit ? cur ? 0.55 : inactiveOpacity : 1,
+              opacity: cur ? isCredit ? 0.55 : 1 : inactiveOpacity,
               lineHeight: "1.4",
-              position: "relative",
-              transform: `translateY(${centerSeparationY}px) translateZ(0)`,
-              transition: adist <= NEAR + 1 ? `transform 650ms ease-in-out${isCredit ? ", opacity 500ms ease-in-out" : ""}` : "none",
-              willChange: near ? isCredit ? "transform, opacity" : "transform" : "auto",
+              transition: adist <= NEAR + 1 ? "opacity 220ms ease-out" : "none",
+              willChange: near ? "opacity" : "auto",
               textShadow: "none",
               cursor: "default",
               letterSpacing: isCredit ? "0.2px" : "normal",
               maxWidth: isCredit ? "260px" : "none",
-              // The row itself never changes geometry. Its preview and highlighted
-              // text layers are both already rendered inside this wider box.
+              // Keep the wider lyric box requested for the focused area, but use it
+              // for every row so highlighting never changes wrapping geometry.
               margin: isCredit ? "0 auto" : `0 -${activeGutterExpansion}px`,
               width: isCredit ? "auto" : `calc(100% + ${activeGutterExpansion * 2}px)`
             }
@@ -6530,35 +6520,7 @@ Move closer to your speakers and try again.`);
               display: "inline-block",
               maxWidth: "100%",
               overflowWrap: "break-word",
-              opacity: isCredit ? 1 : cur ? 0 : inactiveOpacity,
-              // Stagger the two layers instead of crossfading them at equal
-              // brightness. This prevents the differently sized glyphs from
-              // combining into a momentary bright flash.
-              transition: isCredit ? "none" : cur ? "opacity 160ms ease-out" : "opacity 280ms ease-in 180ms",
-              willChange: isCredit || !near ? "auto" : "opacity",
               cursor: isCredit ? "default" : "pointer"
-            }
-          }, line.text), !isCredit && /* @__PURE__ */ React.createElement("span", {
-            onClick: handleLineClick,
-            style: {
-              position: "absolute",
-              left: "50%",
-              top: "50%",
-              width: "100%",
-              maxWidth: "100%",
-              transform: "translate(-50%, -50%) translateZ(0)",
-              fontSize: Math.round(activeVisualFontPx) + "px",
-              fontWeight: "700",
-              lineHeight: "1.35",
-              color: "#ffffff",
-              opacity: cur ? 1 : 0,
-              transition: cur ? "opacity 450ms ease-in 120ms" : "opacity 220ms ease-out",
-              willChange: near ? "opacity" : "auto",
-              backfaceVisibility: "hidden",
-              WebkitBackfaceVisibility: "hidden",
-              overflowWrap: "break-word",
-              pointerEvents: cur ? "auto" : "none",
-              cursor: "pointer"
             }
           }, line.text));
         });

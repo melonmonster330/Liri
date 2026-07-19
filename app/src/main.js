@@ -5487,33 +5487,21 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
     const effectiveIndex = pastLastLyric
       ? lyrics.length - 1 + creditLines.reduce((best, cl, ci) => playbackTime >= cl.time ? ci + 1 : best, 0)
       : currentIndex;
-    // Render every line so the whole song is scrollable. Lines near the
-    // current one are brighter/larger; far lines fade out but stay readable.
+    // Render every line so the whole song is scrollable. The current line is
+    // brightest; far lines fade out but retain identical text geometry.
     const NEAR = 4;
     // iOS portrait runs a touch smaller so more lines fit on the phone screen.
     const iosPortrait = IS_IOS && !isLandscape;
     const previewFont = iosPortrait ? 16 : 18;
     const aheadBase  = isLandscape ? 0.55 : 0.32;
     const behindBase = isLandscape ? 0.38 : 0.22;
-    // The active font is intentionally larger, but it used to keep the same
-    // narrow content box as the smaller preview rows. Let it borrow most of
-    // the lyric panel's side padding so words retain the preview's grouping
-    // instead of wrapping merely because the row became highlighted.
+    // Let every lyric row borrow most of the panel's side padding. Applying
+    // this consistently preserves wrapping as highlighting moves.
     const activeGutterExpansion = isLandscape
       ? (lyricAreaW < 500 ? 14 : 30)
       : 20;
     const renderedPreviewFontPx = previewFont
       * (isLandscape ? effectiveLyricFontScale : responsiveLyricFontScale);
-    // Cap the highlighted line's visual size continuously with panel width.
-    // Its stable row narrows by the inverse scale, so long text wraps inside
-    // the window instead of being enlarged beyond either edge.
-    const maxActiveFontPx = Math.min(32,
-      Math.max(22, 22 + (lyricPanelWidth - 320) * 0.025)
-    );
-    const activeLyricScale = Math.max(1,
-      Math.min(1.45, maxActiveFontPx / Math.max(1, renderedPreviewFontPx))
-    );
-    const activeVisualFontPx = renderedPreviewFontPx * activeLyricScale;
     return allLines.map((line, i) => {
       const dist = i - effectiveIndex;
       const adist = Math.abs(dist);
@@ -5523,9 +5511,6 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
       const aheadOpacity  = Math.max(isLandscape ? 0.12 : 0.06, aheadBase  - adist * (aheadBase  / (NEAR + 1)));
       const behindOpacity = Math.max(isLandscape ? 0.08 : 0.04, behindBase - adist * (behindBase / (NEAR + 1)));
       const inactiveOpacity = dist > 0 ? aheadOpacity : behindOpacity;
-      // Create breathing room around the active layer without changing row
-      // layout. Only the two adjacent rows move, on the compositor.
-      const centerSeparationY = dist === -1 ? -9 : dist === 1 ? 9 : 0;
       const handleLineClick = () => {
         // A tap while the side menu is open just dismisses it; never seeks.
         if (menuWasOpenRef.current || controlsVisible) {
@@ -5541,30 +5526,25 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
         ref: cur ? currentLineRef : i === lyrics.length ? creditsRef : null,
         style: {
           textAlign: "center",
-          // Keep glyph layout completely stable. iOS WebKit flashes when it
-          // has to rasterize changing font sizes/weights during a scroll. The
-          // active emphasis is now a composited transform; the inner text box
-          // handles any wrapping needed to keep that transform on-screen.
-          padding: "7px 0",
+          // One stable text layer per lyric: no resizing, duplicate crossfade,
+          // or transform ownership changes. Extra fixed padding gives the
+          // centered line breathing room without moving neighboring rows.
+          padding: "11px 0",
           fontSize: isCredit
             ? "13px"
             : Math.round(renderedPreviewFontPx) + "px",
           fontWeight: isCredit ? "400" : "600",
           color: "#ffffff",
-          opacity: isCredit ? (cur ? 0.55 : inactiveOpacity) : 1,
+          opacity: cur ? (isCredit ? 0.55 : 1) : inactiveOpacity,
           lineHeight: "1.4",
-          position: "relative",
-          transform: `translateY(${centerSeparationY}px) translateZ(0)`,
-          transition: adist <= NEAR + 1
-            ? `transform 650ms ease-in-out${isCredit ? ", opacity 500ms ease-in-out" : ""}`
-            : "none",
-          willChange: near ? (isCredit ? "transform, opacity" : "transform") : "auto",
+          transition: adist <= NEAR + 1 ? "opacity 220ms ease-out" : "none",
+          willChange: near ? "opacity" : "auto",
           textShadow: "none",
           cursor: "default",
           letterSpacing: isCredit ? "0.2px" : "normal",
           maxWidth: isCredit ? "260px" : "none",
-          // The row itself never changes geometry. Its preview and highlighted
-          // text layers are both already rendered inside this wider box.
+          // Keep the wider lyric box requested for the focused area, but use it
+          // for every row so highlighting never changes wrapping geometry.
           margin: isCredit ? "0 auto" : `0 -${activeGutterExpansion}px`,
           width: isCredit ? "auto" : `calc(100% + ${activeGutterExpansion * 2}px)`,
         }
@@ -5574,41 +5554,7 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
           display: "inline-block",
           maxWidth: "100%",
           overflowWrap: "break-word",
-          opacity: isCredit ? 1 : (cur ? 0 : inactiveOpacity),
-          // Stagger the two layers instead of crossfading them at equal
-          // brightness. This prevents the differently sized glyphs from
-          // combining into a momentary bright flash.
-          transition: isCredit
-            ? "none"
-            : cur
-              ? "opacity 160ms ease-out"
-              : "opacity 280ms ease-in 180ms",
-          willChange: isCredit || !near ? "auto" : "opacity",
           cursor: isCredit ? "default" : "pointer",
-        }
-      }, line.text), !isCredit && /*#__PURE__*/React.createElement("span", {
-        onClick: handleLineClick,
-        style: {
-          position: "absolute",
-          left: "50%",
-          top: "50%",
-          width: "100%",
-          maxWidth: "100%",
-          transform: "translate(-50%, -50%) translateZ(0)",
-          fontSize: Math.round(activeVisualFontPx) + "px",
-          fontWeight: "700",
-          lineHeight: "1.35",
-          color: "#ffffff",
-          opacity: cur ? 1 : 0,
-          transition: cur
-            ? "opacity 450ms ease-in 120ms"
-            : "opacity 220ms ease-out",
-          willChange: near ? "opacity" : "auto",
-          backfaceVisibility: "hidden",
-          WebkitBackfaceVisibility: "hidden",
-          overflowWrap: "break-word",
-          pointerEvents: cur ? "auto" : "none",
-          cursor: "pointer"
         }
       }, line.text));
     });
