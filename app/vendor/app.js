@@ -1496,6 +1496,11 @@
     const lyricAreaW = menuOpen ? Math.min(760, Math.max(260, winW - railW - 48)) : Math.min(820, winW - 48);
     const lyricAreaLeft = menuOpen ? Math.max(railW + 24, Math.round((winW - lyricAreaW) / 2)) : Math.round((winW - lyricAreaW) / 2);
     const layoutLyricFontScale = menuOpen ? 1.1 * Math.max(0.72, Math.min(1, lyricAreaW / 640)) : 1.25;
+    const lyricPanelWidth = isLandscape ? lyricAreaW : winW;
+    const responsiveLyricFontScaleCap = Math.min(
+      1.4,
+      Math.max(0.9, 0.9 + (lyricPanelWidth - 320) / 500 * 0.5)
+    );
     const [showBugReport, setShowBugReport] = useState6(false);
     const [bugText, setBugText] = useState6("");
     const [bugSending, setBugSending] = useState6(false);
@@ -1611,7 +1616,8 @@
       const v = parseFloat(localStorage.getItem("liri_lyric_font_scale"));
       return isNaN(v) ? 1 : Math.min(1.4, Math.max(0.8, v));
     });
-    const effectiveLyricFontScale = lyricFontScale * layoutLyricFontScale;
+    const responsiveLyricFontScale = Math.min(lyricFontScale, responsiveLyricFontScaleCap);
+    const effectiveLyricFontScale = responsiveLyricFontScale * layoutLyricFontScale;
     const [flipSound, setFlipSound] = useState6(() => localStorage.getItem("liri_flip_sound") !== "false");
     const [flipNotify, setFlipNotify] = useState6(() => localStorage.getItem("liri_flip_notify") === "true");
     const [notifyDenied, setNotifyDenied] = useState6(false);
@@ -2988,7 +2994,10 @@ Move closer to your speakers and try again.`);
       setScrollSpeed((s) => Math.round(Math.min(4, Math.max(0.25, s + delta)) * 100) / 100);
     };
     const adjustLyricFontSize = (delta) => {
-      setLyricFontScale((s) => Math.round(Math.min(1.4, Math.max(0.8, s + delta)) * 10) / 10);
+      setLyricFontScale((s) => {
+        const visibleScale = Math.min(s, responsiveLyricFontScaleCap);
+        return Math.round(Math.min(responsiveLyricFontScaleCap, Math.max(0.8, visibleScale + delta)) * 10) / 10;
+      });
     };
     const handleNudge = (s) => {
       nudge(s);
@@ -6450,6 +6459,15 @@ Move closer to your speakers and try again.`);
         const aheadBase = isLandscape ? 0.55 : 0.32;
         const behindBase = isLandscape ? 0.38 : 0.22;
         const activeGutterExpansion = isLandscape ? lyricAreaW < 500 ? 14 : 30 : 20;
+        const renderedPreviewFontPx = previewFont * (isLandscape ? effectiveLyricFontScale : responsiveLyricFontScale);
+        const maxActiveFontPx = Math.min(
+          32,
+          Math.max(22, 22 + (lyricPanelWidth - 320) * 0.025)
+        );
+        const activeLyricScale = Math.max(
+          1,
+          Math.min(1.45, maxActiveFontPx / Math.max(1, renderedPreviewFontPx))
+        );
         return allLines.map((line, i) => {
           const dist = i - effectiveIndex;
           const adist = Math.abs(dist);
@@ -6465,25 +6483,23 @@ Move closer to your speakers and try again.`);
               textAlign: "center",
               // Keep glyph layout completely stable. iOS WebKit flashes when it
               // has to rasterize changing font sizes/weights during a scroll. The
-              // active emphasis is now a composited transform, which also means
-              // preview and active rows retain exactly the same word wrapping.
+              // active emphasis is now a composited transform; the inner text box
+              // handles any wrapping needed to keep that transform on-screen.
               padding: "7px 0",
-              fontSize: isCredit ? "13px" : Math.round(previewFont * (isLandscape ? effectiveLyricFontScale : lyricFontScale)) + "px",
+              fontSize: isCredit ? "13px" : Math.round(renderedPreviewFontPx) + "px",
               fontWeight: isCredit ? "400" : "600",
               color: "#ffffff",
               opacity: cur ? isCredit ? 0.55 : 1 : dist > 0 ? aheadOpacity : behindOpacity,
               lineHeight: "1.4",
-              transform: cur ? `scale(${isCredit ? 1.08 : 1.45})` : "scale(1)",
-              transformOrigin: "center center",
-              transition: adist <= NEAR + 1 ? "transform 650ms ease-in-out, opacity 500ms ease-in-out" : "none",
-              willChange: near ? "transform, opacity" : "auto",
+              transition: adist <= NEAR + 1 ? "opacity 500ms ease-in-out" : "none",
+              willChange: near ? "opacity" : "auto",
               textShadow: "none",
               cursor: "default",
               letterSpacing: isCredit ? "0.2px" : "normal",
               maxWidth: isCredit ? "260px" : "none",
               // Keep row geometry fixed as highlighting moves. Animating width and
-              // margins forced the browser to re-wrap text mid-roll, which looked
-              // like a white flash. Preview and active rows now share one box.
+              // margins forced the browser to re-wrap the outer row mid-roll,
+              // which looked like a white flash. Every row now shares one box.
               margin: isCredit ? "0 auto" : `0 -${activeGutterExpansion}px`,
               width: isCredit ? "auto" : `calc(100% + ${activeGutterExpansion * 2}px)`
             }
@@ -6501,6 +6517,14 @@ Move closer to your speakers and try again.`);
             },
             style: {
               display: "inline-block",
+              width: cur && !isCredit ? `${100 / activeLyricScale}%` : "auto",
+              maxWidth: "100%",
+              margin: "0 auto",
+              transform: cur ? `scale(${isCredit ? 1.08 : activeLyricScale})` : "scale(1)",
+              transformOrigin: "center center",
+              transition: "transform 650ms ease-in-out",
+              willChange: near ? "transform" : "auto",
+              overflowWrap: "break-word",
               cursor: isCredit ? "default" : "pointer"
             }
           }, line.text));
@@ -6749,7 +6773,7 @@ Move closer to your speakers and try again.`);
       }
     }, /* @__PURE__ */ React.createElement("button", {
       onClick: () => adjustLyricFontSize(-0.1),
-      disabled: lyricFontScale <= 0.8,
+      disabled: responsiveLyricFontScale <= 0.8,
       "aria-label": "Decrease lyric font size",
       style: {
         width: "38px",
@@ -6761,14 +6785,14 @@ Move closer to your speakers and try again.`);
         fontSize: "13px",
         fontWeight: "700",
         fontFamily: "inherit",
-        cursor: lyricFontScale <= 0.8 ? "default" : "pointer",
-        opacity: lyricFontScale <= 0.8 ? 0.35 : 1
+        cursor: responsiveLyricFontScale <= 0.8 ? "default" : "pointer",
+        opacity: responsiveLyricFontScale <= 0.8 ? 0.35 : 1
       }
     }, "A\u2212"), /* @__PURE__ */ React.createElement("span", {
       style: { minWidth: "48px", textAlign: "center", color: "rgba(255,255,255,0.45)", fontSize: "11px", fontWeight: "600" }
-    }, Math.round(lyricFontScale * 100) + "%"), /* @__PURE__ */ React.createElement("button", {
+    }, Math.round(responsiveLyricFontScale * 100) + "%"), /* @__PURE__ */ React.createElement("button", {
       onClick: () => adjustLyricFontSize(0.1),
-      disabled: lyricFontScale >= 1.4,
+      disabled: responsiveLyricFontScale >= responsiveLyricFontScaleCap - 1e-3,
       "aria-label": "Increase lyric font size",
       style: {
         width: "38px",
@@ -6780,8 +6804,8 @@ Move closer to your speakers and try again.`);
         fontSize: "16px",
         fontWeight: "700",
         fontFamily: "inherit",
-        cursor: lyricFontScale >= 1.4 ? "default" : "pointer",
-        opacity: lyricFontScale >= 1.4 ? 0.35 : 1
+        cursor: responsiveLyricFontScale >= responsiveLyricFontScaleCap - 1e-3 ? "default" : "pointer",
+        opacity: responsiveLyricFontScale >= responsiveLyricFontScaleCap - 1e-3 ? 0.35 : 1
       }
     }, "A+")), userScrolling && /* @__PURE__ */ React.createElement("button", {
       onClick: refollow,
