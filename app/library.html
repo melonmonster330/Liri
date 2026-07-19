@@ -701,7 +701,21 @@
           }
         }
 
-        const hasSideData = sidesByPosition.length > 0 && sidesByPosition.length >= trackList.length;
+        // Listen also falls back to vinyl_releases/vinyl_tracks when curated
+        // vinyl_sides rows are absent or incomplete. Use that same source here
+        // so Library never labels known side data as missing or estimates a
+        // different split from the player.
+        const { data: release } = await sb.from("vinyl_releases")
+          .select("vinyl_tracks(side, track_number_on_side, position, title)")
+          .eq("itunes_collection_id", cid)
+          .order("confirmed_count", { ascending: false })
+          .limit(1)
+          .maybeSingle();
+        const releaseTracks = [...(release?.vinyl_tracks || [])].sort((a, b) =>
+          String(a.side || "").localeCompare(String(b.side || ""))
+          || (a.track_number_on_side || 0) - (b.track_number_on_side || 0));
+        const normTitle = s => (s || "").toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
+        const hasSideData = sidesByPosition.length > 0 || releaseTracks.some(t => t.side);
         setVinylSource(hasSideData ? "db" : "estimated");
 
         // Which tracks already have lyrics in the DB — drives the per-track
@@ -714,12 +728,25 @@
 
         const merged = trackList.map((t, i) => {
           let side, trackOnSide, position;
-          if (hasSideData && sidesByPosition[i]) {
+          if (sidesByPosition[i]?.side) {
             const s = sidesByPosition[i];
             side = s.side.toUpperCase();
             trackOnSide = s.side_track_number;
             position = s.position || (side + trackOnSide);
-          } else {
+          } else if (releaseTracks.length) {
+            const title = normTitle(t.track_name);
+            const s = releaseTracks.find(v => v.side && normTitle(v.title) === title)
+              || releaseTracks[i];
+            if (s?.side) {
+              side = s.side.toUpperCase();
+              // Discogs sometimes numbers continuously across sides (B5, B6).
+              // Display the ordinal within this side, as Listen does.
+              const sideRows = releaseTracks.filter(v => v.side === s.side);
+              trackOnSide = Math.max(1, sideRows.indexOf(s) + 1);
+              position = s.position || (side + trackOnSide);
+            }
+          }
+          if (!side) {
             const d = deriveSideFromIndex(i, trackList.map(tr => ({ trackTimeMillis: tr.duration_ms })));
             side = d.side; trackOnSide = d.track; position = side + trackOnSide;
           }
@@ -1012,9 +1039,10 @@
         const cids = (lib || []).map(a => String(a.itunes_collection_id)).filter(Boolean);
         if (!cids.length) { setMetaFlags({}); return; }
         try {
-          const [trackRows, sideRows] = await Promise.all([
+          const [trackRows, sideRows, releaseRows] = await Promise.all([
             sbInChunked("album_tracks", "itunes_collection_id, itunes_track_id", "itunes_collection_id", cids),
             sbInChunked("vinyl_sides", "itunes_collection_id, side, side_track_number", "itunes_collection_id", cids),
+            sbInChunked("vinyl_releases", "itunes_collection_id, vinyl_tracks(side)", "itunes_collection_id", cids),
           ]);
           const allTrackIds = trackRows.map(t => t.itunes_track_id).filter(Boolean);
           const lyricRows = await sbInChunked(
@@ -1026,12 +1054,12 @@
           for (const cid of cids) {
             const tracks = trackRows.filter(t => String(t.itunes_collection_id) === cid);
             if (!tracks.length) continue; // no track data at all — nothing to edit yet
-            // Same rule as AlbumDetailSheet: deduped side rows must cover every track.
-            const seen = new Set();
-            for (const s of sideRows.filter(s => String(s.itunes_collection_id) === cid)) {
-              seen.add(`${s.side}|${s.side_track_number}`);
-            }
-            const sidesMissing = seen.size < tracks.length;
+            // Match Listen/AlbumDetailSheet: any curated side rows or release
+            // tracklist side data means this album has real side information.
+            const hasCuratedSides = sideRows.some(s => String(s.itunes_collection_id) === cid && s.side);
+            const hasReleaseSides = releaseRows.some(r =>
+              String(r.itunes_collection_id) === cid && r.vinyl_tracks?.some(t => t.side));
+            const sidesMissing = !hasCuratedSides && !hasReleaseSides;
             const lyricsMissing = tracks.filter(t => t.itunes_track_id && !lyricSet.has(String(t.itunes_track_id))).length;
             if (sidesMissing || lyricsMissing > 0) flags[cid] = { sidesMissing, lyricsMissing };
           }
