@@ -408,6 +408,7 @@
 
   // app/src/hooks/useLyricScroll.js
   var { useRef: useRef2, useEffect: useEffect3, useLayoutEffect } = React;
+  var ACTIVE_LINE_CENTER_OFFSET_PX = 48;
   function useLyricScroll({
     mode,
     lyrics,
@@ -441,7 +442,7 @@
       const containerRect = container.getBoundingClientRect();
       const lineRect = line.getBoundingClientRect();
       const lineCenterInScroller = lineRect.top - containerRect.top + container.scrollTop + lineRect.height / 2;
-      const target = Math.max(0, lineCenterInScroller - container.clientHeight / 2);
+      const target = Math.max(0, lineCenterInScroller - container.clientHeight / 2 + ACTIVE_LINE_CENTER_OFFSET_PX);
       container.scrollTop = target;
     };
     const rollActiveLineToCenter = () => {
@@ -457,7 +458,7 @@
         const containerRect = container.getBoundingClientRect();
         const lineRect = line.getBoundingClientRect();
         const lineCenter = lineRect.top - containerRect.top + container.scrollTop + lineRect.height / 2;
-        const target = Math.max(0, lineCenter - container.clientHeight / 2);
+        const target = Math.max(0, lineCenter - container.clientHeight / 2 + ACTIVE_LINE_CENTER_OFFSET_PX);
         const progress = Math.min(1, (now - startedAt) / duration);
         const eased = 1 - Math.pow(1 - progress, 3);
         container.scrollTop = from + (target - from) * eased;
