@@ -5513,6 +5513,7 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
     const activeLyricScale = Math.max(1,
       Math.min(1.45, maxActiveFontPx / Math.max(1, renderedPreviewFontPx))
     );
+    const activeVisualFontPx = renderedPreviewFontPx * activeLyricScale;
     return allLines.map((line, i) => {
       const dist = i - effectiveIndex;
       const adist = Math.abs(dist);
@@ -5521,6 +5522,17 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
       const isCredit = !!line.isCredit;
       const aheadOpacity  = Math.max(isLandscape ? 0.12 : 0.06, aheadBase  - adist * (aheadBase  / (NEAR + 1)));
       const behindOpacity = Math.max(isLandscape ? 0.08 : 0.04, behindBase - adist * (behindBase / (NEAR + 1)));
+      const inactiveOpacity = dist > 0 ? aheadOpacity : behindOpacity;
+      const handleLineClick = () => {
+        // A tap while the side menu is open just dismisses it; never seeks.
+        if (menuWasOpenRef.current || controlsVisible) {
+          menuWasOpenRef.current = false;
+          if (controlsVisible) setControlsVisible(false);
+          return;
+        }
+        if (cur) return refollow();
+        if (!isCredit) seekToLine(i);
+      };
       return /*#__PURE__*/React.createElement("div", {
         key: i,
         ref: cur ? currentLineRef : i === lyrics.length ? creditsRef : null,
@@ -5536,51 +5548,52 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
             : Math.round(renderedPreviewFontPx) + "px",
           fontWeight: isCredit ? "400" : "600",
           color: "#ffffff",
-          opacity: cur
-            ? (isCredit ? 0.55 : 1)
-            : dist > 0 ? aheadOpacity : behindOpacity,
+          opacity: isCredit ? (cur ? 0.55 : inactiveOpacity) : 1,
           lineHeight: "1.4",
-          transform: cur
-            ? `translateZ(0) scale(${isCredit ? 1.08 : activeLyricScale})`
-            : "translateZ(0) scale(1)",
-          transformOrigin: "center center",
-          transition: adist <= NEAR + 1
-            ? "transform 650ms ease-in-out, opacity 500ms ease-in-out"
-            : "none",
-          willChange: near ? "transform, opacity" : "auto",
-          backfaceVisibility: "hidden",
-          WebkitBackfaceVisibility: "hidden",
+          position: "relative",
+          transition: isCredit && adist <= NEAR + 1 ? "opacity 500ms ease-in-out" : "none",
+          willChange: isCredit && near ? "opacity" : "auto",
           textShadow: "none",
           cursor: "default",
           letterSpacing: isCredit ? "0.2px" : "normal",
           maxWidth: isCredit ? "260px" : "none",
-          // Every row keeps this same pre-scaled width. Once highlighted, its
-          // compositor scale expands it to the lyric width plus the wider
-          // gutters; before highlighting it may wrap, but never re-wraps as
-          // ownership moves during a nudge.
-          margin: "0 auto",
-          width: isCredit
-            ? "auto"
-            : `calc(${100 / activeLyricScale}% + ${activeGutterExpansion * 2 / activeLyricScale}px)`,
+          // The row itself never changes geometry. Its preview and highlighted
+          // text layers are both already rendered inside this wider box.
+          margin: isCredit ? "0 auto" : `0 -${activeGutterExpansion}px`,
+          width: isCredit ? "auto" : `calc(100% + ${activeGutterExpansion * 2}px)`,
         }
       }, /*#__PURE__*/React.createElement("span", {
-        // Seek only fires when the tap lands on the words themselves — not the
-        // padding or empty width of the row. Credits aren't seekable.
-        onClick: () => {
-          // A tap while the side menu is open just dismisses it; never seeks.
-          if (menuWasOpenRef.current || controlsVisible) {
-            menuWasOpenRef.current = false;
-            if (controlsVisible) setControlsVisible(false);
-            return;
-          }
-          if (cur) return refollow();
-          if (!isCredit) seekToLine(i);
-        },
+        onClick: handleLineClick,
         style: {
           display: "inline-block",
           maxWidth: "100%",
           overflowWrap: "break-word",
+          opacity: isCredit ? 1 : (cur ? 0 : inactiveOpacity),
+          transition: isCredit ? "none" : "opacity 450ms ease-in-out",
+          willChange: isCredit || !near ? "auto" : "opacity",
           cursor: isCredit ? "default" : "pointer",
+        }
+      }, line.text), !isCredit && /*#__PURE__*/React.createElement("span", {
+        onClick: handleLineClick,
+        style: {
+          position: "absolute",
+          left: "50%",
+          top: "50%",
+          width: "100%",
+          maxWidth: "100%",
+          transform: "translate(-50%, -50%) translateZ(0)",
+          fontSize: Math.round(activeVisualFontPx) + "px",
+          fontWeight: "700",
+          lineHeight: "1.35",
+          color: "#ffffff",
+          opacity: cur ? 1 : 0,
+          transition: "opacity 450ms ease-in-out",
+          willChange: near ? "opacity" : "auto",
+          backfaceVisibility: "hidden",
+          WebkitBackfaceVisibility: "hidden",
+          overflowWrap: "break-word",
+          pointerEvents: cur ? "auto" : "none",
+          cursor: "pointer"
         }
       }, line.text));
     });
