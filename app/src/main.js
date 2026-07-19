@@ -1365,6 +1365,9 @@ function Liri() {
   // ── Vinyl auto-advance: trigger when song nears its end ──
   useEffect(() => {
     if (mode !== "syncing") return;
+    // A paused clock—including a former owner frozen after device handoff—must
+    // never advance a track or open the side-end screen.
+    if (isPaused) return;
     // A turntable album is selected but its track list is still loading (e.g.
     // right after a tab-nav restore re-mounts the page). Advancing now would
     // find an empty track list and fall through to the flip screen mid-side —
@@ -1382,7 +1385,7 @@ function Liri() {
       autoAdvanceFiredRef.current = true;
       setShouldAdvanceTrack(true);
     }
-  }, [playbackTime, songDuration, lyrics, mode]);
+  }, [playbackTime, songDuration, lyrics, mode, isPaused]);
 
 
   // ── Handle track advance (runs with fresh state) ──
@@ -2531,6 +2534,10 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
   };
 
     const reset = () => {
+    if (deviceSession.isOwner && handoffSnapshotRef.current) {
+      deviceSession.publishSession({ ...handoffSnapshotRef.current, status: "ended" })
+        .catch(err => setDeviceActionError(err.message));
+    }
     cancelFlipChimes();
     setShowSideEndPicker(false);
     flipStartDelayMsRef.current = 0;
@@ -2694,6 +2701,9 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
   useEffect(() => {
     const session = deviceSession.liveSession;
     if (!session || !deviceSession.device || session.owner_device_id !== deviceSession.device.id) return;
+    if (session.status === "ended") return;
+    const sessionAge = Date.now() - new Date(session.updated_at).getTime();
+    if (!Number.isFinite(sessionAge) || sessionAge > 60 * 60 * 1000) return;
     const ownershipKey = `${session.id}:${session.owner_generation}`;
     if (adoptedOwnershipRef.current === ownershipKey) return;
     adoptedOwnershipRef.current = ownershipKey;

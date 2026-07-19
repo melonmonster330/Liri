@@ -2690,6 +2690,7 @@
     });
     useEffect8(() => {
       if (mode !== "syncing") return;
+      if (isPaused) return;
       if (turntableAlbumRef.current && turntableTracksLoading && turntableTracksRef.current.length === 0) return;
       const lastLyricTime = lyrics.length > 0 ? lyrics[lyrics.length - 1].time : null;
       const tIdx = turntableMatchedIdxRef.current;
@@ -2700,7 +2701,7 @@
         autoAdvanceFiredRef.current = true;
         setShouldAdvanceTrack(true);
       }
-    }, [playbackTime, songDuration, lyrics, mode]);
+    }, [playbackTime, songDuration, lyrics, mode, isPaused]);
     useEffect8(() => {
       if (!shouldAdvanceTrack) return;
       setShouldAdvanceTrack(false);
@@ -3636,6 +3637,9 @@ Move closer to your speakers and try again.`);
       setIsResyncing(false);
     };
     const reset = () => {
+      if (deviceSession.isOwner && handoffSnapshotRef.current) {
+        deviceSession.publishSession({ ...handoffSnapshotRef.current, status: "ended" }).catch((err) => setDeviceActionError(err.message));
+      }
       cancelFlipChimes();
       setShowSideEndPicker(false);
       flipStartDelayMsRef.current = 0;
@@ -3780,6 +3784,9 @@ Move closer to your speakers and try again.`);
     useEffect8(() => {
       const session = deviceSession.liveSession;
       if (!session || !deviceSession.device || session.owner_device_id !== deviceSession.device.id) return;
+      if (session.status === "ended") return;
+      const sessionAge = Date.now() - new Date(session.updated_at).getTime();
+      if (!Number.isFinite(sessionAge) || sessionAge > 60 * 60 * 1e3) return;
       const ownershipKey = `${session.id}:${session.owner_generation}`;
       if (adoptedOwnershipRef.current === ownershipKey) return;
       adoptedOwnershipRef.current = ownershipKey;
