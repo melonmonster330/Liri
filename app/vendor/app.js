@@ -2419,7 +2419,7 @@
           console.log("[silence] gap detected \u2014 advancing track");
           const tTracks = turntableTracksRef.current;
           const tIdx = turntableMatchedIdxRef.current;
-          if (tTracks.length > 0 && tIdx >= 0 && tIdx < tTracks.length - 1) {
+          if (tTracks.length > 0 && tIdx >= 0 && tIdx < tTracks.length) {
             advanceToNextTrack(tTracks, tIdx);
           }
         } catch (e3) {
@@ -2466,7 +2466,12 @@
       const lastLyricTime = lyrics.length > 0 ? lyrics[lyrics.length - 1].time : null;
       const tIdx = turntableMatchedIdxRef.current;
       const trackDuration = tIdx >= 0 ? (turntableTracksRef.current[tIdx]?.trackTimeMillis ?? 0) / 1e3 || null : null;
-      const effectiveDuration = trackDuration ?? songDuration ?? (lastLyricTime ? lastLyricTime + 3 : null);
+      const durationCandidates = [trackDuration, songDuration].filter((d) => Number.isFinite(d) && d > 0);
+      let effectiveDuration = durationCandidates.length ? Math.min(...durationCandidates) : null;
+      if (lastLyricTime != null) {
+        const lyricOutroLimit = Math.max(lastLyricTime + 20, (effectiveDuration || 0) * 0.85);
+        effectiveDuration = effectiveDuration == null ? lyricOutroLimit : Math.min(effectiveDuration, lyricOutroLimit);
+      }
       if (!effectiveDuration) return;
       if (playbackTime >= effectiveDuration && !autoAdvanceFiredRef.current) {
         autoAdvanceFiredRef.current = true;

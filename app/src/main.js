@@ -1336,7 +1336,9 @@ function Liri() {
         console.log("[silence] gap detected — advancing track");
         const tTracks = turntableTracksRef.current;
         const tIdx = turntableMatchedIdxRef.current;
-        if (tTracks.length > 0 && tIdx >= 0 && tIdx < tTracks.length - 1) {
+        // Include the final album track too; advanceToNextTrack decides whether
+        // this is a side flip or the album-end screen.
+        if (tTracks.length > 0 && tIdx >= 0 && tIdx < tTracks.length) {
           advanceToNextTrack(tTracks, tIdx);
         }
       } catch (e) {
@@ -1389,11 +1391,21 @@ function Liri() {
     // when songDuration hasn't updated yet for the new track.
     const tIdx = turntableMatchedIdxRef.current;
     const trackDuration = tIdx >= 0 ? (turntableTracksRef.current[tIdx]?.trackTimeMillis ?? 0) / 1000 || null : null;
-    // Fallback: last lyric + 3s (was 30s — trimmed so same-side advance is immediate)
-    // The selected album track duration is authoritative. Recognition can
-    // briefly leave songDuration from a prior/mismatched track, which used to
-    // trigger auto-advance halfway through the song.
-    const effectiveDuration = trackDuration ?? songDuration ?? (lastLyricTime ? lastLyricTime + 3 : null);
+    // Prefer the shorter valid duration when both album and recognition data
+    // describe the displayed track. Some digital editions contain extra tail
+    // silence that is not present on vinyl. Also cap a clearly excessive tail
+    // at 20s after the final timed lyric so incorrect metadata cannot suppress
+    // side-end forever; genuine instrumental outros still get a safe window.
+    const durationCandidates = [trackDuration, songDuration].filter(d => Number.isFinite(d) && d > 0);
+    let effectiveDuration = durationCandidates.length ? Math.min(...durationCandidates) : null;
+    if (lastLyricTime != null) {
+      // Never let this fallback fire before 85% of the known duration. That
+      // preserves long instrumental outros and prevents another mid-song flip.
+      const lyricOutroLimit = Math.max(lastLyricTime + 20, (effectiveDuration || 0) * 0.85);
+      effectiveDuration = effectiveDuration == null
+        ? lyricOutroLimit
+        : Math.min(effectiveDuration, lyricOutroLimit);
+    }
     if (!effectiveDuration) return;
     if (playbackTime >= effectiveDuration && !autoAdvanceFiredRef.current) {
       autoAdvanceFiredRef.current = true;
