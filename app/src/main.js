@@ -5452,7 +5452,7 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
       minHeight: currentIndex < 0 ? "0%" : "50%",
       flexShrink: 0,
       pointerEvents: "none",
-      transition: "height 420ms ease-out, min-height 420ms ease-out"
+      transition: "height 650ms ease-in-out, min-height 650ms ease-in-out"
     }
   }), (() => {
     // Adaptive transition: scale with how long the current line lasts.

@@ -452,7 +452,7 @@
       cancelAnimationFrame(rollRafRef.current);
       const from = container.scrollTop;
       const startedAt = performance.now();
-      const duration = 420;
+      const duration = 650;
       const frame = (now) => {
         const line = currentLineRef.current;
         if (!line || !lyricsScrollRef.current) return;
@@ -461,7 +461,7 @@
         const lineCenter = lineRect.top - containerRect.top + container.scrollTop + lineRect.height / 2;
         const target = Math.max(0, lineCenter - container.clientHeight / 2 + ACTIVE_LINE_CENTER_OFFSET_PX);
         const progress = Math.min(1, (now - startedAt) / duration);
-        const eased = 1 - Math.pow(1 - progress, 3);
+        const eased = progress * progress * (3 - 2 * progress);
         container.scrollTop = from + (target - from) * eased;
         if (progress < 1) rollRafRef.current = requestAnimationFrame(frame);
         else centerActiveLine();
@@ -6430,7 +6430,7 @@ Move closer to your speakers and try again.`);
           minHeight: currentIndex < 0 ? "0%" : "50%",
           flexShrink: 0,
           pointerEvents: "none",
-          transition: "height 420ms ease-out, min-height 420ms ease-out"
+          transition: "height 650ms ease-in-out, min-height 650ms ease-in-out"
         }
       }),
       (() => {

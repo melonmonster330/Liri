@@ -59,7 +59,7 @@ export function useLyricScroll({
     cancelAnimationFrame(rollRafRef.current);
     const from = container.scrollTop;
     const startedAt = performance.now();
-    const duration = 420;
+    const duration = 650;
     const frame = now => {
       const line = currentLineRef.current;
       if (!line || !lyricsScrollRef.current) return;
@@ -70,7 +70,9 @@ export function useLyricScroll({
       const target = Math.max(0, lineCenter - container.clientHeight / 2
         + ACTIVE_LINE_CENTER_OFFSET_PX);
       const progress = Math.min(1, (now - startedAt) / duration);
-      const eased = 1 - Math.pow(1 - progress, 3);
+      // Smoothstep eases both ends of the movement. The previous ease-out
+      // curve moved too much in its first few frames and looked like a jump.
+      const eased = progress * progress * (3 - 2 * progress);
       container.scrollTop = from + (target - from) * eased;
       if (progress < 1) rollRafRef.current = requestAnimationFrame(frame);
       else centerActiveLine();
