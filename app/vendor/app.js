@@ -1608,6 +1608,8 @@
     const chimeCtxRef = useRef5(null);
     const syncIntervalRef = useRef5(null);
     const syncStartRef = useRef5(null);
+    const endClockPosRef = useRef5(0);
+    const endClockStartRef = useRef5(null);
     const detectedAtRef = useRef5(null);
     const initialPosRef = useRef5(0);
     const userNudgeRef = useRef5(0);
@@ -2452,12 +2454,14 @@
       scrollSpeedRef,
       initialPosRef,
       syncStartRef,
-      onSeek: () => {
+      onSeek: (targetTime) => {
         clearTimeout(sideEndTimerRef.current);
         sideEndTimerRef.current = null;
         cancelFlipChimes();
         autoAdvanceFiredRef.current = false;
         setShouldAdvanceTrack(false);
+        endClockPosRef.current = targetTime;
+        endClockStartRef.current = Date.now();
       }
     });
     useEffect7(() => {
@@ -2465,19 +2469,28 @@
       if (turntableAlbumRef.current && turntableTracksLoading && turntableTracksRef.current.length === 0) return;
       const lastLyricTime = lyrics.length > 0 ? lyrics[lyrics.length - 1].time : null;
       const tIdx = turntableMatchedIdxRef.current;
-      const trackDuration = tIdx >= 0 ? (turntableTracksRef.current[tIdx]?.trackTimeMillis ?? 0) / 1e3 || null : null;
-      const durationCandidates = [trackDuration, songDuration].filter((d) => Number.isFinite(d) && d > 0);
-      let effectiveDuration = durationCandidates.length ? Math.min(...durationCandidates) : null;
-      if (lastLyricTime != null) {
+      const tTracks = turntableTracksRef.current;
+      const trackDuration = tIdx >= 0 ? (tTracks[tIdx]?.trackTimeMillis ?? 0) / 1e3 || null : null;
+      const dbRelease = vinylDbReleaseRef.current;
+      const sideEnds = tTracks.length > 0 ? getSideEndsFromSidesMap(tTracks, vinylSidesRef.current) ?? (dbRelease?.vinyl_tracks?.length > 0 ? getDbSideEndIndices(tTracks, dbRelease.vinyl_tracks) : getSideEndIndices(tTracks, albumTpsRef.current > 0 ? albumTpsRef.current : 0)) : [];
+      const isKnownSideEnd = tIdx >= 0 && sideEnds.includes(tIdx);
+      let effectiveDuration = trackDuration ?? songDuration ?? null;
+      if (isKnownSideEnd) {
+        const durationCandidates = [trackDuration, songDuration].filter((d) => Number.isFinite(d) && d > 0);
+        effectiveDuration = durationCandidates.length ? Math.min(...durationCandidates) : null;
+      }
+      if (isKnownSideEnd && lastLyricTime != null) {
         const lyricOutroLimit = Math.max(lastLyricTime + 20, (effectiveDuration || 0) * 0.85);
         effectiveDuration = effectiveDuration == null ? lyricOutroLimit : Math.min(effectiveDuration, lyricOutroLimit);
       }
       if (!effectiveDuration) return;
-      if (playbackTime >= effectiveDuration && !autoAdvanceFiredRef.current) {
+      const endClockElapsed = !isPaused && endClockStartRef.current != null ? (Date.now() - endClockStartRef.current) / 1e3 : 0;
+      const endPlaybackTime = Math.max(0, endClockPosRef.current + endClockElapsed);
+      if (endPlaybackTime >= effectiveDuration && !autoAdvanceFiredRef.current) {
         autoAdvanceFiredRef.current = true;
         setShouldAdvanceTrack(true);
       }
-    }, [playbackTime, songDuration, lyrics, mode]);
+    }, [playbackTime, songDuration, lyrics, mode, isPaused]);
     useEffect7(() => {
       if (!shouldAdvanceTrack) return;
       setShouldAdvanceTrack(false);
@@ -2804,15 +2817,24 @@ Move closer to your speakers and try again.`);
           recStart
         } = syncCalcRef.current;
         syncCalcRef.current = null;
-        initialPosRef.current = Math.max(0, startPos - phraseOffset + (Date.now() - recStart) / 1e3 * SYNC_PLAYBACK_RATE);
+        const elapsed = (Date.now() - recStart) / 1e3;
+        initialPosRef.current = Math.max(0, startPos - phraseOffset + elapsed * SYNC_PLAYBACK_RATE);
+        endClockPosRef.current = Math.max(0, startPos - phraseOffset + elapsed);
       } else if (syncStartRef.current !== null) {
         initialPosRef.current = initialPosRef.current + (Date.now() - syncStartRef.current) / 1e3 * SYNC_PLAYBACK_RATE;
+        if (endClockStartRef.current != null) {
+          endClockPosRef.current += (Date.now() - endClockStartRef.current) / 1e3;
+        }
+      } else {
+        endClockPosRef.current = initialPosRef.current;
       }
       if (flipStartDelayMsRef.current > 0) {
         initialPosRef.current = -flipStartDelayMsRef.current / 1e3;
+        endClockPosRef.current = initialPosRef.current;
         flipStartDelayMsRef.current = 0;
       }
       syncStartRef.current = Date.now();
+      endClockStartRef.current = syncStartRef.current;
       const lrc0 = lyricsRef.current;
       const t0 = initialPosRef.current;
       let initIdx = -1;
@@ -2871,6 +2893,7 @@ Move closer to your speakers and try again.`);
     const togglePause = () => {
       if (isPaused) {
         syncStartRef.current = Date.now();
+        endClockStartRef.current = syncStartRef.current;
         clearInterval(syncIntervalRef.current);
         syncIntervalRef.current = setInterval(() => {
           const t = initialPosRef.current + (Date.now() - syncStartRef.current) / 1e3 * SYNC_PLAYBACK_RATE;
@@ -2892,6 +2915,9 @@ Move closer to your speakers and try again.`);
         setIsPaused(false);
       } else {
         initialPosRef.current = Math.max(0, playbackTime);
+        if (endClockStartRef.current != null) {
+          endClockPosRef.current += (Date.now() - endClockStartRef.current) / 1e3;
+        }
         clearInterval(syncIntervalRef.current);
         setIsPaused(true);
       }
@@ -3409,6 +3435,8 @@ Move closer to your speakers and try again.`);
         if (matchedIdx === curIdx) {
           initialPosRef.current = adjustedOffset;
           syncStartRef.current = Date.now();
+          endClockPosRef.current = adjustedOffset;
+          endClockStartRef.current = syncStartRef.current;
           syncCalcRef.current = null;
         } else {
           jumpToTrackIdx(matchedIdx, adjustedOffset);
@@ -3451,6 +3479,8 @@ Move closer to your speakers and try again.`);
       setError(null);
       setListenProgress(0);
       setPlaybackTime(0);
+      endClockPosRef.current = 0;
+      endClockStartRef.current = null;
       setAlbumTracks([]);
       setCurrentTrackIndex(-1);
       setShouldAdvanceTrack(false);
@@ -6214,6 +6244,8 @@ Move closer to your speakers and try again.`);
         const targetTime = ratio * songDuration;
         initialPosRef.current = targetTime;
         syncStartRef.current = Date.now();
+        endClockPosRef.current = targetTime;
+        endClockStartRef.current = syncStartRef.current;
         setPlaybackTime(targetTime);
       }
     }, (() => {

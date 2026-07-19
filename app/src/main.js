@@ -382,6 +382,10 @@ function Liri() {
   const chimeCtxRef = useRef(null); // Persistent AudioContext unlocked on first Listen tap
   const syncIntervalRef = useRef(null);
   const syncStartRef = useRef(null);
+  // Physical 1× song clock, deliberately separate from the corrected lyric
+  // clock. Drives track/side transitions without inheriting lyric speed-up.
+  const endClockPosRef = useRef(0);
+  const endClockStartRef = useRef(null);
   const detectedAtRef = useRef(null);
   const initialPosRef = useRef(0);
   const userNudgeRef = useRef(0); // cumulative nudge applied by user this session
@@ -1367,7 +1371,7 @@ function Liri() {
     currentLineRef, creditsRef,
     scrollSpeedRef,
     initialPosRef, syncStartRef,
-    onSeek: () => {
+    onSeek: targetTime => {
       // Seeking to a lyric means the user is continuing this song. Undo any
       // end-of-side decision that was waiting through the four-second linger.
       clearTimeout(sideEndTimerRef.current);
@@ -1375,6 +1379,8 @@ function Liri() {
       cancelFlipChimes();
       autoAdvanceFiredRef.current = false;
       setShouldAdvanceTrack(false);
+      endClockPosRef.current = targetTime;
+      endClockStartRef.current = Date.now();
     },
   });
 
@@ -1390,15 +1396,29 @@ function Liri() {
     // Read duration from turntable track ref directly — more reliable than state
     // when songDuration hasn't updated yet for the new track.
     const tIdx = turntableMatchedIdxRef.current;
-    const trackDuration = tIdx >= 0 ? (turntableTracksRef.current[tIdx]?.trackTimeMillis ?? 0) / 1000 || null : null;
-    // Prefer the shorter valid duration when both album and recognition data
-    // describe the displayed track. Some digital editions contain extra tail
-    // silence that is not present on vinyl. Also cap a clearly excessive tail
-    // at 20s after the final timed lyric so incorrect metadata cannot suppress
-    // side-end forever; genuine instrumental outros still get a safe window.
-    const durationCandidates = [trackDuration, songDuration].filter(d => Number.isFinite(d) && d > 0);
-    let effectiveDuration = durationCandidates.length ? Math.min(...durationCandidates) : null;
-    if (lastLyricTime != null) {
+    const tTracks = turntableTracksRef.current;
+    const trackDuration = tIdx >= 0 ? (tTracks[tIdx]?.trackTimeMillis ?? 0) / 1000 || null : null;
+
+    // Ordinary song-to-song transitions must use the album duration (or native
+    // silence detection). Applying the lyric-outro fallback to every track made
+    // Liri enter the next song before the physical groove gap.
+    const dbRelease = vinylDbReleaseRef.current;
+    const sideEnds = tTracks.length > 0
+      ? (getSideEndsFromSidesMap(tTracks, vinylSidesRef.current)
+        ?? (dbRelease?.vinyl_tracks?.length > 0
+          ? getDbSideEndIndices(tTracks, dbRelease.vinyl_tracks)
+          : getSideEndIndices(tTracks, albumTpsRef.current > 0 ? albumTpsRef.current : 0)))
+      : [];
+    const isKnownSideEnd = tIdx >= 0 && sideEnds.includes(tIdx);
+    let effectiveDuration = trackDuration ?? songDuration ?? null;
+
+    if (isKnownSideEnd) {
+      // At an actual side end, tolerate digital editions with extra tail
+      // silence so a metadata mismatch cannot suppress the flip prompt.
+      const durationCandidates = [trackDuration, songDuration].filter(d => Number.isFinite(d) && d > 0);
+      effectiveDuration = durationCandidates.length ? Math.min(...durationCandidates) : null;
+    }
+    if (isKnownSideEnd && lastLyricTime != null) {
       // Never let this fallback fire before 85% of the known duration. That
       // preserves long instrumental outros and prevents another mid-song flip.
       const lyricOutroLimit = Math.max(lastLyricTime + 20, (effectiveDuration || 0) * 0.85);
@@ -1407,11 +1427,20 @@ function Liri() {
         : Math.min(effectiveDuration, lyricOutroLimit);
     }
     if (!effectiveDuration) return;
-    if (playbackTime >= effectiveDuration && !autoAdvanceFiredRef.current) {
+
+    // The lyric clock intentionally runs at 1.03×, but physical record
+    // transitions do not. Comparing accelerated playbackTime to the real track
+    // duration advanced every next song by ~3% of the outgoing track. Use a
+    // separate 1× end clock anchored by the same recognition/seek position.
+    const endClockElapsed = !isPaused && endClockStartRef.current != null
+      ? (Date.now() - endClockStartRef.current) / 1000
+      : 0;
+    const endPlaybackTime = Math.max(0, endClockPosRef.current + endClockElapsed);
+    if (endPlaybackTime >= effectiveDuration && !autoAdvanceFiredRef.current) {
       autoAdvanceFiredRef.current = true;
       setShouldAdvanceTrack(true);
     }
-  }, [playbackTime, songDuration, lyrics, mode]);
+  }, [playbackTime, songDuration, lyrics, mode, isPaused]);
 
 
   // ── Handle track advance (runs with fresh state) ──
@@ -1829,7 +1858,9 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
         recStart
       } = syncCalcRef.current;
       syncCalcRef.current = null;
-      initialPosRef.current = Math.max(0, startPos - phraseOffset + (Date.now() - recStart) / 1000 * SYNC_PLAYBACK_RATE);
+      const elapsed = (Date.now() - recStart) / 1000;
+      initialPosRef.current = Math.max(0, startPos - phraseOffset + elapsed * SYNC_PLAYBACK_RATE);
+      endClockPosRef.current = Math.max(0, startPos - phraseOffset + elapsed);
     } else if (syncStartRef.current !== null) {
       // Sync is already running and no new timing data is available.
       // This happens when detectedSong is updated for a non-song reason (e.g. artwork
@@ -1840,15 +1871,22 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
       // counting down. Clamping it to 0 was silently cancelling the needle-drop
       // window whenever detectedSong updated (e.g. artwork arriving) mid-park.
       initialPosRef.current = initialPosRef.current + (Date.now() - syncStartRef.current) / 1000 * SYNC_PLAYBACK_RATE;
+      if (endClockStartRef.current != null) {
+        endClockPosRef.current += (Date.now() - endClockStartRef.current) / 1000;
+      }
+    } else {
+      endClockPosRef.current = initialPosRef.current;
     }
     // Manual flip: park playbackTime at 0 while the user drops the needle.
     // We start the clock in the "past" so (Date.now() - syncStart)/1000 is
     // negative for the delay window; the interval below clamps display to 0.
     if (flipStartDelayMsRef.current > 0) {
       initialPosRef.current = -flipStartDelayMsRef.current / 1000;
+      endClockPosRef.current = initialPosRef.current;
       flipStartDelayMsRef.current = 0;
     }
     syncStartRef.current = Date.now();
+    endClockStartRef.current = syncStartRef.current;
     // Jump to correct starting index immediately so the scroll effect lands on the right
     // line without smooth-scrolling from 0 (which caused a ~3s visual lag on load).
     // Use -1 as sentinel when we're still in the intro (before the first lyric timestamp).
@@ -1909,6 +1947,7 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
       // captured at pause time and nudges made while paused shifted it, so it
       // (NOT playbackTime, which may lag a keyboard nudge) is authoritative.
       syncStartRef.current = Date.now();
+      endClockStartRef.current = syncStartRef.current;
       clearInterval(syncIntervalRef.current); // never leak a second interval
       syncIntervalRef.current = setInterval(() => {
         const t = initialPosRef.current + (Date.now() - syncStartRef.current) / 1000 * SYNC_PLAYBACK_RATE;
@@ -1932,6 +1971,9 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
       // initialPosRef so it becomes the single source of truth while paused —
       // nudges shift it, and resume restarts the clock from it.
       initialPosRef.current = Math.max(0, playbackTime);
+      if (endClockStartRef.current != null) {
+        endClockPosRef.current += (Date.now() - endClockStartRef.current) / 1000;
+      }
       clearInterval(syncIntervalRef.current);
       setIsPaused(true);
     }
@@ -2556,6 +2598,8 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
         // Same song — just snap the position.
         initialPosRef.current = adjustedOffset;
         syncStartRef.current = Date.now();
+        endClockPosRef.current = adjustedOffset;
+        endClockStartRef.current = syncStartRef.current;
         syncCalcRef.current = null;
       } else {
         // Different song — switch to it at the detected position.
@@ -2596,6 +2640,8 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
     setError(null);
     setListenProgress(0);
     setPlaybackTime(0);
+    endClockPosRef.current = 0;
+    endClockStartRef.current = null;
     setAlbumTracks([]);
     setCurrentTrackIndex(-1);
     setShouldAdvanceTrack(false);
@@ -5263,12 +5309,13 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
       const targetTime = ratio * songDuration;
       initialPosRef.current = targetTime;
       syncStartRef.current = Date.now();
+      endClockPosRef.current = targetTime;
+      endClockStartRef.current = syncStartRef.current;
       setPlaybackTime(targetTime);
     }
   }, (() => {
-    // Keep the progress bar on the same clock as auto-advance. The playback
-    // state updates every 80ms, so a long transition would perpetually trail
-    // the actual song position and never appear full before track advance.
+    // The progress bar intentionally reflects the corrected lyric position.
+    // Physical auto-advance uses the separate 1× end clock above.
     const effDur = songDuration ?? (lyrics.length > 0 ? lyrics[lyrics.length - 1].time + 3 : null);
     return effDur ? /*#__PURE__*/React.createElement("div", {
       style: {
