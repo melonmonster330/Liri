@@ -137,7 +137,7 @@
   var IS_IOS = !!window.Capacitor;
   var TRANSCRIBE_PROXY = window.Capacitor ? "https://www.getliri.com/api/transcribe" : "/api/transcribe";
   var ITUNES_PROXY = window.Capacitor ? "https://www.getliri.com/api/itunes-lookup" : "/api/itunes-lookup";
-  var SYNC_PLAYBACK_RATE = 1.03;
+  var SYNC_PLAYBACK_RATE = 1.035;
 
   // app/ios/iap.js
   function getLiriIAP() {
@@ -1378,6 +1378,7 @@
   var APP_VERSION = "1.5.14";
   var LYRIC_LEAD_SECONDS = 1;
   var TRACK_GAP_MS = 300;
+  var TRACK_TRANSITION_LEAD_SECONDS = 3;
   var FLIP_NEEDLE_DROP_MS = 1e4;
   var NUDGE_STEP_SECS = 1;
   var NUDGE_FINE_SECS = 0.5;
@@ -2497,7 +2498,11 @@
       if (!effectiveDuration) return;
       const endClockElapsed = !isPaused && endClockStartRef.current != null ? (Date.now() - endClockStartRef.current) / 1e3 : 0;
       const endPlaybackTime = Math.max(0, endClockPosRef.current + endClockElapsed);
-      if (endPlaybackTime >= effectiveDuration && !autoAdvanceFiredRef.current) {
+      const transitionAt = Math.max(
+        0,
+        effectiveDuration - (isKnownSideEnd ? 0 : TRACK_TRANSITION_LEAD_SECONDS)
+      );
+      if (endPlaybackTime >= transitionAt && !autoAdvanceFiredRef.current) {
         autoAdvanceFiredRef.current = true;
         setShouldAdvanceTrack(true);
       }

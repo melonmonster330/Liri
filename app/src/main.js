@@ -58,6 +58,11 @@ const LYRIC_LEAD_SECONDS = 1;
 // next track's lyrics don't start ahead of the needle. (Reduced from 1500ms;
 // if she's nudging forward constantly the gap is too long for her vinyl.)
 const TRACK_GAP_MS = 300;
+// Digital track durations commonly include a few seconds of tail that are not
+// useful for a vinyl song-to-song handoff. Move to the next song slightly
+// before that metadata endpoint so its intro is not spent on the prior screen.
+// Side endings deliberately do not use this lead; flip timing remains exact.
+const TRACK_TRANSITION_LEAD_SECONDS = 3;
 // How long the lyric clock parks at 0 after a manual flip / side pick while
 // the user physically flips the record and drops the needle.
 const FLIP_NEEDLE_DROP_MS = 10000;
@@ -1428,7 +1433,7 @@ function Liri() {
     }
     if (!effectiveDuration) return;
 
-    // The lyric clock intentionally runs at 1.03×, but physical record
+    // The lyric clock intentionally runs faster than 1×, but physical record
     // transitions do not. Comparing accelerated playbackTime to the real track
     // duration advanced every next song by ~3% of the outgoing track. Use a
     // separate 1× end clock anchored by the same recognition/seek position.
@@ -1436,7 +1441,10 @@ function Liri() {
       ? (Date.now() - endClockStartRef.current) / 1000
       : 0;
     const endPlaybackTime = Math.max(0, endClockPosRef.current + endClockElapsed);
-    if (endPlaybackTime >= effectiveDuration && !autoAdvanceFiredRef.current) {
+    const transitionAt = Math.max(0,
+      effectiveDuration - (isKnownSideEnd ? 0 : TRACK_TRANSITION_LEAD_SECONDS)
+    );
+    if (endPlaybackTime >= transitionAt && !autoAdvanceFiredRef.current) {
       autoAdvanceFiredRef.current = true;
       setShouldAdvanceTrack(true);
     }
