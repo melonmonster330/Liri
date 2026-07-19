@@ -5567,7 +5567,10 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
         },
         style: {
           display: "inline-block",
-          width: cur && !isCredit ? `${100 / activeLyricScale}%` : "auto",
+          // Keep this width identical before, during, and after highlighting.
+          // Swapping between auto and the scaled width during a manual nudge
+          // forced an immediate re-wrap that appeared as a bright flash.
+          width: isCredit ? "auto" : `${100 / activeLyricScale}%`,
           maxWidth: "100%",
           margin: "0 auto",
           transform: cur

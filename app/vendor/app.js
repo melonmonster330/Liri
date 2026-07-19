@@ -137,7 +137,7 @@
   var IS_IOS = !!window.Capacitor;
   var TRANSCRIBE_PROXY = window.Capacitor ? "https://www.getliri.com/api/transcribe" : "/api/transcribe";
   var ITUNES_PROXY = window.Capacitor ? "https://www.getliri.com/api/itunes-lookup" : "/api/itunes-lookup";
-  var SYNC_PLAYBACK_RATE = 1.035;
+  var SYNC_PLAYBACK_RATE = 1.0325;
 
   // app/ios/iap.js
   function getLiriIAP() {
@@ -6525,7 +6525,10 @@ Move closer to your speakers and try again.`);
             },
             style: {
               display: "inline-block",
-              width: cur && !isCredit ? `${100 / activeLyricScale}%` : "auto",
+              // Keep this width identical before, during, and after highlighting.
+              // Swapping between auto and the scaled width during a manual nudge
+              // forced an immediate re-wrap that appeared as a bright flash.
+              width: isCredit ? "auto" : `${100 / activeLyricScale}%`,
               maxWidth: "100%",
               margin: "0 auto",
               transform: cur ? `scale(${isCredit ? 1.08 : activeLyricScale})` : "scale(1)",
