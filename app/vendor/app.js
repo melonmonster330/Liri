@@ -6434,11 +6434,13 @@ Move closer to your speakers and try again.`);
         }
       }),
       (() => {
-        const curLine = lyrics[currentIndex];
-        const nextLine = lyrics[currentIndex + 1];
-        const lineDur = curLine && nextLine ? nextLine.time - curLine.time : 3;
-        const transSec = Math.min(0.4, Math.max(0.1, lineDur * 0.35)).toFixed(2);
-        const transition = `all ${transSec}s cubic-bezier(0.4,0,0.2,1)`;
+        const transition = [
+          "font-size 650ms ease-in-out",
+          "font-weight 650ms ease-in-out",
+          "padding 650ms ease-in-out",
+          "color 500ms ease-in-out",
+          "text-shadow 500ms ease-in-out"
+        ].join(", ");
         const lastLyricTime = lyrics.length > 0 ? lyrics[lyrics.length - 1].time : 0;
         const creditLines = [
           ...detectedSong?.title ? [{ text: detectedSong.title, time: lastLyricTime + 5, isCredit: true }] : [],
@@ -6477,13 +6479,16 @@ Move closer to your speakers and try again.`);
               fontWeight: cur && !isCredit ? "700" : "400",
               color: cur ? isCredit ? "rgba(255,255,255,0.55)" : "#ffffff" : dist > 0 ? `rgba(255,255,255,${aheadOpacity})` : `rgba(255,255,255,${behindOpacity})`,
               lineHeight: "1.4",
-              transition: near ? transition : "none",
+              transition: adist <= NEAR + 1 ? transition : "none",
               textShadow: cur && !isCredit ? "0 0 60px rgba(212,168,70,0.4), 0 2px 20px rgba(0,0,0,0.8)" : "none",
               cursor: "default",
               letterSpacing: isCredit ? "0.2px" : "normal",
               maxWidth: isCredit ? "260px" : "none",
-              margin: isCredit ? "0 auto" : cur ? `0 -${activeGutterExpansion}px` : "0",
-              width: cur && !isCredit ? `calc(100% + ${activeGutterExpansion * 2}px)` : "auto"
+              // Keep row geometry fixed as highlighting moves. Animating width and
+              // margins forced the browser to re-wrap text mid-roll, which looked
+              // like a white flash. Preview and active rows now share one box.
+              margin: isCredit ? "0 auto" : `0 -${activeGutterExpansion}px`,
+              width: isCredit ? "auto" : `calc(100% + ${activeGutterExpansion * 2}px)`
             }
           }, /* @__PURE__ */ React.createElement("span", {
             // Seek only fires when the tap lands on the words themselves — not the

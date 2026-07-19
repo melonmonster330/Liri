@@ -5455,14 +5455,16 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
       transition: "height 650ms ease-in-out, min-height 650ms ease-in-out"
     }
   }), (() => {
-    // Adaptive transition: scale with how long the current line lasts.
-    // Fast rap/spoken sections have lines <1s apart — a 0.4s transition
-    // overlaps and looks sluggish. Cap at 0.4s, floor at 0.1s.
-    const curLine = lyrics[currentIndex];
-    const nextLine = lyrics[currentIndex + 1];
-    const lineDur = curLine && nextLine ? nextLine.time - curLine.time : 3;
-    const transSec = Math.min(0.4, Math.max(0.1, lineDur * 0.35)).toFixed(2);
-    const transition = `all ${transSec}s cubic-bezier(0.4,0,0.2,1)`;
+    // Keep the visual emphasis in step with the 650ms scroll roll. The old
+    // adaptive transition could shrink to 100ms on fast lyrics, making the
+    // text flash to a new size while the list was still moving.
+    const transition = [
+      "font-size 650ms ease-in-out",
+      "font-weight 650ms ease-in-out",
+      "padding 650ms ease-in-out",
+      "color 500ms ease-in-out",
+      "text-shadow 500ms ease-in-out"
+    ].join(", ");
     // Append credit lines after the last lyric so they scroll + highlight naturally
     const lastLyricTime = lyrics.length > 0 ? lyrics[lyrics.length - 1].time : 0;
     const creditLines = [
@@ -5526,19 +5528,16 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
               ? `rgba(255,255,255,${aheadOpacity})`
               : `rgba(255,255,255,${behindOpacity})`,
           lineHeight: "1.4",
-          transition: near ? transition : "none",
+          transition: adist <= NEAR + 1 ? transition : "none",
           textShadow: cur && !isCredit ? "0 0 60px rgba(212,168,70,0.4), 0 2px 20px rgba(0,0,0,0.8)" : "none",
           cursor: "default",
           letterSpacing: isCredit ? "0.2px" : "normal",
           maxWidth: isCredit ? "260px" : "none",
-          margin: isCredit
-            ? "0 auto"
-            : cur
-              ? `0 -${activeGutterExpansion}px`
-              : "0",
-          width: cur && !isCredit
-            ? `calc(100% + ${activeGutterExpansion * 2}px)`
-            : "auto",
+          // Keep row geometry fixed as highlighting moves. Animating width and
+          // margins forced the browser to re-wrap text mid-roll, which looked
+          // like a white flash. Preview and active rows now share one box.
+          margin: isCredit ? "0 auto" : `0 -${activeGutterExpansion}px`,
+          width: isCredit ? "auto" : `calc(100% + ${activeGutterExpansion * 2}px)`,
         }
       }, /*#__PURE__*/React.createElement("span", {
         // Seek only fires when the tap lands on the words themselves — not the
