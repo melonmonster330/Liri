@@ -137,7 +137,7 @@
   var IS_IOS = !!window.Capacitor;
   var TRANSCRIBE_PROXY = window.Capacitor ? "https://www.getliri.com/api/transcribe" : "/api/transcribe";
   var ITUNES_PROXY = window.Capacitor ? "https://www.getliri.com/api/itunes-lookup" : "/api/itunes-lookup";
-  var SYNC_PLAYBACK_RATE = 1.025;
+  var SYNC_PLAYBACK_RATE = 1.03;
 
   // app/ios/iap.js
   function getLiriIAP() {
