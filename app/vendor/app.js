@@ -432,6 +432,8 @@
   }) {
     const lyricsUnsynced = lyrics.length > 0 && lyrics[0].time == null;
     const lyricsScrollRef = useRef2(null);
+    const rollRafRef = useRef2(null);
+    const centeredLineRef = useRef2(null);
     const centerActiveLine = () => {
       const container = lyricsScrollRef.current;
       const line = currentLineRef.current;
@@ -442,10 +444,36 @@
       const target = Math.max(0, lineCenterInScroller - container.clientHeight / 2);
       container.scrollTop = target;
     };
+    const rollActiveLineToCenter = () => {
+      const container = lyricsScrollRef.current;
+      if (!container || !currentLineRef.current) return;
+      cancelAnimationFrame(rollRafRef.current);
+      const from = container.scrollTop;
+      const startedAt = performance.now();
+      const duration = 420;
+      const frame = (now) => {
+        const line = currentLineRef.current;
+        if (!line || !lyricsScrollRef.current) return;
+        const containerRect = container.getBoundingClientRect();
+        const lineRect = line.getBoundingClientRect();
+        const lineCenter = lineRect.top - containerRect.top + container.scrollTop + lineRect.height / 2;
+        const target = Math.max(0, lineCenter - container.clientHeight / 2);
+        const progress = Math.min(1, (now - startedAt) / duration);
+        const eased = 1 - Math.pow(1 - progress, 3);
+        container.scrollTop = from + (target - from) * eased;
+        if (progress < 1) rollRafRef.current = requestAnimationFrame(frame);
+        else centerActiveLine();
+      };
+      rollRafRef.current = requestAnimationFrame(frame);
+    };
     useLayoutEffect(() => {
-      centerActiveLine();
-      const raf = requestAnimationFrame(centerActiveLine);
-      return () => cancelAnimationFrame(raf);
+      const line = currentLineRef.current;
+      const previousLine = centeredLineRef.current;
+      const isNewVisibleLine = line && previousLine && previousLine.isConnected && line !== previousLine;
+      centeredLineRef.current = line;
+      if (isNewVisibleLine) rollActiveLineToCenter();
+      else centerActiveLine();
+      return () => cancelAnimationFrame(rollRafRef.current);
     }, [currentIndex, mode, lyricsUnsynced, lyrics.length, Math.floor(playbackTime)]);
     useEffect3(() => {
       if (!isLandscape || mode !== "syncing" || lyricsUnsynced) return;
@@ -465,7 +493,6 @@
       window.visualViewport?.addEventListener("resize", recenter);
       const observer = typeof ResizeObserver !== "undefined" ? new ResizeObserver(recenter) : null;
       if (lyricsScrollRef.current) observer?.observe(lyricsScrollRef.current);
-      if (currentLineRef.current) observer?.observe(currentLineRef.current);
       return () => {
         window.removeEventListener("resize", recenter);
         window.visualViewport?.removeEventListener("resize", recenter);
@@ -512,7 +539,7 @@
       setUserScrolling(false);
       clearTimeout(refollowTimerRef.current);
       if (lyricsRef.current[0]?.time == null) return;
-      centerActiveLine();
+      rollActiveLineToCenter();
     };
     const noteUserScroll = () => {
       userScrollingRef.current = true;
