@@ -230,6 +230,9 @@ function Liri() {
   // ── Vinyl auto mode (always on) ──
   const vinylMode = true;
   const autoAdvanceFiredRef = useRef(false);
+  // Own the delayed flip/album-end card so a resync or track change can cancel
+  // it. Untracked timeouts previously surfaced "Time to flip" in a later song.
+  const sideEndTimerRef = useRef(null);
 
   // ── Turntable: album the user has selected before listening ──
   const [turntableAlbum, setTurntableAlbum] = useState(() => {
@@ -1366,7 +1369,10 @@ function Liri() {
     const tIdx = turntableMatchedIdxRef.current;
     const trackDuration = tIdx >= 0 ? (turntableTracksRef.current[tIdx]?.trackTimeMillis ?? 0) / 1000 || null : null;
     // Fallback: last lyric + 3s (was 30s — trimmed so same-side advance is immediate)
-    const effectiveDuration = songDuration ?? trackDuration ?? (lastLyricTime ? lastLyricTime + 3 : null);
+    // The selected album track duration is authoritative. Recognition can
+    // briefly leave songDuration from a prior/mismatched track, which used to
+    // trigger auto-advance halfway through the song.
+    const effectiveDuration = trackDuration ?? songDuration ?? (lastLyricTime ? lastLyricTime + 3 : null);
     if (!effectiveDuration) return;
     if (playbackTime >= effectiveDuration && !autoAdvanceFiredRef.current) {
       autoAdvanceFiredRef.current = true;
@@ -1400,6 +1406,7 @@ function Liri() {
     clearInterval(syncIntervalRef.current);
     clearInterval(progressTimerRef.current);
     clearTimeout(refollowTimerRef.current);
+    clearTimeout(sideEndTimerRef.current);
     streamRef.current?.getTracks().forEach(t => t.stop());
   }, []);
 
@@ -1410,6 +1417,8 @@ function Liri() {
 
   // ── Process a confirmed match — update all app state ──
   const handleMatch = async (data, isAutoAdvance) => {
+    clearTimeout(sideEndTimerRef.current);
+    sideEndTimerRef.current = null;
     const m = data.metadata.music[0];
     const duration = m.duration_ms ? m.duration_ms / 1000 : null;
     const acrScore = m.score || null;
@@ -2201,7 +2210,21 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
 
   // ── Advance to the next track using the known tracklist (no re-listening) ──
   const advanceToNextTrack = async (tracks, idx) => {
-    const nextIdx = idx + 1;
+    clearTimeout(sideEndTimerRef.current);
+    sideEndTimerRef.current = null;
+
+    // The cached turntable index can lag behind recognition/resync. Reconcile
+    // it with the song actually on screen before deciding this is a side end.
+    const displayedTitle = normText(detectedSong?.title);
+    const displayedIdx = displayedTitle
+      ? tracks.findIndex(t => normText(t.trackName || t.title) === displayedTitle)
+      : -1;
+    const resolvedIdx = displayedIdx >= 0 ? displayedIdx : idx;
+    if (resolvedIdx !== idx && tracks === turntableTracksRef.current) {
+      turntableMatchedIdxRef.current = resolvedIdx;
+      setCurrentTrackIndex(resolvedIdx);
+    }
+    const nextIdx = resolvedIdx + 1;
 
     // Stop the running sync interval immediately so stale playbackTime values
     // can't trigger a false auto-advance on the incoming track. Reset the
@@ -2214,14 +2237,24 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
     const effectiveTps = albumTpsRef.current > 0 ? albumTpsRef.current : 0;
     const sideEnds = getSideEndsFromSidesMap(tracks, vinylSidesRef.current)
       ?? (dbRelease?.vinyl_tracks?.length > 0 ? getDbSideEndIndices(tracks, dbRelease.vinyl_tracks) : getSideEndIndices(tracks, effectiveTps));
-    const isLastTrack = idx === tracks.length - 1;
-    const isSideEnd = sideEnds.includes(idx);
+    const isLastTrack = resolvedIdx === tracks.length - 1;
+    const isSideEnd = sideEnds.includes(resolvedIdx);
+    const showSideEndIfStillCurrent = () => {
+      const scheduledIdx = resolvedIdx;
+      sideEndTimerRef.current = setTimeout(() => {
+        sideEndTimerRef.current = null;
+        // A track pick/resync may have happened during the four-second linger.
+        if (turntableTracksRef.current.length > 0
+            && turntableMatchedIdxRef.current !== scheduledIdx) return;
+        setMode("side-end");
+      }, 4000);
+    };
     if (isLastTrack) {
       showAlbumEndPushNotification(detectedSong);
       setSideEndReason("album-end");
       if (detectedSong) setLastSong(detectedSong);
       // Let the last lyric linger for a beat before showing the album-end card.
-      setTimeout(() => setMode("side-end"), 4000);
+      showSideEndIfStillCurrent();
       return;
     }
     if (isSideEnd) {
@@ -2232,7 +2265,7 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
       scheduleFlipChimes(detectedSong, discInfo);
 
       // ── Log the flip event to analytics ──
-      const sideIdx = sideEnds.indexOf(idx); // 0 = first flip (A→B), 1 = B→C, etc.
+      const sideIdx = sideEnds.indexOf(resolvedIdx); // 0 = first flip (A→B), 1 = B→C, etc.
       const method = dbRelease?.vinyl_tracks?.length > 0 ? "db" : albumTpsRef.current > 0 ? "learned" : "heuristic";
       logFlipEvent({
         userId: user?.id,
@@ -2246,7 +2279,7 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
       });
       if (detectedSong) setLastSong(detectedSong);
       // Let the last lyric linger for a beat before showing the flip card.
-      setTimeout(() => setMode("side-end"), 4000);
+      showSideEndIfStillCurrent();
       return;
     }
     const next = tracks[nextIdx];
@@ -2316,6 +2349,8 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
   // Stops the current recording session and jumps straight into confirmed mode
   // at position 0 for the chosen track. Same state setup as advanceToNextTrack.
   const jumpToTrackIdx = (idx, startPos = 0) => {
+    clearTimeout(sideEndTimerRef.current);
+    sideEndTimerRef.current = null;
     const tracks = turntableTracksRef.current;
     const track = tracks[idx];
     if (!track) return;
@@ -2502,6 +2537,8 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
 
     const reset = () => {
     cancelFlipChimes();
+    clearTimeout(sideEndTimerRef.current);
+    sideEndTimerRef.current = null;
     setShowSideEndPicker(false);
     flipStartDelayMsRef.current = 0;
     clearInterval(syncIntervalRef.current);

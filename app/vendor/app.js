@@ -1509,6 +1509,7 @@
     const [historyLoading, setHistoryLoading] = useState6(false);
     const vinylMode = true;
     const autoAdvanceFiredRef = useRef5(false);
+    const sideEndTimerRef = useRef5(null);
     const [turntableAlbum, setTurntableAlbum] = useState6(() => {
       try {
         return JSON.parse(localStorage.getItem("liri_turntable") || "null");
@@ -2449,7 +2450,7 @@
       const lastLyricTime = lyrics.length > 0 ? lyrics[lyrics.length - 1].time : null;
       const tIdx = turntableMatchedIdxRef.current;
       const trackDuration = tIdx >= 0 ? (turntableTracksRef.current[tIdx]?.trackTimeMillis ?? 0) / 1e3 || null : null;
-      const effectiveDuration = songDuration ?? trackDuration ?? (lastLyricTime ? lastLyricTime + 3 : null);
+      const effectiveDuration = trackDuration ?? songDuration ?? (lastLyricTime ? lastLyricTime + 3 : null);
       if (!effectiveDuration) return;
       if (playbackTime >= effectiveDuration && !autoAdvanceFiredRef.current) {
         autoAdvanceFiredRef.current = true;
@@ -2477,12 +2478,15 @@
       clearInterval(syncIntervalRef.current);
       clearInterval(progressTimerRef.current);
       clearTimeout(refollowTimerRef.current);
+      clearTimeout(sideEndTimerRef.current);
       streamRef.current?.getTracks().forEach((t) => t.stop());
     }, []);
     useEffect7(() => {
       if (mode !== "side-end") cancelFlipChimes();
     }, [mode]);
     const handleMatch = async (data, isAutoAdvance) => {
+      clearTimeout(sideEndTimerRef.current);
+      sideEndTimerRef.current = null;
       const m = data.metadata.music[0];
       const duration = m.duration_ms ? m.duration_ms / 1e3 : null;
       const acrScore = m.score || null;
@@ -3126,19 +3130,36 @@ Move closer to your speakers and try again.`);
       return ends;
     };
     const advanceToNextTrack = async (tracks, idx) => {
-      const nextIdx = idx + 1;
+      clearTimeout(sideEndTimerRef.current);
+      sideEndTimerRef.current = null;
+      const displayedTitle = normText(detectedSong?.title);
+      const displayedIdx = displayedTitle ? tracks.findIndex((t) => normText(t.trackName || t.title) === displayedTitle) : -1;
+      const resolvedIdx = displayedIdx >= 0 ? displayedIdx : idx;
+      if (resolvedIdx !== idx && tracks === turntableTracksRef.current) {
+        turntableMatchedIdxRef.current = resolvedIdx;
+        setCurrentTrackIndex(resolvedIdx);
+      }
+      const nextIdx = resolvedIdx + 1;
       clearInterval(syncIntervalRef.current);
       setPlaybackTime(0);
       const dbRelease = vinylDbReleaseRef.current;
       const effectiveTps = albumTpsRef.current > 0 ? albumTpsRef.current : 0;
       const sideEnds = getSideEndsFromSidesMap(tracks, vinylSidesRef.current) ?? (dbRelease?.vinyl_tracks?.length > 0 ? getDbSideEndIndices(tracks, dbRelease.vinyl_tracks) : getSideEndIndices(tracks, effectiveTps));
-      const isLastTrack = idx === tracks.length - 1;
-      const isSideEnd = sideEnds.includes(idx);
+      const isLastTrack = resolvedIdx === tracks.length - 1;
+      const isSideEnd = sideEnds.includes(resolvedIdx);
+      const showSideEndIfStillCurrent = () => {
+        const scheduledIdx = resolvedIdx;
+        sideEndTimerRef.current = setTimeout(() => {
+          sideEndTimerRef.current = null;
+          if (turntableTracksRef.current.length > 0 && turntableMatchedIdxRef.current !== scheduledIdx) return;
+          setMode("side-end");
+        }, 4e3);
+      };
       if (isLastTrack) {
         showAlbumEndPushNotification(detectedSong);
         setSideEndReason("album-end");
         if (detectedSong) setLastSong(detectedSong);
-        setTimeout(() => setMode("side-end"), 4e3);
+        showSideEndIfStillCurrent();
         return;
       }
       if (isSideEnd) {
@@ -3146,7 +3167,7 @@ Move closer to your speakers and try again.`);
         setSideEndNextDiscInfo(discInfo);
         setSideEndReason("flip");
         scheduleFlipChimes(detectedSong, discInfo);
-        const sideIdx = sideEnds.indexOf(idx);
+        const sideIdx = sideEnds.indexOf(resolvedIdx);
         const method = dbRelease?.vinyl_tracks?.length > 0 ? "db" : albumTpsRef.current > 0 ? "learned" : "heuristic";
         logFlipEvent2({
           userId: user?.id,
@@ -3159,7 +3180,7 @@ Move closer to your speakers and try again.`);
           method
         });
         if (detectedSong) setLastSong(detectedSong);
-        setTimeout(() => setMode("side-end"), 4e3);
+        showSideEndIfStillCurrent();
         return;
       }
       const next = tracks[nextIdx];
@@ -3213,6 +3234,8 @@ Move closer to your speakers and try again.`);
       setMode("confirmed");
     };
     const jumpToTrackIdx = (idx, startPos = 0) => {
+      clearTimeout(sideEndTimerRef.current);
+      sideEndTimerRef.current = null;
       const tracks = turntableTracksRef.current;
       const track = tracks[idx];
       if (!track) return;
@@ -3375,6 +3398,8 @@ Move closer to your speakers and try again.`);
     };
     const reset = () => {
       cancelFlipChimes();
+      clearTimeout(sideEndTimerRef.current);
+      sideEndTimerRef.current = null;
       setShowSideEndPicker(false);
       flipStartDelayMsRef.current = 0;
       clearInterval(syncIntervalRef.current);
