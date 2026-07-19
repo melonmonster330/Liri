@@ -6499,17 +6499,22 @@ Move closer to your speakers and try again.`);
               color: "#ffffff",
               opacity: cur ? isCredit ? 0.55 : 1 : dist > 0 ? aheadOpacity : behindOpacity,
               lineHeight: "1.4",
-              transition: adist <= NEAR + 1 ? "opacity 500ms ease-in-out" : "none",
-              willChange: near ? "opacity" : "auto",
+              transform: cur ? `translateZ(0) scale(${isCredit ? 1.08 : activeLyricScale})` : "translateZ(0) scale(1)",
+              transformOrigin: "center center",
+              transition: adist <= NEAR + 1 ? "transform 650ms ease-in-out, opacity 500ms ease-in-out" : "none",
+              willChange: near ? "transform, opacity" : "auto",
+              backfaceVisibility: "hidden",
+              WebkitBackfaceVisibility: "hidden",
               textShadow: "none",
               cursor: "default",
               letterSpacing: isCredit ? "0.2px" : "normal",
               maxWidth: isCredit ? "260px" : "none",
-              // Keep row geometry fixed as highlighting moves. Animating width and
-              // margins forced the browser to re-wrap the outer row mid-roll,
-              // which looked like a white flash. Every row now shares one box.
-              margin: isCredit ? "0 auto" : `0 -${activeGutterExpansion}px`,
-              width: isCredit ? "auto" : `calc(100% + ${activeGutterExpansion * 2}px)`
+              // Every row keeps this same pre-scaled width. Once highlighted, its
+              // compositor scale expands it to the lyric width plus the wider
+              // gutters; before highlighting it may wrap, but never re-wraps as
+              // ownership moves during a nudge.
+              margin: "0 auto",
+              width: isCredit ? "auto" : `calc(${100 / activeLyricScale}% + ${activeGutterExpansion * 2 / activeLyricScale}px)`
             }
           }, /* @__PURE__ */ React.createElement("span", {
             // Seek only fires when the tap lands on the words themselves — not the
@@ -6525,16 +6530,7 @@ Move closer to your speakers and try again.`);
             },
             style: {
               display: "inline-block",
-              // Keep this width identical before, during, and after highlighting.
-              // Swapping between auto and the scaled width during a manual nudge
-              // forced an immediate re-wrap that appeared as a bright flash.
-              width: isCredit ? "auto" : `${100 / activeLyricScale}%`,
               maxWidth: "100%",
-              margin: "0 auto",
-              transform: cur ? `scale(${isCredit ? 1.08 : activeLyricScale})` : "scale(1)",
-              transformOrigin: "center center",
-              transition: "transform 650ms ease-in-out",
-              willChange: near ? "transform" : "auto",
               overflowWrap: "break-word",
               cursor: isCredit ? "default" : "pointer"
             }
