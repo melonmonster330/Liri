@@ -5908,7 +5908,9 @@ Move closer to your speakers and try again.`);
       style: {
         position: "fixed",
         // Stay physically attached to the viewport edge at every window size.
-        top: isLandscape ? "68px" : "calc(env(safe-area-inset-top) + 70px)",
+        // On iOS portrait, keep the record control below the song header instead
+        // of crowding the top safe area. Web + landscape retain their placement.
+        top: isLandscape ? "68px" : IS_IOS ? "28vh" : "calc(env(safe-area-inset-top) + 70px)",
         left: "5px",
         zIndex: 25,
         background: "none",
