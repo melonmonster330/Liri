@@ -7,7 +7,7 @@
 // noteUserScroll because the (still-monolithic, pre-Phase-4) render in
 // main.js references them directly by these names.
 
-const { useRef, useEffect } = React;
+const { useRef, useEffect, useLayoutEffect } = React;
 
 export function useLyricScroll({
   mode,
@@ -28,14 +28,29 @@ export function useLyricScroll({
   const lyricsUnsynced = lyrics.length > 0 && lyrics[0].time == null;
   const lyricsScrollRef = useRef(null); // the lyrics overflow container
 
-  // ── Scroll to current lyric (skip if user is manually browsing) ──
-  useEffect(() => {
-    if (userScrollingRef.current || lyricsUnsynced) return;
-    if (currentLineRef.current && mode === "syncing") currentLineRef.current.scrollIntoView({
-      behavior: "smooth",
-      block: "center"
-    });
-  }, [currentIndex, mode, lyricsUnsynced]);
+  // Center against the lyric scroller itself, not the page viewport. This is
+  // reliable inside iOS's fixed overlay and across every screen size.
+  const centerActiveLine = () => {
+    const container = lyricsScrollRef.current;
+    const line = currentLineRef.current;
+    if (!container || !line || mode !== "syncing" || lyricsUnsynced) return;
+    const containerRect = container.getBoundingClientRect();
+    const lineRect = line.getBoundingClientRect();
+    const lineCenterInScroller = lineRect.top - containerRect.top
+      + container.scrollTop + lineRect.height / 2;
+    const target = Math.max(0, lineCenterInScroller - container.clientHeight / 2);
+    container.scrollTop = target;
+  };
+
+  // useLayoutEffect handles initial Shazam/manual matches and every lyric,
+  // nudge, or selected-line change before the frame is painted. The playback
+  // second dependency also follows the highlighted credit lines appended by
+  // main.js, whose effective index changes after the final lyric.
+  useLayoutEffect(() => {
+    centerActiveLine();
+    const raf = requestAnimationFrame(centerActiveLine);
+    return () => cancelAnimationFrame(raf);
+  }, [currentIndex, mode, lyricsUnsynced, lyrics.length, Math.floor(playbackTime)]);
 
   // ── Keep the current line centered while the menu fades in/out (landscape) ──
   // Hiding/showing the menu animates the lyrics column's width and font size
@@ -48,12 +63,31 @@ export function useLyricScroll({
     let raf, start;
     const pin = ts => {
       if (start == null) start = ts;
-      if (!userScrollingRef.current) currentLineRef.current?.scrollIntoView({ block: "center" });
+      centerActiveLine();
       if (ts - start < 450) raf = requestAnimationFrame(pin);
     };
     raf = requestAnimationFrame(pin);
     return () => cancelAnimationFrame(raf);
   }, [controlsVisible, isLandscape, mode, lyricsUnsynced]);
+
+  // Re-center when the viewport or lyric box changes without a line change:
+  // rotation, split view, browser chrome, font reflow, or device resizing.
+  useEffect(() => {
+    if (mode !== "syncing" || lyricsUnsynced) return;
+    const recenter = () => requestAnimationFrame(centerActiveLine);
+    window.addEventListener("resize", recenter);
+    window.visualViewport?.addEventListener("resize", recenter);
+    const observer = typeof ResizeObserver !== "undefined"
+      ? new ResizeObserver(recenter)
+      : null;
+    if (lyricsScrollRef.current) observer?.observe(lyricsScrollRef.current);
+    if (currentLineRef.current) observer?.observe(currentLineRef.current);
+    return () => {
+      window.removeEventListener("resize", recenter);
+      window.visualViewport?.removeEventListener("resize", recenter);
+      observer?.disconnect();
+    };
+  }, [mode, lyricsUnsynced, currentIndex, isLandscape, controlsVisible]);
 
   // ── Unsynced auto-scroll: glide the flat lyric page at a steady rate ──
   // Base rate spreads the full scroll height over the track duration (guessing
@@ -106,10 +140,7 @@ export function useLyricScroll({
     // Unsynced view: auto-scroll simply resumes from wherever the user left
     // the page — there is no "current line" to snap to.
     if (lyricsRef.current[0]?.time == null) return;
-    currentLineRef.current?.scrollIntoView({
-      behavior: "smooth",
-      block: "center"
-    });
+    centerActiveLine();
   };
 
   // Mark the user as manually scrolling and (re)arm a 10s idle timer — once they
@@ -120,16 +151,6 @@ export function useLyricScroll({
     clearTimeout(refollowTimerRef.current);
     refollowTimerRef.current = setTimeout(() => refollow(), 10000);
   };
-
-  // ── Scroll to credits once song passes the last lyric (outro roll) ──
-  useEffect(() => {
-    if (mode !== "syncing" || !lyrics.length || lyricsUnsynced) return;
-    const lastTime = lyrics[lyrics.length - 1].time;
-    if (playbackTime >= lastTime + 6 && creditsRef.current) creditsRef.current.scrollIntoView({
-      behavior: "smooth",
-      block: "center"
-    });
-  }, [Math.floor(playbackTime), mode, lyrics.length]);
 
   return { lyricsUnsynced, lyricsScrollRef, seekToLine, refollow, noteUserScroll };
 }

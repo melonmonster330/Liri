@@ -5428,7 +5428,16 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
       /*#__PURE__*/React.createElement("div", { key: i }, t)
     )),
     /*#__PURE__*/React.createElement("div", { style: { paddingBottom: "30vh" } })
-  ) : /*#__PURE__*/React.createElement(React.Fragment, null, (() => {
+  ) : /*#__PURE__*/React.createElement(React.Fragment, null,
+  // Give the first lyric enough room above it to occupy the exact center of
+  // every lyric viewport. A scroll container cannot otherwise scroll its
+  // first child upward from the top edge, even when the centering math is
+  // correct. Percentage height follows the actual lyric panel on iPhone,
+  // iPad split view, and landscape instead of assuming a screen height.
+  /*#__PURE__*/React.createElement("div", {
+    "aria-hidden": true,
+    style: { height: "50%", minHeight: "50%", flexShrink: 0, pointerEvents: "none" }
+  }), (() => {
     // Adaptive transition: scale with how long the current line lasts.
     // Fast rap/spoken sections have lines <1s apart — a 0.4s transition
     // overlaps and looks sluggish. Cap at 0.4s, floor at 0.1s.
@@ -5519,7 +5528,12 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
         }
       }, line.text));
     });
-  })(), /*#__PURE__*/React.createElement("div", { style: { paddingBottom: "30vh" } }))) : /*#__PURE__*/React.createElement("div", {
+  })(), /*#__PURE__*/React.createElement("div", {
+    "aria-hidden": true,
+    // Matching space below the credits lets the final highlighted row reach
+    // the same center point instead of stopping near the bottom of the list.
+    style: { height: "50%", minHeight: "50%", flexShrink: 0, pointerEvents: "none" }
+  }))) : /*#__PURE__*/React.createElement("div", {
     style: {
       textAlign: "center",
       color: "rgba(255,255,255,0.2)",

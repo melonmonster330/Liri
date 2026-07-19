@@ -407,7 +407,7 @@
   }
 
   // app/src/hooks/useLyricScroll.js
-  var { useRef: useRef2, useEffect: useEffect3 } = React;
+  var { useRef: useRef2, useEffect: useEffect3, useLayoutEffect } = React;
   function useLyricScroll({
     mode,
     lyrics,
@@ -432,24 +432,46 @@
   }) {
     const lyricsUnsynced = lyrics.length > 0 && lyrics[0].time == null;
     const lyricsScrollRef = useRef2(null);
-    useEffect3(() => {
-      if (userScrollingRef.current || lyricsUnsynced) return;
-      if (currentLineRef.current && mode === "syncing") currentLineRef.current.scrollIntoView({
-        behavior: "smooth",
-        block: "center"
-      });
-    }, [currentIndex, mode, lyricsUnsynced]);
+    const centerActiveLine = () => {
+      const container = lyricsScrollRef.current;
+      const line = currentLineRef.current;
+      if (!container || !line || mode !== "syncing" || lyricsUnsynced) return;
+      const containerRect = container.getBoundingClientRect();
+      const lineRect = line.getBoundingClientRect();
+      const lineCenterInScroller = lineRect.top - containerRect.top + container.scrollTop + lineRect.height / 2;
+      const target = Math.max(0, lineCenterInScroller - container.clientHeight / 2);
+      container.scrollTop = target;
+    };
+    useLayoutEffect(() => {
+      centerActiveLine();
+      const raf = requestAnimationFrame(centerActiveLine);
+      return () => cancelAnimationFrame(raf);
+    }, [currentIndex, mode, lyricsUnsynced, lyrics.length, Math.floor(playbackTime)]);
     useEffect3(() => {
       if (!isLandscape || mode !== "syncing" || lyricsUnsynced) return;
       let raf, start;
       const pin = (ts) => {
         if (start == null) start = ts;
-        if (!userScrollingRef.current) currentLineRef.current?.scrollIntoView({ block: "center" });
+        centerActiveLine();
         if (ts - start < 450) raf = requestAnimationFrame(pin);
       };
       raf = requestAnimationFrame(pin);
       return () => cancelAnimationFrame(raf);
     }, [controlsVisible, isLandscape, mode, lyricsUnsynced]);
+    useEffect3(() => {
+      if (mode !== "syncing" || lyricsUnsynced) return;
+      const recenter = () => requestAnimationFrame(centerActiveLine);
+      window.addEventListener("resize", recenter);
+      window.visualViewport?.addEventListener("resize", recenter);
+      const observer = typeof ResizeObserver !== "undefined" ? new ResizeObserver(recenter) : null;
+      if (lyricsScrollRef.current) observer?.observe(lyricsScrollRef.current);
+      if (currentLineRef.current) observer?.observe(currentLineRef.current);
+      return () => {
+        window.removeEventListener("resize", recenter);
+        window.visualViewport?.removeEventListener("resize", recenter);
+        observer?.disconnect();
+      };
+    }, [mode, lyricsUnsynced, currentIndex, isLandscape, controlsVisible]);
     useEffect3(() => {
       if (mode !== "syncing" || !lyricsUnsynced || isPaused) return;
       const el = lyricsScrollRef.current;
@@ -490,10 +512,7 @@
       setUserScrolling(false);
       clearTimeout(refollowTimerRef.current);
       if (lyricsRef.current[0]?.time == null) return;
-      currentLineRef.current?.scrollIntoView({
-        behavior: "smooth",
-        block: "center"
-      });
+      centerActiveLine();
     };
     const noteUserScroll = () => {
       userScrollingRef.current = true;
@@ -501,14 +520,6 @@
       clearTimeout(refollowTimerRef.current);
       refollowTimerRef.current = setTimeout(() => refollow(), 1e4);
     };
-    useEffect3(() => {
-      if (mode !== "syncing" || !lyrics.length || lyricsUnsynced) return;
-      const lastTime = lyrics[lyrics.length - 1].time;
-      if (playbackTime >= lastTime + 6 && creditsRef.current) creditsRef.current.scrollIntoView({
-        behavior: "smooth",
-        block: "center"
-      });
-    }, [Math.floor(playbackTime), mode, lyrics.length]);
     return { lyricsUnsynced, lyricsScrollRef, seekToLine, refollow, noteUserScroll };
   }
 
@@ -6365,75 +6376,94 @@ Move closer to your speakers and try again.`);
         (t, i) => /* @__PURE__ */ React.createElement("div", { key: i }, t)
       )),
       /* @__PURE__ */ React.createElement("div", { style: { paddingBottom: "30vh" } })
-    ) : /* @__PURE__ */ React.createElement(React.Fragment, null, (() => {
-      const curLine = lyrics[currentIndex];
-      const nextLine = lyrics[currentIndex + 1];
-      const lineDur = curLine && nextLine ? nextLine.time - curLine.time : 3;
-      const transSec = Math.min(0.4, Math.max(0.1, lineDur * 0.35)).toFixed(2);
-      const transition = `all ${transSec}s cubic-bezier(0.4,0,0.2,1)`;
-      const lastLyricTime = lyrics.length > 0 ? lyrics[lyrics.length - 1].time : 0;
-      const creditLines = [
-        ...detectedSong?.title ? [{ text: detectedSong.title, time: lastLyricTime + 5, isCredit: true }] : [],
-        ...detectedSong?.artist ? [{ text: detectedSong.artist, time: lastLyricTime + 8, isCredit: true }] : [],
-        ...detectedSong?.album ? [{ text: detectedSong.album, time: lastLyricTime + 11, isCredit: true }] : [],
-        { text: "Lyrics via LRCLib", time: lastLyricTime + 16, isCredit: true },
-        { text: `\xA9 ${(/* @__PURE__ */ new Date()).getFullYear()} Liri \xB7 Music rights belong to their respective artists, labels & publishers.`, time: lastLyricTime + 20, isCredit: true }
-      ];
-      const allLines = [...lyrics, ...creditLines];
-      const pastLastLyric = currentIndex >= lyrics.length - 1 && lyrics.length > 0;
-      const effectiveIndex = pastLastLyric ? lyrics.length - 1 + creditLines.reduce((best, cl, ci) => playbackTime >= cl.time ? ci + 1 : best, 0) : currentIndex;
-      const NEAR = 4;
-      const iosPortrait = IS_IOS && !isLandscape;
-      const curFontBase = iosPortrait ? 26 : 30;
-      const near1Font = iosPortrait ? 16 : 18;
-      const nearFont = iosPortrait ? 13 : 15;
-      const farFont = iosPortrait ? 11 : 12;
-      const aheadBase = isLandscape ? 0.55 : 0.32;
-      const behindBase = isLandscape ? 0.38 : 0.22;
-      return allLines.map((line, i) => {
-        const dist = i - effectiveIndex;
-        const adist = Math.abs(dist);
-        const cur = dist === 0;
-        const near = adist <= NEAR;
-        const isCredit = !!line.isCredit;
-        const aheadOpacity = Math.max(isLandscape ? 0.12 : 0.06, aheadBase - adist * (aheadBase / (NEAR + 1)));
-        const behindOpacity = Math.max(isLandscape ? 0.08 : 0.04, behindBase - adist * (behindBase / (NEAR + 1)));
-        return /* @__PURE__ */ React.createElement("div", {
-          key: i,
-          ref: cur ? currentLineRef : i === lyrics.length ? creditsRef : null,
-          style: {
-            textAlign: "center",
-            padding: near ? "6px 0" : "3px 0",
-            fontSize: isCredit ? cur ? "15px" : adist <= 1 ? "13px" : "11px" : cur ? Math.round(curFontBase * (isLandscape ? effectiveLyricFontScale : lyricFontScale)) + "px" : adist === 1 ? Math.round(near1Font * (isLandscape ? effectiveLyricFontScale : lyricFontScale)) + "px" : near ? Math.round(nearFont * (isLandscape ? effectiveLyricFontScale : lyricFontScale)) + "px" : Math.round(farFont * (isLandscape ? effectiveLyricFontScale : lyricFontScale)) + "px",
-            fontWeight: cur && !isCredit ? "700" : "400",
-            color: cur ? isCredit ? "rgba(255,255,255,0.55)" : "#ffffff" : dist > 0 ? `rgba(255,255,255,${aheadOpacity})` : `rgba(255,255,255,${behindOpacity})`,
-            lineHeight: "1.4",
-            transition: near ? transition : "none",
-            textShadow: cur && !isCredit ? "0 0 60px rgba(212,168,70,0.4), 0 2px 20px rgba(0,0,0,0.8)" : "none",
-            cursor: "default",
-            letterSpacing: isCredit ? "0.2px" : "normal",
-            maxWidth: isCredit ? "260px" : "none",
-            margin: isCredit ? "0 auto" : "0"
-          }
-        }, /* @__PURE__ */ React.createElement("span", {
-          // Seek only fires when the tap lands on the words themselves — not the
-          // padding or empty width of the row. Credits aren't seekable.
-          onClick: () => {
-            if (menuWasOpenRef.current || controlsVisible) {
-              menuWasOpenRef.current = false;
-              if (controlsVisible) setControlsVisible(false);
-              return;
+    ) : /* @__PURE__ */ React.createElement(
+      React.Fragment,
+      null,
+      // Give the first lyric enough room above it to occupy the exact center of
+      // every lyric viewport. A scroll container cannot otherwise scroll its
+      // first child upward from the top edge, even when the centering math is
+      // correct. Percentage height follows the actual lyric panel on iPhone,
+      // iPad split view, and landscape instead of assuming a screen height.
+      /* @__PURE__ */ React.createElement("div", {
+        "aria-hidden": true,
+        style: { height: "50%", minHeight: "50%", flexShrink: 0, pointerEvents: "none" }
+      }),
+      (() => {
+        const curLine = lyrics[currentIndex];
+        const nextLine = lyrics[currentIndex + 1];
+        const lineDur = curLine && nextLine ? nextLine.time - curLine.time : 3;
+        const transSec = Math.min(0.4, Math.max(0.1, lineDur * 0.35)).toFixed(2);
+        const transition = `all ${transSec}s cubic-bezier(0.4,0,0.2,1)`;
+        const lastLyricTime = lyrics.length > 0 ? lyrics[lyrics.length - 1].time : 0;
+        const creditLines = [
+          ...detectedSong?.title ? [{ text: detectedSong.title, time: lastLyricTime + 5, isCredit: true }] : [],
+          ...detectedSong?.artist ? [{ text: detectedSong.artist, time: lastLyricTime + 8, isCredit: true }] : [],
+          ...detectedSong?.album ? [{ text: detectedSong.album, time: lastLyricTime + 11, isCredit: true }] : [],
+          { text: "Lyrics via LRCLib", time: lastLyricTime + 16, isCredit: true },
+          { text: `\xA9 ${(/* @__PURE__ */ new Date()).getFullYear()} Liri \xB7 Music rights belong to their respective artists, labels & publishers.`, time: lastLyricTime + 20, isCredit: true }
+        ];
+        const allLines = [...lyrics, ...creditLines];
+        const pastLastLyric = currentIndex >= lyrics.length - 1 && lyrics.length > 0;
+        const effectiveIndex = pastLastLyric ? lyrics.length - 1 + creditLines.reduce((best, cl, ci) => playbackTime >= cl.time ? ci + 1 : best, 0) : currentIndex;
+        const NEAR = 4;
+        const iosPortrait = IS_IOS && !isLandscape;
+        const curFontBase = iosPortrait ? 26 : 30;
+        const near1Font = iosPortrait ? 16 : 18;
+        const nearFont = iosPortrait ? 13 : 15;
+        const farFont = iosPortrait ? 11 : 12;
+        const aheadBase = isLandscape ? 0.55 : 0.32;
+        const behindBase = isLandscape ? 0.38 : 0.22;
+        return allLines.map((line, i) => {
+          const dist = i - effectiveIndex;
+          const adist = Math.abs(dist);
+          const cur = dist === 0;
+          const near = adist <= NEAR;
+          const isCredit = !!line.isCredit;
+          const aheadOpacity = Math.max(isLandscape ? 0.12 : 0.06, aheadBase - adist * (aheadBase / (NEAR + 1)));
+          const behindOpacity = Math.max(isLandscape ? 0.08 : 0.04, behindBase - adist * (behindBase / (NEAR + 1)));
+          return /* @__PURE__ */ React.createElement("div", {
+            key: i,
+            ref: cur ? currentLineRef : i === lyrics.length ? creditsRef : null,
+            style: {
+              textAlign: "center",
+              padding: near ? "6px 0" : "3px 0",
+              fontSize: isCredit ? cur ? "15px" : adist <= 1 ? "13px" : "11px" : cur ? Math.round(curFontBase * (isLandscape ? effectiveLyricFontScale : lyricFontScale)) + "px" : adist === 1 ? Math.round(near1Font * (isLandscape ? effectiveLyricFontScale : lyricFontScale)) + "px" : near ? Math.round(nearFont * (isLandscape ? effectiveLyricFontScale : lyricFontScale)) + "px" : Math.round(farFont * (isLandscape ? effectiveLyricFontScale : lyricFontScale)) + "px",
+              fontWeight: cur && !isCredit ? "700" : "400",
+              color: cur ? isCredit ? "rgba(255,255,255,0.55)" : "#ffffff" : dist > 0 ? `rgba(255,255,255,${aheadOpacity})` : `rgba(255,255,255,${behindOpacity})`,
+              lineHeight: "1.4",
+              transition: near ? transition : "none",
+              textShadow: cur && !isCredit ? "0 0 60px rgba(212,168,70,0.4), 0 2px 20px rgba(0,0,0,0.8)" : "none",
+              cursor: "default",
+              letterSpacing: isCredit ? "0.2px" : "normal",
+              maxWidth: isCredit ? "260px" : "none",
+              margin: isCredit ? "0 auto" : "0"
             }
-            if (cur) return refollow();
-            if (!isCredit) seekToLine(i);
-          },
-          style: {
-            display: "inline-block",
-            cursor: isCredit ? "default" : "pointer"
-          }
-        }, line.text));
-      });
-    })(), /* @__PURE__ */ React.createElement("div", { style: { paddingBottom: "30vh" } })) : /* @__PURE__ */ React.createElement("div", {
+          }, /* @__PURE__ */ React.createElement("span", {
+            // Seek only fires when the tap lands on the words themselves — not the
+            // padding or empty width of the row. Credits aren't seekable.
+            onClick: () => {
+              if (menuWasOpenRef.current || controlsVisible) {
+                menuWasOpenRef.current = false;
+                if (controlsVisible) setControlsVisible(false);
+                return;
+              }
+              if (cur) return refollow();
+              if (!isCredit) seekToLine(i);
+            },
+            style: {
+              display: "inline-block",
+              cursor: isCredit ? "default" : "pointer"
+            }
+          }, line.text));
+        });
+      })(),
+      /* @__PURE__ */ React.createElement("div", {
+        "aria-hidden": true,
+        // Matching space below the credits lets the final highlighted row reach
+        // the same center point instead of stopping near the bottom of the list.
+        style: { height: "50%", minHeight: "50%", flexShrink: 0, pointerEvents: "none" }
+      })
+    ) : /* @__PURE__ */ React.createElement("div", {
       style: {
         textAlign: "center",
         color: "rgba(255,255,255,0.2)",
