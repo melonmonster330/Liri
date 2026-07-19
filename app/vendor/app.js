@@ -137,6 +137,7 @@
   var IS_IOS = !!window.Capacitor;
   var TRANSCRIBE_PROXY = window.Capacitor ? "https://www.getliri.com/api/transcribe" : "/api/transcribe";
   var ITUNES_PROXY = window.Capacitor ? "https://www.getliri.com/api/itunes-lookup" : "/api/itunes-lookup";
+  var SYNC_PLAYBACK_RATE = 1.025;
 
   // app/ios/iap.js
   function getLiriIAP() {
@@ -315,7 +316,7 @@
           turntableMatchedIdx: turntableMatchedIdxRef.current
         };
         try {
-          const t = syncStartRef.current != null ? initialPosRef.current + (Date.now() - syncStartRef.current) / 1e3 : initialPosRef.current;
+          const t = syncStartRef.current != null ? initialPosRef.current + (Date.now() - syncStartRef.current) / 1e3 * SYNC_PLAYBACK_RATE : initialPosRef.current;
           localStorage.setItem("liri_nowplaying", JSON.stringify({
             ...nowPlayingSnapshotRef.current,
             playbackTime: Math.max(0, t),
@@ -337,7 +338,7 @@
       const onHide = () => {
         const snap = nowPlayingSnapshotRef.current;
         if (!snap || !snap.detectedSong) return;
-        const t = syncStartRef.current != null ? initialPosRef.current + (Date.now() - syncStartRef.current) / 1e3 : initialPosRef.current;
+        const t = syncStartRef.current != null ? initialPosRef.current + (Date.now() - syncStartRef.current) / 1e3 * SYNC_PLAYBACK_RATE : initialPosRef.current;
         const payload = JSON.stringify({ ...snap, playbackTime: Math.max(0, t), savedAt: Date.now() });
         try {
           sessionStorage.setItem("liri_nowplaying", payload);
@@ -2792,9 +2793,9 @@ Move closer to your speakers and try again.`);
           recStart
         } = syncCalcRef.current;
         syncCalcRef.current = null;
-        initialPosRef.current = Math.max(0, startPos - phraseOffset + (Date.now() - recStart) / 1e3);
+        initialPosRef.current = Math.max(0, startPos - phraseOffset + (Date.now() - recStart) / 1e3 * SYNC_PLAYBACK_RATE);
       } else if (syncStartRef.current !== null) {
-        initialPosRef.current = initialPosRef.current + (Date.now() - syncStartRef.current) / 1e3;
+        initialPosRef.current = initialPosRef.current + (Date.now() - syncStartRef.current) / 1e3 * SYNC_PLAYBACK_RATE;
       }
       if (flipStartDelayMsRef.current > 0) {
         initialPosRef.current = -flipStartDelayMsRef.current / 1e3;
@@ -2816,7 +2817,7 @@ Move closer to your speakers and try again.`);
       setIsPaused(false);
       clearInterval(syncIntervalRef.current);
       syncIntervalRef.current = setInterval(() => {
-        const t = initialPosRef.current + (Date.now() - syncStartRef.current) / 1e3;
+        const t = initialPosRef.current + (Date.now() - syncStartRef.current) / 1e3 * SYNC_PLAYBACK_RATE;
         setPlaybackTime(t < 0 ? 0 : t);
         const lrc = lyricsRef.current;
         if (!lrc.length || lrc[0].time == null) return;
@@ -2861,7 +2862,7 @@ Move closer to your speakers and try again.`);
         syncStartRef.current = Date.now();
         clearInterval(syncIntervalRef.current);
         syncIntervalRef.current = setInterval(() => {
-          const t = initialPosRef.current + (Date.now() - syncStartRef.current) / 1e3;
+          const t = initialPosRef.current + (Date.now() - syncStartRef.current) / 1e3 * SYNC_PLAYBACK_RATE;
           setPlaybackTime(t);
           const lrc = lyricsRef.current;
           if (!lrc.length || lrc[0].time == null) return;
@@ -2887,7 +2888,7 @@ Move closer to your speakers and try again.`);
     const nudge = (s) => {
       userNudgeRef.current += s;
       const running = !isPaused && syncStartRef.current != null;
-      const elapsedScaled = running ? (Date.now() - syncStartRef.current) / 1e3 : 0;
+      const elapsedScaled = running ? (Date.now() - syncStartRef.current) / 1e3 * SYNC_PLAYBACK_RATE : 0;
       const curPos = initialPosRef.current + elapsedScaled;
       const newPos = curPos < 0 ? curPos + s : Math.max(0, curPos + s);
       initialPosRef.current = newPos - elapsedScaled;

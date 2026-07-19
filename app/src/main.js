@@ -7,7 +7,7 @@ import {
   logFlipEvent as libLogFlipEvent,
   logButtonEvent as libLogButtonEvent,
 } from "../base/lib/analytics.js";
-import { IS_IOS, TRANSCRIBE_PROXY, ITUNES_PROXY, PLAYBACK_OFFSET_CORRECTION, AUTO_ADVANCE_OFFSET } from "../base/lib/config.js";
+import { IS_IOS, TRANSCRIBE_PROXY, ITUNES_PROXY, PLAYBACK_OFFSET_CORRECTION, AUTO_ADVANCE_OFFSET, SYNC_PLAYBACK_RATE } from "../base/lib/config.js";
 import { usePayments } from "./hooks/usePayments.js";
 import { useNowPlaying } from "./hooks/useNowPlaying.js";
 import { useLyricScroll } from "./hooks/useLyricScroll.js";
@@ -1789,7 +1789,7 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
     // budget is automatically accounted for, producing a position that is consistently
     // in sync with what the speakers are actually playing.
     //
-    // Formula: initialPos = startPos - phraseOffset + (Date.now() - recStart) / 1000
+    // Formula: initialPos = startPos - phraseOffset + elapsed × sync playback rate
     //   startPos      — position in the track (seconds) where the matched phrase lives
     //   phraseOffset  — estimate of how far into the recording window the phrase started
     //                   (so we subtract it to roll back to the beginning of the window)
@@ -1805,7 +1805,7 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
         recStart
       } = syncCalcRef.current;
       syncCalcRef.current = null;
-      initialPosRef.current = Math.max(0, startPos - phraseOffset + (Date.now() - recStart) / 1000);
+      initialPosRef.current = Math.max(0, startPos - phraseOffset + (Date.now() - recStart) / 1000 * SYNC_PLAYBACK_RATE);
     } else if (syncStartRef.current !== null) {
       // Sync is already running and no new timing data is available.
       // This happens when detectedSong is updated for a non-song reason (e.g. artwork
@@ -1815,7 +1815,7 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
       // NO Math.max(0) here: a negative position is the flip/track-gap park still
       // counting down. Clamping it to 0 was silently cancelling the needle-drop
       // window whenever detectedSong updated (e.g. artwork arriving) mid-park.
-      initialPosRef.current = initialPosRef.current + (Date.now() - syncStartRef.current) / 1000;
+      initialPosRef.current = initialPosRef.current + (Date.now() - syncStartRef.current) / 1000 * SYNC_PLAYBACK_RATE;
     }
     // Manual flip: park playbackTime at 0 while the user drops the needle.
     // We start the clock in the "past" so (Date.now() - syncStart)/1000 is
@@ -1844,7 +1844,7 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
     setIsPaused(false);
     clearInterval(syncIntervalRef.current);
     syncIntervalRef.current = setInterval(() => {
-      const t = initialPosRef.current + (Date.now() - syncStartRef.current) / 1000;
+      const t = initialPosRef.current + (Date.now() - syncStartRef.current) / 1000 * SYNC_PLAYBACK_RATE;
       // Clamp displayed time to 0 during the manual-flip pause window.
       setPlaybackTime(t < 0 ? 0 : t);
       const lrc = lyricsRef.current;
@@ -1887,7 +1887,7 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
       syncStartRef.current = Date.now();
       clearInterval(syncIntervalRef.current); // never leak a second interval
       syncIntervalRef.current = setInterval(() => {
-        const t = initialPosRef.current + (Date.now() - syncStartRef.current) / 1000;
+        const t = initialPosRef.current + (Date.now() - syncStartRef.current) / 1000 * SYNC_PLAYBACK_RATE;
         setPlaybackTime(t);
         const lrc = lyricsRef.current;
         if (!lrc.length || lrc[0].time == null) return;
@@ -1921,7 +1921,7 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
     // instead: it can't go below 0 — except while parked (negative position =
     // needle-drop countdown), where a nudge shifts the countdown itself.
     const running = !isPaused && syncStartRef.current != null;
-    const elapsedScaled = running ? (Date.now() - syncStartRef.current) / 1000 : 0;
+    const elapsedScaled = running ? (Date.now() - syncStartRef.current) / 1000 * SYNC_PLAYBACK_RATE : 0;
     const curPos = initialPosRef.current + elapsedScaled;
     const newPos = curPos < 0 ? curPos + s : Math.max(0, curPos + s);
     initialPosRef.current = newPos - elapsedScaled;
