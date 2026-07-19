@@ -6400,6 +6400,12 @@ Move closer to your speakers and try again.`);
         WebkitOverflowScrolling: "touch",
         touchAction: "pan-y",
         overscrollBehavior: "contain",
+        // Keep emphasis tied to the lyric's physical position instead of
+        // cross-fading two React rows when currentIndex changes. A single mask
+        // on the scroller lets each line brighten naturally as it rolls through
+        // the resting point and avoids per-row compositor churn in Chrome.
+        WebkitMaskImage: lyricsUnsynced ? "none" : "linear-gradient(to bottom, rgba(0,0,0,0.10) 0%, rgba(0,0,0,0.28) calc(50% - 150px), rgba(0,0,0,0.58) calc(50% - 92px), #000 calc(50% - 66px), #000 calc(50% - 30px), rgba(0,0,0,0.58) calc(50% + 4px), rgba(0,0,0,0.24) calc(50% + 105px), rgba(0,0,0,0.08) 100%)",
+        maskImage: lyricsUnsynced ? "none" : "linear-gradient(to bottom, rgba(0,0,0,0.10) 0%, rgba(0,0,0,0.28) calc(50% - 150px), rgba(0,0,0,0.58) calc(50% - 92px), #000 calc(50% - 66px), #000 calc(50% - 30px), rgba(0,0,0,0.58) calc(50% + 4px), rgba(0,0,0,0.24) calc(50% + 105px), rgba(0,0,0,0.08) 100%)",
         // Slide + resize in step with the 0.35s menu fade
         transition: isLandscape ? "margin-left 0.35s, width 0.35s" : "none"
       },
@@ -6464,22 +6470,14 @@ Move closer to your speakers and try again.`);
         const allLines = [...lyrics, ...creditLines];
         const pastLastLyric = currentIndex >= lyrics.length - 1 && lyrics.length > 0;
         const effectiveIndex = pastLastLyric ? lyrics.length - 1 + creditLines.reduce((best, cl, ci) => playbackTime >= cl.time ? ci + 1 : best, 0) : currentIndex;
-        const NEAR = 4;
         const iosPortrait = IS_IOS && !isLandscape;
         const previewFont = iosPortrait ? 16 : 18;
-        const aheadBase = isLandscape ? 0.55 : 0.32;
-        const behindBase = isLandscape ? 0.38 : 0.22;
         const activeGutterExpansion = isLandscape ? lyricAreaW < 500 ? 14 : 30 : 20;
         const renderedPreviewFontPx = previewFont * (isLandscape ? effectiveLyricFontScale : responsiveLyricFontScale);
         return allLines.map((line, i) => {
           const dist = i - effectiveIndex;
-          const adist = Math.abs(dist);
           const cur = dist === 0;
-          const near = adist <= NEAR;
           const isCredit = !!line.isCredit;
-          const aheadOpacity = Math.max(isLandscape ? 0.12 : 0.06, aheadBase - adist * (aheadBase / (NEAR + 1)));
-          const behindOpacity = Math.max(isLandscape ? 0.08 : 0.04, behindBase - adist * (behindBase / (NEAR + 1)));
-          const inactiveOpacity = dist > 0 ? aheadOpacity : behindOpacity;
           const handleLineClick = () => {
             if (menuWasOpenRef.current || controlsVisible) {
               menuWasOpenRef.current = false;
@@ -6501,10 +6499,8 @@ Move closer to your speakers and try again.`);
               fontSize: isCredit ? "13px" : Math.round(renderedPreviewFontPx) + "px",
               fontWeight: isCredit ? "400" : "600",
               color: "#ffffff",
-              opacity: cur ? isCredit ? 0.55 : 1 : inactiveOpacity,
+              opacity: isCredit ? 0.55 : 1,
               lineHeight: "1.4",
-              transition: adist <= NEAR + 1 ? "opacity 220ms ease-out" : "none",
-              willChange: near ? "opacity" : "auto",
               textShadow: "none",
               cursor: "default",
               letterSpacing: isCredit ? "0.2px" : "normal",

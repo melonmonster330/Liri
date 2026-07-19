@@ -5426,6 +5426,12 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
       WebkitOverflowScrolling: "touch",
       touchAction: "pan-y",
       overscrollBehavior: "contain",
+      // Keep emphasis tied to the lyric's physical position instead of
+      // cross-fading two React rows when currentIndex changes. A single mask
+      // on the scroller lets each line brighten naturally as it rolls through
+      // the resting point and avoids per-row compositor churn in Chrome.
+      WebkitMaskImage: lyricsUnsynced ? "none" : "linear-gradient(to bottom, rgba(0,0,0,0.10) 0%, rgba(0,0,0,0.28) calc(50% - 150px), rgba(0,0,0,0.58) calc(50% - 92px), #000 calc(50% - 66px), #000 calc(50% - 30px), rgba(0,0,0,0.58) calc(50% + 4px), rgba(0,0,0,0.24) calc(50% + 105px), rgba(0,0,0,0.08) 100%)",
+      maskImage: lyricsUnsynced ? "none" : "linear-gradient(to bottom, rgba(0,0,0,0.10) 0%, rgba(0,0,0,0.28) calc(50% - 150px), rgba(0,0,0,0.58) calc(50% - 92px), #000 calc(50% - 66px), #000 calc(50% - 30px), rgba(0,0,0,0.58) calc(50% + 4px), rgba(0,0,0,0.24) calc(50% + 105px), rgba(0,0,0,0.08) 100%)",
       // Slide + resize in step with the 0.35s menu fade
       transition: isLandscape ? "margin-left 0.35s, width 0.35s" : "none"
     },
@@ -5487,14 +5493,12 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
     const effectiveIndex = pastLastLyric
       ? lyrics.length - 1 + creditLines.reduce((best, cl, ci) => playbackTime >= cl.time ? ci + 1 : best, 0)
       : currentIndex;
-    // Render every line so the whole song is scrollable. The current line is
-    // brightest; far lines fade out but retain identical text geometry.
-    const NEAR = 4;
+    // Render every line so the whole song is scrollable. Brightness comes from
+    // the fixed scroller mask above, so changing the active index never fades,
+    // promotes, or rebuilds individual text layers.
     // iOS portrait runs a touch smaller so more lines fit on the phone screen.
     const iosPortrait = IS_IOS && !isLandscape;
     const previewFont = iosPortrait ? 16 : 18;
-    const aheadBase  = isLandscape ? 0.55 : 0.32;
-    const behindBase = isLandscape ? 0.38 : 0.22;
     // Let every lyric row borrow most of the panel's side padding. Applying
     // this consistently preserves wrapping as highlighting moves.
     const activeGutterExpansion = isLandscape
@@ -5504,13 +5508,8 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
       * (isLandscape ? effectiveLyricFontScale : responsiveLyricFontScale);
     return allLines.map((line, i) => {
       const dist = i - effectiveIndex;
-      const adist = Math.abs(dist);
       const cur = dist === 0;
-      const near = adist <= NEAR;
       const isCredit = !!line.isCredit;
-      const aheadOpacity  = Math.max(isLandscape ? 0.12 : 0.06, aheadBase  - adist * (aheadBase  / (NEAR + 1)));
-      const behindOpacity = Math.max(isLandscape ? 0.08 : 0.04, behindBase - adist * (behindBase / (NEAR + 1)));
-      const inactiveOpacity = dist > 0 ? aheadOpacity : behindOpacity;
       const handleLineClick = () => {
         // A tap while the side menu is open just dismisses it; never seeks.
         if (menuWasOpenRef.current || controlsVisible) {
@@ -5535,10 +5534,8 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
             : Math.round(renderedPreviewFontPx) + "px",
           fontWeight: isCredit ? "400" : "600",
           color: "#ffffff",
-          opacity: cur ? (isCredit ? 0.55 : 1) : inactiveOpacity,
+          opacity: isCredit ? 0.55 : 1,
           lineHeight: "1.4",
-          transition: adist <= NEAR + 1 ? "opacity 220ms ease-out" : "none",
-          willChange: near ? "opacity" : "auto",
           textShadow: "none",
           cursor: "default",
           letterSpacing: isCredit ? "0.2px" : "normal",
