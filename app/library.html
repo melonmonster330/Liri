@@ -937,14 +937,39 @@
         }
       }, []);
       const [searching, setSearching]     = useState(false);
-      // Queue: [{cid, album, status: "pending"|"adding"|"done"|"error", error?}]
-      const [addQueue, setAddQueue]       = useState([]);
+      // Queue survives page/tab navigation. Any item that was "adding" when
+      // this page unloaded is safely retried as pending on return; the API is
+      // idempotent for an album already present in the user's library.
+      // [{cid, userId, album, status: "pending"|"adding"|"done"|"error", error?}]
+      const [addQueue, setAddQueue]       = useState(() => {
+        try {
+          const saved = JSON.parse(localStorage.getItem("liri_add_queue") || "[]");
+          return Array.isArray(saved)
+            ? saved.map(q => q?.status === "adding" ? { ...q, status: "pending" } : q).filter(Boolean)
+            : [];
+        } catch { return []; }
+      });
       const [queueBusy, setQueueBusy]     = useState(false);
       const [removing, setRemoving]       = useState(null);
       const [undoAlbum, setUndoAlbum]     = useState(null); // { album, timer } for undo toast
       const [everAddedIds, setEverAddedIds] = useState(new Set()); // collectionIds ever added by user
       const searchTimer                   = useRef(null);
       const sessionTokenRef               = useRef(null);
+
+      // Persist before navigation can tear this page down. This also lets an
+      // add whose keepalive response was lost be reconciled/retried on return.
+      useEffect(() => {
+        try { localStorage.setItem("liri_add_queue", JSON.stringify(addQueue)); } catch {}
+      }, [addQueue]);
+
+      // Never expose or process another account's queued records on a shared
+      // device. Older queue entries without userId belong to the active user.
+      useEffect(() => {
+        if (!user?.id) return;
+        setAddQueue(prev => prev
+          .filter(q => !q.userId || q.userId === user.id)
+          .map(q => q.userId ? q : { ...q, userId: user.id }));
+      }, [user?.id]);
 
       // ── Subscription ──
       const [subscription, setSubscription] = useState(null); // { tier, status, albumCount, albumLimit }
@@ -1173,27 +1198,39 @@
       const addAlbum = (album) => {
         if (!user) return;
         const cid = String(album.collectionId);
+        const entry = {
+          cid,
+          userId: user.id,
+          album: {
+            album_name: album.collectionName,
+            artist_name: album.artistName,
+            artwork_url: album.artworkUrl100?.replace("100x100bb", "600x600bb") || album.artworkUrl100 || null,
+            itunes_collection_id: cid,
+            _source: album._source,
+            collectionId: album.collectionId,
+          },
+          status: "pending",
+        };
+        // Write synchronously in the tap handler. React may not render the
+        // queued state before a fast tab/page navigation destroys this page.
+        try {
+          const saved = JSON.parse(localStorage.getItem("liri_add_queue") || "[]");
+          const queue = Array.isArray(saved) ? saved : [];
+          if (!queue.some(q => q.cid === cid && q.userId === user.id)) {
+            localStorage.setItem("liri_add_queue", JSON.stringify([...queue, entry]));
+          }
+        } catch {}
         setAddQueue(prev => {
           if (prev.some(q => q.cid === cid)) return prev; // already queued
-          return [...prev, {
-            cid,
-            album: {
-              album_name: album.collectionName,
-              artist_name: album.artistName,
-              artwork_url: album.artworkUrl100?.replace("100x100bb", "600x600bb") || album.artworkUrl100 || null,
-              itunes_collection_id: cid,
-              _source: album._source,
-              collectionId: album.collectionId,
-            },
-            status: "pending",
-          }];
+          return [...prev, entry];
         });
       };
 
       // ── Queue processor — works through pending items one at a time ──
       useEffect(() => {
         if (queueBusy) return;
-        const next = addQueue.find(q => q.status === "pending");
+        if (!user?.id) return;
+        const next = addQueue.find(q => q.status === "pending" && q.userId === user.id);
         if (!next) return;
         setQueueBusy(true);
         setAddQueue(prev => prev.map(q => q.cid === next.cid ? { ...q, status: "adding" } : q));
