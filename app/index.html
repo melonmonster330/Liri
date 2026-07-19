@@ -35,6 +35,8 @@
   <script src="vendor/react-dom.min.js"></script>
   <script src="vendor/supabase.min.js"></script>
   <script src="vendor/tabbar.js"></script>
-  <script src="vendor/app.js"></script>
+  <!-- Bump this release token whenever the app bundle changes so WKWebView
+       cannot reuse stale JavaScript after an Xcode rebuild. -->
+  <script src="vendor/app.js?v=ios-release-testing-3"></script>
 </body>
 </html>

@@ -171,7 +171,7 @@ function Liri() {
   const lyricAreaLeft = menuOpen
     ? Math.max(railW + 24, Math.round((winW - lyricAreaW) / 2))
     : Math.round((winW - lyricAreaW) / 2);
-  const lyricFontScale = menuOpen
+  const layoutLyricFontScale = menuOpen
     ? 1.1 * Math.max(0.72, Math.min(1, lyricAreaW / 640))
     : 1.25; // menu away → a touch larger
   const [showBugReport, setShowBugReport] = useState(false);
@@ -320,6 +320,13 @@ function Liri() {
   });
   const scrollSpeedRef = useRef(scrollSpeed); // mirror for use inside the rAF loop
 
+  // ── Lyric font size (shared by web + iOS, persisted on this device) ──
+  const [lyricFontScale, setLyricFontScale] = useState(() => {
+    const v = parseFloat(localStorage.getItem("liri_lyric_font_scale"));
+    return isNaN(v) ? 1 : Math.min(1.4, Math.max(0.8, v));
+  });
+  const effectiveLyricFontScale = lyricFontScale * layoutLyricFontScale;
+
   // ── Flip notifications ──
   const [flipSound, setFlipSound] = useState(() => localStorage.getItem("liri_flip_sound") !== "false");
   const [flipNotify, setFlipNotify] = useState(() => localStorage.getItem("liri_flip_notify") === "true");
@@ -418,6 +425,10 @@ function Liri() {
     scrollSpeedRef.current = scrollSpeed;
     try { localStorage.setItem("liri_scroll_speed", String(scrollSpeed)); } catch {}
   }, [scrollSpeed]);
+
+  useEffect(() => {
+    try { localStorage.setItem("liri_lyric_font_scale", String(lyricFontScale)); } catch {}
+  }, [lyricFontScale]);
 
   // ── Per-album side data (localStorage, keyed by iTunes collectionId) ──
   const getAlbumSideData = cid => {
@@ -1916,6 +1927,9 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
   // ── Unsynced auto-scroll speed control (replaces the old sync-rate setting) ──
   const adjustScrollSpeed = delta => {
     setScrollSpeed(s => Math.round(Math.min(4, Math.max(0.25, s + delta)) * 100) / 100);
+  };
+  const adjustLyricFontSize = delta => {
+    setLyricFontScale(s => Math.round(Math.min(1.4, Math.max(0.8, s + delta)) * 10) / 10);
   };
   const handleNudge = s => {
     nudge(s);
@@ -5270,7 +5284,7 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
       style: {
         textAlign: "center",
         padding: "7px 0",
-        fontSize: isLandscape ? Math.round(20 * lyricFontScale) + "px" : "20px",
+        fontSize: Math.round(20 * (isLandscape ? effectiveLyricFontScale : lyricFontScale)) + "px",
         fontWeight: "500",
         color: "rgba(255,255,255,0.78)",
         lineHeight: "1.45"
@@ -5333,7 +5347,13 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
           padding: near ? "6px 0" : "3px 0",
           fontSize: isCredit
             ? (cur ? "15px" : adist <= 1 ? "13px" : "11px")
-            : (cur ? (isLandscape ? Math.round(curFontBase * lyricFontScale) + "px" : curFontBase + "px") : adist === 1 ? (isLandscape ? Math.round(near1Font * lyricFontScale) + "px" : near1Font + "px") : near ? (isLandscape ? Math.round(nearFont * lyricFontScale) + "px" : nearFont + "px") : (isLandscape ? Math.round(farFont * lyricFontScale) + "px" : farFont + "px")),
+            : (cur
+              ? Math.round(curFontBase * (isLandscape ? effectiveLyricFontScale : lyricFontScale)) + "px"
+              : adist === 1
+                ? Math.round(near1Font * (isLandscape ? effectiveLyricFontScale : lyricFontScale)) + "px"
+                : near
+                  ? Math.round(nearFont * (isLandscape ? effectiveLyricFontScale : lyricFontScale)) + "px"
+                  : Math.round(farFont * (isLandscape ? effectiveLyricFontScale : lyricFontScale)) + "px"),
           fontWeight: cur && !isCredit ? "700" : "400",
           color: cur
             ? (isCredit ? "rgba(255,255,255,0.55)" : "#ffffff")
@@ -5589,7 +5609,52 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
       gap: "6px",
       marginBottom: "8px"
     }
-  }, userScrolling && /*#__PURE__*/React.createElement("button", {
+  }, /*#__PURE__*/React.createElement("div", {
+    style: {
+      width: "100%",
+      display: "flex",
+      alignItems: "center",
+      justifyContent: "center",
+      gap: "8px",
+      marginBottom: "2px"
+    }
+  }, /*#__PURE__*/React.createElement("button", {
+    onClick: () => adjustLyricFontSize(-0.1),
+    disabled: lyricFontScale <= 0.8,
+    "aria-label": "Decrease lyric font size",
+    style: {
+      width: "38px",
+      height: "32px",
+      background: "rgba(255,255,255,0.07)",
+      border: "1px solid rgba(255,255,255,0.15)",
+      borderRadius: "16px",
+      color: "rgba(255,255,255,0.7)",
+      fontSize: "13px",
+      fontWeight: "700",
+      fontFamily: "inherit",
+      cursor: lyricFontScale <= 0.8 ? "default" : "pointer",
+      opacity: lyricFontScale <= 0.8 ? 0.35 : 1
+    }
+  }, "A−"), /*#__PURE__*/React.createElement("span", {
+    style: { minWidth: "48px", textAlign: "center", color: "rgba(255,255,255,0.45)", fontSize: "11px", fontWeight: "600" }
+  }, Math.round(lyricFontScale * 100) + "%"), /*#__PURE__*/React.createElement("button", {
+    onClick: () => adjustLyricFontSize(0.1),
+    disabled: lyricFontScale >= 1.4,
+    "aria-label": "Increase lyric font size",
+    style: {
+      width: "38px",
+      height: "32px",
+      background: "rgba(255,255,255,0.07)",
+      border: "1px solid rgba(255,255,255,0.15)",
+      borderRadius: "16px",
+      color: "rgba(255,255,255,0.7)",
+      fontSize: "16px",
+      fontWeight: "700",
+      fontFamily: "inherit",
+      cursor: lyricFontScale >= 1.4 ? "default" : "pointer",
+      opacity: lyricFontScale >= 1.4 ? 0.35 : 1
+    }
+  }, "A+")), userScrolling && /*#__PURE__*/React.createElement("button", {
     onClick: refollow,
     style: {
       background: "rgba(212,168,70,0.12)",
