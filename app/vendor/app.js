@@ -476,9 +476,9 @@
       centeredLineRef.current = line;
       lastActiveIndexRef.current = currentIndex;
       if (isEnteringFromIntro || isNewVisibleLine) rollActiveLineToCenter();
-      else centerActiveLine();
-      return () => cancelAnimationFrame(rollRafRef.current);
+      else if (line && (!previousLine || !previousLine.isConnected)) centerActiveLine();
     }, [currentIndex, mode, lyricsUnsynced, lyrics.length, Math.floor(playbackTime)]);
+    useEffect3(() => () => cancelAnimationFrame(rollRafRef.current), []);
     useEffect3(() => {
       if (!isLandscape || mode !== "syncing" || lyricsUnsynced) return;
       let raf, start;

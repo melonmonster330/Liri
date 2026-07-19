@@ -93,9 +93,15 @@ export function useLyricScroll({
     centeredLineRef.current = line;
     lastActiveIndexRef.current = currentIndex;
     if (isEnteringFromIntro || isNewVisibleLine) rollActiveLineToCenter();
-    else centerActiveLine();
-    return () => cancelAnimationFrame(rollRafRef.current);
+    // Only place the line immediately on initial entry. Playback-time ticks
+    // can rerun this effect for the credit rows; doing another instant center
+    // for the same DOM line used to interrupt an active roll with a flash.
+    else if (line && (!previousLine || !previousLine.isConnected)) centerActiveLine();
   }, [currentIndex, mode, lyricsUnsynced, lyrics.length, Math.floor(playbackTime)]);
+
+  // New rolls cancel the previous RAF themselves. Cancel here only when the
+  // hook actually unmounts, not on routine playback dependency updates.
+  useEffect(() => () => cancelAnimationFrame(rollRafRef.current), []);
 
   // ── Keep the current line centered while the menu fades in/out (landscape) ──
   // Hiding/showing the menu animates the lyrics column's width and font size
