@@ -5475,9 +5475,28 @@ Move closer to your speakers and try again.`);
     }, (() => {
       const _wt = turntableTracksRef.current;
       if (!_wt.length) return null;
-      const _groups = getSideGroups(_wt, vinylSidesRef.current, vinylDbRelease?.vinyl_tracks);
+      const _groups = getSideGroups(_wt, vinylSidesRef.current, vinylDbRelease?.vinyl_tracks, reverseMode);
       const _noSideData = !hasSideData(vinylSidesRef.current, vinylDbRelease?.vinyl_tracks);
+      const _lastSide = getLastSideLetter();
       return [
+        _groups.length > 1 && /* @__PURE__ */ React.createElement("button", {
+          key: "play-backwards",
+          onClick: toggleReverseMode,
+          style: {
+            width: "100%",
+            background: reverseMode ? "rgba(212,168,70,0.14)" : "rgba(255,255,255,0.03)",
+            border: reverseMode ? "1px solid rgba(212,168,70,0.45)" : "1px solid rgba(255,255,255,0.08)",
+            borderRadius: "12px",
+            padding: "12px 14px",
+            color: reverseMode ? "rgba(212,168,70,0.95)" : "rgba(255,255,255,0.55)",
+            fontSize: "12px",
+            fontWeight: "600",
+            letterSpacing: "0.3px",
+            cursor: "pointer",
+            fontFamily: "inherit",
+            textAlign: "center"
+          }
+        }, reverseMode ? `\u21A9 Playing backwards${_lastSide ? ` \u2014 from Side ${_lastSide}` : ""}` : `\u21C4 Play backwards${_lastSide ? ` \u2014 start at Side ${_lastSide}` : ""}`),
         _noSideData && /* @__PURE__ */ React.createElement("div", { key: "no-side-notice", style: { fontSize: 11, color: "rgba(255,180,0,0.75)", padding: "7px 12px", background: "rgba(255,180,0,0.07)", borderRadius: 8, border: "1px solid rgba(255,180,0,0.2)", marginBottom: 4 } }, "\u26A0\uFE0E Side data pending \u2014 track grouping is estimated"),
         ..._groups.map(({ side, tracks }) => /* @__PURE__ */ React.createElement(
           "div",
@@ -7795,38 +7814,7 @@ Move closer to your speakers and try again.`);
                 )
               ))
             )
-          )),
-          // ── "Play backwards" toggle — reverse side order (last side first) ──
-          // Only meaningful with 2+ sides. Sits at the very bottom of the picker.
-          (isWeb || showTrackList) && groups.length > 1 && (() => {
-            const lastSide = getLastSideLetter();
-            return /* @__PURE__ */ React.createElement(
-              "button",
-              {
-                onClick: toggleReverseMode,
-                style: {
-                  marginTop: "14px",
-                  width: "100%",
-                  background: reverseMode ? "rgba(212,168,70,0.14)" : "rgba(255,255,255,0.03)",
-                  border: reverseMode ? "1px solid rgba(212,168,70,0.45)" : "1px solid rgba(255,255,255,0.08)",
-                  borderRadius: "12px",
-                  padding: "11px 14px",
-                  color: reverseMode ? "rgba(212,168,70,0.95)" : "rgba(255,255,255,0.55)",
-                  fontSize: "12px",
-                  fontWeight: "600",
-                  letterSpacing: "0.3px",
-                  cursor: "pointer",
-                  fontFamily: "inherit",
-                  textAlign: "center",
-                  display: "flex",
-                  alignItems: "center",
-                  justifyContent: "center",
-                  gap: "8px"
-                }
-              },
-              reverseMode ? `\u21A9 Playing backwards${lastSide ? ` \u2014 from Side ${lastSide}` : ""}` : `\u21C4 Play backwards${lastSide ? ` \u2014 start at Side ${lastSide}` : ""}`
-            );
-          })()
+          ))
         );
       })(),
       /* @__PURE__ */ React.createElement("div", {
