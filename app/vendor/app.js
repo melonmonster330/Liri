@@ -426,7 +426,8 @@
     creditsRef,
     scrollSpeedRef,
     initialPosRef,
-    syncStartRef
+    syncStartRef,
+    onSeek
   }) {
     const lyricsUnsynced = lyrics.length > 0 && lyrics[0].time == null;
     const lyricsScrollRef = useRef2(null);
@@ -475,6 +476,7 @@
     const seekToLine = (i) => {
       const targetTime = lyricsRef.current[i]?.time;
       if (targetTime == null) return;
+      onSeek?.(targetTime);
       initialPosRef.current = targetTime;
       syncStartRef.current = Date.now();
       setCurrentIndex(i);
@@ -2442,7 +2444,14 @@
       creditsRef,
       scrollSpeedRef,
       initialPosRef,
-      syncStartRef
+      syncStartRef,
+      onSeek: () => {
+        clearTimeout(sideEndTimerRef.current);
+        sideEndTimerRef.current = null;
+        cancelFlipChimes();
+        autoAdvanceFiredRef.current = false;
+        setShouldAdvanceTrack(false);
+      }
     });
     useEffect7(() => {
       if (mode !== "syncing") return;
@@ -3140,8 +3149,6 @@ Move closer to your speakers and try again.`);
         setCurrentTrackIndex(resolvedIdx);
       }
       const nextIdx = resolvedIdx + 1;
-      clearInterval(syncIntervalRef.current);
-      setPlaybackTime(0);
       const dbRelease = vinylDbReleaseRef.current;
       const effectiveTps = albumTpsRef.current > 0 ? albumTpsRef.current : 0;
       const sideEnds = getSideEndsFromSidesMap(tracks, vinylSidesRef.current) ?? (dbRelease?.vinyl_tracks?.length > 0 ? getDbSideEndIndices(tracks, dbRelease.vinyl_tracks) : getSideEndIndices(tracks, effectiveTps));
@@ -3152,6 +3159,7 @@ Move closer to your speakers and try again.`);
         sideEndTimerRef.current = setTimeout(() => {
           sideEndTimerRef.current = null;
           if (turntableTracksRef.current.length > 0 && turntableMatchedIdxRef.current !== scheduledIdx) return;
+          clearInterval(syncIntervalRef.current);
           setMode("side-end");
         }, 4e3);
       };
@@ -3183,6 +3191,8 @@ Move closer to your speakers and try again.`);
         showSideEndIfStillCurrent();
         return;
       }
+      clearInterval(syncIntervalRef.current);
+      setPlaybackTime(0);
       const next = tracks[nextIdx];
       const nextTitle = next.trackName;
       const nextArtist = next.artistName || detectedSong?.artist || "";

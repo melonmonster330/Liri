@@ -1353,6 +1353,15 @@ function Liri() {
     currentLineRef, creditsRef,
     scrollSpeedRef,
     initialPosRef, syncStartRef,
+    onSeek: () => {
+      // Seeking to a lyric means the user is continuing this song. Undo any
+      // end-of-side decision that was waiting through the four-second linger.
+      clearTimeout(sideEndTimerRef.current);
+      sideEndTimerRef.current = null;
+      cancelFlipChimes();
+      autoAdvanceFiredRef.current = false;
+      setShouldAdvanceTrack(false);
+    },
   });
 
   // ── Vinyl auto-advance: trigger when song nears its end ──
@@ -2226,12 +2235,6 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
     }
     const nextIdx = resolvedIdx + 1;
 
-    // Stop the running sync interval immediately so stale playbackTime values
-    // can't trigger a false auto-advance on the incoming track. Reset the
-    // display to 0 so the UI reflects the new track from the start.
-    clearInterval(syncIntervalRef.current);
-    setPlaybackTime(0);
-
     // Priority: vinyl_sides (same source as library.html) → vinyl_tracks (Discogs title match) → heuristic
     const dbRelease = vinylDbReleaseRef.current;
     const effectiveTps = albumTpsRef.current > 0 ? albumTpsRef.current : 0;
@@ -2246,6 +2249,7 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
         // A track pick/resync may have happened during the four-second linger.
         if (turntableTracksRef.current.length > 0
             && turntableMatchedIdxRef.current !== scheduledIdx) return;
+        clearInterval(syncIntervalRef.current);
         setMode("side-end");
       }, 4000);
     };
@@ -2282,6 +2286,10 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
       showSideEndIfStillCurrent();
       return;
     }
+    // This is a real same-side track advance. Stop the outgoing clock only now,
+    // after giving side-ending songs a cancellable seek-back window.
+    clearInterval(syncIntervalRef.current);
+    setPlaybackTime(0);
     const next = tracks[nextIdx];
     const nextTitle = next.trackName;
     const nextArtist = next.artistName || detectedSong?.artist || "";

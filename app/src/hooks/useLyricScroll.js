@@ -22,6 +22,7 @@ export function useLyricScroll({
   currentLineRef, creditsRef,
   scrollSpeedRef,
   initialPosRef, syncStartRef,
+  onSeek,
 }) {
   // ── Unsynced lyrics: plain text with time:null — flat auto-scroll view ──
   const lyricsUnsynced = lyrics.length > 0 && lyrics[0].time == null;
@@ -88,6 +89,7 @@ export function useLyricScroll({
   const seekToLine = i => {
     const targetTime = lyricsRef.current[i]?.time;
     if (targetTime == null) return;
+    onSeek?.(targetTime);
     initialPosRef.current = targetTime;
     syncStartRef.current = Date.now();
     setCurrentIndex(i);
