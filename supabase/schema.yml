@@ -1,5 +1,5 @@
 # Liri Database Schema
-# Last updated: 2026-03-22
+# Last updated: 2026-07-18
 #
 # Rule: ALL external API calls happen at add-vinyl time only.
 #       Turntable playback reads from these tables exclusively — no live API calls.
@@ -182,6 +182,80 @@ tables:
       is_active: boolean DEFAULT true
       updated_at: timestamptz DEFAULT now()
 
+  account_devices:
+    purpose: Signed-in Liri installations available for independent playback
+             and account-owned session handoff.
+    written_by: device clients through register_account_device and heartbeat_account_device RPCs
+    read_by: signed-in device clients
+    rls: users read only their own rows · mutations through validated RPCs only
+    key_columns:
+      id: uuid PRIMARY KEY
+      user_id: uuid NOT NULL → auth.users (CASCADE delete)
+      installation_id: text NOT NULL — stable ID stored by the app installation
+      name: text NOT NULL — user-visible name such as “Living Room TV”
+      platform: text NOT NULL — web | ios | samsung_tv | future clients
+      model: text
+      app_version: text
+      last_seen_at: timestamptz NOT NULL
+      revoked_at: timestamptz
+    constraints:
+      - UNIQUE (user_id, installation_id)
+
+  listening_sessions:
+    purpose: The account's authoritative live lyric session and clock anchor.
+             MVP allows one live session per account.
+    written_by: owner device through publish_listening_session and handoff RPCs
+    read_by: all signed-in devices belonging to the user
+    rls: users read only their own row · generation-fenced mutations through RPCs
+    key_columns:
+      id: uuid PRIMARY KEY
+      user_id: uuid NOT NULL UNIQUE → auth.users (CASCADE delete)
+      owner_device_id: uuid NOT NULL → account_devices
+      owner_generation: bigint NOT NULL — incremented atomically on handoff
+      status: text — playing | paused | ended
+      song: jsonb
+      lyrics: jsonb
+      album_context: jsonb
+      track_index: integer
+      position_seconds: numeric NOT NULL
+      position_recorded_at: timestamptz NOT NULL
+      updated_at: timestamptz NOT NULL
+
+  device_commands:
+    purpose: Durable commands sent to the current clock owner, including the
+             transactional take_ownership command created during handoff.
+    written_by: queue/transfer RPCs
+    read_by: the user's signed-in devices; target device acknowledges through RPC
+    rls: users read only their own rows · mutations through validated RPCs only
+    key_columns:
+      id: uuid PRIMARY KEY
+      session_id: uuid NOT NULL → listening_sessions (CASCADE delete)
+      user_id: uuid NOT NULL → auth.users (CASCADE delete)
+      source_device_id: uuid NOT NULL → account_devices
+      target_device_id: uuid NOT NULL → account_devices
+      owner_generation: bigint NOT NULL
+      kind: text — take_ownership | pause | resume | seek | select_track | end
+      payload: jsonb
+      created_at: timestamptz NOT NULL
+      acknowledged_at: timestamptz
+
+  device_activation_codes:
+    purpose: Optional short-lived TV activation convenience. Not required for
+             standalone TV email/password sign-in and not client-readable.
+    written_by: future authenticated server endpoints only
+    read_by: future authenticated server endpoints only
+    rls: enabled with no client policies
+    key_columns:
+      id: uuid PRIMARY KEY
+      installation_id: text NOT NULL
+      code_hash: text NOT NULL UNIQUE
+      requested_device_name: text
+      requested_platform: text
+      approved_user_id: uuid → auth.users (CASCADE delete)
+      expires_at: timestamptz NOT NULL
+      approved_at: timestamptz
+      consumed_at: timestamptz
+
 # ── RPCs ──────────────────────────────────────────────────────────────────────
 
 rpcs:
@@ -192,6 +266,26 @@ rpcs:
     returns: TABLE(collection_id text, play_count bigint)
     reads_from: listening_events
     called_by: vinyl.html
+
+  register_account_device:
+    purpose: Registers or refreshes one non-revoked installation for auth.uid().
+
+  heartbeat_account_device:
+    purpose: Refreshes last_seen_at for an owned, non-revoked device.
+
+  publish_listening_session:
+    purpose: Creates a session or updates its clock/content only when the caller
+             presents the current owner device and owner generation.
+
+  transfer_listening_session:
+    purpose: Atomically increments owner generation, transfers ownership, and
+             queues the target's take_ownership command.
+
+  queue_device_command:
+    purpose: Sends a durable control command to the current owner device.
+
+  acknowledge_device_command:
+    purpose: Lets only the owned target device acknowledge its command.
 
 # ── Removed tables ────────────────────────────────────────────────────────────
 

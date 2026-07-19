@@ -12,6 +12,7 @@ import { usePayments } from "./hooks/usePayments.js";
 import { useNowPlaying } from "./hooks/useNowPlaying.js";
 import { useLyricScroll } from "./hooks/useLyricScroll.js";
 import { useCast } from "./hooks/useCast.js";
+import { useDeviceSession } from "./hooks/useDeviceSession.js";
 import { startWhisperChunks } from "../base/lib/whisper.js";
 import { getSideGroups, hasSideData } from "../base/lib/sides.js";
 import { LYRIC_SITES, saveUserLyrics, buildSideRows, saveUserSides } from "../base/lib/usermeta.js";
@@ -108,6 +109,15 @@ function CastGlyph({ connected = false }) {
   /*#__PURE__*/React.createElement("path", { d: "M8 4h10a2 2 0 0 1 2 2v12" }));
 }
 
+function DeviceGlyph({ active = false }) {
+  return /*#__PURE__*/React.createElement("svg", {
+    width: "18", height: "18", viewBox: "0 0 24 24", fill: "none",
+    stroke: active ? "#d4a846" : "currentColor", strokeWidth: "1.7",
+    strokeLinecap: "round", strokeLinejoin: "round", "aria-hidden": "true"
+  }, /*#__PURE__*/React.createElement("rect", { x: "3", y: "4", width: "18", height: "12", rx: "2" }),
+  /*#__PURE__*/React.createElement("path", { d: "M8 20h8M12 16v4" }));
+}
+
 function Liri() {
   // ── Core state ──
   const [mode, setMode] = useState("idle");
@@ -125,6 +135,9 @@ function Liri() {
 
   // ── UI panels ──
   const [showSettings, setShowSettings] = useState(false);
+  const [showDevices, setShowDevices] = useState(false);
+  const [deviceActionBusy, setDeviceActionBusy] = useState(null);
+  const [deviceActionError, setDeviceActionError] = useState(null);
   const [isWide, setIsWide] = useState(() => window.innerWidth >= 768);
   useEffect(() => {
     const onResize = () => setIsWide(window.innerWidth >= 768);
@@ -283,6 +296,10 @@ function Liri() {
   const [isPaused, setIsPaused] = useState(false);
   const [showCast, setShowCast] = useState(false);
   const cast = useCast({ mode, song: detectedSong, lyrics, playbackTime, isPaused });
+  // Registers this installation as an independent account device and observes
+  // the account's live session. Publishing/transfer UI is added in the next
+  // slice; keeping it separate now avoids changing the existing lyric clock.
+  const deviceSession = useDeviceSession({ sb, user, appVersion: APP_VERSION });
   const [kbToast, setKbToast] = useState(null);
   const kbToastTimerRef = useRef(null);
   const [shouldAdvanceTrack, setShouldAdvanceTrack] = useState(false);
@@ -328,6 +345,10 @@ function Liri() {
   // ── Nudge expand ──
   const [nudgeMenu, setNudgeMenu] = useState(null); // null | "left" | "right"
   const nudgeMenuTimerRef = useRef(null);
+  const handoffSnapshotRef = useRef(null);
+  const adoptedOwnershipRef = useRef(null);
+  const pauseTransferredSessionRef = useRef(false);
+  const processingCommandsRef = useRef(new Set());
 
   // ── Onboarding ──
   const [showOnboarding, setShowOnboarding] = useState(false); // shown after login/signup (see effect below)
@@ -1814,6 +1835,13 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
     // pause toggle stays consistent after skipping a track while paused.
     setIsPaused(false);
     clearInterval(syncIntervalRef.current);
+    if (pauseTransferredSessionRef.current) {
+      pauseTransferredSessionRef.current = false;
+      syncStartRef.current = null;
+      setPlaybackTime(Math.max(0, initialPosRef.current));
+      setIsPaused(true);
+      return;
+    }
     syncIntervalRef.current = setInterval(() => {
       const t = initialPosRef.current + (Date.now() - syncStartRef.current) / 1000;
       // Clamp displayed time to 0 during the manual-flip pause window.
@@ -1851,6 +1879,11 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
   });
 
   const togglePause = () => {
+    if (deviceSession.liveSession && deviceSession.device && !deviceSession.isOwner) {
+      const nextCommand = deviceSession.liveSession.status === "paused" ? "resume" : "pause";
+      deviceSession.sendCommand(nextCommand).catch(err => setDeviceActionError(err.message));
+      return;
+    }
     if (isPaused) {
       // Resume: restart the clock from the paused anchor. initialPosRef was
       // captured at pause time and nudges made while paused shifted it, so it
@@ -1884,6 +1917,17 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
     }
   };
   const nudge = s => {
+    if (deviceSession.liveSession && deviceSession.device && !deviceSession.isOwner) {
+      const remote = deviceSession.liveSession;
+      const recordedAt = new Date(remote.position_recorded_at).getTime();
+      const elapsed = remote.status === "playing" && Number.isFinite(recordedAt)
+        ? Math.max(0, (Date.now() - recordedAt) / 1000)
+        : 0;
+      const position = Math.max(0, Number(remote.position_seconds || 0) + elapsed + s);
+      deviceSession.sendCommand("seek", { position_seconds: position })
+        .catch(err => setDeviceActionError(err.message));
+      return;
+    }
     userNudgeRef.current += s;
     // Apply the nudge to the playback POSITION, not the raw anchor. The anchor
     // (initialPosRef) is ~0 at the start of auto-advanced tracks, so clamping
@@ -2610,6 +2654,149 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
     }
   };
 
+  // ── Account device handoff ───────────────────────────────────────────────
+  // Keep one complete, portable snapshot ready for the current clock owner to
+  // persist. The receiver can reconstruct the lyric experience without having
+  // access to the device that originally recognized the record.
+  handoffSnapshotRef.current = detectedSong ? {
+    status: isPaused ? "paused" : "playing",
+    song: detectedSong,
+    lyrics,
+    albumContext: {
+      albumTracks,
+      collectionId: albumCollectionId,
+      identifiedBy,
+      songDuration,
+      turntableMatchedIdx: turntableMatchedIdxRef.current,
+    },
+    trackIndex: currentTrackIndex,
+    positionSeconds: Math.max(0, playbackTime),
+    positionRecordedAt: new Date().toISOString(),
+  } : null;
+
+  useEffect(() => {
+    if (!user || !deviceSession.device || mode !== "syncing" || !handoffSnapshotRef.current) return;
+    if (deviceSession.liveSession && !deviceSession.isOwner) return;
+
+    let active = true;
+    const publish = () => {
+      if (!active || !handoffSnapshotRef.current) return;
+      deviceSession.publishSession(handoffSnapshotRef.current)
+        .catch(err => active && setDeviceActionError(err.message));
+    };
+    publish();
+    const timer = setInterval(publish, 4000);
+    return () => { active = false; clearInterval(timer); };
+  }, [user, mode, deviceSession.device?.id, deviceSession.isOwner, deviceSession.liveSession?.id]);
+
+  // A newly selected owner reconstructs the session from the database snapshot.
+  // The generation key ensures ordinary clock-anchor updates never restart it.
+  useEffect(() => {
+    const session = deviceSession.liveSession;
+    if (!session || !deviceSession.device || session.owner_device_id !== deviceSession.device.id) return;
+    const ownershipKey = `${session.id}:${session.owner_generation}`;
+    if (adoptedOwnershipRef.current === ownershipKey) return;
+    adoptedOwnershipRef.current = ownershipKey;
+    if (!session.song?.title) return;
+
+    const recordedAt = new Date(session.position_recorded_at).getTime();
+    const elapsed = session.status === "playing" && Number.isFinite(recordedAt)
+      ? Math.max(0, (Date.now() - recordedAt) / 1000)
+      : 0;
+    const position = Math.max(0, Number(session.position_seconds || 0) + elapsed);
+    const context = session.album_context || {};
+    const transferredLyrics = Array.isArray(session.lyrics) ? session.lyrics : [];
+    const transferredTracks = Array.isArray(context.albumTracks) ? context.albumTracks : [];
+
+    clearInterval(syncIntervalRef.current);
+    setDetectedSong(session.song);
+    setLyrics(transferredLyrics);
+    lyricsRef.current = transferredLyrics;
+    setAlbumTracks(transferredTracks);
+    albumTracksRef.current = transferredTracks;
+    setCurrentTrackIndex(session.track_index ?? -1);
+    currentTrackIndexRef.current = session.track_index ?? -1;
+    setSongDuration(context.songDuration ?? null);
+    setIdentifiedBy(context.identifiedBy || "device_handoff");
+    setAlbumCollectionId(context.collectionId || null);
+    albumCollectionIdRef.current = context.collectionId || null;
+    turntableMatchedIdxRef.current = context.turntableMatchedIdx ?? session.track_index ?? -1;
+    pauseTransferredSessionRef.current = session.status === "paused";
+    syncCalcRef.current = { startPos: position, phraseOffset: 0, recStart: Date.now() };
+    setDeviceActionError(null);
+    setMode("confirmed");
+  }, [deviceSession.liveSession?.id, deviceSession.liveSession?.owner_device_id, deviceSession.liveSession?.owner_generation, deviceSession.device?.id]);
+
+  // Once another device owns the session, this client is a remote—not a second
+  // playback engine. Freeze its interval immediately to prevent duplicate track
+  // advances, chimes, and notifications. Realtime anchors keep the displayed
+  // position fresh while controls are forwarded to the actual owner.
+  useEffect(() => {
+    const session = deviceSession.liveSession;
+    if (!session || !deviceSession.device || session.owner_device_id === deviceSession.device.id) return;
+    const recordedAt = new Date(session.position_recorded_at).getTime();
+    const elapsed = session.status === "playing" && Number.isFinite(recordedAt)
+      ? Math.max(0, (Date.now() - recordedAt) / 1000)
+      : 0;
+    const position = Math.max(0, Number(session.position_seconds || 0) + elapsed);
+    clearInterval(syncIntervalRef.current);
+    syncStartRef.current = null;
+    initialPosRef.current = position;
+    setPlaybackTime(position);
+    setIsPaused(true);
+  }, [deviceSession.liveSession?.owner_device_id, deviceSession.liveSession?.updated_at, deviceSession.device?.id]);
+
+  // Apply durable commands only on the current owner and acknowledge each one
+  // after it has changed local state. Missed realtime events are recovered by
+  // the hook's pending-command query on reconnect.
+  useEffect(() => {
+    if (!deviceSession.isOwner || !deviceSession.liveSession) return;
+    const currentGeneration = deviceSession.liveSession.owner_generation;
+    deviceSession.pendingCommands.forEach(command => {
+      if (processingCommandsRef.current.has(command.id)) return;
+      processingCommandsRef.current.add(command.id);
+      Promise.resolve().then(() => {
+        if (command.owner_generation !== currentGeneration) return;
+        if (command.kind === "pause" && !isPaused) togglePause();
+        if (command.kind === "resume" && isPaused) togglePause();
+        if (command.kind === "seek") {
+          const position = Math.max(0, Number(command.payload?.position_seconds) || 0);
+          initialPosRef.current = position;
+          setPlaybackTime(position);
+          if (!isPaused) syncStartRef.current = Date.now();
+        }
+        if (command.kind === "select_track" && Number.isInteger(command.payload?.track_index)) {
+          jumpToTrack(command.payload.track_index);
+        }
+        if (command.kind === "end") reset();
+      }).then(() => deviceSession.acknowledgeCommand(command.id))
+        .catch(err => setDeviceActionError(err.message))
+        .finally(() => processingCommandsRef.current.delete(command.id));
+    });
+  }, [deviceSession.pendingCommands, deviceSession.isOwner, deviceSession.liveSession?.owner_generation, isPaused]);
+
+  const switchPlaybackDevice = async targetDevice => {
+    if (!deviceSession.liveSession || !targetDevice) return;
+    setDeviceActionBusy(targetDevice.id);
+    setDeviceActionError(null);
+    try {
+      const session = deviceSession.liveSession;
+      const recordedAt = new Date(session.position_recorded_at).getTime();
+      const elapsed = session.status === "playing" && Number.isFinite(recordedAt)
+        ? Math.max(0, (Date.now() - recordedAt) / 1000)
+        : 0;
+      const position = deviceSession.isOwner
+        ? Math.max(0, playbackTime)
+        : Math.max(0, Number(session.position_seconds || 0) + elapsed);
+      await deviceSession.transferSession(targetDevice.id, position);
+      setShowDevices(false);
+    } catch (err) {
+      setDeviceActionError(err?.message || "Could not switch devices");
+    } finally {
+      setDeviceActionBusy(null);
+    }
+  };
+
   // ── Screen wake lock ──
   useEffect(() => {
     const acquire = async () => {
@@ -3160,6 +3347,10 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
   const isSyncing = mode === "syncing";
 
   const artwork = detectedSong?.artwork;
+  const activeAccountDevice = deviceSession.devices.find(d => d.id === deviceSession.liveSession?.owner_device_id) || null;
+  const activeDeviceLabel = activeAccountDevice
+    ? (activeAccountDevice.id === deviceSession.device?.id ? activeAccountDevice.name : activeAccountDevice.name)
+    : "This device";
   return /*#__PURE__*/React.createElement("div", {
     style: {
       minHeight: "100vh",
@@ -3189,7 +3380,84 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
       background: "linear-gradient(to bottom, rgba(8,8,16,0.6) 0%, rgba(8,8,16,0.3) 40%, rgba(8,8,16,0.7) 100%)",
       pointerEvents: "none"
     }
-  }), showCast && /*#__PURE__*/React.createElement("div", {
+  }), user && /*#__PURE__*/React.createElement("button", {
+    onClick: () => { setDeviceActionError(null); setShowDevices(true); },
+    title: "Switch playback device",
+    "aria-label": `Playing on ${activeDeviceLabel}. Switch devices`,
+    style: {
+      position: "fixed", right: "18px", bottom: "calc(env(safe-area-inset-bottom) + 78px)", zIndex: 42,
+      display: "flex", alignItems: "center", gap: "8px", maxWidth: "220px",
+      padding: "10px 14px", borderRadius: "999px",
+      border: "1px solid rgba(212,168,70,0.28)",
+      background: "rgba(15,15,28,0.92)", color: "#f0e6d3",
+      boxShadow: "0 8px 28px rgba(0,0,0,0.38)", backdropFilter: "blur(12px)",
+      fontFamily: "inherit", cursor: "pointer"
+    }
+  }, /*#__PURE__*/React.createElement(DeviceGlyph, { active: !!deviceSession.liveSession }), /*#__PURE__*/React.createElement("span", {
+    style: { minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", fontSize: "12px", fontWeight: "700" }
+  }, deviceSession.liveSession ? `Playing on ${activeDeviceLabel}` : "Devices")), showDevices && /*#__PURE__*/React.createElement("div", {
+    onClick: () => setShowDevices(false),
+    style: { position: "fixed", inset: 0, zIndex: 470, display: "flex", alignItems: "center", justifyContent: "center", padding: "24px", background: "rgba(0,0,0,0.7)", backdropFilter: "blur(10px)" }
+  }, /*#__PURE__*/React.createElement("div", {
+    onClick: e => e.stopPropagation(),
+    style: { width: "100%", maxWidth: "430px", padding: "26px", borderRadius: "24px", background: "#0f0f1c", border: "1px solid rgba(255,255,255,0.08)", boxShadow: "0 24px 80px rgba(0,0,0,0.65)" }
+  }, /*#__PURE__*/React.createElement("div", {
+    style: { fontSize: "11px", letterSpacing: "3px", textTransform: "uppercase", color: "#d4a846", marginBottom: "8px" }
+  }, "Playing on"), /*#__PURE__*/React.createElement("div", {
+    style: { fontSize: "23px", fontWeight: "750", color: "#f0e6d3", marginBottom: "6px" }
+  }, activeAccountDevice ? activeDeviceLabel : "Choose a device"), /*#__PURE__*/React.createElement("div", {
+    style: { fontSize: "13px", lineHeight: "1.55", color: "rgba(255,255,255,0.38)", marginBottom: "20px" }
+  }, deviceSession.liveSession
+    ? "Move this live lyric session to any online Liri device on your account."
+    : "Start lyrics on this device to create a session. Other signed-in devices will appear here."),
+  deviceSession.error && /*#__PURE__*/React.createElement("div", {
+    style: { padding: "10px 12px", marginBottom: "12px", borderRadius: "10px", background: "rgba(201,128,122,0.1)", color: "#c9807a", fontSize: "12px" }
+  }, deviceSession.error), deviceActionError && /*#__PURE__*/React.createElement("div", {
+    style: { padding: "10px 12px", marginBottom: "12px", borderRadius: "10px", background: "rgba(201,128,122,0.1)", color: "#c9807a", fontSize: "12px" }
+  }, deviceActionError), /*#__PURE__*/React.createElement("div", {
+    style: { display: "flex", flexDirection: "column", gap: "8px" }
+  }, deviceSession.devices.map(accountDevice => {
+    const isCurrent = accountDevice.id === deviceSession.device?.id;
+    const isActive = accountDevice.id === deviceSession.liveSession?.owner_device_id;
+    const isOnline = Date.now() - new Date(accountDevice.last_seen_at).getTime() < 30000;
+    const duplicateName = deviceSession.devices.filter(d => d.name === accountDevice.name).length > 1;
+    const label = duplicateName ? `${accountDevice.name} · ${accountDevice.id.slice(0, 4)}` : accountDevice.name;
+    const disabled = !deviceSession.liveSession || isActive || !isOnline || !!deviceActionBusy;
+    return /*#__PURE__*/React.createElement("button", {
+      key: accountDevice.id,
+      onClick: () => switchPlaybackDevice(accountDevice),
+      disabled,
+      style: {
+        width: "100%", display: "flex", alignItems: "center", gap: "12px", textAlign: "left",
+        padding: "13px 14px", borderRadius: "14px",
+        border: isActive ? "1px solid rgba(212,168,70,0.35)" : "1px solid rgba(255,255,255,0.07)",
+        background: isActive ? "rgba(212,168,70,0.09)" : "rgba(255,255,255,0.035)",
+        color: isOnline ? "#f0e6d3" : "rgba(255,255,255,0.3)", fontFamily: "inherit",
+        cursor: disabled ? "default" : "pointer", opacity: deviceActionBusy && deviceActionBusy !== accountDevice.id ? 0.5 : 1
+      }
+    }, /*#__PURE__*/React.createElement(DeviceGlyph, { active: isActive }), /*#__PURE__*/React.createElement("div", {
+      style: { flex: 1, minWidth: 0 }
+    }, /*#__PURE__*/React.createElement("div", {
+      style: { fontSize: "14px", fontWeight: "700", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }
+    }, label), /*#__PURE__*/React.createElement("div", {
+      style: { marginTop: "3px", fontSize: "11px", color: isOnline ? "rgba(255,255,255,0.38)" : "rgba(255,255,255,0.22)" }
+    }, `${isCurrent ? "This device · " : ""}${isOnline ? "Online" : "Offline"}`)), isActive && /*#__PURE__*/React.createElement("span", {
+      style: { color: "#d4a846", fontSize: "16px", fontWeight: "800" }
+    }, "✓"), deviceActionBusy === accountDevice.id && /*#__PURE__*/React.createElement("span", {
+      style: { color: "#d4a846", fontSize: "11px" }
+    }, "Switching…"));
+  })), deviceSession.device && /*#__PURE__*/React.createElement("button", {
+    onClick: async () => {
+      const nextName = window.prompt("Name this device", deviceSession.device.name);
+      if (!nextName?.trim()) return;
+      try { await deviceSession.renameDevice(nextName); }
+      catch (err) { setDeviceActionError(err.message); }
+    },
+    style: { marginTop: "14px", border: "none", background: "none", color: "rgba(212,168,70,0.75)", padding: "8px 4px", fontSize: "12px", fontWeight: "700", fontFamily: "inherit", cursor: "pointer" }
+  }, "Rename this device"), /*#__PURE__*/React.createElement("button", {
+    onClick: () => setShowDevices(false),
+    style: { width: "100%", marginTop: "8px", border: "none", borderRadius: "13px", padding: "12px", background: "rgba(255,255,255,0.06)", color: "rgba(255,255,255,0.5)", fontSize: "13px", fontFamily: "inherit", cursor: "pointer" }
+  }, "Close"))), showCast && /*#__PURE__*/React.createElement("div", {
     onClick: () => setShowCast(false),
     style: { position: "fixed", inset: 0, zIndex: 450, display: "flex", alignItems: "center", justifyContent: "center", padding: "24px", background: "rgba(0,0,0,0.68)", backdropFilter: "blur(10px)" }
   }, /*#__PURE__*/React.createElement("div", {
