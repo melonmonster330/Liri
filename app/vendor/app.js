@@ -6486,6 +6486,7 @@ Move closer to your speakers and try again.`);
           const aheadOpacity = Math.max(isLandscape ? 0.12 : 0.06, aheadBase - adist * (aheadBase / (NEAR + 1)));
           const behindOpacity = Math.max(isLandscape ? 0.08 : 0.04, behindBase - adist * (behindBase / (NEAR + 1)));
           const inactiveOpacity = dist > 0 ? aheadOpacity : behindOpacity;
+          const centerSeparationY = dist === -1 ? -9 : dist === 1 ? 9 : 0;
           const handleLineClick = () => {
             if (menuWasOpenRef.current || controlsVisible) {
               menuWasOpenRef.current = false;
@@ -6511,8 +6512,9 @@ Move closer to your speakers and try again.`);
               opacity: isCredit ? cur ? 0.55 : inactiveOpacity : 1,
               lineHeight: "1.4",
               position: "relative",
-              transition: isCredit && adist <= NEAR + 1 ? "opacity 500ms ease-in-out" : "none",
-              willChange: isCredit && near ? "opacity" : "auto",
+              transform: `translateY(${centerSeparationY}px) translateZ(0)`,
+              transition: adist <= NEAR + 1 ? `transform 650ms ease-in-out${isCredit ? ", opacity 500ms ease-in-out" : ""}` : "none",
+              willChange: near ? isCredit ? "transform, opacity" : "transform" : "auto",
               textShadow: "none",
               cursor: "default",
               letterSpacing: isCredit ? "0.2px" : "normal",
@@ -6529,7 +6531,10 @@ Move closer to your speakers and try again.`);
               maxWidth: "100%",
               overflowWrap: "break-word",
               opacity: isCredit ? 1 : cur ? 0 : inactiveOpacity,
-              transition: isCredit ? "none" : "opacity 450ms ease-in-out",
+              // Stagger the two layers instead of crossfading them at equal
+              // brightness. This prevents the differently sized glyphs from
+              // combining into a momentary bright flash.
+              transition: isCredit ? "none" : cur ? "opacity 160ms ease-out" : "opacity 280ms ease-in 180ms",
               willChange: isCredit || !near ? "auto" : "opacity",
               cursor: isCredit ? "default" : "pointer"
             }
@@ -6547,7 +6552,7 @@ Move closer to your speakers and try again.`);
               lineHeight: "1.35",
               color: "#ffffff",
               opacity: cur ? 1 : 0,
-              transition: "opacity 450ms ease-in-out",
+              transition: cur ? "opacity 450ms ease-in 120ms" : "opacity 220ms ease-out",
               willChange: near ? "opacity" : "auto",
               backfaceVisibility: "hidden",
               WebkitBackfaceVisibility: "hidden",
