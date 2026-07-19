@@ -1177,8 +1177,10 @@
           background: "#0f0f1c",
           borderRadius: "24px 24px 0 0",
           maxHeight: "85vh",
-          overflowY: "auto",
-          WebkitOverflowScrolling: "touch",
+          overflow: "hidden",
+          display: "flex",
+          flexDirection: "column",
+          minHeight: 0,
           boxShadow: "0 -8px 48px rgba(0,0,0,0.6)",
           animation: "slide-up 0.3s ease"
         }
@@ -1214,7 +1216,7 @@
       e2(
         "div",
         {
-          style: { padding: "8px 24px" }
+          style: { overflowY: "auto", flex: 1, minHeight: 0, padding: "8px 24px", WebkitOverflowScrolling: "touch" }
         },
         (tracks || []).map((t, i) => {
           const startsSide = i === 0 || breaks.has(i);
@@ -1266,34 +1268,29 @@
               }, breaks.has(i) ? "starts side " + letters[i] : "same side")
             )
           );
-        }),
-        // The action is part of the same scrolling content as the tracks, placed
-        // directly after the final track rather than in a separate footer.
-        e2(
-          "div",
-          { style: {
-            padding: "20px 0 max(112px, calc(env(safe-area-inset-bottom) + 82px))",
-            borderTop: "1px solid rgba(255,255,255,0.06)"
-          } },
-          error && e2("div", { style: { color: "#c9807a", fontSize: 12, marginBottom: 8 } }, String(error)),
-          e2("button", {
-            onClick: () => !saving && onSave(letters),
-            disabled: saving,
-            style: {
-              width: "100%",
-              background: saving ? "rgba(255,255,255,0.08)" : "linear-gradient(135deg, #d4a846, #c9807a)",
-              color: saving ? "rgba(255,255,255,0.3)" : "#080810",
-              border: "none",
-              borderRadius: 50,
-              padding: "15px 0",
-              fontSize: 14,
-              fontWeight: 700,
-              letterSpacing: "0.5px",
-              cursor: saving ? "default" : "pointer",
-              fontFamily: "inherit"
-            }
-          }, saving ? "Saving\u2026" : "Save side info")
-        )
+        })
+      ),
+      e2(
+        "div",
+        { style: { padding: "12px 24px max(24px, env(safe-area-inset-bottom))", borderTop: "1px solid rgba(255,255,255,0.06)" } },
+        error && e2("div", { style: { color: "#c9807a", fontSize: 12, marginBottom: 8 } }, String(error)),
+        e2("button", {
+          onClick: () => !saving && onSave(letters),
+          disabled: saving,
+          style: {
+            width: "100%",
+            background: saving ? "rgba(255,255,255,0.08)" : "linear-gradient(135deg, #d4a846, #c9807a)",
+            color: saving ? "rgba(255,255,255,0.3)" : "#080810",
+            border: "none",
+            borderRadius: 50,
+            padding: "15px 0",
+            fontSize: 14,
+            fontWeight: 700,
+            letterSpacing: "0.5px",
+            cursor: saving ? "default" : "pointer",
+            fontFamily: "inherit"
+          }
+        }, saving ? "Saving\u2026" : "Save side info")
       )
     ));
   }
