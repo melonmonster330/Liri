@@ -6458,6 +6458,7 @@ Move closer to your speakers and try again.`);
         const farFont = iosPortrait ? 11 : 12;
         const aheadBase = isLandscape ? 0.55 : 0.32;
         const behindBase = isLandscape ? 0.38 : 0.22;
+        const activeGutterExpansion = isLandscape ? lyricAreaW < 500 ? 14 : 30 : 20;
         return allLines.map((line, i) => {
           const dist = i - effectiveIndex;
           const adist = Math.abs(dist);
@@ -6481,7 +6482,8 @@ Move closer to your speakers and try again.`);
               cursor: "default",
               letterSpacing: isCredit ? "0.2px" : "normal",
               maxWidth: isCredit ? "260px" : "none",
-              margin: isCredit ? "0 auto" : "0"
+              margin: isCredit ? "0 auto" : cur ? `0 -${activeGutterExpansion}px` : "0",
+              width: cur && !isCredit ? `calc(100% + ${activeGutterExpansion * 2}px)` : "auto"
             }
           }, /* @__PURE__ */ React.createElement("span", {
             // Seek only fires when the tap lands on the words themselves — not the

@@ -5489,6 +5489,13 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
     const farFont     = iosPortrait ? 11 : 12;
     const aheadBase  = isLandscape ? 0.55 : 0.32;
     const behindBase = isLandscape ? 0.38 : 0.22;
+    // The active font is intentionally larger, but it used to keep the same
+    // narrow content box as the smaller preview rows. Let it borrow most of
+    // the lyric panel's side padding so words retain the preview's grouping
+    // instead of wrapping merely because the row became highlighted.
+    const activeGutterExpansion = isLandscape
+      ? (lyricAreaW < 500 ? 14 : 30)
+      : 20;
     return allLines.map((line, i) => {
       const dist = i - effectiveIndex;
       const adist = Math.abs(dist);
@@ -5524,7 +5531,14 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
           cursor: "default",
           letterSpacing: isCredit ? "0.2px" : "normal",
           maxWidth: isCredit ? "260px" : "none",
-          margin: isCredit ? "0 auto" : "0",
+          margin: isCredit
+            ? "0 auto"
+            : cur
+              ? `0 -${activeGutterExpansion}px`
+              : "0",
+          width: cur && !isCredit
+            ? `calc(100% + ${activeGutterExpansion * 2}px)`
+            : "auto",
         }
       }, /*#__PURE__*/React.createElement("span", {
         // Seek only fires when the tap lands on the words themselves — not the
