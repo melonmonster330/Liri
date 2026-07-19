@@ -435,6 +435,7 @@
     const lyricsScrollRef = useRef2(null);
     const rollRafRef = useRef2(null);
     const centeredLineRef = useRef2(null);
+    const lastActiveIndexRef = useRef2(currentIndex);
     const centerActiveLine = () => {
       const container = lyricsScrollRef.current;
       const line = currentLineRef.current;
@@ -470,9 +471,11 @@
     useLayoutEffect(() => {
       const line = currentLineRef.current;
       const previousLine = centeredLineRef.current;
+      const isEnteringFromIntro = lastActiveIndexRef.current < 0 && currentIndex >= 0;
       const isNewVisibleLine = line && previousLine && previousLine.isConnected && line !== previousLine;
       centeredLineRef.current = line;
-      if (isNewVisibleLine) rollActiveLineToCenter();
+      lastActiveIndexRef.current = currentIndex;
+      if (isEnteringFromIntro || isNewVisibleLine) rollActiveLineToCenter();
       else centerActiveLine();
       return () => cancelAnimationFrame(rollRafRef.current);
     }, [currentIndex, mode, lyricsUnsynced, lyrics.length, Math.floor(playbackTime)]);
@@ -6419,7 +6422,16 @@ Move closer to your speakers and try again.`);
       // iPad split view, and landscape instead of assuming a screen height.
       /* @__PURE__ */ React.createElement("div", {
         "aria-hidden": true,
-        style: { height: "50%", minHeight: "50%", flexShrink: 0, pointerEvents: "none" }
+        style: {
+          // During the instrumental intro, keep the upcoming lyrics at the top.
+          // As the first lyric activates, grow the runway while the scroll hook
+          // rolls that line into its normal above-center resting position.
+          height: currentIndex < 0 ? "0%" : "50%",
+          minHeight: currentIndex < 0 ? "0%" : "50%",
+          flexShrink: 0,
+          pointerEvents: "none",
+          transition: "height 420ms ease-out, min-height 420ms ease-out"
+        }
       }),
       (() => {
         const curLine = lyrics[currentIndex];

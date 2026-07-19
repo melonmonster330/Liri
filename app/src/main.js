@@ -5444,7 +5444,16 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
   // iPad split view, and landscape instead of assuming a screen height.
   /*#__PURE__*/React.createElement("div", {
     "aria-hidden": true,
-    style: { height: "50%", minHeight: "50%", flexShrink: 0, pointerEvents: "none" }
+    style: {
+      // During the instrumental intro, keep the upcoming lyrics at the top.
+      // As the first lyric activates, grow the runway while the scroll hook
+      // rolls that line into its normal above-center resting position.
+      height: currentIndex < 0 ? "0%" : "50%",
+      minHeight: currentIndex < 0 ? "0%" : "50%",
+      flexShrink: 0,
+      pointerEvents: "none",
+      transition: "height 420ms ease-out, min-height 420ms ease-out"
+    }
   }), (() => {
     // Adaptive transition: scale with how long the current line lasts.
     // Fast rap/spoken sections have lines <1s apart — a 0.4s transition

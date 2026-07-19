@@ -33,6 +33,7 @@ export function useLyricScroll({
   const lyricsScrollRef = useRef(null); // the lyrics overflow container
   const rollRafRef = useRef(null);
   const centeredLineRef = useRef(null);
+  const lastActiveIndexRef = useRef(currentIndex);
 
   // Center against the lyric scroller itself, not the page viewport. This is
   // reliable inside iOS's fixed overlay and across every screen size.
@@ -84,10 +85,12 @@ export function useLyricScroll({
   useLayoutEffect(() => {
     const line = currentLineRef.current;
     const previousLine = centeredLineRef.current;
+    const isEnteringFromIntro = lastActiveIndexRef.current < 0 && currentIndex >= 0;
     const isNewVisibleLine = line && previousLine && previousLine.isConnected
       && line !== previousLine;
     centeredLineRef.current = line;
-    if (isNewVisibleLine) rollActiveLineToCenter();
+    lastActiveIndexRef.current = currentIndex;
+    if (isEnteringFromIntro || isNewVisibleLine) rollActiveLineToCenter();
     else centerActiveLine();
     return () => cancelAnimationFrame(rollRafRef.current);
   }, [currentIndex, mode, lyricsUnsynced, lyrics.length, Math.floor(playbackTime)]);
