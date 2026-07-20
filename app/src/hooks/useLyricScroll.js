@@ -7,7 +7,7 @@
 // noteUserScroll because the (still-monolithic, pre-Phase-4) render in
 // main.js references them directly by these names.
 
-const { useRef, useEffect, useLayoutEffect } = React;
+const { useRef, useState, useEffect, useLayoutEffect } = React;
 
 // Keep the active lyric a little above mathematical center so the upcoming
 // lines have more visual room. 48 CSS px is approximately half an inch.
@@ -35,6 +35,7 @@ export function useLyricScroll({
   const rollRafRef = useRef(null);
   const centeredLineRef = useRef(null);
   const lastActiveIndexRef = useRef(currentIndex);
+  const [refollowDirection, setRefollowDirection] = useState("up");
   const focusStrengthRef = useRef(focusStrength);
   focusStrengthRef.current = focusStrength;
 
@@ -69,6 +70,17 @@ export function useLyricScroll({
         line.style.setProperty("--lyric-opacity", opacity);
       }
     });
+  };
+
+  const updateRefollowDirection = () => {
+    const container = lyricsScrollRef.current;
+    const line = currentLineRef.current;
+    if (!container || !line || lyricsUnsynced) return;
+    const containerRect = container.getBoundingClientRect();
+    const lineRect = line.getBoundingClientRect();
+    const focusY = containerRect.top + container.clientHeight / 2
+      - ACTIVE_LINE_CENTER_OFFSET_PX;
+    setRefollowDirection(lineRect.top + lineRect.height / 2 > focusY ? "down" : "up");
   };
 
   // Center against the lyric scroller itself, not the page viewport. This is
@@ -150,6 +162,7 @@ export function useLyricScroll({
     // for the same DOM line used to interrupt an active roll with a flash.
     else if (line && (!previousLine || !previousLine.isConnected)) centerActiveLine();
     updateLyricEmphasis();
+    if (userScrollingRef.current) updateRefollowDirection();
   }, [currentIndex, mode, lyricsUnsynced, lyrics.length, Math.floor(playbackTime), focusStrength]);
 
   // Manual and momentum scrolling also move lyrics through the same fixed
@@ -281,6 +294,7 @@ export function useLyricScroll({
     rollRafRef.current = null;
     userScrollingRef.current = true;
     setUserScrolling(true);
+    updateRefollowDirection();
     clearTimeout(refollowTimerRef.current);
     refollowTimerRef.current = setTimeout(() => refollow(), 10000);
   };
@@ -301,5 +315,5 @@ export function useLyricScroll({
     return true;
   };
 
-  return { lyricsUnsynced, lyricsScrollRef, seekToLine, browseToLine, refollow, noteUserScroll };
+  return { lyricsUnsynced, lyricsScrollRef, seekToLine, browseToLine, refollow, noteUserScroll, refollowDirection };
 }

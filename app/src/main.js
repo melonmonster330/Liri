@@ -1421,7 +1421,7 @@ function Liri() {
   }, [mode]);
 
   // ── Lyric scroll behavior — hooks/useLyricScroll.js ──
-  const { lyricsUnsynced, lyricsScrollRef, seekToLine, browseToLine, refollow, noteUserScroll } = useLyricScroll({
+  const { lyricsUnsynced, lyricsScrollRef, seekToLine, browseToLine, refollow, noteUserScroll, refollowDirection } = useLyricScroll({
     mode,
     lyrics, lyricsRef,
     songDuration,
@@ -5615,7 +5615,7 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
       fontFamily: "inherit",
       whiteSpace: "nowrap"
     }
-  }, "\u2191 Sync Lyrics"), /*#__PURE__*/React.createElement("div", {
+  }, (refollowDirection === "down" ? "\u2193" : "\u2191") + " Sync Lyrics"), /*#__PURE__*/React.createElement("div", {
     ref: lyricsScrollRef,
     style: {
       overflowY: "auto",
