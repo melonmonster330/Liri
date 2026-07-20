@@ -69,6 +69,10 @@
   .signup-email { color: rgba(255,255,255,0.7); }
   .signup-date { color: var(--muted); font-size: 11px; }
   .premium-badge { display:inline-flex; align-items:center; border:1px solid rgba(212,168,70,.32); background:rgba(212,168,70,.1); color:var(--gold); border-radius:20px; padding:3px 8px; font-size:10px; font-weight:700; text-transform:uppercase; letter-spacing:.04em; }
+  .user-columns { display:flex; align-items:center; gap:12px; padding:0 0 7px; border-bottom:1px solid var(--border); }
+  .user-columns-label { flex:1; font-size:10px; color:var(--muted); text-transform:uppercase; letter-spacing:.06em; }
+  .sort-btn { width:54px; padding:4px 2px; border:0; background:transparent; color:var(--muted); font:700 10px/1 inherit; text-transform:uppercase; letter-spacing:.04em; cursor:pointer; text-align:right; }
+  .sort-btn:hover, .sort-btn.active { color:var(--gold); }
 
   .split-row { display: flex; gap: 20px; }
   .split-item { flex: 1; }
@@ -474,6 +478,7 @@ function signupPlatform(u) {
 
 let usersCache = [];
 let userTierFilter = "all";
+let userSort = { field: null, direction: null };
 
 async function openUsers() {
   setActiveNav("users");
@@ -484,6 +489,7 @@ async function openUsers() {
   const d = await r.json();
   usersCache = d.users || [];
   userTierFilter = "all";
+  userSort = { field: null, direction: null };
   renderUsers();
 }
 
@@ -492,17 +498,50 @@ function setUserTierFilter(filter) {
   renderUsers();
 }
 
+function cycleUserSort(field) {
+  if (userSort.field !== field || !userSort.direction) {
+    userSort = { field, direction: "desc" };
+  } else if (userSort.direction === "desc") {
+    userSort = { field, direction: "asc" };
+  } else {
+    userSort = { field: null, direction: null };
+  }
+  renderUsers();
+}
+
+function userSortLabel(field) {
+  if (userSort.field !== field) return "";
+  return userSort.direction === "desc" ? " ↓" : " ↑";
+}
+
 function renderUsers() {
   const c = document.getElementById("content");
   const premiumCount = usersCache.filter(u => u.is_premium).length;
-  const users = userTierFilter === "premium" ? usersCache.filter(u => u.is_premium) : usersCache;
+  const filteredUsers = userTierFilter === "premium" ? usersCache.filter(u => u.is_premium) : usersCache;
+  const users = [...filteredUsers];
+  if (userSort.field && userSort.direction) {
+    const multiplier = userSort.direction === "desc" ? -1 : 1;
+    users.sort((a, b) => {
+      const difference = (Number(a[userSort.field]) || 0) - (Number(b[userSort.field]) || 0);
+      if (difference !== 0) return difference * multiplier;
+      return String(b.created_at || "").localeCompare(String(a.created_at || ""));
+    });
+  }
+  const sortDescription = userSort.field
+    ? `sorted by ${userSort.field}, ${userSort.direction === "desc" ? "highest first" : "lowest first"}`
+    : "newest first";
   c.innerHTML = `
     <button class="back-btn" onclick="load()">← Back to dashboard</button>
     <div class="section">
-      <div class="section-title">Users — newest first</div>
+      <div class="section-title">Users — ${sortDescription}</div>
       <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:14px">
         <button class="back-btn" style="margin:0;${userTierFilter === 'all' ? 'color:var(--gold);border-color:rgba(212,168,70,.45)' : ''}" onclick="setUserTierFilter('all')">All (${usersCache.length})</button>
         <button class="back-btn" style="margin:0;${userTierFilter === 'premium' ? 'color:var(--gold);border-color:rgba(212,168,70,.45)' : ''}" onclick="setUserTierFilter('premium')">Premium (${premiumCount})</button>
+      </div>
+      <div class="user-columns">
+        <div class="user-columns-label">User</div>
+        <button class="sort-btn${userSort.field === 'plays' ? ' active' : ''}" aria-label="Sort users by plays" aria-pressed="${userSort.field === 'plays'}" onclick="cycleUserSort('plays')">Plays${userSortLabel('plays')}</button>
+        <button class="sort-btn${userSort.field === 'albums' ? ' active' : ''}" aria-label="Sort users by albums" aria-pressed="${userSort.field === 'albums'}" onclick="cycleUserSort('albums')">Albums${userSortLabel('albums')}</button>
       </div>
       ${users.length === 0 ? `<div style="color:var(--muted);font-size:13px">${userTierFilter === 'premium' ? 'No premium users' : 'No users yet'}</div>` :
         users.map(u => `
