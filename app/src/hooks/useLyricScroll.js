@@ -125,7 +125,10 @@ export function useLyricScroll({
       container.scrollTop = from + (target - from) * eased;
       updateLyricEmphasis();
       if (progress < 1) rollRafRef.current = requestAnimationFrame(frame);
-      else centerActiveLine();
+      else {
+        rollRafRef.current = null;
+        centerActiveLine();
+      }
     };
     rollRafRef.current = requestAnimationFrame(frame);
   };
@@ -177,7 +180,10 @@ export function useLyricScroll({
     let raf, start;
     const pin = ts => {
       if (start == null) start = ts;
-      centerActiveLine();
+      // The active-line roll recalculates its target from live geometry each
+      // frame, so it already accounts for the menu reflow. Never let this
+      // instant pin become a second scroll writer during that roll.
+      if (rollRafRef.current == null) centerActiveLine();
       if (ts - start < 450) raf = requestAnimationFrame(pin);
     };
     raf = requestAnimationFrame(pin);
@@ -186,9 +192,20 @@ export function useLyricScroll({
 
   // Re-center when the viewport or lyric box changes without a line change:
   // rotation, split view, browser chrome, font reflow, or device resizing.
+  // Do NOT recreate this observer for currentIndex changes. ResizeObserver
+  // invokes its callback once when observation begins; doing that on every
+  // lyric handoff made this instant centering path race the eased roll and
+  // intermittently snap/flash midway through the animation.
   useEffect(() => {
     if (mode !== "syncing" || lyricsUnsynced) return;
-    const recenter = () => requestAnimationFrame(centerActiveLine);
+    let recenterRaf = null;
+    const recenter = () => {
+      cancelAnimationFrame(recenterRaf);
+      recenterRaf = requestAnimationFrame(() => {
+        recenterRaf = null;
+        if (rollRafRef.current == null) centerActiveLine();
+      });
+    };
     window.addEventListener("resize", recenter);
     window.visualViewport?.addEventListener("resize", recenter);
     const observer = typeof ResizeObserver !== "undefined"
@@ -198,9 +215,10 @@ export function useLyricScroll({
     return () => {
       window.removeEventListener("resize", recenter);
       window.visualViewport?.removeEventListener("resize", recenter);
+      cancelAnimationFrame(recenterRaf);
       observer?.disconnect();
     };
-  }, [mode, lyricsUnsynced, currentIndex, isLandscape, controlsVisible]);
+  }, [mode, lyricsUnsynced, isLandscape, controlsVisible]);
 
   // ── Unsynced auto-scroll: glide the flat lyric page at a steady rate ──
   // Base rate spreads the full scroll height over the track duration (guessing

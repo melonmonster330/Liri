@@ -503,7 +503,10 @@
         container.scrollTop = from + (target - from) * eased;
         updateLyricEmphasis();
         if (progress < 1) rollRafRef.current = requestAnimationFrame(frame);
-        else centerActiveLine();
+        else {
+          rollRafRef.current = null;
+          centerActiveLine();
+        }
       };
       rollRafRef.current = requestAnimationFrame(frame);
     };
@@ -532,7 +535,7 @@
       let raf, start;
       const pin = (ts) => {
         if (start == null) start = ts;
-        centerActiveLine();
+        if (rollRafRef.current == null) centerActiveLine();
         if (ts - start < 450) raf = requestAnimationFrame(pin);
       };
       raf = requestAnimationFrame(pin);
@@ -540,7 +543,14 @@
     }, [controlsVisible, isLandscape, mode, lyricsUnsynced]);
     useEffect3(() => {
       if (mode !== "syncing" || lyricsUnsynced) return;
-      const recenter = () => requestAnimationFrame(centerActiveLine);
+      let recenterRaf = null;
+      const recenter = () => {
+        cancelAnimationFrame(recenterRaf);
+        recenterRaf = requestAnimationFrame(() => {
+          recenterRaf = null;
+          if (rollRafRef.current == null) centerActiveLine();
+        });
+      };
       window.addEventListener("resize", recenter);
       window.visualViewport?.addEventListener("resize", recenter);
       const observer = typeof ResizeObserver !== "undefined" ? new ResizeObserver(recenter) : null;
@@ -548,9 +558,10 @@
       return () => {
         window.removeEventListener("resize", recenter);
         window.visualViewport?.removeEventListener("resize", recenter);
+        cancelAnimationFrame(recenterRaf);
         observer?.disconnect();
       };
-    }, [mode, lyricsUnsynced, currentIndex, isLandscape, controlsVisible]);
+    }, [mode, lyricsUnsynced, isLandscape, controlsVisible]);
     useEffect3(() => {
       if (mode !== "syncing" || !lyricsUnsynced || isPaused) return;
       const el = lyricsScrollRef.current;
