@@ -1503,6 +1503,7 @@
     const menuOpen = isLandscape && controlsVisible;
     const lyricAreaW = menuOpen ? Math.min(760, Math.max(260, winW - railW - 48)) : Math.min(820, winW - 48);
     const lyricAreaLeft = menuOpen ? Math.max(railW + 24, Math.round((winW - lyricAreaW) / 2)) : Math.round((winW - lyricAreaW) / 2);
+    const lyricFocusMask = "linear-gradient(to bottom, rgba(0,0,0,0.04) 0%, rgba(0,0,0,0.10) calc(50% - 150px), rgba(0,0,0,0.25) calc(50% - 94px), #000 calc(50% - 70px), #000 calc(50% - 26px), rgba(0,0,0,0.25) calc(50% + 2px), rgba(0,0,0,0.10) calc(50% + 105px), rgba(0,0,0,0.03) 100%)";
     const layoutLyricFontScale = menuOpen ? 1.1 * Math.max(0.72, Math.min(1, lyricAreaW / 640)) : 1.25;
     const lyricPanelWidth = isLandscape ? lyricAreaW : winW;
     const responsiveLyricFontScaleCap = Math.min(
@@ -6465,8 +6466,8 @@ Move closer to your speakers and try again.`);
         // cross-fading two React rows when currentIndex changes. A single mask
         // on the scroller lets each line brighten naturally as it rolls through
         // the resting point and avoids per-row compositor churn in Chrome.
-        WebkitMaskImage: lyricsUnsynced ? "none" : "linear-gradient(to bottom, rgba(0,0,0,0.10) 0%, rgba(0,0,0,0.28) calc(50% - 150px), rgba(0,0,0,0.58) calc(50% - 92px), #000 calc(50% - 66px), #000 calc(50% - 30px), rgba(0,0,0,0.58) calc(50% + 4px), rgba(0,0,0,0.24) calc(50% + 105px), rgba(0,0,0,0.08) 100%)",
-        maskImage: lyricsUnsynced ? "none" : "linear-gradient(to bottom, rgba(0,0,0,0.10) 0%, rgba(0,0,0,0.28) calc(50% - 150px), rgba(0,0,0,0.58) calc(50% - 92px), #000 calc(50% - 66px), #000 calc(50% - 30px), rgba(0,0,0,0.58) calc(50% + 4px), rgba(0,0,0,0.24) calc(50% + 105px), rgba(0,0,0,0.08) 100%)",
+        WebkitMaskImage: lyricsUnsynced ? "none" : lyricFocusMask,
+        maskImage: lyricsUnsynced ? "none" : lyricFocusMask,
         // Slide + resize in step with the 0.35s menu fade
         transition: isLandscape ? "margin-left 0.35s, width 0.35s" : "none"
       },
