@@ -2808,7 +2808,7 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
     }
   };
 
-  const renderListeningTitleNav = ({ fontSize, wrapTitle = false }) => {
+  const renderListeningTitleNav = ({ fontSize, artistFontSize, wrapTitle = false }) => {
     const nav = getListeningHeaderNav();
     const arrow = (direction, enabled, label) => /*#__PURE__*/React.createElement("button", {
       onClick: e => { e.stopPropagation(); skipListeningHeaderTrack(direction); },
@@ -2817,8 +2817,8 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
       title: label,
       "aria-label": label,
       style: {
-        width: "26px",
-        height: "28px",
+        width: "20px",
+        height: "34px",
         padding: 0,
         flexShrink: 0,
         display: "flex",
@@ -2827,17 +2827,32 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
         background: "none",
         border: "none",
         color: enabled && !isResyncing ? "rgba(240,230,211,0.68)" : "rgba(255,255,255,0.12)",
-        fontSize: "17px",
         lineHeight: 1,
         cursor: enabled && !isResyncing ? "pointer" : "default",
       }
-    }, direction < 0 ? "\u2190" : "\u2192");
+    }, /*#__PURE__*/React.createElement("svg", {
+      width: "10",
+      height: "14",
+      viewBox: "0 0 10 14",
+      fill: "none",
+      stroke: "currentColor",
+      strokeWidth: "1.7",
+      strokeLinecap: "round",
+      strokeLinejoin: "round",
+      "aria-hidden": "true"
+    }, /*#__PURE__*/React.createElement("path", {
+      d: direction < 0 ? "M7 2.5 2.5 7 7 11.5" : "M3 2.5 7.5 7 3 11.5"
+    })));
     return /*#__PURE__*/React.createElement("div", {
-      style: { display: "flex", alignItems: "center", gap: "3px", width: "100%", minWidth: 0 }
+      style: { display: "inline-flex", alignItems: "center", gap: "5px", maxWidth: "100%", minWidth: 0 }
     }, arrow(-1, nav.canPrevious, "Previous song"), /*#__PURE__*/React.createElement("div", {
       style: {
         minWidth: 0,
-        flex: 1,
+        maxWidth: "100%",
+        overflow: "hidden"
+      }
+    }, /*#__PURE__*/React.createElement("div", {
+      style: {
         fontSize,
         fontWeight: "600",
         color: "#f0e6d3",
@@ -2846,7 +2861,15 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
           ? { display: "-webkit-box", WebkitBoxOrient: "vertical", WebkitLineClamp: 2, lineHeight: 1.2 }
           : { textOverflow: "ellipsis", whiteSpace: "nowrap" })
       }
-    }, detectedSong?.title), arrow(1, nav.canNext, "Next song"));
+    }, detectedSong?.title), /*#__PURE__*/React.createElement("div", {
+      style: {
+        fontSize: artistFontSize,
+        color: "rgba(255,255,255,0.38)",
+        overflow: "hidden",
+        textOverflow: "ellipsis",
+        whiteSpace: "nowrap"
+      }
+    }, detectedSong?.artist)), arrow(1, nav.canNext, "Next song"));
   };
 
   // ── Screen wake lock ──
@@ -5247,17 +5270,12 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
       background: "rgba(8,8,16,0.92)", backdropFilter: "blur(12px)",
       borderBottom: "1px solid rgba(255,255,255,0.06)", zIndex: 20
     }
-  }, /*#__PURE__*/React.createElement("button", {
-    onClick: reset,
-    style: { background: "none", border: "none", color: "rgba(255,255,255,0.45)", fontSize: "18px", cursor: "pointer", padding: "4px 8px 4px 0", lineHeight: 1, flexShrink: 0 }
-  }, "\u2190"),
-  artwork && /*#__PURE__*/React.createElement("img", {
+  }, artwork && /*#__PURE__*/React.createElement("img", {
     src: artwork, alt: "",
     style: { width: "32px", height: "32px", borderRadius: "6px", flexShrink: 0, boxShadow: "0 2px 8px rgba(0,0,0,0.5)" }
   }),
   /*#__PURE__*/React.createElement("div", { style: { flex: 1, minWidth: 0 } },
-    renderListeningTitleNav({ fontSize: "13px" }),
-    /*#__PURE__*/React.createElement("div", { style: { fontSize: "11px", color: "rgba(255,255,255,0.35)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" } }, detectedSong?.artist)
+    renderListeningTitleNav({ fontSize: "13px", artistFontSize: "11px" })
   ),
   (() => { const si = getSideInfo(); return si ? /*#__PURE__*/React.createElement("div", { style: { fontSize: "10px", fontWeight: "700", letterSpacing: "2px", color: "rgba(212,168,70,0.85)", textTransform: "uppercase", flexShrink: 0 } }, si.side ? `Side ${si.side} \xB7 ${si.track}` : `Track ${si.track}`) : null; })(),
   cast.supported && /*#__PURE__*/React.createElement("button", {
@@ -5291,20 +5309,7 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
       flex: 1,
       minWidth: 0
     }
-  }, /*#__PURE__*/React.createElement("button", {
-    onClick: reset,
-    style: {
-      background: "none",
-      border: "none",
-      color: "rgba(255,255,255,0.45)",
-      fontSize: "20px",
-      cursor: "pointer",
-      padding: "4px 8px 4px 0",
-      lineHeight: 1,
-      flexShrink: 0
-    },
-    title: "Home"
-  }, "\u2190"), artwork && /*#__PURE__*/React.createElement("img", {
+  }, artwork && /*#__PURE__*/React.createElement("img", {
     src: artwork,
     alt: "",
     style: {
@@ -5321,16 +5326,9 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
     }
   }, renderListeningTitleNav({
     fontSize: "14px",
+    artistFontSize: "12px",
     wrapTitle: IS_IOS
-  }), /*#__PURE__*/React.createElement("div", {
-    style: {
-      fontSize: "12px",
-      color: "rgba(255,255,255,0.4)",
-      overflow: "hidden",
-      textOverflow: "ellipsis",
-      whiteSpace: "nowrap"
-    }
-  }, detectedSong?.artist), (() => {
+  }), (() => {
     const si = getSideInfo();
     return si ? /*#__PURE__*/React.createElement("div", {
       style: {
