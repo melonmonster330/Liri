@@ -1416,7 +1416,7 @@
   var sb = supabase.createClient("https://xjdjpaxgymgbvcwmvorc.supabase.co", "sb_publishable_C-NBnfg0ltAoUi46XQTUjA_ozjZW_Nd", { auth: { storage: liriAuthStorage } });
   var APP_VERSION = "1.5.14";
   var LYRIC_LEAD_SECONDS = 1;
-  var TRACK_GAP_MS = 300;
+  var TRACK_GAP_MS = 1e3;
   var SIDE_END_HANDOFF_MS = 650;
   var INTRO_FOCUS_FADE_SECONDS = 1.2;
   var FLIP_NEEDLE_DROP_MS = 1e4;

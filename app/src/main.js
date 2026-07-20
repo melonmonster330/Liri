@@ -53,11 +53,9 @@ const APP_VERSION = "1.5.14";
 // lateness was actually the clock-drift bug, fixed on this branch; with an
 // honest clock the 2s lead made every line feel rushed).
 const LYRIC_LEAD_SECONDS = 1;
-// Vinyl has a physical groove gap between tracks that digital durations don't
-// include — park the lyric clock at 0 for this long on auto-advance so the
-// next track's lyrics don't start ahead of the needle. (Reduced from 1500ms;
-// if she's nudging forward constantly the gap is too long for her vinyl.)
-const TRACK_GAP_MS = 300;
+// Switch the UI to the next track as soon as the current duration ends, then
+// park its lyric clock at 0:00 for the physical inter-track groove.
+const TRACK_GAP_MS = 1000;
 const SIDE_END_HANDOFF_MS = 650;
 const INTRO_FOCUS_FADE_SECONDS = 1.2;
 // How long the lyric clock parks at 0 after a manual flip / side pick while
