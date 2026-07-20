@@ -1417,6 +1417,7 @@
   var APP_VERSION = "1.5.14";
   var LYRIC_LEAD_SECONDS = 1;
   var TRACK_GAP_MS = 300;
+  var SIDE_END_HANDOFF_MS = 650;
   var FLIP_NEEDLE_DROP_MS = 1e4;
   var NUDGE_STEP_SECS = 1;
   var NUDGE_FINE_SECS = 0.5;
@@ -2525,8 +2526,10 @@
       if (mode !== "syncing") return;
       if (turntableAlbumRef.current && turntableTracksLoading && turntableTracksRef.current.length === 0) return;
       const lastLyricTime = lyrics.length > 0 ? lyrics[lyrics.length - 1].time : null;
-      const tIdx = turntableMatchedIdxRef.current;
       const tTracks = turntableTracksRef.current;
+      const displayedTitle = normText(detectedSong?.title);
+      const displayedTrackIdx = displayedTitle ? tTracks.findIndex((t) => normText(t.trackName || t.title) === displayedTitle) : -1;
+      const tIdx = displayedTrackIdx >= 0 ? displayedTrackIdx : turntableMatchedIdxRef.current;
       const trackDuration = tIdx >= 0 ? (tTracks[tIdx]?.trackTimeMillis ?? 0) / 1e3 || null : null;
       const dbRelease = vinylDbReleaseRef.current;
       const sideEnds = tTracks.length > 0 ? getSideEndsFromSidesMap(tTracks, vinylSidesRef.current) ?? (dbRelease?.vinyl_tracks?.length > 0 ? getDbSideEndIndices(tTracks, dbRelease.vinyl_tracks) : getSideEndIndices(tTracks, albumTpsRef.current > 0 ? albumTpsRef.current : 0)) : [];
@@ -2547,7 +2550,7 @@
         autoAdvanceFiredRef.current = true;
         setShouldAdvanceTrack(true);
       }
-    }, [playbackTime, songDuration, lyrics, mode, isPaused]);
+    }, [playbackTime, songDuration, lyrics, mode, isPaused, detectedSong?.title]);
     useEffect7(() => {
       if (!shouldAdvanceTrack) return;
       setShouldAdvanceTrack(false);
@@ -3259,7 +3262,7 @@ Move closer to your speakers and try again.`);
           if (turntableTracksRef.current.length > 0 && turntableMatchedIdxRef.current !== scheduledIdx) return;
           clearInterval(syncIntervalRef.current);
           setMode("side-end");
-        }, 4e3);
+        }, SIDE_END_HANDOFF_MS);
       };
       if (isLastTrack) {
         showAlbumEndPushNotification(detectedSong);
@@ -6395,7 +6398,7 @@ Move closer to your speakers and try again.`);
         whiteSpace: "nowrap",
         flexShrink: 0
       }
-    }, formatTime(playbackTime) + (songDuration ? " / " + formatTime(songDuration) : ""))), /* @__PURE__ */ React.createElement("div", {
+    }, formatTime(songDuration ? Math.min(playbackTime, songDuration) : playbackTime) + (songDuration ? " / " + formatTime(songDuration) : ""))), /* @__PURE__ */ React.createElement("div", {
       style: {
         flex: 1,
         overflow: "hidden",
@@ -6531,8 +6534,9 @@ Move closer to your speakers and try again.`);
           { text: `\xA9 ${(/* @__PURE__ */ new Date()).getFullYear()} Liri \xB7 Music rights belong to their respective artists, labels & publishers.`, time: lastLyricTime + 20, isCredit: true }
         ];
         const allLines = [...lyrics, ...creditLines];
+        const creditPlaybackTime = songDuration ? Math.min(playbackTime, songDuration) : playbackTime;
         const pastLastLyric = currentIndex >= lyrics.length - 1 && lyrics.length > 0;
-        const effectiveIndex = pastLastLyric ? lyrics.length - 1 + creditLines.reduce((best, cl, ci) => playbackTime >= cl.time ? ci + 1 : best, 0) : currentIndex;
+        const effectiveIndex = pastLastLyric ? lyrics.length - 1 + creditLines.reduce((best, cl, ci) => creditPlaybackTime >= cl.time ? ci + 1 : best, 0) : currentIndex;
         const iosPortrait = IS_IOS && !isLandscape;
         const previewFont = iosPortrait ? 16 : 18;
         const activeGutterExpansion = isLandscape ? lyricAreaW < 500 ? 14 : 30 : 20;

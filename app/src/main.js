@@ -58,6 +58,7 @@ const LYRIC_LEAD_SECONDS = 1;
 // next track's lyrics don't start ahead of the needle. (Reduced from 1500ms;
 // if she's nudging forward constantly the gap is too long for her vinyl.)
 const TRACK_GAP_MS = 300;
+const SIDE_END_HANDOFF_MS = 650;
 // How long the lyric clock parks at 0 after a manual flip / side pick while
 // the user physically flips the record and drops the needle.
 const FLIP_NEEDLE_DROP_MS = 10000;
@@ -636,8 +637,8 @@ function Liri() {
   };
 
   // Schedule flip chimes: every 10s for the first 30s, then one more 30s
-  // later. Delays are measured from song end (the side-end card itself
-  // appears 4s in). First fire also surfaces the push notification.
+  // later. Delays are measured from song end. First fire also surfaces the
+  // push notification.
   const scheduleFlipChimes = (song, discInfo) => {
     flipChimeTimersRef.current.forEach(clearTimeout);
     flipChimeTimersRef.current = [10000, 20000, 30000, 60000].map((delay, i) =>
@@ -1408,8 +1409,17 @@ function Liri() {
     const lastLyricTime = lyrics.length > 0 ? lyrics[lyrics.length - 1].time : null;
     // Read duration from turntable track ref directly — more reliable than state
     // when songDuration hasn't updated yet for the new track.
-    const tIdx = turntableMatchedIdxRef.current;
     const tTracks = turntableTracksRef.current;
+    // The cached index can lag after recognition, a header skip, or a restored
+    // session. Resolve the duration from the song actually displayed so the
+    // ending clock can never inherit a longer neighboring track's runtime.
+    const displayedTitle = normText(detectedSong?.title);
+    const displayedTrackIdx = displayedTitle
+      ? tTracks.findIndex(t => normText(t.trackName || t.title) === displayedTitle)
+      : -1;
+    const tIdx = displayedTrackIdx >= 0
+      ? displayedTrackIdx
+      : turntableMatchedIdxRef.current;
     const trackDuration = tIdx >= 0 ? (tTracks[tIdx]?.trackTimeMillis ?? 0) / 1000 || null : null;
 
     // Ordinary song-to-song transitions must use the album duration (or native
@@ -1452,7 +1462,7 @@ function Liri() {
       autoAdvanceFiredRef.current = true;
       setShouldAdvanceTrack(true);
     }
-  }, [playbackTime, songDuration, lyrics, mode, isPaused]);
+  }, [playbackTime, songDuration, lyrics, mode, isPaused, detectedSong?.title]);
 
 
   // ── Handle track advance (runs with fresh state) ──
@@ -2327,18 +2337,18 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
       const scheduledIdx = resolvedIdx;
       sideEndTimerRef.current = setTimeout(() => {
         sideEndTimerRef.current = null;
-        // A track pick/resync may have happened during the four-second linger.
+        // A track pick/resync may have happened during the brief handoff.
         if (turntableTracksRef.current.length > 0
             && turntableMatchedIdxRef.current !== scheduledIdx) return;
         clearInterval(syncIntervalRef.current);
         setMode("side-end");
-      }, 4000);
+      }, SIDE_END_HANDOFF_MS);
     };
     if (isLastTrack) {
       showAlbumEndPushNotification(detectedSong);
       setSideEndReason("album-end");
       if (detectedSong) setLastSong(detectedSong);
-      // Let the last lyric linger for a beat before showing the album-end card.
+      // Give the final lyric only a brief visual handoff before the end card.
       showSideEndIfStillCurrent();
       return;
     }
@@ -2346,7 +2356,7 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
       const discInfo = getNextDiscInfo();
       setSideEndNextDiscInfo(discInfo);
       setSideEndReason("flip");
-      // Chime ~3s after the flip card appears (≈7s from song end).
+      // The first reminder chime fires 10s after the song ends.
       scheduleFlipChimes(detectedSong, discInfo);
 
       // ── Log the flip event to analytics ──
@@ -2363,7 +2373,7 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
         method
       });
       if (detectedSong) setLastSong(detectedSong);
-      // Let the last lyric linger for a beat before showing the flip card.
+      // Give the final lyric only a brief visual handoff before the flip card.
       showSideEndIfStillCurrent();
       return;
     }
@@ -5426,7 +5436,8 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
       whiteSpace: "nowrap",
       flexShrink: 0
     }
-  }, formatTime(playbackTime) + (songDuration ? " / " + formatTime(songDuration) : ""))), /*#__PURE__*/React.createElement("div", {
+  }, formatTime(songDuration ? Math.min(playbackTime, songDuration) : playbackTime)
+    + (songDuration ? " / " + formatTime(songDuration) : ""))), /*#__PURE__*/React.createElement("div", {
     style: {
       flex: 1,
       overflow: "hidden",
@@ -5557,9 +5568,15 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
     ];
     // Effective current index across real lyrics + credits
     const allLines = [...lyrics, ...creditLines];
+    // Credits may be timestamped beyond a short outro, but they must never
+    // extend the perceived song runtime. Stop their progression at the real
+    // track duration while still allowing available outro time to reveal them.
+    const creditPlaybackTime = songDuration
+      ? Math.min(playbackTime, songDuration)
+      : playbackTime;
     const pastLastLyric = currentIndex >= lyrics.length - 1 && lyrics.length > 0;
     const effectiveIndex = pastLastLyric
-      ? lyrics.length - 1 + creditLines.reduce((best, cl, ci) => playbackTime >= cl.time ? ci + 1 : best, 0)
+      ? lyrics.length - 1 + creditLines.reduce((best, cl, ci) => creditPlaybackTime >= cl.time ? ci + 1 : best, 0)
       : currentIndex;
     // Render every line so the whole song is scrollable. Brightness comes from
     // the fixed scroller mask above, so changing the active index never fades,
