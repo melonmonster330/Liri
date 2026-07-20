@@ -14,6 +14,11 @@ import { useLyricScroll } from "./hooks/useLyricScroll.js";
 import { useCast } from "./hooks/useCast.js";
 import { startWhisperChunks } from "../base/lib/whisper.js";
 import { getSideGroups, hasSideData } from "../base/lib/sides.js";
+import {
+  expandKnownVinylSplitTracks,
+  expandKnownVinylSplitLyrics,
+  reconcileKnownVinylSplitSides,
+} from "../base/lib/vinyl-splits.js";
 import { LYRIC_SITES, saveUserLyrics, buildSideRows, saveUserSides } from "../base/lib/usermeta.js";
 import { showFlipPushNotification, showAlbumEndPushNotification, getLocalNotif } from "../base/lib/notifications.js";
 import { Vinyl }          from "../base/components/Vinyl.js";
@@ -1014,7 +1019,8 @@ function Liri() {
         .order("track_number", { ascending: true });
 
       if (trackRows?.length > 0) {
-        turntableTracksRef.current = trackRows.map(t => ({
+        const playbackTrackRows = expandKnownVinylSplitTracks(trackRows);
+        turntableTracksRef.current = playbackTrackRows.map(t => ({
           trackName: t.track_name,
           artistName: t.artist_name || artistName,
           collectionName: albumName,
@@ -1022,6 +1028,7 @@ function Liri() {
           trackTimeMillis: t.duration_ms || null,
           trackNumber: t.track_number || 1,
           discNumber: t.disc_number || 1,
+          vinylSplitSourceId: t._vinylSplitSourceId || null,
         }));
 
         setTurntableTracksProgress({ percent: 60, stage: "Loading lyrics…" });
@@ -1029,7 +1036,7 @@ function Liri() {
           .from("track_lyrics")
           .select("itunes_track_id, lrc_raw, words_json, lyrics_plain")
           .in("itunes_track_id", trackRows.map(t => t.itunes_track_id).filter(Boolean));
-        const cache = {};
+        let cache = {};
         for (const row of lrcRows || []) {
           // Key as String() to guard against numeric vs string type mismatch.
           if (row.itunes_track_id) {
@@ -1046,6 +1053,7 @@ function Liri() {
             };
           }
         }
+        cache = expandKnownVinylSplitLyrics(cache, playbackTrackRows);
         console.log("[turntable] lrcRows:", (lrcRows || []).length, "cache entries:", Object.keys(cache).length, "tracks:", trackRows.length);
 
         // Store in ref (not state) so startListeningSpeech can read it synchronously
@@ -1097,8 +1105,11 @@ function Liri() {
             const key = `${s.side}|${s.side_track_number}`;
             if (!seen.has(key)) { seen.add(key); sorted.push(s); }
           }
-          // Only use if we have at least as many side rows as tracks (otherwise incomplete data)
-          if (sorted.length >= trackRows.length) vinylSidesRef.current = sorted;
+          const reconciledSides = reconcileKnownVinylSplitSides(trackRows, sorted);
+          // Only use complete positional data; curated split exceptions add the
+          // physical track missing from the digital service's combined entry.
+          if (reconciledSides.length >= playbackTrackRows.length
+              && reconciledSides.every(Boolean)) vinylSidesRef.current = reconciledSides;
         }
 
         const dbRelease = await fetchVinylRelease(collectionId);

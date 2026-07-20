@@ -71,6 +71,15 @@
       return lines;
     }
 
+    function lyricsForVinylTrack(raw, track) {
+      const parsed = parseLRC(raw);
+      if (track.lyricStartSeconds == null) return parsed;
+      return parsed
+        .filter(line => line.time >= track.lyricStartSeconds
+          && (track.lyricEndSeconds == null || line.time < track.lyricEndSeconds))
+        .map(line => ({ ...line, time: Math.max(0, line.time - track.lyricStartSeconds) }));
+    }
+
     function formatDuration(ms) {
       const s = Math.round(ms / 1000);
       return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`;
@@ -438,10 +447,10 @@
 
       useEffect(() => {
         fetchLyricsForTrack(
-          track.trackId, track.trackName, track.artistName,
+          track.lyricSourceId || track.trackId, track.trackName, track.artistName,
           album.album_name, track.trackTimeMillis
         ).then(result => {
-          if (result) setLrc(parseLRC(result));
+          if (result) setLrc(lyricsForVinylTrack(result, track));
           else setNoLyrics(true);
           setLoading(false);
         });
@@ -678,9 +687,9 @@
           .order("disc_number", { ascending: true })
           .order("track_number", { ascending: true });
 
-        const trackList = dbTracks || [];
+        const sourceTrackList = dbTracks || [];
 
-        if (trackList.length === 0) { setLoading(false); return; }
+        if (sourceTrackList.length === 0) { setLoading(false); return; }
 
         // 3. Load vinyl side data — query by collection only (track IDs can be
         //    synthetic Discogs values that won't match real iTunes IDs in trackList).
@@ -718,9 +727,44 @@
         const hasSideData = sidesByPosition.length > 0 || releaseTracks.some(t => t.side);
         setVinylSource(hasSideData ? "db" : "estimated");
 
+        // The digital Melodrama listing combines these into one 6:07 entry,
+        // while the physical record ends side A with Hard Feelings and starts
+        // side B with Loveless. Represent the actual vinyl tracks here.
+        const trackList = [];
+        const reconciledSides = [];
+        sourceTrackList.forEach((t, i) => {
+          if (String(t.itunes_track_id) !== "1429663168") {
+            trackList.push(t);
+            reconciledSides.push(sidesByPosition[i] || null);
+            return;
+          }
+          trackList.push({
+            ...t,
+            track_name: "Hard Feelings",
+            duration_ms: 234000,
+            _lyricSourceId: t.itunes_track_id,
+            _lyricStartSeconds: 0,
+            _lyricEndSeconds: 234,
+          });
+          reconciledSides.push({ side: "A", side_track_number: 6, position: "A6" });
+          trackList.push({
+            ...t,
+            itunes_track_id: 1429663168001,
+            track_name: "Loveless",
+            duration_ms: 133391,
+            _lyricSourceId: t.itunes_track_id,
+            _lyricStartSeconds: 234,
+            _lyricEndSeconds: null,
+          });
+          reconciledSides.push({ side: "B", side_track_number: 1, position: "B1" });
+        });
+        if (reconciledSides.length === trackList.length && reconciledSides.every(Boolean)) {
+          sidesByPosition = reconciledSides;
+        }
+
         // Which tracks already have lyrics in the DB — drives the per-track
         // "no lyrics" tag so missing ones can be filled in from here.
-        const trackIds = trackList.map(t => t.itunes_track_id).filter(Boolean);
+        const trackIds = [...new Set(trackList.map(t => t._lyricSourceId || t.itunes_track_id).filter(Boolean))];
         const lyricRows = await sbInChunked(
           "track_lyrics", "itunes_track_id, lrc_raw, lyrics_plain", "itunes_track_id", trackIds);
         const lyricSet = new Set(
@@ -757,7 +801,10 @@
             collectionName: album.album_name,
             trackTimeMillis: t.duration_ms,
             side, trackOnSide, position,
-            hasLyrics: lyricSet.has(String(t.itunes_track_id)),
+            lyricSourceId: t._lyricSourceId || null,
+            lyricStartSeconds: t._lyricStartSeconds,
+            lyricEndSeconds: t._lyricEndSeconds,
+            hasLyrics: lyricSet.has(String(t._lyricSourceId || t.itunes_track_id)),
           };
         });
 

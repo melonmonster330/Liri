@@ -817,6 +817,101 @@
     ].filter((g) => g.tracks.length > 0);
   }
 
+  // app/base/lib/vinyl-splits.js
+  var SPLITS = {
+    "1429663168": {
+      parts: [
+        {
+          trackId: 1429663168,
+          title: "Hard Feelings",
+          durationMs: 234e3,
+          side: "A",
+          sideTrackNumber: 6,
+          position: "A6",
+          lyricStartSeconds: 0,
+          lyricEndSeconds: 234
+        },
+        {
+          // Stable synthetic ID used only inside Liri's playback model.
+          trackId: 1429663168001,
+          title: "Loveless",
+          durationMs: 133391,
+          side: "B",
+          sideTrackNumber: 1,
+          position: "B1",
+          lyricStartSeconds: 234,
+          lyricEndSeconds: null
+        }
+      ]
+    }
+  };
+  var formatLrcTime = (seconds) => {
+    const mins = Math.floor(seconds / 60);
+    const secs = (seconds - mins * 60).toFixed(3).padStart(6, "0");
+    return `${String(mins).padStart(2, "0")}:${secs}`;
+  };
+  var sliceLrc = (lrc, start, end) => (lrc || "").split("\n").flatMap((line) => {
+    const m = line.match(/^\[(\d{2}):(\d{2})[.:](\d{2,3})\](.*)$/);
+    if (!m) return [];
+    const time = Number(m[1]) * 60 + Number(m[2]) + Number(m[3].padEnd(3, "0").slice(0, 3)) / 1e3;
+    if (time < start || end != null && time >= end) return [];
+    return [`[${formatLrcTime(Math.max(0, time - start))}]${m[4]}`];
+  }).join("\n");
+  var lrcToPlain = (lrc) => (lrc || "").split("\n").map((line) => line.replace(/^\[\d{2}:\d{2}[.:]\d{2,3}\]/, "").trim()).filter(Boolean).join("\n");
+  function expandKnownVinylSplitTracks(trackRows) {
+    const expanded = [];
+    for (const row of trackRows || []) {
+      const split = SPLITS[String(row.itunes_track_id)];
+      if (!split) {
+        expanded.push(row);
+        continue;
+      }
+      split.parts.forEach((part) => expanded.push({
+        ...row,
+        itunes_track_id: part.trackId,
+        track_name: part.title,
+        duration_ms: part.durationMs,
+        _vinylSplitSourceId: row.itunes_track_id,
+        _vinylSplitPart: part
+      }));
+    }
+    return expanded.map((row, i) => ({ ...row, track_number: i + 1 }));
+  }
+  function expandKnownVinylSplitLyrics(cache, expandedRows) {
+    const sourceCache = { ...cache || {} };
+    const next = { ...cache || {} };
+    for (const row of expandedRows || []) {
+      const part = row._vinylSplitPart;
+      if (!part) continue;
+      const source = sourceCache[String(row._vinylSplitSourceId)];
+      if (!source) continue;
+      const lrc = sliceLrc(source.lrc_raw, part.lyricStartSeconds, part.lyricEndSeconds);
+      const words = Array.isArray(source.words_json) ? source.words_json.filter((w) => w.start_ms >= part.lyricStartSeconds * 1e3 && (part.lyricEndSeconds == null || w.start_ms < part.lyricEndSeconds * 1e3)).map((w) => ({ ...w, start_ms: Math.max(0, w.start_ms - part.lyricStartSeconds * 1e3) })) : null;
+      next[String(row.itunes_track_id)] = {
+        lrc_raw: lrc || null,
+        words_json: words,
+        lyrics_plain: lrc ? lrcToPlain(lrc) : source.lyrics_plain
+      };
+    }
+    return next;
+  }
+  function reconcileKnownVinylSplitSides(originalRows, sideRows) {
+    const reconciled = [];
+    (originalRows || []).forEach((row, i) => {
+      const split = SPLITS[String(row.itunes_track_id)];
+      if (!split) {
+        reconciled.push(sideRows?.[i] || null);
+        return;
+      }
+      split.parts.forEach((part) => reconciled.push({
+        side: part.side,
+        side_track_number: part.sideTrackNumber,
+        position: part.position
+      }));
+    });
+    return reconciled;
+  }
+
   // app/base/lib/usermeta.js
   var LYRIC_SITES = [
     { name: "LRCLIB", url: "https://lrclib.net" },
@@ -829,7 +924,7 @@
     const stamped = (text || "").split("\n").filter((l) => /^\s*\[\d{1,2}:\d{2}/.test(l));
     return stamped.length >= 2;
   }
-  function lrcToPlain(text) {
+  function lrcToPlain2(text) {
     return (text || "").split("\n").map((l) => l.replace(/\[[^\]]*\]/g, "").trim()).filter(Boolean).join("\n");
   }
   async function saveUserLyrics(sb2, trackId, text) {
@@ -839,7 +934,7 @@
     const row = {
       itunes_track_id: trackId,
       lrc_raw: isLrc ? trimmed : null,
-      lyrics_plain: isLrc ? lrcToPlain(trimmed) : trimmed,
+      lyrics_plain: isLrc ? lrcToPlain2(trimmed) : trimmed,
       words_json: null,
       source: "user",
       fetched_at: (/* @__PURE__ */ new Date()).toISOString()
@@ -2274,18 +2369,20 @@
         const albumName = alb?.album_name || "";
         const { data: trackRows } = await sb.from("album_tracks").select("itunes_track_id, track_name, artist_name, track_number, disc_number, duration_ms").eq("itunes_collection_id", collectionId).order("disc_number", { ascending: true }).order("track_number", { ascending: true });
         if (trackRows?.length > 0) {
-          turntableTracksRef.current = trackRows.map((t) => ({
+          const playbackTrackRows = expandKnownVinylSplitTracks(trackRows);
+          turntableTracksRef.current = playbackTrackRows.map((t) => ({
             trackName: t.track_name,
             artistName: t.artist_name || artistName,
             collectionName: albumName,
             trackId: t.itunes_track_id || null,
             trackTimeMillis: t.duration_ms || null,
             trackNumber: t.track_number || 1,
-            discNumber: t.disc_number || 1
+            discNumber: t.disc_number || 1,
+            vinylSplitSourceId: t._vinylSplitSourceId || null
           }));
           setTurntableTracksProgress({ percent: 60, stage: "Loading lyrics\u2026" });
           const { data: lrcRows } = await sb.from("track_lyrics").select("itunes_track_id, lrc_raw, words_json, lyrics_plain").in("itunes_track_id", trackRows.map((t) => t.itunes_track_id).filter(Boolean));
-          const cache = {};
+          let cache = {};
           for (const row of lrcRows || []) {
             if (row.itunes_track_id) {
               let wordsJson = row.words_json || null;
@@ -2303,6 +2400,7 @@
               };
             }
           }
+          cache = expandKnownVinylSplitLyrics(cache, playbackTrackRows);
           console.log("[turntable] lrcRows:", (lrcRows || []).length, "cache entries:", Object.keys(cache).length, "tracks:", trackRows.length);
           turntableLyricsCacheRef.current = cache;
           const refreshCurrentLyrics = () => {
@@ -2334,7 +2432,8 @@
                 sorted.push(s);
               }
             }
-            if (sorted.length >= trackRows.length) vinylSidesRef.current = sorted;
+            const reconciledSides = reconcileKnownVinylSplitSides(trackRows, sorted);
+            if (reconciledSides.length >= playbackTrackRows.length && reconciledSides.every(Boolean)) vinylSidesRef.current = reconciledSides;
           }
           const dbRelease = await fetchVinylRelease(collectionId);
           if (dbRelease?.vinyl_tracks?.length > 0) {
