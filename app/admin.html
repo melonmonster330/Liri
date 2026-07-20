@@ -72,6 +72,8 @@
   .user-columns { display:flex; align-items:center; gap:12px; padding:0 0 7px; border-bottom:1px solid var(--border); }
   .user-columns-label { flex:1; font-size:10px; color:var(--muted); text-transform:uppercase; letter-spacing:.06em; }
   .sort-btn { width:54px; padding:4px 2px; border:0; background:transparent; color:var(--muted); font:700 10px/1 inherit; text-transform:uppercase; letter-spacing:.04em; cursor:pointer; text-align:right; }
+  .sort-btn.last-login, .album-stat.user-last-login { width:84px; min-width:84px; }
+  .album-stat.user-metric { width:54px; min-width:54px; }
   .sort-btn:hover, .sort-btn.active { color:var(--gold); }
 
   .split-row { display: flex; gap: 20px; }
@@ -522,14 +524,25 @@ function renderUsers() {
   if (userSort.field && userSort.direction) {
     const multiplier = userSort.direction === "desc" ? -1 : 1;
     users.sort((a, b) => {
+      if (userSort.field === "last_sign_in_at") {
+        const aTime = a.last_sign_in_at ? new Date(a.last_sign_in_at).getTime() : null;
+        const bTime = b.last_sign_in_at ? new Date(b.last_sign_in_at).getTime() : null;
+        if (aTime == null && bTime != null) return 1;
+        if (aTime != null && bTime == null) return -1;
+        const difference = (aTime || 0) - (bTime || 0);
+        if (difference !== 0) return difference * multiplier;
+        return String(b.created_at || "").localeCompare(String(a.created_at || ""));
+      }
       const difference = (Number(a[userSort.field]) || 0) - (Number(b[userSort.field]) || 0);
       if (difference !== 0) return difference * multiplier;
       return String(b.created_at || "").localeCompare(String(a.created_at || ""));
     });
   }
-  const sortDescription = userSort.field
-    ? `sorted by ${userSort.field}, ${userSort.direction === "desc" ? "highest first" : "lowest first"}`
-    : "newest first";
+  const sortFieldLabel = userSort.field === "last_sign_in_at" ? "last login" : userSort.field;
+  const sortDirectionLabel = userSort.field === "last_sign_in_at"
+    ? (userSort.direction === "desc" ? "most recent first" : "oldest first")
+    : (userSort.direction === "desc" ? "highest first" : "lowest first");
+  const sortDescription = userSort.field ? `sorted by ${sortFieldLabel}, ${sortDirectionLabel}` : "newest first";
   c.innerHTML = `
     <button class="back-btn" onclick="load()">← Back to dashboard</button>
     <div class="section">
@@ -542,6 +555,7 @@ function renderUsers() {
         <div class="user-columns-label">User</div>
         <button class="sort-btn${userSort.field === 'plays' ? ' active' : ''}" aria-label="Sort users by plays" aria-pressed="${userSort.field === 'plays'}" onclick="cycleUserSort('plays')">Plays${userSortLabel('plays')}</button>
         <button class="sort-btn${userSort.field === 'albums' ? ' active' : ''}" aria-label="Sort users by albums" aria-pressed="${userSort.field === 'albums'}" onclick="cycleUserSort('albums')">Albums${userSortLabel('albums')}</button>
+        <button class="sort-btn last-login${userSort.field === 'last_sign_in_at' ? ' active' : ''}" aria-label="Sort users by last login" aria-pressed="${userSort.field === 'last_sign_in_at'}" onclick="cycleUserSort('last_sign_in_at')">Last login${userSortLabel('last_sign_in_at')}</button>
       </div>
       ${users.length === 0 ? `<div style="color:var(--muted);font-size:13px">${userTierFilter === 'premium' ? 'No premium users' : 'No users yet'}</div>` :
         users.map(u => `
@@ -552,8 +566,9 @@ function renderUsers() {
               <div class="album-artist" style="margin-top:2px">${signupPlatform(u)}</div>
             </div>
             <div class="album-stats">
-              <div class="album-stat"><div class="album-stat-val">${fmt(u.plays)}</div><div class="album-stat-lbl">plays</div></div>
-              <div class="album-stat"><div class="album-stat-val">${fmt(u.albums)}</div><div class="album-stat-lbl">albums</div></div>
+              <div class="album-stat user-metric"><div class="album-stat-val">${fmt(u.plays)}</div><div class="album-stat-lbl">plays</div></div>
+              <div class="album-stat user-metric"><div class="album-stat-val">${fmt(u.albums)}</div><div class="album-stat-lbl">albums</div></div>
+              <div class="album-stat user-last-login"><div class="album-stat-val" style="font-size:12px">${u.last_sign_in_at ? timeAgo(u.last_sign_in_at) : 'Never'}</div><div class="album-stat-lbl">last login</div></div>
             </div>
           </div>
         `).join("")}
