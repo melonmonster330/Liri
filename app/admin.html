@@ -68,6 +68,7 @@
   .signup-row:last-child { border-bottom: none; }
   .signup-email { color: rgba(255,255,255,0.7); }
   .signup-date { color: var(--muted); font-size: 11px; }
+  .premium-badge { display:inline-flex; align-items:center; border:1px solid rgba(212,168,70,.32); background:rgba(212,168,70,.1); color:var(--gold); border-radius:20px; padding:3px 8px; font-size:10px; font-weight:700; text-transform:uppercase; letter-spacing:.04em; }
 
   .split-row { display: flex; gap: 20px; }
   .split-item { flex: 1; }
@@ -471,6 +472,9 @@ function signupPlatform(u) {
   return "· platform unknown";
 }
 
+let usersCache = [];
+let userTierFilter = "all";
+
 async function openUsers() {
   setActiveNav("users");
   const c = document.getElementById("content");
@@ -478,16 +482,33 @@ async function openUsers() {
   const r = await fetch(API + "?action=users");
   if (!r.ok) { c.innerHTML = `<div class="loading">Error loading users</div>`; return; }
   const d = await r.json();
-  const users = d.users || [];
+  usersCache = d.users || [];
+  userTierFilter = "all";
+  renderUsers();
+}
+
+function setUserTierFilter(filter) {
+  userTierFilter = filter;
+  renderUsers();
+}
+
+function renderUsers() {
+  const c = document.getElementById("content");
+  const premiumCount = usersCache.filter(u => u.is_premium).length;
+  const users = userTierFilter === "premium" ? usersCache.filter(u => u.is_premium) : usersCache;
   c.innerHTML = `
     <button class="back-btn" onclick="load()">← Back to dashboard</button>
     <div class="section">
-      <div class="section-title">All users (${users.length}) — newest first</div>
-      ${users.length === 0 ? '<div style="color:var(--muted);font-size:13px">No users yet</div>' :
+      <div class="section-title">Users — newest first</div>
+      <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:14px">
+        <button class="back-btn" style="margin:0;${userTierFilter === 'all' ? 'color:var(--gold);border-color:rgba(212,168,70,.45)' : ''}" onclick="setUserTierFilter('all')">All (${usersCache.length})</button>
+        <button class="back-btn" style="margin:0;${userTierFilter === 'premium' ? 'color:var(--gold);border-color:rgba(212,168,70,.45)' : ''}" onclick="setUserTierFilter('premium')">Premium (${premiumCount})</button>
+      </div>
+      ${users.length === 0 ? `<div style="color:var(--muted);font-size:13px">${userTierFilter === 'premium' ? 'No premium users' : 'No users yet'}</div>` :
         users.map(u => `
           <div class="album-row" onclick="openUser('${esc(u.id)}')">
             <div class="album-info">
-              <div class="album-name">${esc(u.email)}</div>
+              <div class="album-name" style="display:flex;align-items:center;gap:8px">${esc(u.email)} ${u.is_premium ? `<span class="premium-badge">${u.subscription_tier === 'lifetime' ? 'Lifetime' : 'Premium'}</span>` : ''}</div>
               <div class="album-artist">${esc(u.provider)} · joined ${timeAgo(u.created_at)}</div>
               <div class="album-artist" style="margin-top:2px">${signupPlatform(u)}</div>
             </div>

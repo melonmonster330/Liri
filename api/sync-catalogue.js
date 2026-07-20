@@ -434,7 +434,10 @@ async function getAdminStats(days = 3) {
 
   // Subscriptions
   const subs        = Array.isArray(subsResp.body) ? subsResp.body : [];
-  const premiumUsers = subs.filter(s => s.tier === "premium" && ["active","trialing"].includes(s.status)).length;
+  const premiumUsers = subs.filter(s =>
+    (s.tier === "premium" && ["active", "trialing"].includes(s.status))
+    || (s.tier === "lifetime" && s.status === "active")
+  ).length;
 
   // Catalogue & flips
   const catalogueTotal = parseInt(releasesResp.headers?.["content-range"]?.split("/")[1] || "0", 10);
@@ -492,10 +495,12 @@ async function getUsersList() {
     allUsers.push(...batch);
     if (batch.length < 1000) break;
   }
-  const [libRows, eventRows] = await Promise.all([
+  const [libRows, eventRows, subscriptionRows] = await Promise.all([
     sbGetAll("user_library?select=user_id"),
     sbGetAll("listening_events?select=user_id,platform,source"),
+    sbGetAll("subscriptions?select=user_id,tier,status"),
   ]);
+  const subscriptionByUid = new Map(subscriptionRows.map(s => [s.user_id, s]));
   const albumByUid = {};
   for (const r of libRows) albumByUid[r.user_id] = (albumByUid[r.user_id] || 0) + 1;
   // A "play" = an album load, so exclude auto_advance (per-track continuations).
@@ -521,7 +526,13 @@ async function getUsersList() {
   return {
     users: allUsers
       .sort((a, b) => (b.created_at || "").localeCompare(a.created_at || ""))
-      .map(u => ({
+      .map(u => {
+        const subscription = subscriptionByUid.get(u.id);
+        const isPremium = !!subscription && (
+          (subscription.tier === "premium" && ["active", "trialing"].includes(subscription.status))
+          || (subscription.tier === "lifetime" && subscription.status === "active")
+        );
+        return {
         id:         u.id,
         email:      maskEmail(u.email),
         created_at: u.created_at,
@@ -532,7 +543,11 @@ async function getUsersList() {
         // from the platforms their plays came from (older accounts).
         signup_platform:   u.user_metadata?.signup_platform || null,
         platform_inferred: inferPlatform(u.id),
-      })),
+        is_premium: isPremium,
+        subscription_tier: isPremium ? subscription.tier : "free",
+        subscription_status: subscription?.status || null,
+      };
+      }),
   };
 }
 
