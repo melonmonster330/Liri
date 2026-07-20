@@ -52,7 +52,7 @@ export function LyricsEditorSheet({ track, sites, saving, error, onSave, onClose
       }, e("svg", { width: "12", height: "12", viewBox: "0 0 24 24", fill: "none", stroke: "currentColor", strokeWidth: "2.5", strokeLinecap: "round" },
         e("line", { x1: "18", y1: "6", x2: "6", y2: "18" }), e("line", { x1: "6", y1: "6", x2: "18", y2: "18" })))),
     e("div", {
-      style: { overflowY: "auto", flex: 1, minHeight: 0, padding: "8px 24px", WebkitOverflowScrolling: "touch", paddingBottom: "max(24px, env(safe-area-inset-bottom))" }
+      style: { overflowY: "auto", flex: 1, minHeight: 0, padding: "8px 24px", WebkitOverflowScrolling: "touch", paddingBottom: "max(32px, calc(env(safe-area-inset-bottom) + 24px))" }
     },
       e("div", { style: { fontSize: 12, color: "rgba(255,255,255,0.45)", lineHeight: 1.6, marginBottom: 10 } },
         "Search one of these sites for the song, then paste the lyrics below. Timestamped LRC lines (e.g. [00:12.34]) sync automatically; plain text scrolls at reading speed."),
