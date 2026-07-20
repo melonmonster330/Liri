@@ -417,6 +417,7 @@
     isPaused,
     isLandscape,
     controlsVisible,
+    focusStrength = 1,
     currentIndex,
     setCurrentIndex,
     playbackTime,
@@ -436,6 +437,36 @@
     const rollRafRef = useRef2(null);
     const centeredLineRef = useRef2(null);
     const lastActiveIndexRef = useRef2(currentIndex);
+    const focusStrengthRef = useRef2(focusStrength);
+    focusStrengthRef.current = focusStrength;
+    const updateLyricEmphasis = () => {
+      const container = lyricsScrollRef.current;
+      if (!container || lyricsUnsynced) return;
+      const lines = Array.from(container.querySelectorAll("[data-lyric-line]"));
+      if (!lines.length) return;
+      const containerRect = container.getBoundingClientRect();
+      const focusY = containerRect.top + container.clientHeight / 2 - ACTIVE_LINE_CENTER_OFFSET_PX;
+      const strength = focusStrengthRef.current;
+      const updates = lines.map((line) => {
+        const rect = line.getBoundingClientRect();
+        const distance = Math.abs(rect.top + rect.height / 2 - focusY);
+        let targetOpacity;
+        if (distance <= 22) targetOpacity = 1;
+        else if (distance <= 70) targetOpacity = 1 - (distance - 22) / 48 * 0.75;
+        else if (distance <= 165) targetOpacity = 0.25 - (distance - 70) / 95 * 0.15;
+        else targetOpacity = 0.04;
+        if (line.dataset.creditLine === "true") {
+          targetOpacity = Math.min(0.55, targetOpacity);
+        }
+        const opacity = 0.14 + (targetOpacity - 0.14) * strength;
+        return [line, opacity.toFixed(3)];
+      });
+      updates.forEach(([line, opacity]) => {
+        if (line.style.getPropertyValue("--lyric-opacity") !== opacity) {
+          line.style.setProperty("--lyric-opacity", opacity);
+        }
+      });
+    };
     const centerActiveLine = () => {
       const container = lyricsScrollRef.current;
       const line = currentLineRef.current;
@@ -445,6 +476,7 @@
       const lineCenterInScroller = lineRect.top - containerRect.top + container.scrollTop + lineRect.height / 2;
       const target = Math.max(0, lineCenterInScroller - container.clientHeight / 2 + ACTIVE_LINE_CENTER_OFFSET_PX);
       container.scrollTop = target;
+      updateLyricEmphasis();
     };
     const rollActiveLineToCenter = () => {
       const container = lyricsScrollRef.current;
@@ -469,6 +501,7 @@
         const progress = Math.min(1, (now - startedAt) / duration);
         const eased = progress * progress * (3 - 2 * progress);
         container.scrollTop = from + (target - from) * eased;
+        updateLyricEmphasis();
         if (progress < 1) rollRafRef.current = requestAnimationFrame(frame);
         else centerActiveLine();
       };
@@ -483,7 +516,16 @@
       lastActiveIndexRef.current = currentIndex;
       if (isEnteringFromIntro || isNewVisibleLine) rollActiveLineToCenter();
       else if (line && (!previousLine || !previousLine.isConnected)) centerActiveLine();
-    }, [currentIndex, mode, lyricsUnsynced, lyrics.length, Math.floor(playbackTime)]);
+      updateLyricEmphasis();
+    }, [currentIndex, mode, lyricsUnsynced, lyrics.length, Math.floor(playbackTime), focusStrength]);
+    useEffect3(() => {
+      const container = lyricsScrollRef.current;
+      if (!container || lyricsUnsynced) return;
+      const update = () => updateLyricEmphasis();
+      container.addEventListener("scroll", update, { passive: true });
+      update();
+      return () => container.removeEventListener("scroll", update);
+    }, [mode, lyricsUnsynced, lyrics.length]);
     useEffect3(() => () => cancelAnimationFrame(rollRafRef.current), []);
     useEffect3(() => {
       if (!isLandscape || mode !== "syncing" || lyricsUnsynced) return;
@@ -1510,9 +1552,6 @@
       1,
       (playbackTime - firstLyricTime) / INTRO_FOCUS_FADE_SECONDS
     )) : 1;
-    const introMaskAlpha = 0.14;
-    const focusAlpha = (target) => (introMaskAlpha + (target - introMaskAlpha) * lyricFocusStrength).toFixed(3);
-    const lyricFocusMask = `linear-gradient(to bottom, rgba(0,0,0,${focusAlpha(0.04)}) 0%, rgba(0,0,0,${focusAlpha(0.1)}) calc(50% - 150px), rgba(0,0,0,${focusAlpha(0.25)}) calc(50% - 94px), rgba(0,0,0,${focusAlpha(1)}) calc(50% - 70px), rgba(0,0,0,${focusAlpha(1)}) calc(50% - 26px), rgba(0,0,0,${focusAlpha(0.25)}) calc(50% + 2px), rgba(0,0,0,${focusAlpha(0.1)}) calc(50% + 105px), rgba(0,0,0,${focusAlpha(0.03)}) 100%)`;
     const layoutLyricFontScale = menuOpen ? 1.1 * Math.max(0.72, Math.min(1, lyricAreaW / 640)) : 1.25;
     const lyricPanelWidth = isLandscape ? lyricAreaW : winW;
     const responsiveLyricFontScaleCap = Math.min(
@@ -2508,6 +2547,7 @@
       isPaused,
       isLandscape,
       controlsVisible,
+      focusStrength: lyricFocusStrength,
       currentIndex,
       setCurrentIndex,
       playbackTime,
@@ -6473,12 +6513,6 @@ Move closer to your speakers and try again.`);
         WebkitOverflowScrolling: "touch",
         touchAction: "pan-y",
         overscrollBehavior: "contain",
-        // Keep emphasis tied to the lyric's physical position instead of
-        // cross-fading two React rows when currentIndex changes. A single mask
-        // on the scroller lets each line brighten naturally as it rolls through
-        // the resting point and avoids per-row compositor churn in Chrome.
-        WebkitMaskImage: lyricsUnsynced ? "none" : lyricFocusMask,
-        maskImage: lyricsUnsynced ? "none" : lyricFocusMask,
         // Slide + resize in step with the 0.35s menu fade
         transition: isLandscape ? "margin-left 0.35s, width 0.35s" : "none"
       },
@@ -6564,6 +6598,8 @@ Move closer to your speakers and try again.`);
           };
           return /* @__PURE__ */ React.createElement("div", {
             key: i,
+            "data-lyric-line": "true",
+            "data-credit-line": isCredit ? "true" : void 0,
             ref: cur ? currentLineRef : i === lyrics.length ? creditsRef : null,
             style: {
               textAlign: "center",
@@ -6574,7 +6610,7 @@ Move closer to your speakers and try again.`);
               fontSize: isCredit ? "13px" : Math.round(renderedPreviewFontPx) + "px",
               fontWeight: isCredit ? "400" : "600",
               color: "#ffffff",
-              opacity: isCredit ? 0.55 : 1,
+              opacity: "var(--lyric-opacity, 0.14)",
               lineHeight: "1.4",
               textShadow: "none",
               cursor: "default",

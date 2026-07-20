@@ -19,6 +19,7 @@ export function useLyricScroll({
   songDuration,
   isPaused,
   isLandscape, controlsVisible,
+  focusStrength = 1,
   currentIndex, setCurrentIndex,
   playbackTime, setPlaybackTime,
   setUserScrolling, userScrollingRef,
@@ -34,6 +35,42 @@ export function useLyricScroll({
   const rollRafRef = useRef(null);
   const centeredLineRef = useRef(null);
   const lastActiveIndexRef = useRef(currentIndex);
+  const focusStrengthRef = useRef(focusStrength);
+  focusStrengthRef.current = focusStrength;
+
+  // Brighten lyrics by their physical distance from the resting point. This
+  // avoids a CSS mask on the moving scroll surface (which intermittently
+  // flashes when Chrome/Safari re-composites it) and avoids React opacity
+  // handoffs. The custom property is the only value changed during a roll.
+  const updateLyricEmphasis = () => {
+    const container = lyricsScrollRef.current;
+    if (!container || lyricsUnsynced) return;
+    const lines = Array.from(container.querySelectorAll("[data-lyric-line]"));
+    if (!lines.length) return;
+    const containerRect = container.getBoundingClientRect();
+    const focusY = containerRect.top + container.clientHeight / 2
+      - ACTIVE_LINE_CENTER_OFFSET_PX;
+    const strength = focusStrengthRef.current;
+    const updates = lines.map(line => {
+      const rect = line.getBoundingClientRect();
+      const distance = Math.abs(rect.top + rect.height / 2 - focusY);
+      let targetOpacity;
+      if (distance <= 22) targetOpacity = 1;
+      else if (distance <= 70) targetOpacity = 1 - (distance - 22) / 48 * 0.75;
+      else if (distance <= 165) targetOpacity = 0.25 - (distance - 70) / 95 * 0.15;
+      else targetOpacity = 0.04;
+      if (line.dataset.creditLine === "true") {
+        targetOpacity = Math.min(0.55, targetOpacity);
+      }
+      const opacity = 0.14 + (targetOpacity - 0.14) * strength;
+      return [line, opacity.toFixed(3)];
+    });
+    updates.forEach(([line, opacity]) => {
+      if (line.style.getPropertyValue("--lyric-opacity") !== opacity) {
+        line.style.setProperty("--lyric-opacity", opacity);
+      }
+    });
+  };
 
   // Center against the lyric scroller itself, not the page viewport. This is
   // reliable inside iOS's fixed overlay and across every screen size.
@@ -49,6 +86,7 @@ export function useLyricScroll({
     const target = Math.max(0, lineCenterInScroller - container.clientHeight / 2
       + ACTIVE_LINE_CENTER_OFFSET_PX);
     container.scrollTop = target;
+    updateLyricEmphasis();
   };
 
   // Roll the newly highlighted line into place instead of snapping the list.
@@ -85,6 +123,7 @@ export function useLyricScroll({
       // curve moved too much in its first few frames and looked like a jump.
       const eased = progress * progress * (3 - 2 * progress);
       container.scrollTop = from + (target - from) * eased;
+      updateLyricEmphasis();
       if (progress < 1) rollRafRef.current = requestAnimationFrame(frame);
       else centerActiveLine();
     };
@@ -108,7 +147,20 @@ export function useLyricScroll({
     // can rerun this effect for the credit rows; doing another instant center
     // for the same DOM line used to interrupt an active roll with a flash.
     else if (line && (!previousLine || !previousLine.isConnected)) centerActiveLine();
-  }, [currentIndex, mode, lyricsUnsynced, lyrics.length, Math.floor(playbackTime)]);
+    updateLyricEmphasis();
+  }, [currentIndex, mode, lyricsUnsynced, lyrics.length, Math.floor(playbackTime), focusStrength]);
+
+  // Manual and momentum scrolling also move lyrics through the same fixed
+  // focus point. Update brightness from the scroll event without changing
+  // React state or creating/removing compositor layers.
+  useEffect(() => {
+    const container = lyricsScrollRef.current;
+    if (!container || lyricsUnsynced) return;
+    const update = () => updateLyricEmphasis();
+    container.addEventListener("scroll", update, { passive: true });
+    update();
+    return () => container.removeEventListener("scroll", update);
+  }, [mode, lyricsUnsynced, lyrics.length]);
 
   // New rolls cancel the previous RAF themselves. Cancel here only when the
   // hook actually unmounts, not on routine playback dependency updates.

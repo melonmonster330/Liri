@@ -172,10 +172,9 @@ function Liri() {
   const lyricAreaLeft = menuOpen
     ? Math.max(railW + 24, Math.round((winW - lyricAreaW) / 2))
     : Math.round((winW - lyricAreaW) / 2);
-  // One stable viewport mask supplies the active-line emphasis. During the
-  // instrumental intro every line has the same dim opacity, so a lyric merely
-  // passing through the middle cannot look active. As the first lyric starts,
-  // blend the focus band in alongside the existing 650ms centering motion.
+  // During the instrumental intro every line has the same dim opacity. As the
+  // first lyric starts, the scroll hook blends in position-based emphasis;
+  // mid-song matches and manual selections focus immediately.
   const firstLyricTime = Number.isFinite(lyrics[0]?.time) ? lyrics[0].time : null;
   const lyricFocusStrength = currentIndex < 0
     ? 0
@@ -183,10 +182,6 @@ function Liri() {
       ? Math.max(0, Math.min(1,
         (playbackTime - firstLyricTime) / INTRO_FOCUS_FADE_SECONDS))
       : 1;
-  const introMaskAlpha = 0.14;
-  const focusAlpha = target => (introMaskAlpha
-    + (target - introMaskAlpha) * lyricFocusStrength).toFixed(3);
-  const lyricFocusMask = `linear-gradient(to bottom, rgba(0,0,0,${focusAlpha(0.04)}) 0%, rgba(0,0,0,${focusAlpha(0.10)}) calc(50% - 150px), rgba(0,0,0,${focusAlpha(0.25)}) calc(50% - 94px), rgba(0,0,0,${focusAlpha(1)}) calc(50% - 70px), rgba(0,0,0,${focusAlpha(1)}) calc(50% - 26px), rgba(0,0,0,${focusAlpha(0.25)}) calc(50% + 2px), rgba(0,0,0,${focusAlpha(0.10)}) calc(50% + 105px), rgba(0,0,0,${focusAlpha(0.03)}) 100%)`;
   const layoutLyricFontScale = menuOpen
     ? 1.1 * Math.max(0.72, Math.min(1, lyricAreaW / 640))
     : 1.25; // menu away → a touch larger
@@ -1388,6 +1383,7 @@ function Liri() {
     songDuration,
     isPaused,
     isLandscape, controlsVisible,
+    focusStrength: lyricFocusStrength,
     currentIndex, setCurrentIndex,
     playbackTime, setPlaybackTime,
     setUserScrolling, userScrollingRef,
@@ -1397,7 +1393,7 @@ function Liri() {
     initialPosRef, syncStartRef,
     onSeek: targetTime => {
       // Seeking to a lyric means the user is continuing this song. Undo any
-      // end-of-side decision that was waiting through the four-second linger.
+      // end-of-side decision that was waiting through the brief handoff.
       clearTimeout(sideEndTimerRef.current);
       sideEndTimerRef.current = null;
       cancelFlipChimes();
@@ -5514,12 +5510,6 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
       WebkitOverflowScrolling: "touch",
       touchAction: "pan-y",
       overscrollBehavior: "contain",
-      // Keep emphasis tied to the lyric's physical position instead of
-      // cross-fading two React rows when currentIndex changes. A single mask
-      // on the scroller lets each line brighten naturally as it rolls through
-      // the resting point and avoids per-row compositor churn in Chrome.
-      WebkitMaskImage: lyricsUnsynced ? "none" : lyricFocusMask,
-      maskImage: lyricsUnsynced ? "none" : lyricFocusMask,
       // Slide + resize in step with the 0.35s menu fade
       transition: isLandscape ? "margin-left 0.35s, width 0.35s" : "none"
     },
@@ -5588,9 +5578,8 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
     const effectiveIndex = pastLastLyric
       ? lyrics.length - 1 + creditLines.reduce((best, cl, ci) => creditPlaybackTime >= cl.time ? ci + 1 : best, 0)
       : currentIndex;
-    // Render every line so the whole song is scrollable. Brightness comes from
-    // the fixed scroller mask above, so changing the active index never fades,
-    // promotes, or rebuilds individual text layers.
+    // Render every line so the whole song is scrollable. The scroll hook sets
+    // a custom opacity from physical position; React never swaps text layers.
     // iOS portrait runs a touch smaller so more lines fit on the phone screen.
     const iosPortrait = IS_IOS && !isLandscape;
     const previewFont = iosPortrait ? 16 : 18;
@@ -5617,6 +5606,8 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
       };
       return /*#__PURE__*/React.createElement("div", {
         key: i,
+        "data-lyric-line": "true",
+        "data-credit-line": isCredit ? "true" : undefined,
         ref: cur ? currentLineRef : i === lyrics.length ? creditsRef : null,
         style: {
           textAlign: "center",
@@ -5629,7 +5620,7 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
             : Math.round(renderedPreviewFontPx) + "px",
           fontWeight: isCredit ? "400" : "600",
           color: "#ffffff",
-          opacity: isCredit ? 0.55 : 1,
+          opacity: "var(--lyric-opacity, 0.14)",
           lineHeight: "1.4",
           textShadow: "none",
           cursor: "default",
