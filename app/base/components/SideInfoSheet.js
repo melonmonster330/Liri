@@ -77,7 +77,7 @@ export function SideInfoSheet({ tracks, initialBreaks, saving, error, onSave, on
       }, e("svg", { width: "12", height: "12", viewBox: "0 0 24 24", fill: "none", stroke: "currentColor", strokeWidth: "2.5", strokeLinecap: "round" },
         e("line", { x1: "18", y1: "6", x2: "6", y2: "18" }), e("line", { x1: "6", y1: "6", x2: "18", y2: "18" })))),
     e("div", {
-      style: { overflowY: "auto", flex: 1, minHeight: 0, padding: "8px 24px", WebkitOverflowScrolling: "touch" }
+      style: { overflowY: "auto", flex: 1, minHeight: 0, padding: "8px 24px 32px", WebkitOverflowScrolling: "touch" }
     },
       (tracks || []).map((t, i) => {
         const startsSide = i === 0 || breaks.has(i);

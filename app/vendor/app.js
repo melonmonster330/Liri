@@ -1,5 +1,5 @@
 (() => {
-  // app/base/lib/text.js
+  // ../../../../../private/tmp/liri-main.VW4zUC/app/base/lib/text.js
   function parseLRC(lrc) {
     const re = /\[(\d{2}):(\d{2})[.:](\d{2,3})\](.*)/;
     return lrc.split("\n").reduce((acc, line) => {
@@ -25,7 +25,7 @@
     return `${Math.floor(diff / 86400)}d ago`;
   }
 
-  // app/base/lib/library.js
+  // ../../../../../private/tmp/liri-main.VW4zUC/app/base/lib/library.js
   var plainToLines = (txt) => (txt || "").split("\n").filter((l) => l.trim()).map((text) => ({ time: null, text }));
   var fold = (s) => (s || "").toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
   var artistSortKey = (album) => fold(album.artist_sort_name || (album.artist_name || "").trim().replace(/^the\s+/i, ""));
@@ -44,7 +44,7 @@
     return [...recent, ...rest];
   }
 
-  // app/base/lib/analytics.js
+  // ../../../../../private/tmp/liri-main.VW4zUC/app/base/lib/analytics.js
   async function logListeningEvent(sb2, sessionId, params) {
     try {
       await sb2.from("listening_events").insert({
@@ -133,18 +133,18 @@
     }
   }
 
-  // app/base/lib/config.js
+  // ../../../../../private/tmp/liri-main.VW4zUC/app/base/lib/config.js
   var IS_IOS = !!window.Capacitor;
   var TRANSCRIBE_PROXY = window.Capacitor ? "https://www.getliri.com/api/transcribe" : "/api/transcribe";
   var ITUNES_PROXY = window.Capacitor ? "https://www.getliri.com/api/itunes-lookup" : "/api/itunes-lookup";
   var SYNC_PLAYBACK_RATE = 1.0315;
 
-  // app/ios/iap.js
+  // ../../../../../private/tmp/liri-main.VW4zUC/app/ios/iap.js
   function getLiriIAP() {
     return window.Capacitor?.Plugins?.LiriIAP ?? null;
   }
 
-  // app/src/hooks/usePayments.js
+  // ../../../../../private/tmp/liri-main.VW4zUC/app/src/hooks/usePayments.js
   var { useState, useEffect } = React;
   function usePayments({ sb: sb2, sessionTokenRef }) {
     const [userTier, setUserTier] = useState("free");
@@ -278,7 +278,7 @@
     };
   }
 
-  // app/src/hooks/useNowPlaying.js
+  // ../../../../../private/tmp/liri-main.VW4zUC/app/src/hooks/useNowPlaying.js
   var { useRef, useEffect: useEffect2 } = React;
   function useNowPlaying({
     sessionTabId: sessionTabId2,
@@ -406,7 +406,7 @@
     }, []);
   }
 
-  // app/src/hooks/useLyricScroll.js
+  // ../../../../../private/tmp/liri-main.VW4zUC/app/src/hooks/useLyricScroll.js
   var { useRef: useRef2, useEffect: useEffect3, useLayoutEffect } = React;
   var ACTIVE_LINE_CENTER_OFFSET_PX = 48;
   function useLyricScroll({
@@ -627,7 +627,7 @@
     return { lyricsUnsynced, lyricsScrollRef, seekToLine, browseToLine, refollow, noteUserScroll };
   }
 
-  // app/src/hooks/useCast.js
+  // ../../../../../private/tmp/liri-main.VW4zUC/app/src/hooks/useCast.js
   var { useState: useState2, useEffect: useEffect4, useRef: useRef3, useCallback } = React;
   var CAST_APP_ID = "2FBB66AA";
   var CAST_NAMESPACE = "urn:x-cast:com.getliri.lyrics";
@@ -776,10 +776,10 @@
     return { supported, ready, connected, deviceName, error, requestSession, stopSession };
   }
 
-  // app/base/lib/whisper.js
+  // ../../../../../private/tmp/liri-main.VW4zUC/app/base/lib/whisper.js
   var WHISPER_PROXY = window.Capacitor ? "https://www.getliri.com/api/whisper" : "/api/whisper";
 
-  // app/base/lib/sides.js
+  // ../../../../../private/tmp/liri-main.VW4zUC/app/base/lib/sides.js
   function hasSideData(vinylSides, dbTracks) {
     return !!(vinylSides?.length || dbTracks?.length);
   }
@@ -817,7 +817,7 @@
     ].filter((g) => g.tracks.length > 0);
   }
 
-  // app/base/lib/vinyl-splits.js
+  // ../../../../../private/tmp/liri-main.VW4zUC/app/base/lib/vinyl-splits.js
   var SPLITS = {
     "1429663168": {
       parts: [
@@ -913,7 +913,7 @@
     return reconciled;
   }
 
-  // app/base/lib/usermeta.js
+  // ../../../../../private/tmp/liri-main.VW4zUC/app/base/lib/usermeta.js
   var LYRIC_SITES = [
     { name: "LRCLIB", url: "https://lrclib.net" },
     { name: "Genius", url: "https://genius.com" },
@@ -982,7 +982,7 @@
     return rows.map((r) => ({ side: r.side, side_track_number: r.side_track_number, position: r.position }));
   }
 
-  // app/base/lib/notifications.js
+  // ../../../../../private/tmp/liri-main.VW4zUC/app/base/lib/notifications.js
   function getLocalNotif() {
     return window.Capacitor?.Plugins?.LocalNotifications ?? null;
   }
@@ -1013,7 +1013,7 @@
     }
   }
 
-  // app/base/components/Vinyl.js
+  // ../../../../../private/tmp/liri-main.VW4zUC/app/base/components/Vinyl.js
   function Vinyl({ size = 120, spinning = false }) {
     return /* @__PURE__ */ React.createElement("div", {
       style: {
@@ -1056,7 +1056,7 @@
     ));
   }
 
-  // app/base/components/WaveAnimation.js
+  // ../../../../../private/tmp/liri-main.VW4zUC/app/base/components/WaveAnimation.js
   var { useRef: useRef4, useEffect: useEffect5 } = React;
   var BAR_MULTS = [0.55, 0.85, 1, 0.75, 0.95, 0.65, 0.9, 0.7, 1, 0.6, 0.8, 0.5];
   function WaveAnimation({ active, size = 1, analyserRef, level }) {
@@ -1147,7 +1147,7 @@
     })));
   }
 
-  // app/base/components/ProgressRing.js
+  // ../../../../../private/tmp/liri-main.VW4zUC/app/base/components/ProgressRing.js
   var { useState: useState3, useEffect: useEffect6 } = React;
   function ProgressRing({ size = 96 }) {
     const r = size / 2 - 5;
@@ -1202,7 +1202,7 @@
     );
   }
 
-  // app/base/components/LyricsEditorSheet.js
+  // ../../../../../private/tmp/liri-main.VW4zUC/app/base/components/LyricsEditorSheet.js
   var { useState: useState4 } = React;
   var e = React.createElement;
   function LyricsEditorSheet({ track, sites, saving, error, onSave, onClose }) {
@@ -1271,7 +1271,7 @@
       e(
         "div",
         {
-          style: { overflowY: "auto", flex: 1, minHeight: 0, padding: "8px 24px", WebkitOverflowScrolling: "touch", paddingBottom: "max(24px, env(safe-area-inset-bottom))" }
+          style: { overflowY: "auto", flex: 1, minHeight: 0, padding: "8px 24px", WebkitOverflowScrolling: "touch", paddingBottom: "max(32px, calc(env(safe-area-inset-bottom) + 24px))" }
         },
         e(
           "div",
@@ -1341,7 +1341,7 @@
     ));
   }
 
-  // app/base/components/SideInfoSheet.js
+  // ../../../../../private/tmp/liri-main.VW4zUC/app/base/components/SideInfoSheet.js
   var { useState: useState5 } = React;
   var e2 = React.createElement;
   function lettersFromBreaks(count, breakSet) {
@@ -1430,7 +1430,7 @@
       e2(
         "div",
         {
-          style: { overflowY: "auto", flex: 1, minHeight: 0, padding: "8px 24px", WebkitOverflowScrolling: "touch" }
+          style: { overflowY: "auto", flex: 1, minHeight: 0, padding: "8px 24px 32px", WebkitOverflowScrolling: "touch" }
         },
         (tracks || []).map((t, i) => {
           const startsSide = i === 0 || breaks.has(i);
@@ -1509,7 +1509,7 @@
     ));
   }
 
-  // app/ios/shazam.js
+  // ../../../../../private/tmp/liri-main.VW4zUC/app/ios/shazam.js
   function getPlugin() {
     const np = window.Capacitor?.nativePromise;
     if (!np) return null;
@@ -1536,19 +1536,19 @@
     }
   };
 
-  // app/ios/audio.js
+  // ../../../../../private/tmp/liri-main.VW4zUC/app/ios/audio.js
   function getNativeAudio() {
     if (!window.Capacitor) return null;
     return window.Capacitor.Plugins?.NativeAudio ?? window.Capacitor.registerPlugin?.("NativeAudio") ?? null;
   }
 
-  // app/ios/keep-awake.js
+  // ../../../../../private/tmp/liri-main.VW4zUC/app/ios/keep-awake.js
   function getKeepAwake() {
     if (!window.Capacitor) return null;
     return window.Capacitor.Plugins?.KeepAwake ?? window.Capacitor.registerPlugin?.("KeepAwake") ?? null;
   }
 
-  // app/src/main.js
+  // ../../../../../private/tmp/liri-main.VW4zUC/app/src/main.js
   var {
     useState: useState6,
     useEffect: useEffect7,
@@ -5271,7 +5271,7 @@ Move closer to your speakers and try again.`);
         padding: "0 24px",
         flex: 1,
         minHeight: 0,
-        paddingBottom: "max(24px, env(safe-area-inset-bottom))",
+        paddingBottom: "max(32px, calc(env(safe-area-inset-bottom) + 24px))",
         WebkitOverflowScrolling: "touch"
       }
     }, turntableAlbum && /* @__PURE__ */ React.createElement("button", {
@@ -5417,7 +5417,7 @@ Move closer to your speakers and try again.`);
       onClick: () => setShowTrackList(false),
       style: { background: "rgba(255,255,255,0.07)", border: "none", color: "rgba(255,255,255,0.5)", width: 30, height: 30, borderRadius: "50%", cursor: "pointer", fontSize: 18, lineHeight: "1", display: "flex", alignItems: "center", justifyContent: "center", fontFamily: "inherit" }
     }, "\xD7")), /* @__PURE__ */ React.createElement("div", {
-      style: { flex: 1, minHeight: 0, overflowY: "auto", WebkitOverflowScrolling: "touch", padding: "0 24px 40px", display: "flex", flexDirection: "column", gap: "20px" }
+      style: { flex: 1, minHeight: 0, overflowY: "auto", WebkitOverflowScrolling: "touch", padding: "0 24px max(40px, calc(env(safe-area-inset-bottom) + 32px))", display: "flex", flexDirection: "column", gap: "20px" }
     }, (() => {
       const _wt = turntableTracksRef.current;
       if (!_wt.length) return null;
@@ -5464,6 +5464,7 @@ Move closer to your speakers and try again.`);
         borderRadius: "20px 0 0 20px",
         overflowY: "auto",
         WebkitOverflowScrolling: "touch",
+        paddingBottom: "max(32px, calc(env(safe-area-inset-bottom) + 24px))",
         boxShadow: "-8px 0 48px rgba(0,0,0,0.7)",
         animation: "slide-right 0.28s cubic-bezier(0.4,0,0.2,1)",
         zIndex: 201
@@ -5477,6 +5478,7 @@ Move closer to your speakers and try again.`);
         maxHeight: "88vh",
         overflowY: "auto",
         WebkitOverflowScrolling: "touch",
+        paddingBottom: "max(32px, calc(env(safe-area-inset-bottom) + 24px))",
         boxShadow: "0 -8px 48px rgba(0,0,0,0.6)",
         animation: "slide-up 0.3s ease",
         zIndex: 201
@@ -6296,7 +6298,7 @@ Move closer to your speakers and try again.`);
         flex: 1,
         minHeight: 0,
         WebkitOverflowScrolling: "touch",
-        padding: "0 24px max(24px, calc(env(safe-area-inset-bottom) + 16px))"
+        padding: "0 24px max(32px, calc(env(safe-area-inset-bottom) + 24px))"
       }
     }, historyLoading ? /* @__PURE__ */ React.createElement("div", {
       style: {
@@ -7286,7 +7288,7 @@ Move closer to your speakers and try again.`);
           "div",
           {
             onClick: (e3) => e3.stopPropagation(),
-            style: { background: "#0e0e1a", borderRadius: "20px 20px 0 0", border: "1px solid rgba(255,255,255,0.09)", maxHeight: "80vh", overflow: "hidden", display: "flex", flexDirection: "column", paddingBottom: "max(24px, calc(env(safe-area-inset-bottom) + 12px))" }
+            style: { background: "#0e0e1a", borderRadius: "20px 20px 0 0", border: "1px solid rgba(255,255,255,0.09)", maxHeight: "80vh", overflow: "hidden", display: "flex", flexDirection: "column", paddingBottom: "max(32px, calc(env(safe-area-inset-bottom) + 24px))" }
           },
           /* @__PURE__ */ React.createElement(
             "div",
@@ -7699,6 +7701,7 @@ Move closer to your speakers and try again.`);
           overflowY: showTrackList ? "auto" : "visible",
           maxHeight: showTrackList ? "75vh" : "none",
           width: "100%",
+          paddingBottom: showTrackList ? "max(32px, calc(env(safe-area-inset-bottom) + 24px))" : 0,
           WebkitOverflowScrolling: "touch"
         }
       },
@@ -7766,7 +7769,7 @@ Move closer to your speakers and try again.`);
           // Warning when no curated/Discogs side data exists — track grouping is estimated
           !hasSideData(vinylSidesRef.current, vinylDbRelease?.vinyl_tracks) && (isWeb || showTrackList) && /* @__PURE__ */ React.createElement("div", { style: { fontSize: 11, color: "rgba(255,180,0,0.75)", marginBottom: 10, padding: "6px 11px", background: "rgba(255,180,0,0.07)", borderRadius: 8, border: "1px solid rgba(255,180,0,0.2)" } }, "\u26A0\uFE0E Side data pending \u2014 track order is estimated"),
           (isWeb || showTrackList) && /* @__PURE__ */ React.createElement("div", {
-            style: { display: "flex", flexDirection: "column", gap: "12px", maxHeight: isWeb ? "60vh" : "45vh", overflowY: "auto", WebkitOverflowScrolling: "touch" }
+            style: { display: "flex", flexDirection: "column", gap: "12px", maxHeight: isWeb ? "60vh" : "45vh", overflowY: "auto", WebkitOverflowScrolling: "touch", paddingBottom: "max(32px, calc(env(safe-area-inset-bottom) + 24px))" }
           }, groups.map(
             ({ side, tracks }) => /* @__PURE__ */ React.createElement(
               "div",
@@ -8241,7 +8244,7 @@ Move closer to your speakers and try again.`);
               background: "rgba(0,0,0,0.35)",
               border: "1px solid rgba(255,255,255,0.07)",
               borderRadius: "12px",
-              padding: "8px",
+              padding: "8px 8px max(32px, calc(env(safe-area-inset-bottom) + 24px))",
               maxHeight: "32vh",
               overflowY: "auto",
               WebkitOverflowScrolling: "touch",

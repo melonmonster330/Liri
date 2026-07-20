@@ -4269,7 +4269,7 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
       padding: "0 24px",
       flex: 1,
       minHeight: 0,
-      paddingBottom: "max(24px, env(safe-area-inset-bottom))",
+      paddingBottom: "max(32px, calc(env(safe-area-inset-bottom) + 24px))",
       WebkitOverflowScrolling: "touch"
     }
   }, turntableAlbum && /*#__PURE__*/React.createElement("button", {
@@ -4415,7 +4415,7 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
     onClick: () => setShowTrackList(false),
     style: { background: "rgba(255,255,255,0.07)", border: "none", color: "rgba(255,255,255,0.5)", width: 30, height: 30, borderRadius: "50%", cursor: "pointer", fontSize: 18, lineHeight: "1", display: "flex", alignItems: "center", justifyContent: "center", fontFamily: "inherit" }
   }, "\u00d7")), /*#__PURE__*/React.createElement("div", {
-    style: { flex: 1, minHeight: 0, overflowY: "auto", WebkitOverflowScrolling: "touch", padding: "0 24px 40px", display: "flex", flexDirection: "column", gap: "20px" }
+    style: { flex: 1, minHeight: 0, overflowY: "auto", WebkitOverflowScrolling: "touch", padding: "0 24px max(40px, calc(env(safe-area-inset-bottom) + 32px))", display: "flex", flexDirection: "column", gap: "20px" }
   }, (() => {
     const _wt = turntableTracksRef.current;
     if (!_wt.length) return null;
@@ -4459,6 +4459,7 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
       borderRadius: "20px 0 0 20px",
       overflowY: "auto",
       WebkitOverflowScrolling: "touch",
+      paddingBottom: "max(32px, calc(env(safe-area-inset-bottom) + 24px))",
       boxShadow: "-8px 0 48px rgba(0,0,0,0.7)",
       animation: "slide-right 0.28s cubic-bezier(0.4,0,0.2,1)",
       zIndex: 201
@@ -4472,6 +4473,7 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
       maxHeight: "88vh",
       overflowY: "auto",
       WebkitOverflowScrolling: "touch",
+      paddingBottom: "max(32px, calc(env(safe-area-inset-bottom) + 24px))",
       boxShadow: "0 -8px 48px rgba(0,0,0,0.6)",
       animation: "slide-up 0.3s ease",
       zIndex: 201
@@ -5207,7 +5209,7 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
       flex: 1,
       minHeight: 0,
       WebkitOverflowScrolling: "touch",
-      padding: "0 24px max(24px, calc(env(safe-area-inset-bottom) + 16px))"
+      padding: "0 24px max(32px, calc(env(safe-area-inset-bottom) + 24px))"
     }
   }, historyLoading ? /*#__PURE__*/React.createElement("div", {
     style: {
@@ -6171,7 +6173,7 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
         style: { position: "fixed", inset: 0, zIndex: 600, background: "rgba(8,8,16,0.75)", backdropFilter: "blur(6px)", display: "flex", flexDirection: "column", justifyContent: "flex-end" }
       }, /*#__PURE__*/React.createElement("div", {
         onClick: e => e.stopPropagation(),
-        style: { background: "#0e0e1a", borderRadius: "20px 20px 0 0", border: "1px solid rgba(255,255,255,0.09)", maxHeight: "80vh", overflow: "hidden", display: "flex", flexDirection: "column", paddingBottom: "max(24px, calc(env(safe-area-inset-bottom) + 12px))" }
+        style: { background: "#0e0e1a", borderRadius: "20px 20px 0 0", border: "1px solid rgba(255,255,255,0.09)", maxHeight: "80vh", overflow: "hidden", display: "flex", flexDirection: "column", paddingBottom: "max(32px, calc(env(safe-area-inset-bottom) + 24px))" }
       },
         /*#__PURE__*/React.createElement("div", {
           style: { padding: "18px 20px 12px", borderBottom: "1px solid rgba(255,255,255,0.06)" }
@@ -6552,6 +6554,7 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
       overflowY: showTrackList ? "auto" : "visible",
       maxHeight: showTrackList ? "75vh" : "none",
       width: "100%",
+      paddingBottom: showTrackList ? "max(32px, calc(env(safe-area-inset-bottom) + 24px))" : 0,
       WebkitOverflowScrolling: "touch"
     }
   }, !(turntableAlbum && (!window.Capacitor || showTrackList)) && /*#__PURE__*/React.createElement("div", {
@@ -6616,7 +6619,7 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
       !hasSideData(vinylSidesRef.current, vinylDbRelease?.vinyl_tracks) && (isWeb || showTrackList) &&
         /*#__PURE__*/React.createElement("div", { style: { fontSize: 11, color: "rgba(255,180,0,0.75)", marginBottom: 10, padding: "6px 11px", background: "rgba(255,180,0,0.07)", borderRadius: 8, border: "1px solid rgba(255,180,0,0.2)" } }, "⚠︎ Side data pending — track order is estimated"),
       (isWeb || showTrackList) && /*#__PURE__*/React.createElement("div", {
-        style: { display: "flex", flexDirection: "column", gap: "12px", maxHeight: isWeb ? "60vh" : "45vh", overflowY: "auto", WebkitOverflowScrolling: "touch" }
+        style: { display: "flex", flexDirection: "column", gap: "12px", maxHeight: isWeb ? "60vh" : "45vh", overflowY: "auto", WebkitOverflowScrolling: "touch", paddingBottom: "max(32px, calc(env(safe-area-inset-bottom) + 24px))" }
       }, groups.map(({ side, tracks }) =>
         /*#__PURE__*/React.createElement("div", { key: side },
           /*#__PURE__*/React.createElement("button", {
@@ -7061,7 +7064,7 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
         background: "rgba(0,0,0,0.35)",
         border: "1px solid rgba(255,255,255,0.07)",
         borderRadius: "12px",
-        padding: "8px",
+        padding: "8px 8px max(32px, calc(env(safe-area-inset-bottom) + 24px))",
         maxHeight: "32vh",
         overflowY: "auto",
         WebkitOverflowScrolling: "touch",
