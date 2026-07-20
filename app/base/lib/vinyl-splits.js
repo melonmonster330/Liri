@@ -88,6 +88,7 @@ export function expandKnownVinylSplitLyrics(cache, expandedRows) {
       lrc_raw: lrc || null,
       words_json: words,
       lyrics_plain: lrc ? lrcToPlain(lrc) : source.lyrics_plain,
+      source: source.source || null,
     };
   }
   return next;

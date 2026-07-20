@@ -708,7 +708,7 @@ function renderAlbum(d) {
   const a = d.album || {};
   const tracks = d.tracks || [];
   const sc = d.sideCoverage || { total: tracks.length, with_side: 0, missing: tracks.length };
-  const missingLyrics = tracks.filter(t => !t.has_lyrics).length;
+  const missingLyrics = tracks.filter(t => !t.has_lyrics && !t.is_instrumental).length;
   c.innerHTML = `
     <button class="back-btn" onclick="openAlbums()">← Back to albums</button>
     <div class="section">
@@ -734,9 +734,10 @@ function renderAlbum(d) {
             <div class="track-name">${esc(t.track_name || '')}</div>
             <div class="track-plays">${fmt(t.plays)} plays</div>
             <div class="track-flag ${t.has_lyrics ? 'ok' : ''}">
-              ${t.has_lyrics ? '✓ lyrics' : '✗ missing'}
+              ${t.is_instrumental ? '♪ instrumental' : t.has_lyrics ? '✓ lyrics' : '✗ missing'}
               ${t.lyrics_source ? `<span class="source">via ${esc(t.lyrics_source)}</span>` : ''}
             </div>
+            ${t.has_lyrics ? `<button class="back-btn" style="margin:0;padding:5px 9px;color:#e07070;border-color:rgba(224,112,112,0.28)" onclick="removeTrackLyrics(${Number(t.itunes_track_id)})">Remove lyrics</button>` : ''}
           </div>`).join("")}
       ${sc.missing > 0 ? `
       <div class="side-form" id="side-form-${a.itunes_collection_id || ''}">
@@ -753,6 +754,19 @@ function renderAlbum(d) {
       </div>` : ''}
     </div>
   `;
+}
+
+async function removeTrackLyrics(itunesTrackId) {
+  const trackName = albumDetailCache?.tracks?.find(t => Number(t.itunes_track_id) === Number(itunesTrackId))?.track_name || "this track";
+  if (!confirm(`Remove the saved lyrics for “${trackName}” from Liri?\n\nThis cannot be undone.`)) return;
+  const r = await fetch(API, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", "x-admin-password": pw },
+    body: JSON.stringify({ action: "delete-lyrics", itunesTrackId }),
+  });
+  const json = await r.json().catch(() => ({}));
+  if (!r.ok) { alert(json.error || `Could not remove lyrics (${r.status})`); return; }
+  await openAlbum(albumDetailCache?.album?.itunes_collection_id);
 }
 
 // ── Track-order editor ─────────────────────────────────────────────────────
@@ -996,7 +1010,7 @@ async function openMissingLyrics() {
                 <div style="display:flex;align-items:center;gap:12px">
                   <button class="lrc-submit-btn" id="lrc-btn-${tid}"
                     onclick="submitLrc('${tid}','${esc(t.track_name).replace(/'/g,"\\'")}','${esc(t.artist_name).replace(/'/g,"\\'")}','${esc(t.album_name).replace(/'/g,"\\'")}',${t.duration_ms||0},${t.itunes_track_id||0})">
-                    Save to Liri + lrclib
+                    Save to Liri
                   </button>
                   <span class="lrc-msg" id="lrc-msg-${tid}"></span>
                 </div>
@@ -1081,11 +1095,11 @@ async function submitLrc(tid, trackName, artistName, albumName, durationMs, itun
       }, 1000);
     } else {
       msg.className = "lrc-msg err"; msg.textContent = json.error || ("Error " + r.status);
-      btn.disabled = false; btn.textContent = "Save to Liri + lrclib";
+      btn.disabled = false; btn.textContent = "Save to Liri";
     }
   } catch(e) {
     msg.className = "lrc-msg err"; msg.textContent = "Network error";
-    btn.disabled = false; btn.textContent = "Save to Liri + lrclib";
+    btn.disabled = false; btn.textContent = "Save to Liri";
   }
 }
 

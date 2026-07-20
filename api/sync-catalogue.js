@@ -93,37 +93,6 @@ function sbUpsertBatch(rows) {
   });
 }
 
-// ── lrclib PoW solver ─────────────────────────────────────────────────────────
-// lrclib hashes the CONCATENATION `prefix + nonce` (no separator) and checks it
-// against the target; the submitted token is formatted `prefix:nonce`. Hashing
-// `prefix:nonce` here (with the colon) is what produced "publish token is
-// incorrect" — the server recomputes SHA256(prefix+nonce) and it fails the
-// difficulty check. Find nonce where SHA256(`${prefix}${nonce}`) < target.
-function solveChallenge(prefix, target) {
-  const targetBig = BigInt("0x" + target);
-  let nonce = 0;
-  while (true) {
-    const hash = crypto.createHash("sha256").update(`${prefix}${nonce}`).digest("hex");
-    if (BigInt("0x" + hash) < targetBig) return nonce;
-    if (++nonce > 10000000) throw new Error("PoW took too long");
-  }
-}
-
-function httpsPost(hostname, path, headers, body) {
-  const bodyStr = typeof body === "string" ? body : JSON.stringify(body);
-  return new Promise((resolve, reject) => {
-    const req = https.request({ hostname, path, method: "POST", headers: { ...headers, "Content-Length": Buffer.byteLength(bodyStr) } }, (res) => {
-      const chunks = [];
-      res.on("data", c => chunks.push(c));
-      res.on("end", () => resolve({ status: res.statusCode, raw: Buffer.concat(chunks).toString() }));
-    });
-    req.on("error", reject);
-    req.setTimeout(30000, () => { req.destroy(); reject(new Error("timeout")); });
-    req.write(bodyStr);
-    req.end();
-  });
-}
-
 // Generic service-role DELETE (used by add-vinyl-sides to wipe old rows).
 function sbDelete(path) {
   const url = process.env.SUPABASE_URL;
@@ -653,6 +622,9 @@ async function getAlbumDetail(collectionId) {
       .filter(r => (r.lrc_raw && r.lrc_raw.trim()) || (r.lyrics_plain && r.lyrics_plain.trim()))
       .map(r => r.itunes_track_id)
   );
+  const instrumental = new Set(
+    lyricRows.filter(r => r.source === "instrumental").map(r => r.itunes_track_id)
+  );
   const sideByTid  = new Map(sideRows.map(r => [r.itunes_track_id, r]));
   const playByTid  = {};
   const playByTitle = {};
@@ -676,7 +648,8 @@ async function getAlbumDetail(collectionId) {
         track_number:    t.track_number,
         disc_number:     t.disc_number,
         duration_ms:     t.duration_ms,
-        has_lyrics:      haveLyrics.has(t.itunes_track_id),
+        has_lyrics:      haveLyrics.has(t.itunes_track_id) || instrumental.has(t.itunes_track_id),
+        is_instrumental: instrumental.has(t.itunes_track_id),
         lyrics_source:   lyricByTid.get(t.itunes_track_id) || null,
         side:            sideRow?.side || null,       // 'A' / 'B' / etc.
         position:        sideRow?.position || null,   // 'A1' / 'B2'
@@ -745,15 +718,17 @@ module.exports = async (req, res) => {
         // 10s sbGet limit on Vercel cold starts.
         // NOTE: album_tracks has no album_name column — album name comes from
         // the catalogue join below, not the tracks table.
-        const [tracksResp, withLrcResp, withPlainResp] = await Promise.all([
+        const [tracksResp, withLrcResp, withPlainResp, instrumentalResp] = await Promise.all([
           sbGetAll(`album_tracks?select=itunes_track_id,track_name,artist_name,itunes_collection_id,duration_ms,disc_number,track_number&order=itunes_collection_id.asc,disc_number.asc,track_number.asc`),
           sbGetAll(`track_lyrics?select=itunes_track_id&lrc_raw=not.is.null`),
           sbGetAll(`track_lyrics?select=itunes_track_id&lyrics_plain=not.is.null`),
+          sbGetAll(`track_lyrics?select=itunes_track_id&source=eq.instrumental`),
         ]);
         const rows = Array.isArray(tracksResp) ? tracksResp : [];
         const haveLrc = new Set((Array.isArray(withLrcResp) ? withLrcResp : []).map(r => r.itunes_track_id));
         const havePlain = new Set((Array.isArray(withPlainResp) ? withPlainResp : []).map(r => r.itunes_track_id));
-        const missing = rows.filter(t => !haveLrc.has(t.itunes_track_id));
+        const instrumental = new Set((Array.isArray(instrumentalResp) ? instrumentalResp : []).map(r => r.itunes_track_id));
+        const missing = rows.filter(t => !haveLrc.has(t.itunes_track_id) && !instrumental.has(t.itunes_track_id));
         // Fetch artwork + album name from catalogue
         const cids = [...new Set(missing.map(t => t.itunes_collection_id))];
         const { body: cat } = cids.length
@@ -826,7 +801,7 @@ module.exports = async (req, res) => {
     }
   }
 
-  // ── POST (admin): publish a Liri update announcement to the feed ──────────
+  // ── POST (admin): catalogue and Liri-owned content management ─────────────
   if (req.headers["x-admin-password"]) {
     const adminPw = process.env.ADMIN_PASSWORD;
     if (!adminPw || !safeCompare(adminPw, req.headers["x-admin-password"])) {
@@ -839,55 +814,38 @@ module.exports = async (req, res) => {
       if (!trackName || !artistName || !albumName || !duration) {
         return res.status(400).json({ error: "trackName, artistName, albumName, duration required" });
       }
+      if (!itunesTrackId) {
+        return res.status(400).json({ error: "itunesTrackId required for Liri storage" });
+      }
       if (!syncedLyrics && !plainLyrics) {
         return res.status(400).json({ error: "Provide syncedLyrics or plainLyrics (or both)" });
       }
 
-      // 1) Save to Liri's own track_lyrics FIRST — this is the table the app
-      //    actually reads (turntable lyrics cache at album select). lrclib is
-      //    the community copy; a publish failure there must not lose the fix.
-      let dbSaved = false;
-      if (itunesTrackId) {
-        const { status } = await sbUpsert("track_lyrics?on_conflict=itunes_track_id", [{
-          itunes_track_id: itunesTrackId,
-          lrc_raw:      syncedLyrics || null,
-          lyrics_plain: plainLyrics || (syncedLyrics ? lrcToPlain(syncedLyrics) : null),
-          words_json:   syncedLyrics ? parseLrcToWords(syncedLyrics) : null,
-          source:       "admin",
-          fetched_at:   new Date().toISOString(),
-        }]);
-        dbSaved = status >= 200 && status < 300;
-        if (!dbSaved) {
-          return res.status(500).json({ error: `track_lyrics upsert failed (${status}) — nothing published` });
-        }
+      // Save only to Liri's own cache. Admin-entered lyrics are never published
+      // to LRCLIB or any other external lyrics service.
+      const { status } = await sbUpsert("track_lyrics?on_conflict=itunes_track_id", [{
+        itunes_track_id: itunesTrackId,
+        lrc_raw:      syncedLyrics || null,
+        lyrics_plain: plainLyrics || (syncedLyrics ? lrcToPlain(syncedLyrics) : null),
+        words_json:   syncedLyrics ? parseLrcToWords(syncedLyrics) : null,
+        source:       "admin",
+        fetched_at:   new Date().toISOString(),
+      }]);
+      if (status < 200 || status >= 300) {
+        return res.status(500).json({ error: `track_lyrics upsert failed (${status})` });
       }
+      return res.status(200).json({ ok: true, message: "Saved to Liri ✓" });
+    }
 
-      // 2) Publish to lrclib (best-effort once the DB save is in).
-      try {
-        const challengeRes = await httpsPost("lrclib.net", "/api/request-challenge",
-          { "Content-Type": "application/json", "Lrclib-Client": "Liri/1.0 (https://getliri.com)" }, "{}");
-        const challenge = JSON.parse(challengeRes.raw);
-        if (!challenge.prefix || !challenge.target) {
-          if (dbSaved) return res.status(200).json({ ok: true, message: "Saved to Liri ✓ — lrclib publish failed (no PoW challenge)" });
-          return res.status(502).json({ error: "Failed to get PoW challenge from lrclib" });
-        }
-        const nonce = solveChallenge(challenge.prefix, challenge.target);
-        const publishRes = await httpsPost("lrclib.net", "/api/publish",
-          { "Content-Type": "application/json", "X-Publish-Token": `${challenge.prefix}:${nonce}`, "Lrclib-Client": "Liri/1.0 (https://getliri.com)" },
-          { trackName, artistName, albumName, duration: Number(duration), ...(syncedLyrics ? { syncedLyrics } : {}), ...(plainLyrics ? { plainLyrics } : {}) }
-        );
-        if (publishRes.status === 201 || publishRes.status === 200) {
-          return res.status(200).json({ ok: true, message: dbSaved ? "Saved to Liri ✓ · published to lrclib ✓" : "Lyrics published to lrclib!" });
-        }
-        let errBody = {};
-        try { errBody = JSON.parse(publishRes.raw); } catch {}
-        const lrclibErr = errBody.message || errBody.error || `lrclib returned ${publishRes.status}`;
-        if (dbSaved) return res.status(200).json({ ok: true, message: `Saved to Liri ✓ — lrclib publish failed: ${lrclibErr}` });
-        return res.status(publishRes.status).json({ error: lrclibErr });
-      } catch (e) {
-        if (dbSaved) return res.status(200).json({ ok: true, message: `Saved to Liri ✓ — lrclib publish failed: ${e.message || "error"}` });
-        return res.status(500).json({ error: e.message || "Internal error" });
+    if (body?.action === "delete-lyrics") {
+      const trackId = Number(body.itunesTrackId);
+      if (!Number.isFinite(trackId) || trackId <= 0) {
+        return res.status(400).json({ error: "valid itunesTrackId required" });
       }
+      const { status } = await sbDelete(`track_lyrics?itunes_track_id=eq.${trackId}`);
+      return (status >= 200 && status < 300)
+        ? res.status(200).json({ ok: true, message: "Lyrics removed from Liri" })
+        : res.status(500).json({ error: `track_lyrics delete failed (${status})` });
     }
 
     if (body?.action === "add-vinyl-sides") {

@@ -57,7 +57,24 @@ export async function saveUserLyrics(sb, trackId, text) {
   };
   const { error } = await sb.from("track_lyrics").upsert(row, { onConflict: "itunes_track_id" });
   if (error) throw error;
-  return { lrc_raw: row.lrc_raw, words_json: null, lyrics_plain: row.lyrics_plain };
+  return { lrc_raw: row.lrc_raw, words_json: null, lyrics_plain: row.lyrics_plain, source: row.source };
+}
+
+// Explicitly record that a track has no sung/spoken lyrics. A real cache row
+// prevents background gap-fill from repeatedly treating it as missing.
+export async function saveUserInstrumental(sb, trackId) {
+  if (!trackId) throw new Error("Track ID is required");
+  const row = {
+    itunes_track_id: trackId,
+    lrc_raw: null,
+    lyrics_plain: null,
+    words_json: [],
+    source: "instrumental",
+    fetched_at: new Date().toISOString(),
+  };
+  const { error } = await sb.from("track_lyrics").upsert(row, { onConflict: "itunes_track_id" });
+  if (error) throw error;
+  return { lrc_raw: null, words_json: [], lyrics_plain: null, source: row.source };
 }
 
 // Turn "which tracks start a new side" into per-track side letters.

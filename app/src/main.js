@@ -19,7 +19,7 @@ import {
   expandKnownVinylSplitLyrics,
   reconcileKnownVinylSplitSides,
 } from "../base/lib/vinyl-splits.js";
-import { LYRIC_SITES, saveUserLyrics, buildSideRows, saveUserSides } from "../base/lib/usermeta.js";
+import { LYRIC_SITES, saveUserLyrics, saveUserInstrumental, buildSideRows, saveUserSides } from "../base/lib/usermeta.js";
 import { showFlipPushNotification, showAlbumEndPushNotification, getLocalNotif } from "../base/lib/notifications.js";
 import { Vinyl }          from "../base/components/Vinyl.js";
 import { WaveAnimation }  from "../base/components/WaveAnimation.js";
@@ -1034,7 +1034,7 @@ function Liri() {
         setTurntableTracksProgress({ percent: 60, stage: "Loading lyrics…" });
         const { data: lrcRows } = await sb
           .from("track_lyrics")
-          .select("itunes_track_id, lrc_raw, words_json, lyrics_plain")
+          .select("itunes_track_id, lrc_raw, words_json, lyrics_plain, source")
           .in("itunes_track_id", trackRows.map(t => t.itunes_track_id).filter(Boolean));
         let cache = {};
         for (const row of lrcRows || []) {
@@ -1050,6 +1050,7 @@ function Liri() {
               lrc_raw: row.lrc_raw || null,
               words_json: Array.isArray(wordsJson) ? wordsJson : null,
               lyrics_plain: row.lyrics_plain || null,
+              source: row.source || null,
             };
           }
         }
@@ -1141,6 +1142,7 @@ function Liri() {
           if (missingTracks.length > 0) {
             await Promise.all(missingTracks.map(async t => {
               try {
+                if (cache[String(t.itunes_track_id)]?.source === "instrumental") return;
                 const p = new URLSearchParams({ track_name: t.track_name, artist_name: t.artist_name || artistName, album_name: albumName });
                 if (t.duration_ms) p.set("duration", String(Math.round(t.duration_ms / 1000)));
                 const ac = new AbortController();
@@ -1149,6 +1151,9 @@ function Liri() {
                 if (!r.ok) return;
                 const d = await r.json();
                 if (d?.syncedLyrics || d?.plainLyrics) {
+                  // The user may have marked it instrumental while this request
+                  // was in flight. Their explicit choice always wins.
+                  if (cache[String(t.itunes_track_id)]?.source === "instrumental") return;
                   cache[String(t.itunes_track_id)] = { lrc_raw: d.syncedLyrics || null, words_json: null, lyrics_plain: d.plainLyrics || null };
                   // Persist the find to track_lyrics (fire-and-forget) so the DB
                   // catches up with what the app displays — otherwise the admin
@@ -1201,6 +1206,8 @@ function Liri() {
   // flow on the no-lyrics playback screen. Only turntable (library) tracks
   // have an itunes_track_id to key track_lyrics on.
   const lyricsEditorTrack = currentTrackIndex >= 0 ? turntableTracksRef.current[currentTrackIndex] : null;
+  const currentTrackIsInstrumental = !!(lyricsEditorTrack?.trackId
+    && turntableLyricsCacheRef.current[String(lyricsEditorTrack.trackId)]?.source === "instrumental");
 
   const handleSaveUserLyrics = async text => {
     const track = currentTrackIndex >= 0 ? turntableTracksRef.current[currentTrackIndex] : null;
@@ -1220,6 +1227,25 @@ function Liri() {
       logButtonEvent("user_lyrics_saved");
     } catch (err) {
       console.error("[usermeta] lyrics save failed:", err);
+      setUserMetaError(err?.message || "Couldn't save — try again");
+    }
+    setUserMetaSaving(false);
+  };
+
+  const handleMarkInstrumental = async () => {
+    const track = currentTrackIndex >= 0 ? turntableTracksRef.current[currentTrackIndex] : null;
+    if (!track?.trackId) return;
+    setUserMetaSaving(true);
+    setUserMetaError(null);
+    try {
+      const entry = await saveUserInstrumental(sb, track.trackId);
+      turntableLyricsCacheRef.current[String(track.trackId)] = entry;
+      setLyrics([]);
+      lyricsRef.current = [];
+      setShowLyricsEditor(false);
+      logButtonEvent("track_marked_instrumental");
+    } catch (err) {
+      console.error("[usermeta] instrumental save failed:", err);
       setUserMetaError(err?.message || "Couldn't save — try again");
     }
     setUserMetaSaving(false);
@@ -5725,7 +5751,9 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
       fontSize: "16px",
       paddingTop: "30vh"
     }
-  }, /*#__PURE__*/React.createElement("div", null, "No lyrics found for this track"), lyricsEditorTrack?.trackId && /*#__PURE__*/React.createElement("button", {
+  }, /*#__PURE__*/React.createElement("div", null, currentTrackIsInstrumental
+    ? "Instrumental — no lyrics needed"
+    : "No lyrics found for this track"), lyricsEditorTrack?.trackId && /*#__PURE__*/React.createElement("button", {
     onClick: () => { setUserMetaError(null); setShowLyricsEditor(true); },
     style: {
       marginTop: "18px",
@@ -5739,7 +5767,23 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
       cursor: "pointer",
       fontFamily: "inherit"
     }
-  }, "Add lyrics"), lyricsEditorTrack?.trackId && /*#__PURE__*/React.createElement("div", {
+  }, currentTrackIsInstrumental ? "Add lyrics instead" : "Add lyrics"), lyricsEditorTrack?.trackId && !currentTrackIsInstrumental && /*#__PURE__*/React.createElement("button", {
+    onClick: handleMarkInstrumental,
+    disabled: userMetaSaving,
+    style: {
+      display: "block",
+      margin: "10px auto 0",
+      background: "rgba(255,255,255,0.04)",
+      border: "1px solid rgba(255,255,255,0.12)",
+      color: "rgba(255,255,255,0.5)",
+      borderRadius: "50px",
+      padding: "10px 22px",
+      fontSize: "12px",
+      fontWeight: 600,
+      cursor: userMetaSaving ? "default" : "pointer",
+      fontFamily: "inherit"
+    }
+  }, userMetaSaving ? "Saving…" : "This track is instrumental"), lyricsEditorTrack?.trackId && !currentTrackIsInstrumental && /*#__PURE__*/React.createElement("div", {
     style: { fontSize: "11px", color: "rgba(255,255,255,0.25)", marginTop: 10, lineHeight: 1.5 }
   }, "Find them on Genius, AZLyrics, Musixmatch or LRCLIB and paste them in"))), /*#__PURE__*/React.createElement("div", {
     style: {

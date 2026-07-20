@@ -82,6 +82,9 @@ function shouldReplace(stored, fresh) {
 }
 
 async function refreshOne(track, album_name, stored) {
+  if (stored?.source === "instrumental") {
+    return { itunes_track_id: track.itunes_track_id, status: "skipped_instrumental" };
+  }
   const fresh = await fetchLyrics(
     track.track_name, track.artist_name, album_name,
     track.duration_ms ? track.duration_ms / 1000 : null

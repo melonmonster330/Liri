@@ -329,6 +329,20 @@
       if (error) throw error;
       return row;
     }
+    async function saveUserInstrumental(trackId) {
+      if (!trackId) throw new Error("Track ID is required");
+      const row = {
+        itunes_track_id: trackId,
+        lrc_raw: null,
+        lyrics_plain: null,
+        words_json: [],
+        source: "instrumental",
+        fetched_at: new Date().toISOString(),
+      };
+      const { error } = await sb.from("track_lyrics").upsert(row, { onConflict: "itunes_track_id" });
+      if (error) throw error;
+      return row;
+    }
     // letters: one side letter per track (album order, monotonic A→B→C…).
     async function saveUserSides(collectionId, tracks, letters) {
       const perSideCount = {};
@@ -438,9 +452,10 @@
     }
 
     // ── Track Lyrics Sheet ─────────────────────────────────────────────────
-    function TrackLyricsSheet({ track, album, onClose, onLyricsSaved }) {
+    function TrackLyricsSheet({ track, album, onClose, onLyricsSaved, onInstrumental }) {
       const [lrc, setLrc]         = useState(null);
-      const [loading, setLoading] = useState(true);
+      const [instrumental, setInstrumental] = useState(!!track.isInstrumental);
+      const [loading, setLoading] = useState(!track.isInstrumental);
       const [noLyrics, setNoLyrics] = useState(false);
       const [draft, setDraft]     = useState("");
       const [saving, setSaving]   = useState(false);
@@ -452,6 +467,7 @@
           const row = await saveUserLyrics(track.trackId, draft);
           setLrc(parseLRC(row.lrc_raw || row.lyrics_plain));
           setNoLyrics(false);
+          setInstrumental(false);
           onLyricsSaved && onLyricsSaved(track.trackId);
         } catch (e) {
           setSaveError(e?.message || "Couldn't save — try again");
@@ -459,7 +475,23 @@
         setSaving(false);
       };
 
+      const markInstrumental = async () => {
+        const id = track.lyricSourceId || track.trackId;
+        if (!id) return;
+        setSaving(true); setSaveError(null);
+        try {
+          await saveUserInstrumental(id);
+          setInstrumental(true);
+          setNoLyrics(false);
+          onInstrumental && onInstrumental(id);
+        } catch (e) {
+          setSaveError(e?.message || "Couldn't save — try again");
+        }
+        setSaving(false);
+      };
+
       useEffect(() => {
+        if (track.isInstrumental) return;
         fetchLyricsForTrack(
           track.lyricSourceId || track.trackId, track.trackName, track.artistName,
           album.album_name, track.trackTimeMillis, !track.lyricSourceId
@@ -510,6 +542,16 @@
                 <div style={{ display: "flex", justifyContent: "center", padding: "48px 0" }}>
                   <Spinner />
                 </div>
+              ) : instrumental ? (
+                <div style={{ textAlign: "center", padding: "42px 0 36px" }}>
+                  <div style={{ fontSize: 34, marginBottom: 14, opacity: 0.38 }}>♪</div>
+                  <div style={{ fontSize: 15, color: "rgba(255,255,255,0.55)", fontWeight: 600 }}>Instrumental</div>
+                  <div style={{ fontSize: 12, color: "rgba(255,255,255,0.28)", marginTop: 6 }}>No lyrics needed for this track.</div>
+                  <button onClick={() => { setInstrumental(false); setNoLyrics(true); }}
+                    style={{ marginTop: 20, background: "none", border: "none", color: "rgba(212,168,70,0.72)", fontSize: 12, cursor: "pointer", fontFamily: "inherit" }}>
+                    Add lyrics instead
+                  </button>
+                </div>
               ) : noLyrics ? (
                 <div style={{ padding: "16px 0 32px" }}>
                   <div style={{ textAlign: "center", padding: "8px 0 20px", color: "rgba(255,255,255,0.2)", fontSize: 14 }}>
@@ -543,6 +585,10 @@
                           cursor: draft.trim() && !saving ? "pointer" : "default", fontFamily: "inherit",
                         }}>
                         {saving ? "Saving…" : "Save lyrics"}
+                      </button>
+                      <button onClick={() => !saving && markInstrumental()} disabled={saving}
+                        style={{ width: "100%", marginTop: 10, background: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.11)", borderRadius: 50, padding: "12px 0", color: "rgba(255,255,255,0.5)", fontSize: 12, fontWeight: 600, cursor: saving ? "default" : "pointer", fontFamily: "inherit" }}>
+                        This track is instrumental
                       </button>
                     </>
                   ) : (
@@ -783,9 +829,11 @@
         // "no lyrics" tag so missing ones can be filled in from here.
         const trackIds = [...new Set(trackList.map(t => t._lyricSourceId || t.itunes_track_id).filter(Boolean))];
         const lyricRows = await sbInChunked(
-          "track_lyrics", "itunes_track_id, lrc_raw, lyrics_plain", "itunes_track_id", trackIds);
+          "track_lyrics", "itunes_track_id, lrc_raw, lyrics_plain, source", "itunes_track_id", trackIds);
         const lyricSet = new Set(
           (lyricRows || []).filter(r => r.lrc_raw || r.lyrics_plain).map(r => String(r.itunes_track_id)));
+        const instrumentalSet = new Set(
+          (lyricRows || []).filter(r => r.source === "instrumental").map(r => String(r.itunes_track_id)));
 
         const merged = trackList.map((t, i) => {
           let side, trackOnSide, position;
@@ -822,6 +870,7 @@
             lyricStartSeconds: t._lyricStartSeconds,
             lyricEndSeconds: t._lyricEndSeconds,
             hasLyrics: lyricSet.has(String(t._lyricSourceId || t.itunes_track_id)),
+            isInstrumental: instrumentalSet.has(String(t._lyricSourceId || t.itunes_track_id)),
           };
         });
 
@@ -928,10 +977,12 @@
                         <div style={{ fontSize: 14, color: "#f0e6d3", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
                           {track.trackName}
                         </div>
-                        {(track.trackTimeMillis || !track.hasLyrics) && (
+                        {(track.trackTimeMillis || track.isInstrumental || !track.hasLyrics) && (
                           <div style={{ fontSize: 11, color: "rgba(255,255,255,0.28)", marginTop: 2 }}>
                             {track.trackTimeMillis ? formatDuration(track.trackTimeMillis) : ""}
-                            {!track.hasLyrics && (
+                            {track.isInstrumental ? (
+                              <span style={{ color: "rgba(212,168,70,0.65)", marginLeft: track.trackTimeMillis ? 8 : 0 }}>{track.trackTimeMillis ? "· " : ""}instrumental</span>
+                            ) : !track.hasLyrics && (
                               <span style={{ color: "rgba(212,168,70,0.7)", marginLeft: track.trackTimeMillis ? 8 : 0 }}>{track.trackTimeMillis ? "· " : ""}lyrics not cached — tap to check</span>
                             )}
                           </div>
@@ -956,7 +1007,15 @@
                 setTracks(prev => prev.map(t =>
                   String(t.trackId) === String(trackId)
                     || String(t.lyricSourceId) === String(trackId)
-                    ? { ...t, hasLyrics: true }
+                    ? { ...t, hasLyrics: true, isInstrumental: false }
+                    : t));
+                onMetaChanged && onMetaChanged();
+              }}
+              onInstrumental={trackId => {
+                setTracks(prev => prev.map(t =>
+                  String(t.trackId) === String(trackId)
+                    || String(t.lyricSourceId) === String(trackId)
+                    ? { ...t, hasLyrics: false, isInstrumental: true }
                     : t));
                 onMetaChanged && onMetaChanged();
               }}
@@ -1139,10 +1198,12 @@
           ]);
           const allTrackIds = trackRows.map(t => t.itunes_track_id).filter(Boolean);
           const lyricRows = await sbInChunked(
-            "track_lyrics", "itunes_track_id, lrc_raw, lyrics_plain", "itunes_track_id", allTrackIds);
+            "track_lyrics", "itunes_track_id, lrc_raw, lyrics_plain, source", "itunes_track_id", allTrackIds);
           if (seq !== metaScanSeq.current) return; // a newer scan superseded this one
           const lyricSet = new Set(
             lyricRows.filter(r => r.lrc_raw || r.lyrics_plain).map(r => String(r.itunes_track_id)));
+          const instrumentalSet = new Set(
+            lyricRows.filter(r => r.source === "instrumental").map(r => String(r.itunes_track_id)));
           const flags = {};
           for (const cid of cids) {
             const tracks = trackRows.filter(t => String(t.itunes_collection_id) === cid);
@@ -1153,7 +1214,9 @@
             const hasReleaseSides = releaseRows.some(r =>
               String(r.itunes_collection_id) === cid && r.vinyl_tracks?.some(t => t.side));
             const sidesMissing = !hasCuratedSides && !hasReleaseSides;
-            const lyricsMissing = tracks.filter(t => t.itunes_track_id && !lyricSet.has(String(t.itunes_track_id))).length;
+            const lyricsMissing = tracks.filter(t => t.itunes_track_id
+              && !lyricSet.has(String(t.itunes_track_id))
+              && !instrumentalSet.has(String(t.itunes_track_id))).length;
             if (sidesMissing || lyricsMissing > 0) flags[cid] = { sidesMissing, lyricsMissing };
           }
           setMetaFlags(flags);

@@ -890,7 +890,8 @@
       next[String(row.itunes_track_id)] = {
         lrc_raw: lrc || null,
         words_json: words,
-        lyrics_plain: lrc ? lrcToPlain(lrc) : source.lyrics_plain
+        lyrics_plain: lrc ? lrcToPlain(lrc) : source.lyrics_plain,
+        source: source.source || null
       };
     }
     return next;
@@ -941,7 +942,21 @@
     };
     const { error } = await sb2.from("track_lyrics").upsert(row, { onConflict: "itunes_track_id" });
     if (error) throw error;
-    return { lrc_raw: row.lrc_raw, words_json: null, lyrics_plain: row.lyrics_plain };
+    return { lrc_raw: row.lrc_raw, words_json: null, lyrics_plain: row.lyrics_plain, source: row.source };
+  }
+  async function saveUserInstrumental(sb2, trackId) {
+    if (!trackId) throw new Error("Track ID is required");
+    const row = {
+      itunes_track_id: trackId,
+      lrc_raw: null,
+      lyrics_plain: null,
+      words_json: [],
+      source: "instrumental",
+      fetched_at: (/* @__PURE__ */ new Date()).toISOString()
+    };
+    const { error } = await sb2.from("track_lyrics").upsert(row, { onConflict: "itunes_track_id" });
+    if (error) throw error;
+    return { lrc_raw: null, words_json: [], lyrics_plain: null, source: row.source };
   }
   function buildSideRows(collectionId, tracks, letters) {
     const perSideCount = {};
@@ -2381,7 +2396,7 @@
             vinylSplitSourceId: t._vinylSplitSourceId || null
           }));
           setTurntableTracksProgress({ percent: 60, stage: "Loading lyrics\u2026" });
-          const { data: lrcRows } = await sb.from("track_lyrics").select("itunes_track_id, lrc_raw, words_json, lyrics_plain").in("itunes_track_id", trackRows.map((t) => t.itunes_track_id).filter(Boolean));
+          const { data: lrcRows } = await sb.from("track_lyrics").select("itunes_track_id, lrc_raw, words_json, lyrics_plain, source").in("itunes_track_id", trackRows.map((t) => t.itunes_track_id).filter(Boolean));
           let cache = {};
           for (const row of lrcRows || []) {
             if (row.itunes_track_id) {
@@ -2396,7 +2411,8 @@
               cache[String(row.itunes_track_id)] = {
                 lrc_raw: row.lrc_raw || null,
                 words_json: Array.isArray(wordsJson) ? wordsJson : null,
-                lyrics_plain: row.lyrics_plain || null
+                lyrics_plain: row.lyrics_plain || null,
+                source: row.source || null
               };
             }
           }
@@ -2451,6 +2467,7 @@
             if (missingTracks.length > 0) {
               await Promise.all(missingTracks.map(async (t) => {
                 try {
+                  if (cache[String(t.itunes_track_id)]?.source === "instrumental") return;
                   const p = new URLSearchParams({ track_name: t.track_name, artist_name: t.artist_name || artistName, album_name: albumName });
                   if (t.duration_ms) p.set("duration", String(Math.round(t.duration_ms / 1e3)));
                   const ac = new AbortController();
@@ -2459,6 +2476,7 @@
                   if (!r.ok) return;
                   const d = await r.json();
                   if (d?.syncedLyrics || d?.plainLyrics) {
+                    if (cache[String(t.itunes_track_id)]?.source === "instrumental") return;
                     cache[String(t.itunes_track_id)] = { lrc_raw: d.syncedLyrics || null, words_json: null, lyrics_plain: d.plainLyrics || null };
                     const apiBase = window.Capacitor ? "https://www.getliri.com" : "";
                     fetch(`${apiBase}/api/refresh-lyrics?action=track&id=${t.itunes_track_id}`, { method: "POST" }).catch(() => {
@@ -2507,6 +2525,7 @@
       }
     }, [turntableAlbum]);
     const lyricsEditorTrack = currentTrackIndex >= 0 ? turntableTracksRef.current[currentTrackIndex] : null;
+    const currentTrackIsInstrumental = !!(lyricsEditorTrack?.trackId && turntableLyricsCacheRef.current[String(lyricsEditorTrack.trackId)]?.source === "instrumental");
     const handleSaveUserLyrics = async (text) => {
       const track = currentTrackIndex >= 0 ? turntableTracksRef.current[currentTrackIndex] : null;
       if (!track?.trackId) return;
@@ -2524,6 +2543,24 @@
         logButtonEvent2("user_lyrics_saved");
       } catch (err) {
         console.error("[usermeta] lyrics save failed:", err);
+        setUserMetaError(err?.message || "Couldn't save \u2014 try again");
+      }
+      setUserMetaSaving(false);
+    };
+    const handleMarkInstrumental = async () => {
+      const track = currentTrackIndex >= 0 ? turntableTracksRef.current[currentTrackIndex] : null;
+      if (!track?.trackId) return;
+      setUserMetaSaving(true);
+      setUserMetaError(null);
+      try {
+        const entry = await saveUserInstrumental(sb, track.trackId);
+        turntableLyricsCacheRef.current[String(track.trackId)] = entry;
+        setLyrics([]);
+        lyricsRef.current = [];
+        setShowLyricsEditor(false);
+        logButtonEvent2("track_marked_instrumental");
+      } catch (err) {
+        console.error("[usermeta] instrumental save failed:", err);
         setUserMetaError(err?.message || "Couldn't save \u2014 try again");
       }
       setUserMetaSaving(false);
@@ -6814,7 +6851,7 @@ Move closer to your speakers and try again.`);
         fontSize: "16px",
         paddingTop: "30vh"
       }
-    }, /* @__PURE__ */ React.createElement("div", null, "No lyrics found for this track"), lyricsEditorTrack?.trackId && /* @__PURE__ */ React.createElement("button", {
+    }, /* @__PURE__ */ React.createElement("div", null, currentTrackIsInstrumental ? "Instrumental \u2014 no lyrics needed" : "No lyrics found for this track"), lyricsEditorTrack?.trackId && /* @__PURE__ */ React.createElement("button", {
       onClick: () => {
         setUserMetaError(null);
         setShowLyricsEditor(true);
@@ -6831,7 +6868,23 @@ Move closer to your speakers and try again.`);
         cursor: "pointer",
         fontFamily: "inherit"
       }
-    }, "Add lyrics"), lyricsEditorTrack?.trackId && /* @__PURE__ */ React.createElement("div", {
+    }, currentTrackIsInstrumental ? "Add lyrics instead" : "Add lyrics"), lyricsEditorTrack?.trackId && !currentTrackIsInstrumental && /* @__PURE__ */ React.createElement("button", {
+      onClick: handleMarkInstrumental,
+      disabled: userMetaSaving,
+      style: {
+        display: "block",
+        margin: "10px auto 0",
+        background: "rgba(255,255,255,0.04)",
+        border: "1px solid rgba(255,255,255,0.12)",
+        color: "rgba(255,255,255,0.5)",
+        borderRadius: "50px",
+        padding: "10px 22px",
+        fontSize: "12px",
+        fontWeight: 600,
+        cursor: userMetaSaving ? "default" : "pointer",
+        fontFamily: "inherit"
+      }
+    }, userMetaSaving ? "Saving\u2026" : "This track is instrumental"), lyricsEditorTrack?.trackId && !currentTrackIsInstrumental && /* @__PURE__ */ React.createElement("div", {
       style: { fontSize: "11px", color: "rgba(255,255,255,0.25)", marginTop: 10, lineHeight: 1.5 }
     }, "Find them on Genius, AZLyrics, Musixmatch or LRCLIB and paste them in"))), /* @__PURE__ */ React.createElement("div", {
       style: {
