@@ -59,6 +59,7 @@ const LYRIC_LEAD_SECONDS = 1;
 // if she's nudging forward constantly the gap is too long for her vinyl.)
 const TRACK_GAP_MS = 300;
 const SIDE_END_HANDOFF_MS = 650;
+const INTRO_FOCUS_FADE_SECONDS = 1.2;
 // How long the lyric clock parks at 0 after a manual flip / side pick while
 // the user physically flips the record and drops the needle.
 const FLIP_NEEDLE_DROP_MS = 10000;
@@ -173,10 +174,21 @@ function Liri() {
   const lyricAreaLeft = menuOpen
     ? Math.max(railW + 24, Math.round((winW - lyricAreaW) / 2))
     : Math.round((winW - lyricAreaW) / 2);
-  // One stable viewport mask supplies the active-line emphasis. Keep the fully
-  // opaque band tight around the resting position; neighboring lyrics remain
-  // readable but clearly secondary, without animating individual text layers.
-  const lyricFocusMask = "linear-gradient(to bottom, rgba(0,0,0,0.04) 0%, rgba(0,0,0,0.10) calc(50% - 150px), rgba(0,0,0,0.25) calc(50% - 94px), #000 calc(50% - 70px), #000 calc(50% - 26px), rgba(0,0,0,0.25) calc(50% + 2px), rgba(0,0,0,0.10) calc(50% + 105px), rgba(0,0,0,0.03) 100%)";
+  // One stable viewport mask supplies the active-line emphasis. During the
+  // instrumental intro every line has the same dim opacity, so a lyric merely
+  // passing through the middle cannot look active. As the first lyric starts,
+  // blend the focus band in alongside the existing 650ms centering motion.
+  const firstLyricTime = Number.isFinite(lyrics[0]?.time) ? lyrics[0].time : null;
+  const lyricFocusStrength = currentIndex < 0
+    ? 0
+    : firstLyricTime != null && currentIndex === 0
+      ? Math.max(0, Math.min(1,
+        (playbackTime - firstLyricTime) / INTRO_FOCUS_FADE_SECONDS))
+      : 1;
+  const introMaskAlpha = 0.14;
+  const focusAlpha = target => (introMaskAlpha
+    + (target - introMaskAlpha) * lyricFocusStrength).toFixed(3);
+  const lyricFocusMask = `linear-gradient(to bottom, rgba(0,0,0,${focusAlpha(0.04)}) 0%, rgba(0,0,0,${focusAlpha(0.10)}) calc(50% - 150px), rgba(0,0,0,${focusAlpha(0.25)}) calc(50% - 94px), rgba(0,0,0,${focusAlpha(1)}) calc(50% - 70px), rgba(0,0,0,${focusAlpha(1)}) calc(50% - 26px), rgba(0,0,0,${focusAlpha(0.25)}) calc(50% + 2px), rgba(0,0,0,${focusAlpha(0.10)}) calc(50% + 105px), rgba(0,0,0,${focusAlpha(0.03)}) 100%)`;
   const layoutLyricFontScale = menuOpen
     ? 1.1 * Math.max(0.72, Math.min(1, lyricAreaW / 640))
     : 1.25; // menu away → a touch larger

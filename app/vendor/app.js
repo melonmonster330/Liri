@@ -1418,6 +1418,7 @@
   var LYRIC_LEAD_SECONDS = 1;
   var TRACK_GAP_MS = 300;
   var SIDE_END_HANDOFF_MS = 650;
+  var INTRO_FOCUS_FADE_SECONDS = 1.2;
   var FLIP_NEEDLE_DROP_MS = 1e4;
   var NUDGE_STEP_SECS = 1;
   var NUDGE_FINE_SECS = 0.5;
@@ -1504,7 +1505,14 @@
     const menuOpen = isLandscape && controlsVisible;
     const lyricAreaW = menuOpen ? Math.min(760, Math.max(260, winW - railW - 48)) : Math.min(820, winW - 48);
     const lyricAreaLeft = menuOpen ? Math.max(railW + 24, Math.round((winW - lyricAreaW) / 2)) : Math.round((winW - lyricAreaW) / 2);
-    const lyricFocusMask = "linear-gradient(to bottom, rgba(0,0,0,0.04) 0%, rgba(0,0,0,0.10) calc(50% - 150px), rgba(0,0,0,0.25) calc(50% - 94px), #000 calc(50% - 70px), #000 calc(50% - 26px), rgba(0,0,0,0.25) calc(50% + 2px), rgba(0,0,0,0.10) calc(50% + 105px), rgba(0,0,0,0.03) 100%)";
+    const firstLyricTime = Number.isFinite(lyrics[0]?.time) ? lyrics[0].time : null;
+    const lyricFocusStrength = currentIndex < 0 ? 0 : firstLyricTime != null && currentIndex === 0 ? Math.max(0, Math.min(
+      1,
+      (playbackTime - firstLyricTime) / INTRO_FOCUS_FADE_SECONDS
+    )) : 1;
+    const introMaskAlpha = 0.14;
+    const focusAlpha = (target) => (introMaskAlpha + (target - introMaskAlpha) * lyricFocusStrength).toFixed(3);
+    const lyricFocusMask = `linear-gradient(to bottom, rgba(0,0,0,${focusAlpha(0.04)}) 0%, rgba(0,0,0,${focusAlpha(0.1)}) calc(50% - 150px), rgba(0,0,0,${focusAlpha(0.25)}) calc(50% - 94px), rgba(0,0,0,${focusAlpha(1)}) calc(50% - 70px), rgba(0,0,0,${focusAlpha(1)}) calc(50% - 26px), rgba(0,0,0,${focusAlpha(0.25)}) calc(50% + 2px), rgba(0,0,0,${focusAlpha(0.1)}) calc(50% + 105px), rgba(0,0,0,${focusAlpha(0.03)}) 100%)`;
     const layoutLyricFontScale = menuOpen ? 1.1 * Math.max(0.72, Math.min(1, lyricAreaW / 640)) : 1.25;
     const lyricPanelWidth = isLandscape ? lyricAreaW : winW;
     const responsiveLyricFontScaleCap = Math.min(
