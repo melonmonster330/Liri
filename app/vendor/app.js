@@ -1506,8 +1506,8 @@
     const layoutLyricFontScale = menuOpen ? 1.1 * Math.max(0.72, Math.min(1, lyricAreaW / 640)) : 1.25;
     const lyricPanelWidth = isLandscape ? lyricAreaW : winW;
     const responsiveLyricFontScaleCap = Math.min(
-      1.4,
-      Math.max(0.9, 0.9 + (lyricPanelWidth - 320) / 500 * 0.5)
+      2,
+      Math.max(1.6, 1.6 + (lyricPanelWidth - 320) / 500 * 0.4)
     );
     const [showBugReport, setShowBugReport] = useState6(false);
     const [bugText, setBugText] = useState6("");
@@ -1622,7 +1622,7 @@
     const scrollSpeedRef = useRef5(scrollSpeed);
     const [lyricFontScale, setLyricFontScale] = useState6(() => {
       const v = parseFloat(localStorage.getItem("liri_lyric_font_scale"));
-      return isNaN(v) ? 1 : Math.min(1.4, Math.max(0.8, v));
+      return isNaN(v) ? 1 : Math.min(2, Math.max(0.8, v));
     });
     const responsiveLyricFontScale = Math.min(lyricFontScale, responsiveLyricFontScaleCap);
     const effectiveLyricFontScale = responsiveLyricFontScale * layoutLyricFontScale;
@@ -6487,7 +6487,7 @@ Move closer to your speakers and try again.`);
         style: {
           textAlign: "center",
           padding: "7px 0",
-          fontSize: Math.round(20 * (isLandscape ? effectiveLyricFontScale : lyricFontScale)) + "px",
+          fontSize: Math.round(20 * (isLandscape ? effectiveLyricFontScale : responsiveLyricFontScale)) + "px",
           fontWeight: "500",
           color: "rgba(255,255,255,0.78)",
           lineHeight: "1.45"
@@ -6843,7 +6843,7 @@ Move closer to your speakers and try again.`);
       }
     }, "A\u2212"), /* @__PURE__ */ React.createElement("span", {
       style: { minWidth: "48px", textAlign: "center", color: "rgba(255,255,255,0.45)", fontSize: "11px", fontWeight: "600" }
-    }, Math.round(responsiveLyricFontScale * 100) + "%"), /* @__PURE__ */ React.createElement("button", {
+    }, Math.round((lyricsUnsynced ? 20 : IS_IOS && !isLandscape ? 16 : 18) * (isLandscape ? effectiveLyricFontScale : responsiveLyricFontScale)) + " px"), /* @__PURE__ */ React.createElement("button", {
       onClick: () => adjustLyricFontSize(0.1),
       disabled: responsiveLyricFontScale >= responsiveLyricFontScaleCap - 1e-3,
       "aria-label": "Increase lyric font size",

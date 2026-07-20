@@ -177,10 +177,10 @@ function Liri() {
     : 1.25; // menu away → a touch larger
   const lyricPanelWidth = isLandscape ? lyricAreaW : winW;
   // User font nudges still apply, but a narrow lyric panel gets a lower safe
-  // ceiling. The cap grows continuously with the panel instead of jumping at
-  // device breakpoints, reaching the full 140% setting on wide layouts.
-  const responsiveLyricFontScaleCap = Math.min(1.4,
-    Math.max(0.9, 0.9 + (lyricPanelWidth - 320) / 500 * 0.5)
+  // ceiling. Keep a genuinely useful range on phone-sized windows, then let
+  // wider lyric panels grow continuously up to a larger desktop maximum.
+  const responsiveLyricFontScaleCap = Math.min(2,
+    Math.max(1.6, 1.6 + (lyricPanelWidth - 320) / 500 * 0.4)
   );
   const [showBugReport, setShowBugReport] = useState(false);
   const [bugText, setBugText] = useState("");
@@ -334,7 +334,7 @@ function Liri() {
   // ── Lyric font size (shared by web + iOS, persisted on this device) ──
   const [lyricFontScale, setLyricFontScale] = useState(() => {
     const v = parseFloat(localStorage.getItem("liri_lyric_font_scale"));
-    return isNaN(v) ? 1 : Math.min(1.4, Math.max(0.8, v));
+    return isNaN(v) ? 1 : Math.min(2, Math.max(0.8, v));
   });
   const responsiveLyricFontScale = Math.min(lyricFontScale, responsiveLyricFontScaleCap);
   const effectiveLyricFontScale = responsiveLyricFontScale * layoutLyricFontScale;
@@ -5511,7 +5511,7 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
       style: {
         textAlign: "center",
         padding: "7px 0",
-        fontSize: Math.round(20 * (isLandscape ? effectiveLyricFontScale : lyricFontScale)) + "px",
+        fontSize: Math.round(20 * (isLandscape ? effectiveLyricFontScale : responsiveLyricFontScale)) + "px",
         fontWeight: "500",
         color: "rgba(255,255,255,0.78)",
         lineHeight: "1.45"
@@ -5874,7 +5874,8 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
     }
   }, "A−"), /*#__PURE__*/React.createElement("span", {
     style: { minWidth: "48px", textAlign: "center", color: "rgba(255,255,255,0.45)", fontSize: "11px", fontWeight: "600" }
-  }, Math.round(responsiveLyricFontScale * 100) + "%"), /*#__PURE__*/React.createElement("button", {
+  }, Math.round((lyricsUnsynced ? 20 : (IS_IOS && !isLandscape ? 16 : 18))
+    * (isLandscape ? effectiveLyricFontScale : responsiveLyricFontScale)) + " px"), /*#__PURE__*/React.createElement("button", {
     onClick: () => adjustLyricFontSize(0.1),
     disabled: responsiveLyricFontScale >= responsiveLyricFontScaleCap - 0.001,
     "aria-label": "Increase lyric font size",
