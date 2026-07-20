@@ -251,7 +251,7 @@
     }
 
     // Fetch synced lyrics: track_lyrics table (new schema) → LRCLib fallback
-    async function fetchLyricsForTrack(trackId, trackName, artistName, albumName, durationMs) {
+    async function fetchLyricsForTrack(trackId, trackName, artistName, albumName, durationMs, allowCache = true) {
       // Check track_lyrics table (populated when album was added to library)
       if (trackId) {
         const { data } = await sb.from("track_lyrics")
@@ -260,20 +260,34 @@
         if (data?.lyrics_plain) return data.lyrics_plain;
       }
       const dur = durationMs ? Math.round(durationMs / 1000) : 0;
+      const remember = async raw => {
+        if (!raw || !trackId || !allowCache) return raw;
+        try {
+          await sb.from("track_lyrics").upsert({
+            itunes_track_id: trackId,
+            lrc_raw: raw,
+            lyrics_plain: lrcToPlain(raw),
+            words_json: null,
+            source: "lrclib",
+            fetched_at: new Date().toISOString(),
+          }, { onConflict: "itunes_track_id" });
+        } catch {}
+        return raw;
+      };
       try {
         const p = new URLSearchParams({ track_name: trackName, artist_name: artistName, album_name: albumName });
         if (dur) p.set("duration", dur);
         const res = await fetch(`https://lrclib.net/api/get?${p}`).then(r => r.json());
-        if (res?.syncedLyrics) return res.syncedLyrics;
+        if (res?.syncedLyrics) return remember(res.syncedLyrics);
       } catch {}
       try {
         const p = new URLSearchParams({ track_name: trackName, artist_name: artistName });
         const results = await fetch(`https://lrclib.net/api/search?${p}`).then(r => r.json());
         if (Array.isArray(results)) {
           const exact = results.find(r => r.syncedLyrics && r.trackName?.toLowerCase() === trackName.toLowerCase());
-          if (exact?.syncedLyrics) return exact.syncedLyrics;
+          if (exact?.syncedLyrics) return remember(exact.syncedLyrics);
           const any = results.find(r => r.syncedLyrics);
-          if (any?.syncedLyrics) return any.syncedLyrics;
+          if (any?.syncedLyrics) return remember(any.syncedLyrics);
         }
       } catch {}
       return null;
@@ -448,9 +462,12 @@
       useEffect(() => {
         fetchLyricsForTrack(
           track.lyricSourceId || track.trackId, track.trackName, track.artistName,
-          album.album_name, track.trackTimeMillis
+          album.album_name, track.trackTimeMillis, !track.lyricSourceId
         ).then(result => {
-          if (result) setLrc(lyricsForVinylTrack(result, track));
+          if (result) {
+            setLrc(lyricsForVinylTrack(result, track));
+            onLyricsSaved && onLyricsSaved(track.lyricSourceId || track.trackId);
+          }
           else setNoLyrics(true);
           setLoading(false);
         });
@@ -915,7 +932,7 @@
                           <div style={{ fontSize: 11, color: "rgba(255,255,255,0.28)", marginTop: 2 }}>
                             {track.trackTimeMillis ? formatDuration(track.trackTimeMillis) : ""}
                             {!track.hasLyrics && (
-                              <span style={{ color: "rgba(212,168,70,0.7)", marginLeft: track.trackTimeMillis ? 8 : 0 }}>{track.trackTimeMillis ? "· " : ""}no lyrics — tap to add</span>
+                              <span style={{ color: "rgba(212,168,70,0.7)", marginLeft: track.trackTimeMillis ? 8 : 0 }}>{track.trackTimeMillis ? "· " : ""}lyrics not cached — tap to check</span>
                             )}
                           </div>
                         )}
@@ -936,7 +953,11 @@
               album={album}
               onClose={() => setSelectedTrack(null)}
               onLyricsSaved={trackId => {
-                setTracks(prev => prev.map(t => String(t.trackId) === String(trackId) ? { ...t, hasLyrics: true } : t));
+                setTracks(prev => prev.map(t =>
+                  String(t.trackId) === String(trackId)
+                    || String(t.lyricSourceId) === String(trackId)
+                    ? { ...t, hasLyrics: true }
+                    : t));
                 onMetaChanged && onMetaChanged();
               }}
             />
