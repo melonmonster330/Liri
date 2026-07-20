@@ -1,5 +1,5 @@
 (() => {
-  // ../../../../../private/tmp/liri-main.VW4zUC/app/base/lib/text.js
+  // ../../../../../private/tmp/liri-main.nPtj1L/app/base/lib/text.js
   function parseLRC(lrc) {
     const re = /\[(\d{2}):(\d{2})[.:](\d{2,3})\](.*)/;
     return lrc.split("\n").reduce((acc, line) => {
@@ -25,7 +25,7 @@
     return `${Math.floor(diff / 86400)}d ago`;
   }
 
-  // ../../../../../private/tmp/liri-main.VW4zUC/app/base/lib/library.js
+  // ../../../../../private/tmp/liri-main.nPtj1L/app/base/lib/library.js
   var plainToLines = (txt) => (txt || "").split("\n").filter((l) => l.trim()).map((text) => ({ time: null, text }));
   var fold = (s) => (s || "").toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
   var artistSortKey = (album) => fold(album.artist_sort_name || (album.artist_name || "").trim().replace(/^the\s+/i, ""));
@@ -44,7 +44,7 @@
     return [...recent, ...rest];
   }
 
-  // ../../../../../private/tmp/liri-main.VW4zUC/app/base/lib/analytics.js
+  // ../../../../../private/tmp/liri-main.nPtj1L/app/base/lib/analytics.js
   async function logListeningEvent(sb2, sessionId, params) {
     try {
       await sb2.from("listening_events").insert({
@@ -133,18 +133,18 @@
     }
   }
 
-  // ../../../../../private/tmp/liri-main.VW4zUC/app/base/lib/config.js
+  // ../../../../../private/tmp/liri-main.nPtj1L/app/base/lib/config.js
   var IS_IOS = !!window.Capacitor;
   var TRANSCRIBE_PROXY = window.Capacitor ? "https://www.getliri.com/api/transcribe" : "/api/transcribe";
   var ITUNES_PROXY = window.Capacitor ? "https://www.getliri.com/api/itunes-lookup" : "/api/itunes-lookup";
   var SYNC_PLAYBACK_RATE = 1.0315;
 
-  // ../../../../../private/tmp/liri-main.VW4zUC/app/ios/iap.js
+  // ../../../../../private/tmp/liri-main.nPtj1L/app/ios/iap.js
   function getLiriIAP() {
     return window.Capacitor?.Plugins?.LiriIAP ?? null;
   }
 
-  // ../../../../../private/tmp/liri-main.VW4zUC/app/src/hooks/usePayments.js
+  // ../../../../../private/tmp/liri-main.nPtj1L/app/src/hooks/usePayments.js
   var { useState, useEffect } = React;
   function usePayments({ sb: sb2, sessionTokenRef }) {
     const [userTier, setUserTier] = useState("free");
@@ -278,7 +278,7 @@
     };
   }
 
-  // ../../../../../private/tmp/liri-main.VW4zUC/app/src/hooks/useNowPlaying.js
+  // ../../../../../private/tmp/liri-main.nPtj1L/app/src/hooks/useNowPlaying.js
   var { useRef, useEffect: useEffect2 } = React;
   function useNowPlaying({
     sessionTabId: sessionTabId2,
@@ -406,7 +406,7 @@
     }, []);
   }
 
-  // ../../../../../private/tmp/liri-main.VW4zUC/app/src/hooks/useLyricScroll.js
+  // ../../../../../private/tmp/liri-main.nPtj1L/app/src/hooks/useLyricScroll.js
   var { useRef: useRef2, useEffect: useEffect3, useLayoutEffect } = React;
   var ACTIVE_LINE_CENTER_OFFSET_PX = 48;
   function useLyricScroll({
@@ -444,16 +444,16 @@
       if (!container || lyricsUnsynced) return;
       const lines = Array.from(container.querySelectorAll("[data-lyric-line]"));
       if (!lines.length) return;
-      const containerRect = container.getBoundingClientRect();
-      const focusY = containerRect.top + container.clientHeight / 2 - ACTIVE_LINE_CENTER_OFFSET_PX;
+      const activeLine = currentLineRef.current;
+      const activeIndex = activeLine ? lines.indexOf(activeLine) : -1;
       const strength = focusStrengthRef.current;
-      const updates = lines.map((line) => {
-        const rect = line.getBoundingClientRect();
-        const distance = Math.abs(rect.top + rect.height / 2 - focusY);
+      const updates = lines.map((line, index) => {
+        const distance = activeIndex >= 0 ? Math.abs(index - activeIndex) : Infinity;
         let targetOpacity;
-        if (distance <= 22) targetOpacity = 1;
-        else if (distance <= 70) targetOpacity = 1 - (distance - 22) / 48 * 0.75;
-        else if (distance <= 165) targetOpacity = 0.25 - (distance - 70) / 95 * 0.15;
+        if (distance === 0) targetOpacity = 1;
+        else if (distance === 1) targetOpacity = 0.25;
+        else if (distance === 2) targetOpacity = 0.15;
+        else if (distance === 3) targetOpacity = 0.08;
         else targetOpacity = 0.04;
         if (line.dataset.creditLine === "true") {
           targetOpacity = Math.min(0.55, targetOpacity);
@@ -596,6 +596,7 @@
       setPlaybackTime(targetTime);
       userScrollingRef.current = false;
       setUserScrolling(false);
+      clearTimeout(refollowTimerRef.current);
     };
     const refollow = () => {
       userScrollingRef.current = false;
@@ -621,13 +622,12 @@
       const lineRect = line.getBoundingClientRect();
       const lineCenter = lineRect.top - containerRect.top + container.scrollTop + lineRect.height / 2;
       container.scrollTop = Math.max(0, lineCenter - container.clientHeight / 2 + ACTIVE_LINE_CENTER_OFFSET_PX);
-      updateLyricEmphasis();
       return true;
     };
     return { lyricsUnsynced, lyricsScrollRef, seekToLine, browseToLine, refollow, noteUserScroll };
   }
 
-  // ../../../../../private/tmp/liri-main.VW4zUC/app/src/hooks/useCast.js
+  // ../../../../../private/tmp/liri-main.nPtj1L/app/src/hooks/useCast.js
   var { useState: useState2, useEffect: useEffect4, useRef: useRef3, useCallback } = React;
   var CAST_APP_ID = "2FBB66AA";
   var CAST_NAMESPACE = "urn:x-cast:com.getliri.lyrics";
@@ -776,10 +776,10 @@
     return { supported, ready, connected, deviceName, error, requestSession, stopSession };
   }
 
-  // ../../../../../private/tmp/liri-main.VW4zUC/app/base/lib/whisper.js
+  // ../../../../../private/tmp/liri-main.nPtj1L/app/base/lib/whisper.js
   var WHISPER_PROXY = window.Capacitor ? "https://www.getliri.com/api/whisper" : "/api/whisper";
 
-  // ../../../../../private/tmp/liri-main.VW4zUC/app/base/lib/sides.js
+  // ../../../../../private/tmp/liri-main.nPtj1L/app/base/lib/sides.js
   function hasSideData(vinylSides, dbTracks) {
     return !!(vinylSides?.length || dbTracks?.length);
   }
@@ -817,7 +817,7 @@
     ].filter((g) => g.tracks.length > 0);
   }
 
-  // ../../../../../private/tmp/liri-main.VW4zUC/app/base/lib/vinyl-splits.js
+  // ../../../../../private/tmp/liri-main.nPtj1L/app/base/lib/vinyl-splits.js
   var SPLITS = {
     "1429663168": {
       parts: [
@@ -913,7 +913,7 @@
     return reconciled;
   }
 
-  // ../../../../../private/tmp/liri-main.VW4zUC/app/base/lib/usermeta.js
+  // ../../../../../private/tmp/liri-main.nPtj1L/app/base/lib/usermeta.js
   var LYRIC_SITES = [
     { name: "LRCLIB", url: "https://lrclib.net" },
     { name: "Genius", url: "https://genius.com" },
@@ -982,7 +982,7 @@
     return rows.map((r) => ({ side: r.side, side_track_number: r.side_track_number, position: r.position }));
   }
 
-  // ../../../../../private/tmp/liri-main.VW4zUC/app/base/lib/notifications.js
+  // ../../../../../private/tmp/liri-main.nPtj1L/app/base/lib/notifications.js
   function getLocalNotif() {
     return window.Capacitor?.Plugins?.LocalNotifications ?? null;
   }
@@ -1013,7 +1013,7 @@
     }
   }
 
-  // ../../../../../private/tmp/liri-main.VW4zUC/app/base/components/Vinyl.js
+  // ../../../../../private/tmp/liri-main.nPtj1L/app/base/components/Vinyl.js
   function Vinyl({ size = 120, spinning = false }) {
     return /* @__PURE__ */ React.createElement("div", {
       style: {
@@ -1056,7 +1056,7 @@
     ));
   }
 
-  // ../../../../../private/tmp/liri-main.VW4zUC/app/base/components/WaveAnimation.js
+  // ../../../../../private/tmp/liri-main.nPtj1L/app/base/components/WaveAnimation.js
   var { useRef: useRef4, useEffect: useEffect5 } = React;
   var BAR_MULTS = [0.55, 0.85, 1, 0.75, 0.95, 0.65, 0.9, 0.7, 1, 0.6, 0.8, 0.5];
   function WaveAnimation({ active, size = 1, analyserRef, level }) {
@@ -1147,7 +1147,7 @@
     })));
   }
 
-  // ../../../../../private/tmp/liri-main.VW4zUC/app/base/components/ProgressRing.js
+  // ../../../../../private/tmp/liri-main.nPtj1L/app/base/components/ProgressRing.js
   var { useState: useState3, useEffect: useEffect6 } = React;
   function ProgressRing({ size = 96 }) {
     const r = size / 2 - 5;
@@ -1202,7 +1202,7 @@
     );
   }
 
-  // ../../../../../private/tmp/liri-main.VW4zUC/app/base/components/LyricsEditorSheet.js
+  // ../../../../../private/tmp/liri-main.nPtj1L/app/base/components/LyricsEditorSheet.js
   var { useState: useState4 } = React;
   var e = React.createElement;
   function LyricsEditorSheet({ track, sites, saving, error, onSave, onClose }) {
@@ -1341,7 +1341,7 @@
     ));
   }
 
-  // ../../../../../private/tmp/liri-main.VW4zUC/app/base/components/SideInfoSheet.js
+  // ../../../../../private/tmp/liri-main.nPtj1L/app/base/components/SideInfoSheet.js
   var { useState: useState5 } = React;
   var e2 = React.createElement;
   function lettersFromBreaks(count, breakSet) {
@@ -1509,7 +1509,7 @@
     ));
   }
 
-  // ../../../../../private/tmp/liri-main.VW4zUC/app/ios/shazam.js
+  // ../../../../../private/tmp/liri-main.nPtj1L/app/ios/shazam.js
   function getPlugin() {
     const np = window.Capacitor?.nativePromise;
     if (!np) return null;
@@ -1536,19 +1536,19 @@
     }
   };
 
-  // ../../../../../private/tmp/liri-main.VW4zUC/app/ios/audio.js
+  // ../../../../../private/tmp/liri-main.nPtj1L/app/ios/audio.js
   function getNativeAudio() {
     if (!window.Capacitor) return null;
     return window.Capacitor.Plugins?.NativeAudio ?? window.Capacitor.registerPlugin?.("NativeAudio") ?? null;
   }
 
-  // ../../../../../private/tmp/liri-main.VW4zUC/app/ios/keep-awake.js
+  // ../../../../../private/tmp/liri-main.nPtj1L/app/ios/keep-awake.js
   function getKeepAwake() {
     if (!window.Capacitor) return null;
     return window.Capacitor.Plugins?.KeepAwake ?? window.Capacitor.registerPlugin?.("KeepAwake") ?? null;
   }
 
-  // ../../../../../private/tmp/liri-main.VW4zUC/app/src/main.js
+  // ../../../../../private/tmp/liri-main.nPtj1L/app/src/main.js
   var {
     useState: useState6,
     useEffect: useEffect7,
@@ -6706,7 +6706,27 @@ Move closer to your speakers and try again.`);
         fontWeight: "600",
         color: "rgba(255,255,255,0.7)"
       }
-    }, "Resyncing\u2026")), /* @__PURE__ */ React.createElement("div", {
+    }, "Resyncing\u2026")), userScrolling && !lyricsUnsynced && /* @__PURE__ */ React.createElement("button", {
+      onClick: refollow,
+      style: {
+        position: "fixed",
+        top: "max(62px, calc(env(safe-area-inset-top) + 50px))",
+        left: isLandscape ? lyricAreaLeft + lyricAreaW / 2 + "px" : "50%",
+        transform: "translateX(-50%)",
+        zIndex: 30,
+        background: "rgba(15,15,28,0.92)",
+        border: "1px solid rgba(212,168,70,0.45)",
+        boxShadow: "0 6px 22px rgba(0,0,0,0.38)",
+        color: "#d4a846",
+        borderRadius: "50px",
+        padding: "8px 16px",
+        fontSize: "12px",
+        fontWeight: "700",
+        cursor: "pointer",
+        fontFamily: "inherit",
+        whiteSpace: "nowrap"
+      }
+    }, "\u2191 Sync Lyrics"), /* @__PURE__ */ React.createElement("div", {
       ref: lyricsScrollRef,
       style: {
         overflowY: "auto",
@@ -7133,20 +7153,7 @@ Move closer to your speakers and try again.`);
         cursor: responsiveLyricFontScale >= responsiveLyricFontScaleCap - 1e-3 ? "default" : "pointer",
         opacity: responsiveLyricFontScale >= responsiveLyricFontScaleCap - 1e-3 ? 0.35 : 1
       }
-    }, "A+")), userScrolling && /* @__PURE__ */ React.createElement("button", {
-      onClick: refollow,
-      style: {
-        background: "rgba(212,168,70,0.12)",
-        border: "1px solid rgba(212,168,70,0.3)",
-        color: "rgba(212,168,70,0.8)",
-        borderRadius: "50px",
-        padding: isLandscape ? "7px 14px" : "10px 22px",
-        fontSize: isLandscape ? "12px" : "13px",
-        fontWeight: "500",
-        cursor: "pointer",
-        fontFamily: "inherit"
-      }
-    }, "\u2193 Follow"), /* @__PURE__ */ React.createElement("button", {
+    }, "A+")), /* @__PURE__ */ React.createElement("button", {
       onClick: togglePause,
       style: {
         background: isPaused ? "rgba(212,168,70,0.15)" : "rgba(255,255,255,0.07)",

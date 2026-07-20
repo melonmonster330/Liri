@@ -5595,7 +5595,27 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
       fontWeight: "600",
       color: "rgba(255,255,255,0.7)"
     }
-  }, "Resyncing\u2026")), /*#__PURE__*/React.createElement("div", {
+  }, "Resyncing\u2026")), userScrolling && !lyricsUnsynced && /*#__PURE__*/React.createElement("button", {
+    onClick: refollow,
+    style: {
+      position: "fixed",
+      top: "max(62px, calc(env(safe-area-inset-top) + 50px))",
+      left: isLandscape ? lyricAreaLeft + lyricAreaW / 2 + "px" : "50%",
+      transform: "translateX(-50%)",
+      zIndex: 30,
+      background: "rgba(15,15,28,0.92)",
+      border: "1px solid rgba(212,168,70,0.45)",
+      boxShadow: "0 6px 22px rgba(0,0,0,0.38)",
+      color: "#d4a846",
+      borderRadius: "50px",
+      padding: "8px 16px",
+      fontSize: "12px",
+      fontWeight: "700",
+      cursor: "pointer",
+      fontFamily: "inherit",
+      whiteSpace: "nowrap"
+    }
+  }, "\u2191 Sync Lyrics"), /*#__PURE__*/React.createElement("div", {
     ref: lyricsScrollRef,
     style: {
       overflowY: "auto",
@@ -6032,20 +6052,7 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
       cursor: responsiveLyricFontScale >= responsiveLyricFontScaleCap - 0.001 ? "default" : "pointer",
       opacity: responsiveLyricFontScale >= responsiveLyricFontScaleCap - 0.001 ? 0.35 : 1
     }
-  }, "A+")), userScrolling && /*#__PURE__*/React.createElement("button", {
-    onClick: refollow,
-    style: {
-      background: "rgba(212,168,70,0.12)",
-      border: "1px solid rgba(212,168,70,0.3)",
-      color: "rgba(212,168,70,0.8)",
-      borderRadius: "50px",
-      padding: isLandscape ? "7px 14px" : "10px 22px",
-      fontSize: isLandscape ? "12px" : "13px",
-      fontWeight: "500",
-      cursor: "pointer",
-      fontFamily: "inherit"
-    }
-  }, "\u2193 Follow"), /*#__PURE__*/React.createElement("button", {
+  }, "A+")), /*#__PURE__*/React.createElement("button", {
     onClick: togglePause,
     style: {
       background: isPaused ? "rgba(212,168,70,0.15)" : "rgba(255,255,255,0.07)",
