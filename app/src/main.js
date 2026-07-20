@@ -2750,6 +2750,77 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
     }
   };
 
+  // Track controls shared by the compact listening headers. Keep these wired
+  // to the same jump/advance paths as the expanded sync controls so side-end
+  // handling, cached lyrics, history, and playback reset all stay consistent.
+  const getListeningHeaderNav = () => {
+    const hasTurntableTracks = !!turntableAlbum
+      && turntableTracksRef.current.length > 0
+      && turntableMatchedIdxRef.current >= 0;
+    const tracks = hasTurntableTracks ? turntableTracksRef.current : albumTracks;
+    const index = hasTurntableTracks
+      ? turntableMatchedIdxRef.current
+      : currentTrackIndexRef.current;
+    return {
+      hasTurntableTracks,
+      tracks,
+      index,
+      canPrevious: index > 0,
+      canNext: index >= 0 && index < tracks.length - 1,
+    };
+  };
+
+  const skipListeningHeaderTrack = direction => {
+    const nav = getListeningHeaderNav();
+    if (direction < 0 && nav.canPrevious) {
+      if (nav.hasTurntableTracks) jumpToTrackIdx(nav.index - 1);
+      else jumpToTrack(nav.index - 1);
+    } else if (direction > 0 && nav.canNext) {
+      advanceToNextTrack(nav.tracks, nav.index);
+    }
+  };
+
+  const renderListeningTitleNav = ({ fontSize, wrapTitle = false }) => {
+    const nav = getListeningHeaderNav();
+    const arrow = (direction, enabled, label) => /*#__PURE__*/React.createElement("button", {
+      onClick: e => { e.stopPropagation(); skipListeningHeaderTrack(direction); },
+      onPointerDown: e => e.stopPropagation(),
+      disabled: !enabled || isResyncing,
+      title: label,
+      "aria-label": label,
+      style: {
+        width: "26px",
+        height: "28px",
+        padding: 0,
+        flexShrink: 0,
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+        background: "none",
+        border: "none",
+        color: enabled && !isResyncing ? "rgba(240,230,211,0.68)" : "rgba(255,255,255,0.12)",
+        fontSize: "17px",
+        lineHeight: 1,
+        cursor: enabled && !isResyncing ? "pointer" : "default",
+      }
+    }, direction < 0 ? "\u2190" : "\u2192");
+    return /*#__PURE__*/React.createElement("div", {
+      style: { display: "flex", alignItems: "center", gap: "3px", width: "100%", minWidth: 0 }
+    }, arrow(-1, nav.canPrevious, "Previous song"), /*#__PURE__*/React.createElement("div", {
+      style: {
+        minWidth: 0,
+        flex: 1,
+        fontSize,
+        fontWeight: "600",
+        color: "#f0e6d3",
+        overflow: "hidden",
+        ...(wrapTitle
+          ? { display: "-webkit-box", WebkitBoxOrient: "vertical", WebkitLineClamp: 2, lineHeight: 1.2 }
+          : { textOverflow: "ellipsis", whiteSpace: "nowrap" })
+      }
+    }, detectedSong?.title), arrow(1, nav.canNext, "Next song"));
+  };
+
   // ── Screen wake lock ──
   useEffect(() => {
     const acquire = async () => {
@@ -5157,7 +5228,7 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
     style: { width: "32px", height: "32px", borderRadius: "6px", flexShrink: 0, boxShadow: "0 2px 8px rgba(0,0,0,0.5)" }
   }),
   /*#__PURE__*/React.createElement("div", { style: { flex: 1, minWidth: 0 } },
-    /*#__PURE__*/React.createElement("div", { style: { fontSize: "13px", fontWeight: "600", color: "#f0e6d3", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" } }, detectedSong?.title),
+    renderListeningTitleNav({ fontSize: "13px" }),
     /*#__PURE__*/React.createElement("div", { style: { fontSize: "11px", color: "rgba(255,255,255,0.35)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" } }, detectedSong?.artist)
   ),
   (() => { const si = getSideInfo(); return si ? /*#__PURE__*/React.createElement("div", { style: { fontSize: "10px", fontWeight: "700", letterSpacing: "2px", color: "rgba(212,168,70,0.85)", textTransform: "uppercase", flexShrink: 0 } }, si.side ? `Side ${si.side} \xB7 ${si.track}` : `Track ${si.track}`) : null; })(),
@@ -5217,21 +5288,13 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
     }
   }), /*#__PURE__*/React.createElement("div", {
     style: {
-      minWidth: 0
+      minWidth: 0,
+      flex: 1
     }
-  }, /*#__PURE__*/React.createElement("div", {
-    style: {
-      fontSize: "14px",
-      fontWeight: "600",
-      color: "#f0e6d3",
-      overflow: "hidden",
-      // iOS: wrap a long title onto up to 2 lines instead of cutting it off.
-      // Web keeps the single-line ellipsis (unchanged).
-      ...(IS_IOS
-        ? { display: "-webkit-box", WebkitBoxOrient: "vertical", WebkitLineClamp: 2, lineHeight: 1.2 }
-        : { textOverflow: "ellipsis", whiteSpace: "nowrap" })
-    }
-  }, detectedSong?.title), /*#__PURE__*/React.createElement("div", {
+  }, renderListeningTitleNav({
+    fontSize: "14px",
+    wrapTitle: IS_IOS
+  }), /*#__PURE__*/React.createElement("div", {
     style: {
       fontSize: "12px",
       color: "rgba(255,255,255,0.4)",

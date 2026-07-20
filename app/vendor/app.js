@@ -3621,6 +3621,68 @@ Move closer to your speakers and try again.`);
         setTimeout(() => startListening(false), 150);
       }
     };
+    const getListeningHeaderNav = () => {
+      const hasTurntableTracks = !!turntableAlbum && turntableTracksRef.current.length > 0 && turntableMatchedIdxRef.current >= 0;
+      const tracks = hasTurntableTracks ? turntableTracksRef.current : albumTracks;
+      const index = hasTurntableTracks ? turntableMatchedIdxRef.current : currentTrackIndexRef.current;
+      return {
+        hasTurntableTracks,
+        tracks,
+        index,
+        canPrevious: index > 0,
+        canNext: index >= 0 && index < tracks.length - 1
+      };
+    };
+    const skipListeningHeaderTrack = (direction) => {
+      const nav = getListeningHeaderNav();
+      if (direction < 0 && nav.canPrevious) {
+        if (nav.hasTurntableTracks) jumpToTrackIdx(nav.index - 1);
+        else jumpToTrack(nav.index - 1);
+      } else if (direction > 0 && nav.canNext) {
+        advanceToNextTrack(nav.tracks, nav.index);
+      }
+    };
+    const renderListeningTitleNav = ({ fontSize, wrapTitle = false }) => {
+      const nav = getListeningHeaderNav();
+      const arrow = (direction, enabled, label) => /* @__PURE__ */ React.createElement("button", {
+        onClick: (e3) => {
+          e3.stopPropagation();
+          skipListeningHeaderTrack(direction);
+        },
+        onPointerDown: (e3) => e3.stopPropagation(),
+        disabled: !enabled || isResyncing,
+        title: label,
+        "aria-label": label,
+        style: {
+          width: "26px",
+          height: "28px",
+          padding: 0,
+          flexShrink: 0,
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center",
+          background: "none",
+          border: "none",
+          color: enabled && !isResyncing ? "rgba(240,230,211,0.68)" : "rgba(255,255,255,0.12)",
+          fontSize: "17px",
+          lineHeight: 1,
+          cursor: enabled && !isResyncing ? "pointer" : "default"
+        }
+      }, direction < 0 ? "\u2190" : "\u2192");
+      return /* @__PURE__ */ React.createElement("div", {
+        style: { display: "flex", alignItems: "center", gap: "3px", width: "100%", minWidth: 0 }
+      }, arrow(-1, nav.canPrevious, "Previous song"), /* @__PURE__ */ React.createElement("div", {
+        style: {
+          minWidth: 0,
+          flex: 1,
+          fontSize,
+          fontWeight: "600",
+          color: "#f0e6d3",
+          overflow: "hidden",
+          ...wrapTitle ? { display: "-webkit-box", WebkitBoxOrient: "vertical", WebkitLineClamp: 2, lineHeight: 1.2 } : { textOverflow: "ellipsis", whiteSpace: "nowrap" }
+        }
+      }, detectedSong?.title), arrow(1, nav.canNext, "Next song"));
+    };
     useEffect7(() => {
       const acquire = async () => {
         if (!keepScreenAwake) return;
@@ -6138,7 +6200,7 @@ Move closer to your speakers and try again.`);
       /* @__PURE__ */ React.createElement(
         "div",
         { style: { flex: 1, minWidth: 0 } },
-        /* @__PURE__ */ React.createElement("div", { style: { fontSize: "13px", fontWeight: "600", color: "#f0e6d3", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" } }, detectedSong?.title),
+        renderListeningTitleNav({ fontSize: "13px" }),
         /* @__PURE__ */ React.createElement("div", { style: { fontSize: "11px", color: "rgba(255,255,255,0.35)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" } }, detectedSong?.artist)
       ),
       (() => {
@@ -6202,19 +6264,13 @@ Move closer to your speakers and try again.`);
       }
     }), /* @__PURE__ */ React.createElement("div", {
       style: {
-        minWidth: 0
+        minWidth: 0,
+        flex: 1
       }
-    }, /* @__PURE__ */ React.createElement("div", {
-      style: {
-        fontSize: "14px",
-        fontWeight: "600",
-        color: "#f0e6d3",
-        overflow: "hidden",
-        // iOS: wrap a long title onto up to 2 lines instead of cutting it off.
-        // Web keeps the single-line ellipsis (unchanged).
-        ...IS_IOS ? { display: "-webkit-box", WebkitBoxOrient: "vertical", WebkitLineClamp: 2, lineHeight: 1.2 } : { textOverflow: "ellipsis", whiteSpace: "nowrap" }
-      }
-    }, detectedSong?.title), /* @__PURE__ */ React.createElement("div", {
+    }, renderListeningTitleNav({
+      fontSize: "14px",
+      wrapTitle: IS_IOS
+    }), /* @__PURE__ */ React.createElement("div", {
       style: {
         fontSize: "12px",
         color: "rgba(255,255,255,0.4)",
