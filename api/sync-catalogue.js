@@ -39,6 +39,38 @@ function maskEmail(email) {
   return (local.length >= 3 ? local.slice(0, 3) : local) + "***" + domain;
 }
 
+// Rank maintenance work by a blend of current listener demand and durable
+// popularity. A recent play gets a strong three-week-decay boost; lifetime
+// plays use a log curve so one huge album cannot permanently bury everything
+// else. Auto-advance rows are continuations, not new album plays.
+function buildAlbumActivity(rows) {
+  const byCollection = new Map();
+  for (const row of rows || []) {
+    if (row.itunes_collection_id == null || row.source === "auto_advance") continue;
+    const key = String(row.itunes_collection_id);
+    const current = byCollection.get(key) || { play_count: 0, last_played_at: null };
+    current.play_count += 1;
+    if (row.listened_at && (!current.last_played_at
+        || new Date(row.listened_at) > new Date(current.last_played_at))) {
+      current.last_played_at = row.listened_at;
+    }
+    byCollection.set(key, current);
+  }
+  for (const activity of byCollection.values()) {
+    const ageDays = activity.last_played_at
+      ? Math.max(0, (Date.now() - new Date(activity.last_played_at).getTime()) / 86400000)
+      : Infinity;
+    activity.activity_score = 24 * Math.exp(-ageDays / 21)
+      + 6 * Math.log2(activity.play_count + 1);
+  }
+  return byCollection;
+}
+
+function activityFor(activityMap, collectionId) {
+  return activityMap.get(String(collectionId))
+    || { play_count: 0, last_played_at: null, activity_score: 0 };
+}
+
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
 function httpsGet(url, redirects = 3) {
@@ -718,11 +750,12 @@ module.exports = async (req, res) => {
         // 10s sbGet limit on Vercel cold starts.
         // NOTE: album_tracks has no album_name column — album name comes from
         // the catalogue join below, not the tracks table.
-        const [tracksResp, withLrcResp, withPlainResp, instrumentalResp] = await Promise.all([
+        const [tracksResp, withLrcResp, withPlainResp, instrumentalResp, eventResp] = await Promise.all([
           sbGetAll(`album_tracks?select=itunes_track_id,track_name,artist_name,itunes_collection_id,duration_ms,disc_number,track_number&order=itunes_collection_id.asc,disc_number.asc,track_number.asc`),
           sbGetAll(`track_lyrics?select=itunes_track_id&lrc_raw=not.is.null`),
           sbGetAll(`track_lyrics?select=itunes_track_id&lyrics_plain=not.is.null`),
           sbGetAll(`track_lyrics?select=itunes_track_id&source=eq.instrumental`),
+          sbGetAll(`listening_events?select=itunes_collection_id,source,listened_at&itunes_collection_id=not.is.null`),
         ]);
         const rows = Array.isArray(tracksResp) ? tracksResp : [];
         const haveLrc = new Set((Array.isArray(withLrcResp) ? withLrcResp : []).map(r => r.itunes_track_id));
@@ -736,29 +769,40 @@ module.exports = async (req, res) => {
           : { body: [] };
         const catMap = {};
         (Array.isArray(cat) ? cat : []).forEach(c => { catMap[c.itunes_collection_id] = c; });
-        const enriched = missing.map(t => ({
-          ...t,
-          artwork_url:  catMap[t.itunes_collection_id]?.artwork_url || null,
-          album_name:   catMap[t.itunes_collection_id]?.album_name  || "",
-          artist_name:  catMap[t.itunes_collection_id]?.artist_name || t.artist_name || "",
-          // Plain lyrics exist but no synced timestamps — the app falls back to
-          // the unsynced auto-scroll view for these until an LRC is submitted.
-          has_plain:    havePlain.has(t.itunes_track_id),
-        }));
+        const activityMap = buildAlbumActivity(eventResp);
+        const enriched = missing.map(t => {
+          const activity = activityFor(activityMap, t.itunes_collection_id);
+          return {
+            ...t,
+            artwork_url:  catMap[t.itunes_collection_id]?.artwork_url || null,
+            album_name:   catMap[t.itunes_collection_id]?.album_name  || "",
+            artist_name:  catMap[t.itunes_collection_id]?.artist_name || t.artist_name || "",
+            ...activity,
+            // Plain lyrics exist but no synced timestamps — the app falls back to
+            // the unsynced auto-scroll view for these until an LRC is submitted.
+            has_plain:    havePlain.has(t.itunes_track_id),
+          };
+        }).sort((a, b) =>
+          b.activity_score - a.activity_score
+          || String(a.itunes_collection_id).localeCompare(String(b.itunes_collection_id))
+          || (a.disc_number || 1) - (b.disc_number || 1)
+          || (a.track_number || 0) - (b.track_number || 0));
         return res.status(200).json({ tracks: enriched, total: enriched.length });
       }
 
       if (action === "missing-side-info") {
         // Albums with one or more tracks that have no vinyl_sides row.
-        const [tracksResp, sidesResp, catResp] = await Promise.all([
+        const [tracksResp, sidesResp, catResp, eventResp] = await Promise.all([
           sbGetAll(`album_tracks?select=itunes_track_id,itunes_collection_id`),
           sbGetAll(`vinyl_sides?select=itunes_track_id`),
           sbGetAll(`catalogue?select=itunes_collection_id,album_name,artist_name,artwork_url`),
+          sbGetAll(`listening_events?select=itunes_collection_id,source,listened_at&itunes_collection_id=not.is.null`),
         ]);
         const tracks = Array.isArray(tracksResp) ? tracksResp : [];
         const haveSide = new Set((Array.isArray(sidesResp) ? sidesResp : []).map(r => r.itunes_track_id));
         const catMap = {};
         (Array.isArray(catResp) ? catResp : []).forEach(c => { catMap[c.itunes_collection_id] = c; });
+        const activityMap = buildAlbumActivity(eventResp);
         const albumStats = {};
         for (const t of tracks) {
           const cid = t.itunes_collection_id;
@@ -775,8 +819,9 @@ module.exports = async (req, res) => {
             artwork_url: catMap[cid]?.artwork_url || null,
             total: s.total,
             missing: s.missing,
+            ...activityFor(activityMap, cid),
           }))
-          .sort((a, b) => b.missing - a.missing);
+          .sort((a, b) => b.activity_score - a.activity_score || b.missing - a.missing);
         return res.status(200).json({ albums, total: albums.length });
       }
 

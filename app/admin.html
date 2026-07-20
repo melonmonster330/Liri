@@ -977,7 +977,7 @@ async function openMissingLyrics() {
     <button class="back-btn" onclick="load()">← Dashboard</button>
     <div style="margin-bottom:20px">
       <div style="font-size:20px;font-weight:700;margin-bottom:6px">Missing Lyrics</div>
-      <div style="font-size:13px;color:var(--muted)">${tracks.length} track${tracks.length!==1?"s":""} across ${albumOrder.length} album${albumOrder.length!==1?"s":""} without synced timestamps${plainOnly ? ` — <span style="color:var(--gold)">${plainOnly} have plain lyrics</span> and show as unsynced auto-scroll in the app` : ""}. Click a track → find LRC → paste → submit.</div>
+      <div style="font-size:13px;color:var(--muted)">${tracks.length} track${tracks.length!==1?"s":""} across ${albumOrder.length} album${albumOrder.length!==1?"s":""} without synced timestamps${plainOnly ? ` — <span style="color:var(--gold)">${plainOnly} have plain lyrics</span> and show as unsynced auto-scroll in the app` : ""}. Prioritized by recent + total album plays. Click a track → find LRC → paste → submit.</div>
     </div>
     ${albumOrder.map(cid => {
       const alb = albumMap[cid];
@@ -987,7 +987,7 @@ async function openMissingLyrics() {
           ${alb.artwork_url ? `<img class="lrc-album-art" src="${esc(alb.artwork_url)}">` : `<div class="lrc-album-art"></div>`}
           <div class="lrc-album-info">
             <div class="lrc-album-name">${esc(alb.album_name)}</div>
-            <div class="lrc-album-artist">${esc(alb.artist_name)}</div>
+            <div class="lrc-album-artist">${esc(alb.artist_name)} · ${fmt(alb.play_count)} play${alb.play_count === 1 ? "" : "s"}${alb.last_played_at ? ` · played ${timeAgo(alb.last_played_at)}` : ""}</div>
           </div>
           <div class="lrc-badge">${alb.tracks.length} missing</div>
           <div class="lrc-chevron" id="lrc-chev-${cid}">›</div>
@@ -1124,14 +1124,14 @@ async function openMissingSideInfo() {
     <button class="back-btn" onclick="load()">← Dashboard</button>
     <div style="margin-bottom:20px">
       <div style="font-size:20px;font-weight:700;margin-bottom:6px">Missing Side Info</div>
-      <div style="font-size:13px;color:var(--muted)">${albums.length} album${albums.length!==1?"s":""} with missing side data. Click one to enter side counts.</div>
+      <div style="font-size:13px;color:var(--muted)">${albums.length} album${albums.length!==1?"s":""} with missing side data, prioritized by recent + total plays. Click one to enter side counts.</div>
     </div>
     ${albums.map(a => `
       <div class="album-row" onclick="openAlbum(${a.itunes_collection_id})">
         <img class="album-art" src="${esc(a.artwork_url || '')}" onerror="this.style.visibility='hidden'">
         <div class="album-info">
           <div class="album-name">${esc(a.album_name || '(untitled)')}</div>
-          <div class="album-artist">${esc(a.artist_name || '')}</div>
+          <div class="album-artist">${esc(a.artist_name || '')} · ${fmt(a.play_count)} play${a.play_count === 1 ? "" : "s"}${a.last_played_at ? ` · played ${timeAgo(a.last_played_at)}` : ""}</div>
         </div>
         <div class="album-stats">
           <div class="album-stat"><div class="album-stat-val" style="color:rgba(224,112,112,0.85)">${a.missing}/${a.total}</div><div class="album-stat-lbl">missing</div></div>
