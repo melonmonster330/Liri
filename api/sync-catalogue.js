@@ -536,6 +536,7 @@ async function getUsersList() {
         id:         u.id,
         email:      maskEmail(u.email),
         created_at: u.created_at,
+        last_sign_in_at: u.last_sign_in_at || null,
         provider:   authProvider(u),
         albums:     albumByUid[u.id] || 0,
         plays:      playByUid[u.id] || 0,
