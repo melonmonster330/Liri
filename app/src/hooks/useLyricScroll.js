@@ -285,5 +285,22 @@ export function useLyricScroll({
     refollowTimerRef.current = setTimeout(() => refollow(), 10000);
   };
 
-  return { lyricsUnsynced, lyricsScrollRef, seekToLine, refollow, noteUserScroll };
+  // Web type-to-find uses the same manual-browsing path as a wheel/drag. It
+  // moves only the lyric viewport; it never seeks or changes the active line.
+  const browseToLine = i => {
+    const container = lyricsScrollRef.current;
+    const line = container?.querySelectorAll("[data-lyric-line]")?.[i];
+    if (!container || !line) return false;
+    noteUserScroll();
+    const containerRect = container.getBoundingClientRect();
+    const lineRect = line.getBoundingClientRect();
+    const lineCenter = lineRect.top - containerRect.top
+      + container.scrollTop + lineRect.height / 2;
+    container.scrollTop = Math.max(0, lineCenter - container.clientHeight / 2
+      + ACTIVE_LINE_CENTER_OFFSET_PX);
+    updateLyricEmphasis();
+    return true;
+  };
+
+  return { lyricsUnsynced, lyricsScrollRef, seekToLine, browseToLine, refollow, noteUserScroll };
 }

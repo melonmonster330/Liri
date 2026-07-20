@@ -612,7 +612,19 @@
       clearTimeout(refollowTimerRef.current);
       refollowTimerRef.current = setTimeout(() => refollow(), 1e4);
     };
-    return { lyricsUnsynced, lyricsScrollRef, seekToLine, refollow, noteUserScroll };
+    const browseToLine = (i) => {
+      const container = lyricsScrollRef.current;
+      const line = container?.querySelectorAll("[data-lyric-line]")?.[i];
+      if (!container || !line) return false;
+      noteUserScroll();
+      const containerRect = container.getBoundingClientRect();
+      const lineRect = line.getBoundingClientRect();
+      const lineCenter = lineRect.top - containerRect.top + container.scrollTop + lineRect.height / 2;
+      container.scrollTop = Math.max(0, lineCenter - container.clientHeight / 2 + ACTIVE_LINE_CENTER_OFFSET_PX);
+      updateLyricEmphasis();
+      return true;
+    };
+    return { lyricsUnsynced, lyricsScrollRef, seekToLine, browseToLine, refollow, noteUserScroll };
   }
 
   // app/src/hooks/useCast.js
@@ -1659,6 +1671,8 @@
     const cast = useCast({ mode, song: detectedSong, lyrics, playbackTime, isPaused });
     const [kbToast, setKbToast] = useState6(null);
     const kbToastTimerRef = useRef5(null);
+    const lyricTypeaheadRef = useRef5("");
+    const lyricTypeaheadTimerRef = useRef5(null);
     const [shouldAdvanceTrack, setShouldAdvanceTrack] = useState6(false);
     const [sideEndReason, setSideEndReason] = useState6("failed");
     const [sideEndNextDiscInfo, setSideEndNextDiscInfo] = useState6(null);
@@ -2551,7 +2565,7 @@
         Shazam.cancel();
       };
     }, [mode]);
-    const { lyricsUnsynced, lyricsScrollRef, seekToLine, refollow, noteUserScroll } = useLyricScroll({
+    const { lyricsUnsynced, lyricsScrollRef, seekToLine, browseToLine, refollow, noteUserScroll } = useLyricScroll({
       mode,
       lyrics,
       lyricsRef,
@@ -3091,7 +3105,7 @@ Move closer to your speakers and try again.`);
     useEffect7(() => {
       const onKey = (e3) => {
         if (mode !== "syncing") return;
-        if (e3.target.tagName === "INPUT" || e3.target.tagName === "TEXTAREA") return;
+        if (e3.target.closest?.("input, textarea, select, [contenteditable='true']")) return;
         const unsyncedNow = lyricsRef.current.length > 0 && lyricsRef.current[0].time == null;
         if (e3.key === "ArrowLeft") {
           e3.preventDefault();
@@ -3112,13 +3126,48 @@ Move closer to your speakers and try again.`);
             showKbToast("\u2192 +" + NUDGE_STEP_SECS + "s");
           }
         } else if (e3.key === " ") {
+          if (!IS_IOS && lyricTypeaheadRef.current) {
+            e3.preventDefault();
+            lyricTypeaheadRef.current += " ";
+            clearTimeout(lyricTypeaheadTimerRef.current);
+            lyricTypeaheadTimerRef.current = setTimeout(() => {
+              lyricTypeaheadRef.current = "";
+            }, 2e3);
+            return;
+          }
           e3.preventDefault();
           togglePause();
           showKbToast(isPaused ? "\u25B6 Resume" : "\u23F8 Pause");
+        } else if (!IS_IOS && e3.key === "Escape") {
+          lyricTypeaheadRef.current = "";
+          clearTimeout(lyricTypeaheadTimerRef.current);
+        } else if (!IS_IOS && e3.key === "Backspace" && lyricTypeaheadRef.current) {
+          e3.preventDefault();
+          lyricTypeaheadRef.current = lyricTypeaheadRef.current.slice(0, -1);
+          clearTimeout(lyricTypeaheadTimerRef.current);
+          lyricTypeaheadTimerRef.current = setTimeout(() => {
+            lyricTypeaheadRef.current = "";
+          }, 2e3);
+        } else if (!IS_IOS && !e3.metaKey && !e3.ctrlKey && !e3.altKey && e3.key.length === 1 && /[a-z0-9'’]/i.test(e3.key)) {
+          e3.preventDefault();
+          lyricTypeaheadRef.current += e3.key;
+          clearTimeout(lyricTypeaheadTimerRef.current);
+          lyricTypeaheadTimerRef.current = setTimeout(() => {
+            lyricTypeaheadRef.current = "";
+          }, 2e3);
+          const query = normText(lyricTypeaheadRef.current);
+          if (query.length < 3) return;
+          const matchIdx = lyricsRef.current.findIndex(
+            (line) => normText(line?.text).includes(query)
+          );
+          if (matchIdx >= 0) browseToLine(matchIdx);
         }
       };
       window.addEventListener("keydown", onKey);
-      return () => window.removeEventListener("keydown", onKey);
+      return () => {
+        window.removeEventListener("keydown", onKey);
+        clearTimeout(lyricTypeaheadTimerRef.current);
+      };
     }, [mode, isPaused]);
     const fetchAlbumTracks = async (title, artist) => {
       try {
@@ -6550,6 +6599,7 @@ Move closer to your speakers and try again.`);
       }, "unsynced lyrics \xB7 auto-scroll"),
       lyrics.map((line, i) => /* @__PURE__ */ React.createElement("div", {
         key: i,
+        "data-lyric-line": "true",
         style: {
           textAlign: "center",
           padding: "7px 0",

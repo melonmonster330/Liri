@@ -311,6 +311,8 @@ function Liri() {
   const cast = useCast({ mode, song: detectedSong, lyrics, playbackTime, isPaused });
   const [kbToast, setKbToast] = useState(null);
   const kbToastTimerRef = useRef(null);
+  const lyricTypeaheadRef = useRef("");
+  const lyricTypeaheadTimerRef = useRef(null);
   const [shouldAdvanceTrack, setShouldAdvanceTrack] = useState(false);
   const [sideEndReason, setSideEndReason] = useState("failed"); // "failed" | "flip" | "album-end"
   const [sideEndNextDiscInfo, setSideEndNextDiscInfo] = useState(null); // {isNewDisc, nextDisc, nextSide}
@@ -1382,7 +1384,7 @@ function Liri() {
   }, [mode]);
 
   // ── Lyric scroll behavior — hooks/useLyricScroll.js ──
-  const { lyricsUnsynced, lyricsScrollRef, seekToLine, refollow, noteUserScroll } = useLyricScroll({
+  const { lyricsUnsynced, lyricsScrollRef, seekToLine, browseToLine, refollow, noteUserScroll } = useLyricScroll({
     mode,
     lyrics, lyricsRef,
     songDuration,
@@ -2075,7 +2077,7 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
   useEffect(() => {
     const onKey = e => {
       if (mode !== "syncing") return;
-      if (e.target.tagName === "INPUT" || e.target.tagName === "TEXTAREA") return;
+      if (e.target.closest?.("input, textarea, select, [contenteditable='true']")) return;
       const unsyncedNow = lyricsRef.current.length > 0 && lyricsRef.current[0].time == null;
       if (e.key === "ArrowLeft") {
         e.preventDefault();
@@ -2086,13 +2088,53 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
         if (unsyncedNow) { adjustScrollSpeed(0.25); showKbToast("→ faster"); }
         else { nudge(NUDGE_STEP_SECS); showKbToast("→ +" + NUDGE_STEP_SECS + "s"); }
       } else if (e.key === " ") {
+        // Once a hidden lyric query has started, spaces belong to that phrase.
+        if (!IS_IOS && lyricTypeaheadRef.current) {
+          e.preventDefault();
+          lyricTypeaheadRef.current += " ";
+          clearTimeout(lyricTypeaheadTimerRef.current);
+          lyricTypeaheadTimerRef.current = setTimeout(() => {
+            lyricTypeaheadRef.current = "";
+          }, 2000);
+          return;
+        }
         e.preventDefault();
         togglePause();
         showKbToast(isPaused ? "▶ Resume" : "⏸ Pause");
+      } else if (!IS_IOS && e.key === "Escape") {
+        lyricTypeaheadRef.current = "";
+        clearTimeout(lyricTypeaheadTimerRef.current);
+      } else if (!IS_IOS && e.key === "Backspace" && lyricTypeaheadRef.current) {
+        e.preventDefault();
+        lyricTypeaheadRef.current = lyricTypeaheadRef.current.slice(0, -1);
+        clearTimeout(lyricTypeaheadTimerRef.current);
+        lyricTypeaheadTimerRef.current = setTimeout(() => {
+          lyricTypeaheadRef.current = "";
+        }, 2000);
+      } else if (!IS_IOS && !e.metaKey && !e.ctrlKey && !e.altKey
+          && e.key.length === 1 && /[a-z0-9'’]/i.test(e.key)) {
+        e.preventDefault();
+        lyricTypeaheadRef.current += e.key;
+        clearTimeout(lyricTypeaheadTimerRef.current);
+        lyricTypeaheadTimerRef.current = setTimeout(() => {
+          lyricTypeaheadRef.current = "";
+        }, 2000);
+
+        // Three normalized characters avoids accidental one-key jumps. Keep
+        // collecting an unmatched phrase invisibly; move only on a real match.
+        const query = normText(lyricTypeaheadRef.current);
+        if (query.length < 3) return;
+        const matchIdx = lyricsRef.current.findIndex(line =>
+          normText(line?.text).includes(query)
+        );
+        if (matchIdx >= 0) browseToLine(matchIdx);
       }
     };
     window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
+    return () => {
+      window.removeEventListener("keydown", onKey);
+      clearTimeout(lyricTypeaheadTimerRef.current);
+    };
   }, [mode, isPaused]);
 
   // Fetch album tracklist
@@ -5541,6 +5583,7 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
     }, "unsynced lyrics \u00b7 auto-scroll"),
     lyrics.map((line, i) => /*#__PURE__*/React.createElement("div", {
       key: i,
+      "data-lyric-line": "true",
       style: {
         textAlign: "center",
         padding: "7px 0",
