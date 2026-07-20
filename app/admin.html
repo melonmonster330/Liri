@@ -26,6 +26,12 @@
 
   /* ── Dashboard ── */
   #dash { display: none; max-width: 900px; margin: 0 auto; padding: 32px 20px 60px; }
+  .admin-nav { position: sticky; top: 0; z-index: 20; display: flex; gap: 6px; padding: 10px 0 16px; margin-bottom: 14px; overflow-x: auto; background: linear-gradient(var(--bg) 78%, transparent); }
+  .nav-btn { white-space: nowrap; background: var(--surface); border: 1px solid var(--border); color: rgba(255,255,255,.58); border-radius: 10px; padding: 8px 12px; font: 600 12px/1 inherit; cursor: pointer; }
+  .nav-btn:hover, .nav-btn.active { color: var(--gold); border-color: rgba(212,168,70,.4); background: rgba(212,168,70,.1); }
+  .nav-spacer { flex: 1; }
+  .logout-btn { color: #e8a0a8; }
+  button:focus-visible, input:focus-visible, textarea:focus-visible, [role="button"]:focus-visible { outline: 2px solid var(--gold); outline-offset: 2px; }
   .header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 28px; }
   .header h1 { font-size: 20px; font-weight: 700; color: var(--gold); }
   .header-right { display: flex; align-items: center; gap: 12px; }
@@ -39,6 +45,7 @@
   .grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; margin-bottom: 12px; }
   .grid-2 { grid-template-columns: repeat(2, 1fr); }
   @media (max-width: 600px) { .grid, .grid.grid-2 { grid-template-columns: 1fr 1fr; } }
+  @media (max-width: 600px) { #dash { padding: 18px 14px 48px; } .header { align-items:flex-start; } .updated { display:none; } .card { padding:15px; } .card-value { font-size:27px; } .bar-label { width:125px; } }
 
   .card { background: var(--surface); border: 1px solid var(--border); border-radius: 16px; padding: 18px 20px; }
   .card-label { font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.06em; margin-bottom: 6px; }
@@ -184,10 +191,16 @@
       <button class="refresh-btn" id="refresh-btn">Refresh</button>
     </div>
   </div>
+  <nav class="admin-nav" aria-label="Admin sections">
+    <button class="nav-btn active" data-nav="overview" onclick="load()">Overview</button>
+    <button class="nav-btn" data-nav="users" onclick="openUsers()">Users</button>
+    <button class="nav-btn" data-nav="catalogue" onclick="openAlbums()">Catalogue</button>
+    <button class="nav-btn" data-nav="lyrics" onclick="openMissingLyrics()">Missing lyrics</button>
+    <button class="nav-btn" data-nav="sides" onclick="openMissingSideInfo()">Side info</button>
+    <span class="nav-spacer"></span>
+    <button class="nav-btn logout-btn" onclick="logout()">Sign out</button>
+  </nav>
   <div style="margin-bottom:16px;display:flex;gap:8px;flex-wrap:wrap">
-    <button class="refresh-btn" style="background:rgba(212,168,70,0.08);border-color:rgba(212,168,70,0.2);color:var(--gold);padding:10px 20px;font-size:13px;font-weight:700" onclick="openAlbums()">🗂 All Albums & Songs →</button>
-    <button class="refresh-btn" style="background:rgba(212,168,70,0.08);border-color:rgba(212,168,70,0.2);color:var(--gold);padding:10px 20px;font-size:13px;font-weight:700" onclick="openMissingLyrics()">🎵 Missing Lyrics →</button>
-    <button class="refresh-btn" style="background:rgba(212,168,70,0.08);border-color:rgba(212,168,70,0.2);color:var(--gold);padding:10px 20px;font-size:13px;font-weight:700" onclick="openMissingSideInfo()">💿 Missing Side Info →</button>
   </div>
   <div id="liri-update" style="background:rgba(212,168,70,0.06);border:1px solid rgba(212,168,70,0.2);border-radius:12px;padding:16px;margin-bottom:20px">
     <div style="font-size:13px;font-weight:700;color:#d4a846;letter-spacing:0.5px;margin-bottom:10px">📣 Post a Liri update to the feed</div>
@@ -203,11 +216,7 @@
 
 <script>
 const API = "/api/sync-catalogue";
-// Restore pw from sessionStorage so bouncing away from the tab (Chrome memory
-// saver, background purge, F5) doesn't kick you back to the login screen mid-
-// task. sessionStorage clears when the tab is closed, so this doesn't leak
-// past the browser session.
-let pw = sessionStorage.getItem("liri_admin_pw") || "";
+let authenticated = false;
 
 function fmt(n) { return n?.toLocaleString() ?? "—"; }
 function pct(a, b) { return b > 0 ? Math.round(a / b * 100) : 0; }
@@ -220,6 +229,10 @@ function timeAgo(iso) {
   return `${mins}m ago`;
 }
 
+function setActiveNav(name) {
+  document.querySelectorAll("[data-nav]").forEach(btn => btn.classList.toggle("active", btn.dataset.nav === name));
+}
+
 document.addEventListener("click", async (ev) => {
   if (ev.target && ev.target.id === "lu-post") {
     const ta = document.getElementById("lu-text");
@@ -229,7 +242,7 @@ document.addEventListener("click", async (ev) => {
     if (!confirm("Publish this update to everyone's feed (as @liri)?")) return;
     status.textContent = "Posting…";
     try {
-      const r = await fetch(API, { method: "POST", headers: { "x-admin-password": pw, "Content-Type": "application/json" }, body: JSON.stringify({ action: "post-update", text }) });
+      const r = await fetch(API, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ action: "post-update", text }) });
       if (r.ok) { status.textContent = "✓ Posted to the feed"; ta.value = ""; }
       else { const e = await r.json().catch(() => ({})); status.textContent = "✗ " + (e.error || ("HTTP " + r.status)); }
     } catch (e) { status.textContent = "✗ " + e.message; }
@@ -259,8 +272,9 @@ async function setRange(days) {
 }
 
 async function load() {
+  setActiveNav("overview");
   const url = activeDays > 0 ? `${API}?days=${activeDays}` : API + "?days=0";
-  const r = await fetch(url, { headers: { "x-admin-password": pw } });
+  const r = await fetch(url);
   if (r.status === 401) { showLogin("Wrong password"); return; }
   if (!r.ok) { document.getElementById("content").innerHTML = `<div class="loading">Error loading stats</div>`; return; }
   const d = await r.json();
@@ -270,20 +284,20 @@ async function load() {
 
 function render(d) {
   const { users, library, plays, topAlbums, topUsers, bugReports, catalogue } = d;
-  const totalPlatform = plays.web + plays.ios || 1;
-  const totalSource   = plays.recognition + plays.autoAdvance || 1;
+  const totalPlatform = plays.web + plays.ios + (plays.otherPlatform || 0) || 1;
+  const totalSource   = plays.recognition + plays.autoAdvance + (plays.otherSource || 0) || 1;
   const topMax = topAlbums[0]?.count || 1;
   const rangeLabel = activeDays === 0 ? "all time" : activeDays === 1 ? "last 24h" : `last ${activeDays}d`;
 
   document.getElementById("range-pills").innerHTML = renderRangePills();
   document.getElementById("content").innerHTML = `
     <div class="grid">
-      <div class="card card-gold">
+      <div class="card card-gold clickable" role="button" tabindex="0" onclick="openUsers()">
         <div class="card-label">Total Users</div>
         <div class="card-value">${fmt(users.total)}</div>
         <div class="card-sub">+${users.new7d} this week · +${users.new30d} this month</div>
       </div>
-      <div class="card">
+      <div class="card clickable" role="button" tabindex="0" onclick="openUsers()">
         <div class="card-label">Premium</div>
         <div class="card-value">${fmt(users.premium)}</div>
         <div class="card-sub">${pct(users.premium, users.total)}% of users</div>
@@ -296,17 +310,17 @@ function render(d) {
     </div>
 
     <div class="grid">
-      <div class="card card-gold">
+      <div class="card card-gold clickable" role="button" tabindex="0" onclick="openAlbums()">
         <div class="card-label">Listens (${rangeLabel})</div>
         <div class="card-value">${fmt(plays.window)}</div>
         <div class="card-sub">${fmt(plays.total)} all time · ${fmt(plays.songsTotal)} songs</div>
       </div>
-      <div class="card">
+      <div class="card clickable" role="button" tabindex="0" onclick="openAlbums()">
         <div class="card-label">Listens (last 7d)</div>
         <div class="card-value">${fmt(plays.last7d)}</div>
         <div class="card-sub">album loads · rolling 7 days</div>
       </div>
-      <div class="card">
+      <div class="card clickable" role="button" tabindex="0" onclick="openAlbums()">
         <div class="card-label">Catalogue</div>
         <div class="card-value">${fmt(catalogue.releases)}</div>
         <div class="card-sub">${fmt(catalogue.flips)} total flips</div>
@@ -329,6 +343,12 @@ function render(d) {
             <div class="split-pct">${pct(plays.web, totalPlatform)}%</div>
             <div class="split-bar"><div class="split-bar-fill" style="width:${pct(plays.web, totalPlatform)}%"></div></div>
           </div>
+          ${(plays.otherPlatform || 0) > 0 ? `<div class="split-item">
+            <div class="split-label">Other</div>
+            <div class="split-value">${fmt(plays.otherPlatform)}</div>
+            <div class="split-pct">${pct(plays.otherPlatform, totalPlatform)}%</div>
+            <div class="split-bar"><div class="split-bar-fill" style="width:${pct(plays.otherPlatform, totalPlatform)}%"></div></div>
+          </div>` : ''}
         </div>
       </div>
       <div class="section">
@@ -346,6 +366,12 @@ function render(d) {
             <div class="split-pct">${pct(plays.autoAdvance, totalSource)}%</div>
             <div class="split-bar"><div class="split-bar-fill" style="width:${pct(plays.autoAdvance, totalSource)}%"></div></div>
           </div>
+          ${(plays.otherSource || 0) > 0 ? `<div class="split-item">
+            <div class="split-label">Other</div>
+            <div class="split-value">${fmt(plays.otherSource)}</div>
+            <div class="split-pct">${pct(plays.otherSource, totalSource)}%</div>
+            <div class="split-bar"><div class="split-bar-fill" style="width:${pct(plays.otherSource, totalSource)}%"></div></div>
+          </div>` : ''}
         </div>
       </div>
     </div>
@@ -355,7 +381,7 @@ function render(d) {
         <div class="section-title">Top Albums (${rangeLabel})</div>
         ${topAlbums.length === 0 ? '<div style="color:var(--muted);font-size:13px">No data yet</div>' :
           topAlbums.map(a => `
-          <div class="bar-row">
+          <div class="bar-row${a.collectionId ? ' clickable' : ''}" ${a.collectionId ? `role="button" tabindex="0" onclick="openAlbum(${a.collectionId})"` : ''}>
             <div class="bar-label">${esc(a.album)}<span>${esc(a.artist)}</span></div>
             <div class="bar-track"><div class="bar-fill" style="width:${pct(a.count, topMax)}%"></div></div>
             <div class="bar-count">${a.count}</div>
@@ -401,7 +427,14 @@ function render(d) {
   `;
 }
 
-function esc(s) { return (s || "").replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;"); }
+function esc(s) {
+  return String(s ?? "")
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+}
 
 function toggleBug(i) {
   const el = document.getElementById("bug-" + i);
@@ -439,9 +472,10 @@ function signupPlatform(u) {
 }
 
 async function openUsers() {
+  setActiveNav("users");
   const c = document.getElementById("content");
   c.innerHTML = `<div class="loading">Loading users…</div>`;
-  const r = await fetch(API + "?action=users", { headers: { "x-admin-password": pw } });
+  const r = await fetch(API + "?action=users");
   if (!r.ok) { c.innerHTML = `<div class="loading">Error loading users</div>`; return; }
   const d = await r.json();
   const users = d.users || [];
@@ -470,7 +504,7 @@ async function openUsers() {
 async function openUser(uid) {
   const c = document.getElementById("content");
   c.innerHTML = `<div class="loading">Loading user…</div>`;
-  const r = await fetch(API + "?action=user&id=" + encodeURIComponent(uid), { headers: { "x-admin-password": pw } });
+  const r = await fetch(API + "?action=user&id=" + encodeURIComponent(uid));
   if (!r.ok) { c.innerHTML = `<div class="loading">Error loading user</div>`; return; }
   const d = await r.json();
   if (d.error) { c.innerHTML = `<div class="loading">${esc(d.error)}</div>`; return; }
@@ -604,7 +638,7 @@ function renderUser(d) {
 async function openBacklog() {
   const c = document.getElementById("content");
   c.innerHTML = `<div class="loading">Loading backlog…</div>`;
-  const r = await fetch(API + "?action=bugs&status=backlog", { headers: { "x-admin-password": pw } });
+  const r = await fetch(API + "?action=bugs&status=backlog");
   if (!r.ok) { c.innerHTML = `<div class="loading">Error loading backlog</div>`; return; }
   const d = await r.json();
   const bugs = d.bugs || [];
@@ -631,11 +665,12 @@ let albumDetailCache = null;   // last album detail loaded (for the track-order 
 let reorderTracks = null;      // working copy of tracks while reordering
 
 async function openAlbums() {
+  setActiveNav("catalogue");
   const c = document.getElementById("content");
   c.innerHTML = `<div class="loading">Loading albums…</div>`;
   const [albumRes, trackRes] = await Promise.all([
-    fetch(API + "?action=albums", { headers: { "x-admin-password": pw } }),
-    fetch(API + "?action=tracks", { headers: { "x-admin-password": pw } }),
+    fetch(API + "?action=albums"),
+    fetch(API + "?action=tracks"),
   ]);
   if (!albumRes.ok || !trackRes.ok) { c.innerHTML = `<div class="loading">Error loading catalogue</div>`; return; }
   albumsCache = (await albumRes.json()).albums || [];
@@ -715,7 +750,7 @@ function toggleCatalogueMissing() { catalogueMissingOnly = !catalogueMissingOnly
 async function openAlbum(id) {
   const c = document.getElementById("content");
   c.innerHTML = `<div class="loading">Loading tracks…</div>`;
-  const r = await fetch(API + "?action=album&id=" + id, { headers: { "x-admin-password": pw } });
+  const r = await fetch(API + "?action=album&id=" + id);
   if (!r.ok) { c.innerHTML = `<div class="loading">Error loading album</div>`; return; }
   const d = await r.json();
   renderAlbum(d);
@@ -790,7 +825,7 @@ async function removeTrackLyrics(itunesTrackId) {
   if (!confirm(`Remove the saved lyrics for “${trackName}” from Liri?\n\nThis cannot be undone.`)) return;
   const r = await fetch(API, {
     method: "POST",
-    headers: { "Content-Type": "application/json", "x-admin-password": pw },
+    headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ action: "delete-lyrics", itunesTrackId }),
   });
   const json = await r.json().catch(() => ({}));
@@ -805,7 +840,7 @@ function toggleTrackEditor(itunesTrackId) {
 async function setTrackInstrumental(itunesTrackId, instrumental) {
   const track = albumDetailCache?.tracks?.find(t => Number(t.itunes_track_id) === Number(itunesTrackId));
   if (instrumental && track?.has_lyrics && !confirm(`Mark “${track.track_name}” instrumental? This replaces its saved lyrics.`)) return;
-  const r = await fetch(API, { method:"POST", headers:{"Content-Type":"application/json","x-admin-password":pw}, body:JSON.stringify({action:"set-instrumental",itunesTrackId,instrumental}) });
+  const r = await fetch(API, { method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify({action:"set-instrumental",itunesTrackId,instrumental}) });
   const d = await r.json().catch(() => ({}));
   if (!r.ok) { alert(d.error || "Could not update instrumental status"); return; }
   await openAlbum(albumDetailCache?.album?.itunes_collection_id);
@@ -818,7 +853,7 @@ async function saveAdminTrackLyrics(itunesTrackId) {
   const msg = document.getElementById("admin-msg-" + itunesTrackId);
   if (!lrc) { msg.textContent = "Paste lyrics first."; msg.className = "lrc-msg err"; return; }
   const isSynced = /\[\d{2}:\d{2}\.\d+\]/.test(lrc);
-  const r = await fetch(API, { method:"POST", headers:{"Content-Type":"application/json","x-admin-password":pw}, body:JSON.stringify({
+  const r = await fetch(API, { method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify({
     action:"submit-lyrics", trackName:track.track_name, artistName:album.artist_name, albumName:album.album_name,
     duration:Math.max(1, Math.round((track.duration_ms || 1000) / 1000)),
     syncedLyrics:isSynced ? lrc : undefined, plainLyrics:isSynced ? undefined : lrc, itunesTrackId
@@ -882,7 +917,7 @@ async function saveOrder(collectionId) {
   try {
     const r = await fetch(API, {
       method: "POST",
-      headers: { "x-admin-password": pw, "Content-Type": "application/json" },
+      headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ action: "reorder-tracks", collectionId, trackIds: reorderTracks.map(t => t.itunes_track_id) }),
     });
     const d = await r.json().catch(() => ({}));
@@ -927,7 +962,7 @@ async function submitSideData(collectionId, totalTracks) {
   try {
     const r = await fetch(API, {
       method: "POST",
-      headers: { "x-admin-password": pw, "Content-Type": "application/json" },
+      headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ action: "add-vinyl-sides", collectionId, sides }),
     });
     const d = await r.json().catch(() => ({}));
@@ -952,56 +987,64 @@ function showLogin(err) {
   document.getElementById("dash").style.display = "none";
   document.getElementById("login").style.display = "flex";
   document.getElementById("login-err").textContent = err || "";
-  // Drop any stale saved pw so the auto-resume path doesn't keep looping.
-  sessionStorage.removeItem("liri_admin_pw");
-  pw = "";
+  authenticated = false;
 }
 
 async function tryLogin() {
-  pw = document.getElementById("pw-input").value.trim();
-  if (!pw) return;
+  const password = document.getElementById("pw-input").value;
+  if (!password) return;
   document.getElementById("login-btn").textContent = "Checking…";
-  document.getElementById("login").style.display = "none";
-  document.getElementById("dash").style.display = "block";
-  await load();
-  document.getElementById("login-btn").textContent = "Enter";
-  // load() calls showLogin() with an error if pw was rejected; only stash
-  // the pw when the login form is truly gone from view.
-  if (document.getElementById("login").style.display === "none") {
-    sessionStorage.setItem("liri_admin_pw", pw);
+  try {
+    const r = await fetch(API, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ action: "admin-login", password }) });
+    document.getElementById("pw-input").value = "";
+    if (!r.ok) { showLogin("Wrong password"); return; }
+    authenticated = true;
+    document.getElementById("login").style.display = "none";
+    document.getElementById("dash").style.display = "block";
+    await load();
+  } catch {
+    showLogin("Could not connect. Try again.");
+  } finally {
+    document.getElementById("login-btn").textContent = "Enter";
   }
+}
+
+async function logout() {
+  await fetch(API, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ action: "admin-logout" }) }).catch(() => {});
+  showLogin("");
 }
 
 document.getElementById("login-btn").addEventListener("click", tryLogin);
 document.getElementById("pw-input").addEventListener("keydown", e => { if (e.key === "Enter") tryLogin(); });
 document.getElementById("refresh-btn").addEventListener("click", load);
 
-// Auto-resume: if we already have a pw from a prior tab load, skip straight
-// to the dashboard. If it turns out to be stale/wrong, load() will fall
-// through to showLogin() and the sessionStorage entry gets cleared there.
-if (pw) {
+// Resume only when the server still accepts the protected HttpOnly session.
+(async () => {
   document.getElementById("login").style.display = "none";
   document.getElementById("dash").style.display = "block";
-  load();
-}
+  const r = await fetch(API + "?days=" + activeDays);
+  if (r.ok) { authenticated = true; render(await r.json()); }
+  else showLogin("");
+})();
 
 // Auto-refresh the dashboard every 60s — but only when it's actually showing.
 // If the admin has drilled into a sub-view (missing lyrics, user detail, an
 // album, etc. — all of which render a "← Back to dashboard" button), leave it
 // alone so a refresh doesn't yank them out of what they're doing.
 setInterval(() => {
-  if (pw && !document.querySelector("#content .back-btn")) load();
+  if (authenticated && !document.querySelector("#content .back-btn")) load();
 }, 60000);
 
 // ── Missing Lyrics ────────────────────────────────────────────────────────────
 
 async function openMissingLyrics() {
+  setActiveNav("lyrics");
   const c = document.getElementById("content");
   c.innerHTML = `<div class="loading">Finding tracks without lyrics…</div>`;
 
   // Use Supabase REST directly — need the service key or anon key
   // We'll hit the sync-catalogue endpoint with a special action
-  const r = await fetch(API + "?action=missing-lyrics", { headers: { "x-admin-password": pw } });
+  const r = await fetch(API + "?action=missing-lyrics");
   if (!r.ok) { c.innerHTML = `<div class="loading">Error — make sure sync-catalogue supports action=missing-lyrics</div>`; return; }
   const d = await r.json();
   const tracks = d.tracks || [];
@@ -1106,7 +1149,7 @@ async function copySearch(el) {
 async function markMissingInstrumental(itunesTrackId, rowId) {
   const r = await fetch(API, {
     method: "POST",
-    headers: { "Content-Type": "application/json", "x-admin-password": pw },
+    headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ action: "set-instrumental", itunesTrackId, instrumental: true }),
   });
   const d = await r.json().catch(() => ({}));
@@ -1148,7 +1191,7 @@ async function submitLrc(tid, trackName, artistName, albumName, durationMs, itun
   try {
     const r = await fetch("/api/sync-catalogue", {
       method: "POST",
-      headers: { "Content-Type": "application/json", "x-admin-password": pw },
+      headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         action: "submit-lyrics",
         trackName, artistName, albumName,
@@ -1179,9 +1222,10 @@ async function submitLrc(tid, trackName, artistName, albumName, durationMs, itun
 // ── Missing Side Info ────────────────────────────────────────────────────────
 
 async function openMissingSideInfo() {
+  setActiveNav("sides");
   const c = document.getElementById("content");
   c.innerHTML = `<div class="loading">Finding albums without side info…</div>`;
-  const r = await fetch(API + "?action=missing-side-info", { headers: { "x-admin-password": pw } });
+  const r = await fetch(API + "?action=missing-side-info");
   if (!r.ok) { c.innerHTML = `<div class="loading">Error loading missing side info</div>`; return; }
   const d = await r.json();
   const albums = d.albums || [];

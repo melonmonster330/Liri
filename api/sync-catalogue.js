@@ -29,6 +29,47 @@ function safeCompare(a, b) {
   return crypto.timingSafeEqual(ab, bb);
 }
 
+const ADMIN_COOKIE = "liri_admin_session";
+const ADMIN_SESSION_MS = 8 * 60 * 60 * 1000;
+
+function signAdminSession(expiresAt, secret) {
+  return crypto.createHmac("sha256", secret).update(String(expiresAt)).digest("base64url");
+}
+
+function createAdminSession(secret) {
+  const expiresAt = Date.now() + ADMIN_SESSION_MS;
+  return `${expiresAt}.${signAdminSession(expiresAt, secret)}`;
+}
+
+function cookieValue(req, name) {
+  const cookies = String(req.headers.cookie || "").split(";");
+  for (const cookie of cookies) {
+    const [key, ...value] = cookie.trim().split("=");
+    if (key === name) return decodeURIComponent(value.join("="));
+  }
+  return null;
+}
+
+function hasValidAdminSession(req) {
+  const secret = process.env.ADMIN_PASSWORD;
+  if (!secret) return false;
+  // Keep header auth for trusted scripts/curl, but the browser uses an HttpOnly
+  // cookie so the raw password is never retained by client-side JavaScript.
+  const provided = req.headers["x-admin-password"];
+  if (provided && safeCompare(secret, provided)) return true;
+  const token = cookieValue(req, ADMIN_COOKIE);
+  const dot = token?.indexOf(".") || -1;
+  if (dot < 1) return false;
+  const expiresAt = token.slice(0, dot);
+  const signature = token.slice(dot + 1);
+  if (!/^\d+$/.test(expiresAt) || Number(expiresAt) <= Date.now()) return false;
+  return safeCompare(signature, signAdminSession(expiresAt, secret));
+}
+
+function setAdminCookie(res, value, maxAgeSeconds) {
+  res.setHeader("Set-Cookie", `${ADMIN_COOKIE}=${encodeURIComponent(value)}; Path=/; HttpOnly; Secure; SameSite=Strict; Max-Age=${maxAgeSeconds}`);
+}
+
 // Mask PII: "helen@gmail.com" → "hel***@gmail.com"
 function maskEmail(email) {
   if (!email) return null;
@@ -317,9 +358,9 @@ async function getAdminStats(days = 3) {
     sbGet(`listening_events?select=id&or=(source.is.null,source.neq.auto_advance)${dWin ? `&listened_at=gte.${dWin}` : ""}&limit=1`, { "Prefer": "count=exact" }),
     sbGet(`listening_events?select=id&or=(source.is.null,source.neq.auto_advance)&listened_at=gte.${d7}&limit=1`,                  { "Prefer": "count=exact" }),
     sbGet("listening_events?select=id&limit=1",                                  { "Prefer": "count=exact" }),
-    sbGet("user_vinyl_library?select=id&limit=1",                                { "Prefer": "count=exact" }),
-    sbGet("listening_events?select=user_id,platform,source,album_name,artist_name,listened_at&order=listened_at.desc&limit=5000"),
-    sbGet("user_vinyl_library?select=user_id&limit=20000"),
+    sbGet("user_library?select=id&limit=1",                                      { "Prefer": "count=exact" }),
+    sbGetAll(`listening_events?select=user_id,platform,source,album_name,artist_name,itunes_collection_id,listened_at${dWin ? `&listened_at=gte.${dWin}` : ""}&order=listened_at.desc`),
+    sbGetAll("user_library?select=user_id"),
     sbGet("subscriptions?select=tier,status"),
     sbGet("vinyl_releases?select=id&limit=1",                                    { "Prefer": "count=exact" }),
     sbGet("flip_events?select=id&limit=1",                                       { "Prefer": "count=exact" }),
@@ -341,7 +382,7 @@ async function getAdminStats(days = 3) {
 
   // Library — exact total from count header, unique users from fetched rows
   const totalAlbums   = parseInt(totalLibResp.headers?.["content-range"]?.split("/")[1] || "0", 10);
-  const libRows       = Array.isArray(libResp.body) ? libResp.body : [];
+  const libRows       = Array.isArray(libResp) ? libResp : [];
   const uniqueLibUsers = new Set(libRows.map(r => r.user_id)).size;
   const avgAlbums     = uniqueLibUsers > 0 ? (totalAlbums / uniqueLibUsers).toFixed(1) : 0;
 
@@ -351,30 +392,33 @@ async function getAdminStats(days = 3) {
   const plays7d     = parseInt(plays7dResp.headers?.["content-range"]?.split("/")[1] || "0", 10);
   const totalSongs  = parseInt(totalSongsResp.headers?.["content-range"]?.split("/")[1] || "0", 10);
 
-  // Platform / source split from recent-events sample (filtered to selected window).
+  // Platform / source split from the complete selected window. Supabase caps a
+  // single response at 1,000 rows, so this must use the paginated helper.
   // A "play" = an album load, so plays exclude auto_advance rows (the per-track
   // continuations of a side). isPlay is null-safe: legacy rows with a null source
   // still count. recognition/auto splits stay per-source by definition.
   const isPlay     = e => e.source == null || e.source !== "auto_advance";
-  const allEvents  = Array.isArray(eventsResp.body) ? eventsResp.body : [];
-  const events     = dWin ? allEvents.filter(e => e.listened_at >= dWin) : allEvents;
+  const allEvents  = Array.isArray(eventsResp) ? eventsResp : [];
+  const events     = allEvents;
   const webPlays   = events.filter(e => e.platform === "web" && isPlay(e)).length;
   const iosPlays   = events.filter(e => e.platform === "ios" && isPlay(e)).length;
+  const otherPlatformPlays = events.filter(e => !["web", "ios"].includes(e.platform) && isPlay(e)).length;
   const recogPlays = events.filter(e => e.source === "recognition").length;
   const autoPlays  = events.filter(e => e.source === "auto_advance").length;
+  const otherSourcePlays = events.length - recogPlays - autoPlays;
 
   // Top albums — album loads only, filtered to selected window
-  const recentEvents = dWin ? allEvents.filter(e => e.listened_at >= dWin) : allEvents;
+  const recentEvents = allEvents;
   const albumCounts  = {};
   for (const e of recentEvents) {
     if (!e.album_name || !isPlay(e)) continue;
-    const key = `${e.album_name}|||${e.artist_name || ""}`;
+    const key = `${e.album_name}|||${e.artist_name || ""}|||${e.itunes_collection_id || ""}`;
     albumCounts[key] = (albumCounts[key] || 0) + 1;
   }
   const topAlbums = Object.entries(albumCounts)
     .sort((a, b) => b[1] - a[1])
     .slice(0, 8)
-    .map(([key, count]) => { const [album, artist] = key.split("|||"); return { album, artist, count }; });
+    .map(([key, count]) => { const [album, artist, collectionId] = key.split("|||"); return { album, artist, collectionId: collectionId ? Number(collectionId) : null, count }; });
 
   // Top users by play count (album loads, from sample)
   const emailById      = Object.fromEntries(allUsers.map(u => [u.id, u.email]));
@@ -402,7 +446,7 @@ async function getAdminStats(days = 3) {
   return {
     users:    { total: totalUsers, new7d: newUsers7d, new30d: newUsers30d, premium: premiumUsers, recentSignups },
     library:  { totalAlbums, uniqueUsers: uniqueLibUsers, avgAlbums },
-    plays:    { total: totalPlays, window: playsWindow, last7d: plays7d, songsTotal: totalSongs, web: webPlays, ios: iosPlays, recognition: recogPlays, autoAdvance: autoPlays },
+    plays:    { total: totalPlays, window: playsWindow, last7d: plays7d, songsTotal: totalSongs, web: webPlays, ios: iosPlays, otherPlatform: otherPlatformPlays, recognition: recogPlays, autoAdvance: autoPlays, otherSource: otherSourcePlays },
     days,
     topAlbums,
     topUsers,
@@ -735,19 +779,37 @@ async function getAlbumDetail(collectionId) {
 // ── Main handler ──────────────────────────────────────────────────────────────
 
 module.exports = async (req, res) => {
+  res.setHeader("Cache-Control", "no-store");
+  res.setHeader("Pragma", "no-cache");
+
+  // Exchange the password once for a signed, short-lived HttpOnly cookie.
+  // The cookie contains no password or user data and cannot be read by JS.
+  if (req.method === "POST") {
+    let authBody = req.body;
+    if (typeof authBody === "string") { try { authBody = JSON.parse(authBody); } catch { authBody = {}; } }
+    if (authBody?.action === "admin-login") {
+      const secret = process.env.ADMIN_PASSWORD;
+      if (!secret || !authBody.password || !safeCompare(secret, authBody.password)) {
+        return res.status(401).json({ error: "Unauthorized" });
+      }
+      setAdminCookie(res, createAdminSession(secret), Math.floor(ADMIN_SESSION_MS / 1000));
+      return res.status(200).json({ ok: true });
+    }
+    if (authBody?.action === "admin-logout") {
+      setAdminCookie(res, "", 0);
+      return res.status(200).json({ ok: true });
+    }
+  }
+
   // ── GET: admin dashboard stats + drill-in queries ──────────────────────────
   if (req.method === "GET") {
-    const adminPw  = process.env.ADMIN_PASSWORD;
-    const provided = req.headers["x-admin-password"];
-    if (!adminPw || !provided || !safeCompare(adminPw, provided)) {
+    if (!hasValidAdminSession(req)) {
       return res.status(401).json({ error: "Unauthorized" });
     }
     try {
       // Tiny query router so all admin reads share the same auth gate.
       const url    = new URL(req.url || "/", "http://x");
       const action = url.searchParams.get("action");
-
-      res.setHeader("Cache-Control", "no-store");
 
       if (action === "albums") {
         return res.status(200).json(await getAlbumsList());
@@ -765,7 +827,9 @@ module.exports = async (req, res) => {
       }
       if (action === "user") {
         const id = url.searchParams.get("id");
-        if (!id) return res.status(400).json({ error: "id required" });
+        if (!id || !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(id)) {
+          return res.status(400).json({ error: "valid user id required" });
+        }
         return res.status(200).json(await getUserDetail(id));
       }
       if (action === "album-tracks") {
@@ -881,11 +945,7 @@ module.exports = async (req, res) => {
   }
 
   // ── POST (admin): catalogue and Liri-owned content management ─────────────
-  if (req.headers["x-admin-password"]) {
-    const adminPw = process.env.ADMIN_PASSWORD;
-    if (!adminPw || !safeCompare(adminPw, req.headers["x-admin-password"])) {
-      return res.status(401).json({ error: "Unauthorized" });
-    }
+  if (hasValidAdminSession(req)) {
     let body = req.body;
     if (typeof body === "string") { try { body = JSON.parse(body); } catch { body = {}; } }
     if (body?.action === "submit-lyrics") {
