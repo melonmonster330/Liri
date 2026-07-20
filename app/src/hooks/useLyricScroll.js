@@ -38,26 +38,25 @@ export function useLyricScroll({
   const focusStrengthRef = useRef(focusStrength);
   focusStrengthRef.current = focusStrength;
 
-  // Brighten lyrics by their physical distance from the resting point. This
-  // avoids a CSS mask on the moving scroll surface (which intermittently
-  // flashes when Chrome/Safari re-composites it) and avoids React opacity
-  // handoffs. The custom property is the only value changed during a roll.
+  // Keep emphasis attached to playback, not to whichever row happens to pass
+  // through the center while the user browses. The custom property avoids a
+  // CSS mask on the moving scroll surface and lets the synced row remain the
+  // only highlighted row even when it has been scrolled off-screen.
   const updateLyricEmphasis = () => {
     const container = lyricsScrollRef.current;
     if (!container || lyricsUnsynced) return;
     const lines = Array.from(container.querySelectorAll("[data-lyric-line]"));
     if (!lines.length) return;
-    const containerRect = container.getBoundingClientRect();
-    const focusY = containerRect.top + container.clientHeight / 2
-      - ACTIVE_LINE_CENTER_OFFSET_PX;
+    const activeLine = currentLineRef.current;
+    const activeIndex = activeLine ? lines.indexOf(activeLine) : -1;
     const strength = focusStrengthRef.current;
-    const updates = lines.map(line => {
-      const rect = line.getBoundingClientRect();
-      const distance = Math.abs(rect.top + rect.height / 2 - focusY);
+    const updates = lines.map((line, index) => {
+      const distance = activeIndex >= 0 ? Math.abs(index - activeIndex) : Infinity;
       let targetOpacity;
-      if (distance <= 22) targetOpacity = 1;
-      else if (distance <= 70) targetOpacity = 1 - (distance - 22) / 48 * 0.75;
-      else if (distance <= 165) targetOpacity = 0.25 - (distance - 70) / 95 * 0.15;
+      if (distance === 0) targetOpacity = 1;
+      else if (distance === 1) targetOpacity = 0.25;
+      else if (distance === 2) targetOpacity = 0.15;
+      else if (distance === 3) targetOpacity = 0.08;
       else targetOpacity = 0.04;
       if (line.dataset.creditLine === "true") {
         targetOpacity = Math.min(0.55, targetOpacity);
@@ -261,6 +260,7 @@ export function useLyricScroll({
     setPlaybackTime(targetTime);
     userScrollingRef.current = false;
     setUserScrolling(false);
+    clearTimeout(refollowTimerRef.current);
   };
 
   // ── Re-follow: re-enable auto-scroll and snap back to current line ──
@@ -298,7 +298,6 @@ export function useLyricScroll({
       + container.scrollTop + lineRect.height / 2;
     container.scrollTop = Math.max(0, lineCenter - container.clientHeight / 2
       + ACTIVE_LINE_CENTER_OFFSET_PX);
-    updateLyricEmphasis();
     return true;
   };
 
