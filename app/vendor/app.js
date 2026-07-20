@@ -1469,9 +1469,9 @@
   var sb = supabase.createClient("https://xjdjpaxgymgbvcwmvorc.supabase.co", "sb_publishable_C-NBnfg0ltAoUi46XQTUjA_ozjZW_Nd", { auth: { storage: liriAuthStorage } });
   var APP_VERSION = "1.5.14";
   var LYRIC_LEAD_SECONDS = 1;
+  var FIRST_LYRIC_PRELIGHT_SECONDS = 2;
   var TRACK_GAP_MS = 1e3;
   var SIDE_END_HANDOFF_MS = 650;
-  var INTRO_FOCUS_FADE_SECONDS = 1.2;
   var FLIP_NEEDLE_DROP_MS = 1e4;
   var NUDGE_STEP_SECS = 1;
   var NUDGE_FINE_SECS = 0.5;
@@ -1561,7 +1561,7 @@
     const firstLyricTime = Number.isFinite(lyrics[0]?.time) ? lyrics[0].time : null;
     const lyricFocusStrength = currentIndex < 0 ? 0 : firstLyricTime != null && currentIndex === 0 ? Math.max(0, Math.min(
       1,
-      (playbackTime - firstLyricTime) / INTRO_FOCUS_FADE_SECONDS
+      (playbackTime - (firstLyricTime - FIRST_LYRIC_PRELIGHT_SECONDS)) / FIRST_LYRIC_PRELIGHT_SECONDS
     )) : 1;
     const layoutLyricFontScale = menuOpen ? 1.1 * Math.max(0.72, Math.min(1, lyricAreaW / 640)) : 1.25;
     const lyricPanelWidth = isLandscape ? lyricAreaW : winW;
@@ -2958,7 +2958,8 @@ Move closer to your speakers and try again.`);
       const t0 = initialPosRef.current;
       let initIdx = -1;
       const t0Lead = t0 + LYRIC_LEAD_SECONDS;
-      if (lrc0.length > 0 && lrc0[0].time != null && t0Lead >= lrc0[0].time) {
+      if (lrc0.length > 0 && lrc0[0].time != null && t0 >= lrc0[0].time - FIRST_LYRIC_PRELIGHT_SECONDS) {
+        initIdx = 0;
         for (let i = 0; i < lrc0.length; i++) {
           if (lrc0[i].time <= t0Lead) initIdx = i;
           else break;
@@ -2974,7 +2975,7 @@ Move closer to your speakers and try again.`);
         const lrc = lyricsRef.current;
         if (!lrc.length || lrc[0].time == null) return;
         const tLead = t + LYRIC_LEAD_SECONDS;
-        if (tLead < lrc[0].time) {
+        if (t < lrc[0].time - FIRST_LYRIC_PRELIGHT_SECONDS) {
           setCurrentIndex(-1);
           return;
         }
@@ -3020,7 +3021,7 @@ Move closer to your speakers and try again.`);
           const lrc = lyricsRef.current;
           if (!lrc.length || lrc[0].time == null) return;
           const tLead = t + LYRIC_LEAD_SECONDS;
-          if (tLead < lrc[0].time) {
+          if (t < lrc[0].time - FIRST_LYRIC_PRELIGHT_SECONDS) {
             setCurrentIndex(-1);
             return;
           }
@@ -3052,11 +3053,15 @@ Move closer to your speakers and try again.`);
       const base = newPos;
       const lrc = lyricsRef.current;
       if (lrc.length > 0 && lrc[0].time != null) {
-        const t = Math.max(0, base) + LYRIC_LEAD_SECONDS;
+        const playbackPosition = Math.max(0, base);
+        const t = playbackPosition + LYRIC_LEAD_SECONDS;
         let idx = -1;
-        for (let i = 0; i < lrc.length; i++) {
-          if (lrc[i].time <= t) idx = i;
-          else break;
+        if (playbackPosition >= lrc[0].time - FIRST_LYRIC_PRELIGHT_SECONDS) {
+          idx = 0;
+          for (let i = 0; i < lrc.length; i++) {
+            if (lrc[i].time <= t) idx = i;
+            else break;
+          }
         }
         setCurrentIndex(idx);
       }

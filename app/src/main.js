@@ -53,11 +53,14 @@ const APP_VERSION = "1.5.14";
 // lateness was actually the clock-drift bug, fixed on this branch; with an
 // honest clock the 2s lead made every line feel rushed).
 const LYRIC_LEAD_SECONDS = 1;
+// Give the listener an early visual cue during an instrumental intro without
+// advancing the timing of every later line. The first lyric fades from the
+// neutral intro state to fully highlighted over these final two seconds.
+const FIRST_LYRIC_PRELIGHT_SECONDS = 2;
 // Switch the UI to the next track as soon as the current duration ends, then
 // park its lyric clock at 0:00 for the physical inter-track groove.
 const TRACK_GAP_MS = 1000;
 const SIDE_END_HANDOFF_MS = 650;
-const INTRO_FOCUS_FADE_SECONDS = 1.2;
 // How long the lyric clock parks at 0 after a manual flip / side pick while
 // the user physically flips the record and drops the needle.
 const FLIP_NEEDLE_DROP_MS = 10000;
@@ -180,7 +183,8 @@ function Liri() {
     ? 0
     : firstLyricTime != null && currentIndex === 0
       ? Math.max(0, Math.min(1,
-        (playbackTime - firstLyricTime) / INTRO_FOCUS_FADE_SECONDS))
+        (playbackTime - (firstLyricTime - FIRST_LYRIC_PRELIGHT_SECONDS))
+          / FIRST_LYRIC_PRELIGHT_SECONDS))
       : 1;
   const layoutLyricFontScale = menuOpen
     ? 1.1 * Math.max(0.72, Math.min(1, lyricAreaW / 640))
@@ -1922,7 +1926,9 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
     const t0 = initialPosRef.current;
     let initIdx = -1;
     const t0Lead = t0 + LYRIC_LEAD_SECONDS;
-    if (lrc0.length > 0 && lrc0[0].time != null && t0Lead >= lrc0[0].time) {
+    if (lrc0.length > 0 && lrc0[0].time != null
+      && t0 >= lrc0[0].time - FIRST_LYRIC_PRELIGHT_SECONDS) {
+      initIdx = 0;
       for (let i = 0; i < lrc0.length; i++) {
         if (lrc0[i].time <= t0Lead) initIdx = i;else break;
       }
@@ -1941,9 +1947,10 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
       // Unsynced (plain-text) lyrics have time:null — no line highlighting;
       // the flat auto-scroll view handles motion instead.
       if (!lrc.length || lrc[0].time == null) return;
-      // Stay at -1 (no highlight) until playback reaches the first lyric timestamp
+      // Stay neutral until the two-second first-line cue begins. Later lines
+      // continue to use the normal lyric lead above.
       const tLead = t + LYRIC_LEAD_SECONDS;
-      if (tLead < lrc[0].time) {
+      if (t < lrc[0].time - FIRST_LYRIC_PRELIGHT_SECONDS) {
         setCurrentIndex(-1);
         return;
       }
@@ -1983,7 +1990,7 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
         const lrc = lyricsRef.current;
         if (!lrc.length || lrc[0].time == null) return;
         const tLead = t + LYRIC_LEAD_SECONDS;
-        if (tLead < lrc[0].time) {
+        if (t < lrc[0].time - FIRST_LYRIC_PRELIGHT_SECONDS) {
           setCurrentIndex(-1);
           return;
         }
@@ -2027,10 +2034,14 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
     // nudge visibly jumps to a new line instead of looking like "nothing moved."
     const lrc = lyricsRef.current;
     if (lrc.length > 0 && lrc[0].time != null) {
-      const t = Math.max(0, base) + LYRIC_LEAD_SECONDS;
+      const playbackPosition = Math.max(0, base);
+      const t = playbackPosition + LYRIC_LEAD_SECONDS;
       let idx = -1;
-      for (let i = 0; i < lrc.length; i++) {
-        if (lrc[i].time <= t) idx = i;else break;
+      if (playbackPosition >= lrc[0].time - FIRST_LYRIC_PRELIGHT_SECONDS) {
+        idx = 0;
+        for (let i = 0; i < lrc.length; i++) {
+          if (lrc[i].time <= t) idx = i;else break;
+        }
       }
       setCurrentIndex(idx);
     }
