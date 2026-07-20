@@ -40,7 +40,8 @@ export function useLyricScroll({
   const centerActiveLine = () => {
     const container = lyricsScrollRef.current;
     const line = currentLineRef.current;
-    if (!container || !line || mode !== "syncing" || lyricsUnsynced) return;
+    if (!container || !line || mode !== "syncing" || lyricsUnsynced
+      || userScrollingRef.current) return;
     const containerRect = container.getBoundingClientRect();
     const lineRect = line.getBoundingClientRect();
     const lineCenterInScroller = lineRect.top - containerRect.top
@@ -55,7 +56,7 @@ export function useLyricScroll({
   // repeatedly restart an unfinished animation and appear jittery.
   const rollActiveLineToCenter = () => {
     const container = lyricsScrollRef.current;
-    if (!container || !currentLineRef.current) return;
+    if (!container || !currentLineRef.current || userScrollingRef.current) return;
     cancelAnimationFrame(rollRafRef.current);
     const from = container.scrollTop;
     const startedAt = performance.now();
@@ -69,7 +70,10 @@ export function useLyricScroll({
       : Math.min(420, Math.max(180, lineGapMs * 0.45));
     const frame = now => {
       const line = currentLineRef.current;
-      if (!line || !lyricsScrollRef.current) return;
+      if (!line || !lyricsScrollRef.current || userScrollingRef.current) {
+        rollRafRef.current = null;
+        return;
+      }
       const containerRect = container.getBoundingClientRect();
       const lineRect = line.getBoundingClientRect();
       const lineCenter = lineRect.top - containerRect.top
@@ -203,6 +207,8 @@ export function useLyricScroll({
   // Mark the user as manually scrolling and (re)arm a 10s idle timer — once they
   // stop scrolling for 10s we snap back to the current line and resume following.
   const noteUserScroll = () => {
+    cancelAnimationFrame(rollRafRef.current);
+    rollRafRef.current = null;
     userScrollingRef.current = true;
     setUserScrolling(true);
     clearTimeout(refollowTimerRef.current);

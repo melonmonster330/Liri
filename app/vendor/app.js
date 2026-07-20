@@ -439,7 +439,7 @@
     const centerActiveLine = () => {
       const container = lyricsScrollRef.current;
       const line = currentLineRef.current;
-      if (!container || !line || mode !== "syncing" || lyricsUnsynced) return;
+      if (!container || !line || mode !== "syncing" || lyricsUnsynced || userScrollingRef.current) return;
       const containerRect = container.getBoundingClientRect();
       const lineRect = line.getBoundingClientRect();
       const lineCenterInScroller = lineRect.top - containerRect.top + container.scrollTop + lineRect.height / 2;
@@ -448,7 +448,7 @@
     };
     const rollActiveLineToCenter = () => {
       const container = lyricsScrollRef.current;
-      if (!container || !currentLineRef.current) return;
+      if (!container || !currentLineRef.current || userScrollingRef.current) return;
       cancelAnimationFrame(rollRafRef.current);
       const from = container.scrollTop;
       const startedAt = performance.now();
@@ -458,7 +458,10 @@
       const duration = lineGapMs == null ? 360 : Math.min(420, Math.max(180, lineGapMs * 0.45));
       const frame = (now) => {
         const line = currentLineRef.current;
-        if (!line || !lyricsScrollRef.current) return;
+        if (!line || !lyricsScrollRef.current || userScrollingRef.current) {
+          rollRafRef.current = null;
+          return;
+        }
         const containerRect = container.getBoundingClientRect();
         const lineRect = line.getBoundingClientRect();
         const lineCenter = lineRect.top - containerRect.top + container.scrollTop + lineRect.height / 2;
@@ -549,6 +552,8 @@
       rollActiveLineToCenter();
     };
     const noteUserScroll = () => {
+      cancelAnimationFrame(rollRafRef.current);
+      rollRafRef.current = null;
       userScrollingRef.current = true;
       setUserScrolling(true);
       clearTimeout(refollowTimerRef.current);
@@ -6409,6 +6414,7 @@ Move closer to your speakers and try again.`);
         // Slide + resize in step with the 0.35s menu fade
         transition: isLandscape ? "margin-left 0.35s, width 0.35s" : "none"
       },
+      onPointerDown: noteUserScroll,
       onTouchStart: noteUserScroll,
       onWheel: noteUserScroll,
       onScroll: () => {

@@ -5435,6 +5435,7 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
       // Slide + resize in step with the 0.35s menu fade
       transition: isLandscape ? "margin-left 0.35s, width 0.35s" : "none"
     },
+    onPointerDown: noteUserScroll,
     onTouchStart: noteUserScroll,
     onWheel: noteUserScroll,
     onScroll: () => { if (userScrollingRef.current) noteUserScroll(); }
