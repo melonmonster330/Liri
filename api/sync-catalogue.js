@@ -630,6 +630,35 @@ async function getAlbumsList() {
   };
 }
 
+// Complete track catalogue for the admin editor. Keep lyric bodies out of this
+// list response so it stays quick even as the catalogue grows; the album
+// drill-in fetches the editable text for only the selected album.
+async function getTracksList() {
+  const [trackRows, catRows, lyricRows] = await Promise.all([
+    sbGetAll("album_tracks?select=itunes_track_id,itunes_collection_id,track_name,artist_name,track_number,disc_number,duration_ms&order=itunes_collection_id.asc,disc_number.asc,track_number.asc"),
+    sbGetAll("catalogue?select=itunes_collection_id,album_name,artist_name,artwork_url"),
+    sbGetAll("track_lyrics?select=itunes_track_id,source&or=(lrc_raw.not.is.null,lyrics_plain.not.is.null,source.eq.instrumental)"),
+  ]);
+  const catById = new Map(catRows.map(c => [String(c.itunes_collection_id), c]));
+  const withLyrics = new Set(lyricRows.map(r => String(r.itunes_track_id)));
+  const instrumentalIds = new Set(lyricRows.filter(r => r.source === "instrumental").map(r => String(r.itunes_track_id)));
+  return {
+    tracks: trackRows.map(t => {
+      const album = catById.get(String(t.itunes_collection_id)) || {};
+      const trackId = String(t.itunes_track_id);
+      const instrumental = instrumentalIds.has(trackId);
+      return {
+        ...t,
+        album_name: album.album_name || "",
+        artist_name: album.artist_name || t.artist_name || "",
+        artwork_url: album.artwork_url || null,
+        has_lyrics: withLyrics.has(trackId) || instrumental,
+        is_instrumental: instrumental,
+      };
+    }),
+  };
+}
+
 // ── Album drill-in: tracks + per-track play counts + missing-lyrics flag ─────
 async function getAlbumDetail(collectionId) {
   // First fetch album metadata, tracks, events, and side info in parallel.
@@ -683,6 +712,8 @@ async function getAlbumDetail(collectionId) {
         has_lyrics:      haveLyrics.has(t.itunes_track_id) || instrumental.has(t.itunes_track_id),
         is_instrumental: instrumental.has(t.itunes_track_id),
         lyrics_source:   lyricByTid.get(t.itunes_track_id) || null,
+        lrc_raw:          lyricRows.find(r => r.itunes_track_id === t.itunes_track_id)?.lrc_raw || null,
+        lyrics_plain:     lyricRows.find(r => r.itunes_track_id === t.itunes_track_id)?.lyrics_plain || null,
         side:            sideRow?.side || null,       // 'A' / 'B' / etc.
         position:        sideRow?.position || null,   // 'A1' / 'B2'
         plays:           playByTid[t.itunes_track_id] || playByTitle[(t.track_name || "").toLowerCase()] || 0,
@@ -720,6 +751,9 @@ module.exports = async (req, res) => {
 
       if (action === "albums") {
         return res.status(200).json(await getAlbumsList());
+      }
+      if (action === "tracks") {
+        return res.status(200).json(await getTracksList());
       }
       if (action === "album") {
         const id = parseInt(url.searchParams.get("id") || "0", 10);
@@ -891,6 +925,31 @@ module.exports = async (req, res) => {
       return (status >= 200 && status < 300)
         ? res.status(200).json({ ok: true, message: "Lyrics removed from Liri" })
         : res.status(500).json({ error: `track_lyrics delete failed (${status})` });
+    }
+
+    if (body?.action === "set-instrumental") {
+      const trackId = Number(body.itunesTrackId);
+      const instrumental = body.instrumental !== false;
+      if (!Number.isFinite(trackId) || trackId <= 0) {
+        return res.status(400).json({ error: "valid itunesTrackId required" });
+      }
+      if (!instrumental) {
+        const { status } = await sbDelete(`track_lyrics?itunes_track_id=eq.${trackId}&source=eq.instrumental`);
+        return (status >= 200 && status < 300)
+          ? res.status(200).json({ ok: true, message: "Instrumental marker removed" })
+          : res.status(500).json({ error: `instrumental delete failed (${status})` });
+      }
+      const { status } = await sbUpsert("track_lyrics?on_conflict=itunes_track_id", [{
+        itunes_track_id: trackId,
+        lrc_raw: null,
+        lyrics_plain: null,
+        words_json: null,
+        source: "instrumental",
+        fetched_at: new Date().toISOString(),
+      }]);
+      return (status >= 200 && status < 300)
+        ? res.status(200).json({ ok: true, message: "Marked instrumental" })
+        : res.status(500).json({ error: `instrumental upsert failed (${status})` });
     }
 
     if (body?.action === "add-vinyl-sides") {

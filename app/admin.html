@@ -185,6 +185,7 @@
     </div>
   </div>
   <div style="margin-bottom:16px;display:flex;gap:8px;flex-wrap:wrap">
+    <button class="refresh-btn" style="background:rgba(212,168,70,0.08);border-color:rgba(212,168,70,0.2);color:var(--gold);padding:10px 20px;font-size:13px;font-weight:700" onclick="openAlbums()">🗂 All Albums & Songs →</button>
     <button class="refresh-btn" style="background:rgba(212,168,70,0.08);border-color:rgba(212,168,70,0.2);color:var(--gold);padding:10px 20px;font-size:13px;font-weight:700" onclick="openMissingLyrics()">🎵 Missing Lyrics →</button>
     <button class="refresh-btn" style="background:rgba(212,168,70,0.08);border-color:rgba(212,168,70,0.2);color:var(--gold);padding:10px 20px;font-size:13px;font-weight:700" onclick="openMissingSideInfo()">💿 Missing Side Info →</button>
   </div>
@@ -623,28 +624,52 @@ async function openBacklog() {
 
 // ── Drill-in: albums list → album detail ─────────────────────────────────────
 let albumsCache = null;
+let tracksCache = null;
+let catalogueMode = "albums";
+let catalogueMissingOnly = false;
 let albumDetailCache = null;   // last album detail loaded (for the track-order editor)
 let reorderTracks = null;      // working copy of tracks while reordering
 
 async function openAlbums() {
   const c = document.getElementById("content");
   c.innerHTML = `<div class="loading">Loading albums…</div>`;
-  const r = await fetch(API + "?action=albums", { headers: { "x-admin-password": pw } });
-  if (!r.ok) { c.innerHTML = `<div class="loading">Error loading albums</div>`; return; }
-  const d = await r.json();
-  albumsCache = d.albums || [];
-  renderAlbums(albumsCache);
+  const [albumRes, trackRes] = await Promise.all([
+    fetch(API + "?action=albums", { headers: { "x-admin-password": pw } }),
+    fetch(API + "?action=tracks", { headers: { "x-admin-password": pw } }),
+  ]);
+  if (!albumRes.ok || !trackRes.ok) { c.innerHTML = `<div class="loading">Error loading catalogue</div>`; return; }
+  albumsCache = (await albumRes.json()).albums || [];
+  tracksCache = (await trackRes.json()).tracks || [];
+  catalogueMode = "albums";
+  catalogueMissingOnly = false;
+  renderCatalogue();
 }
 
-function renderAlbums(albums) {
+function renderCatalogue() {
   const c = document.getElementById("content");
+  const q = (document.getElementById("album-search")?.value || "").trim().toLowerCase();
+  const missingAlbumIds = new Set((tracksCache || []).filter(t => !t.has_lyrics && !t.is_instrumental).map(t => String(t.itunes_collection_id)));
+  const albums = (albumsCache || []).filter(a => {
+    const matches = !q || (a.album_name || "").toLowerCase().includes(q) || (a.artist_name || "").toLowerCase().includes(q)
+      || (tracksCache || []).some(t => String(t.itunes_collection_id) === String(a.itunes_collection_id) && (t.track_name || "").toLowerCase().includes(q));
+    return matches && (!catalogueMissingOnly || missingAlbumIds.has(String(a.itunes_collection_id)));
+  });
+  const tracks = (tracksCache || []).filter(t => {
+    const matches = !q || (t.track_name || "").toLowerCase().includes(q) || (t.album_name || "").toLowerCase().includes(q) || (t.artist_name || "").toLowerCase().includes(q);
+    return matches && (!catalogueMissingOnly || (!t.has_lyrics && !t.is_instrumental));
+  });
   c.innerHTML = `
     <button class="back-btn" onclick="load()">← Back to dashboard</button>
     <div class="section">
-      <div class="section-title">User-added albums (${albums.length})</div>
-      <input class="search-input" id="album-search" placeholder="Search by album or artist…" oninput="filterAlbums(this.value)">
+      <div class="section-title">Complete catalogue</div>
+      <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:12px">
+        <button class="back-btn" style="margin:0;${catalogueMode === 'albums' ? 'color:var(--gold);border-color:rgba(212,168,70,.45)' : ''}" onclick="setCatalogueMode('albums')">Albums (${albumsCache?.length || 0})</button>
+        <button class="back-btn" style="margin:0;${catalogueMode === 'songs' ? 'color:var(--gold);border-color:rgba(212,168,70,.45)' : ''}" onclick="setCatalogueMode('songs')">Songs (${tracksCache?.length || 0})</button>
+        <button class="back-btn" style="margin:0;${catalogueMissingOnly ? 'color:#e07070;border-color:rgba(224,112,112,.45)' : ''}" onclick="toggleCatalogueMissing()">${catalogueMissingOnly ? '✓ ' : ''}Missing lyrics only</button>
+      </div>
+      <input class="search-input" id="album-search" value="${esc(q).replace(/\"/g, '&quot;')}" placeholder="Search album, artist, or song…" oninput="filterAlbums(this.value)">
       <div id="album-list">
-        ${albums.length === 0 ? '<div style="color:var(--muted);font-size:13px">No albums yet</div>' :
+        ${catalogueMode === 'albums' ? (albums.length === 0 ? '<div style="color:var(--muted);font-size:13px">No matching albums</div>' :
           albums.map(a => `
             <div class="album-row" onclick="openAlbum(${a.itunes_collection_id})">
               <img class="album-art" src="${esc(a.artwork_url || '')}" onerror="this.style.visibility='hidden'">
@@ -661,37 +686,31 @@ function renderAlbums(albums) {
                   <div class="album-stat-val">${fmt(a.added_by)}</div>
                   <div class="album-stat-lbl">added</div>
                 </div>
+                ${missingAlbumIds.has(String(a.itunes_collection_id)) ? '<div class="album-stat"><div class="album-stat-val" style="color:#e07070">!</div><div class="album-stat-lbl">missing</div></div>' : ''}
               </div>
             </div>
-          `).join("")}
+          `).join("")) : (tracks.length === 0 ? '<div style="color:var(--muted);font-size:13px">No matching songs</div>' : tracks.map(t => `
+            <div class="album-row" onclick="openAlbum(${t.itunes_collection_id})">
+              <img class="album-art" src="${esc(t.artwork_url || '')}" onerror="this.style.visibility='hidden'">
+              <div class="album-info">
+                <div class="album-name">${esc(t.track_name || '(untitled)')}</div>
+                <div class="album-artist">${esc(t.artist_name || '')} · ${esc(t.album_name || '')}</div>
+              </div>
+              <div class="track-flag ${t.has_lyrics ? 'ok' : ''}">${t.is_instrumental ? '♪ instrumental' : t.has_lyrics ? '✓ lyrics' : '✗ missing'}</div>
+            </div>`).join(""))}
       </div>
     </div>
   `;
+  const input = document.getElementById("album-search");
+  if (input && q) { input.focus(); input.setSelectionRange(input.value.length, input.value.length); }
 }
 
 function filterAlbums(q) {
-  if (!albumsCache) return;
-  const s = q.trim().toLowerCase();
-  const filtered = s
-    ? albumsCache.filter(a =>
-        (a.album_name || "").toLowerCase().includes(s) ||
-        (a.artist_name || "").toLowerCase().includes(s))
-    : albumsCache;
-  const list = document.getElementById("album-list");
-  if (!list) return;
-  list.innerHTML = filtered.map(a => `
-    <div class="album-row" onclick="openAlbum(${a.itunes_collection_id})">
-      <img class="album-art" src="${esc(a.artwork_url || '')}" onerror="this.style.visibility='hidden'">
-      <div class="album-info">
-        <div class="album-name">${esc(a.album_name || '(untitled)')}</div>
-        <div class="album-artist">${esc(a.artist_name || '')}${a.release_year ? ' · ' + a.release_year : ''}</div>
-      </div>
-      <div class="album-stats">
-        <div class="album-stat"><div class="album-stat-val">${fmt(a.plays)}</div><div class="album-stat-lbl">plays</div></div>
-        <div class="album-stat"><div class="album-stat-val">${fmt(a.added_by)}</div><div class="album-stat-lbl">added</div></div>
-      </div>
-    </div>`).join("");
+  renderCatalogue();
 }
+
+function setCatalogueMode(mode) { catalogueMode = mode; renderCatalogue(); }
+function toggleCatalogueMissing() { catalogueMissingOnly = !catalogueMissingOnly; renderCatalogue(); }
 
 async function openAlbum(id) {
   const c = document.getElementById("content");
@@ -728,16 +747,26 @@ function renderAlbum(d) {
       ${tracks.length > 1 ? `<button class="back-btn" style="margin:0 0 14px" onclick="openReorder()">⇅ Fix track order</button>` : ''}
       ${tracks.length === 0 ? '<div style="color:var(--muted);font-size:13px">No track data</div>' :
         tracks.map(t => `
-          <div class="track-row">
-            <div class="track-num">${t.disc_number > 1 ? t.disc_number + '-' : ''}${t.track_number || ''}</div>
-            <div class="track-side ${t.position ? '' : 'missing'}">${t.position ? esc(t.position) : '—'}</div>
-            <div class="track-name">${esc(t.track_name || '')}</div>
-            <div class="track-plays">${fmt(t.plays)} plays</div>
-            <div class="track-flag ${t.has_lyrics ? 'ok' : ''}">
-              ${t.is_instrumental ? '♪ instrumental' : t.has_lyrics ? '✓ lyrics' : '✗ missing'}
-              ${t.lyrics_source ? `<span class="source">via ${esc(t.lyrics_source)}</span>` : ''}
+          <div>
+            <div class="track-row">
+              <div class="track-num">${t.disc_number > 1 ? t.disc_number + '-' : ''}${t.track_number || ''}</div>
+              <div class="track-side ${t.position ? '' : 'missing'}">${t.position ? esc(t.position) : '—'}</div>
+              <div class="track-name">${esc(t.track_name || '')}</div>
+              <div class="track-plays">${fmt(t.plays)} plays</div>
+              <div class="track-flag ${t.has_lyrics ? 'ok' : ''}">
+                ${t.is_instrumental ? '♪ instrumental' : t.has_lyrics ? '✓ lyrics' : '✗ missing'}
+                ${t.lyrics_source ? `<span class="source">via ${esc(t.lyrics_source)}</span>` : ''}
+              </div>
+              <div style="display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end">
+                <button class="back-btn" style="margin:0;padding:5px 9px" onclick="toggleTrackEditor(${Number(t.itunes_track_id)})">${t.has_lyrics && !t.is_instrumental ? 'Edit lyrics' : 'Add lyrics'}</button>
+                <button class="back-btn" style="margin:0;padding:5px 9px" onclick="setTrackInstrumental(${Number(t.itunes_track_id)},${t.is_instrumental ? 'false' : 'true'})">${t.is_instrumental ? 'Not instrumental' : 'Mark instrumental'}</button>
+                ${t.has_lyrics && !t.is_instrumental ? `<button class="back-btn" style="margin:0;padding:5px 9px;color:#e07070;border-color:rgba(224,112,112,0.28)" onclick="removeTrackLyrics(${Number(t.itunes_track_id)})">Remove lyrics</button>` : ''}
+              </div>
             </div>
-            ${t.has_lyrics ? `<button class="back-btn" style="margin:0;padding:5px 9px;color:#e07070;border-color:rgba(224,112,112,0.28)" onclick="removeTrackLyrics(${Number(t.itunes_track_id)})">Remove lyrics</button>` : ''}
+            <div class="lrc-submit" id="admin-editor-${Number(t.itunes_track_id)}" style="margin:-4px 0 12px">
+              <textarea class="lrc-textarea" id="admin-lrc-${Number(t.itunes_track_id)}" rows="8" placeholder="Paste synced LRC or plain lyrics…">${esc(t.lrc_raw || t.lyrics_plain || '')}</textarea>
+              <div style="display:flex;gap:10px;align-items:center"><button class="lrc-submit-btn" onclick="saveAdminTrackLyrics(${Number(t.itunes_track_id)})">Save to Liri</button><span class="lrc-msg" id="admin-msg-${Number(t.itunes_track_id)}"></span></div>
+            </div>
           </div>`).join("")}
       ${sc.missing > 0 ? `
       <div class="side-form" id="side-form-${a.itunes_collection_id || ''}">
@@ -767,6 +796,37 @@ async function removeTrackLyrics(itunesTrackId) {
   const json = await r.json().catch(() => ({}));
   if (!r.ok) { alert(json.error || `Could not remove lyrics (${r.status})`); return; }
   await openAlbum(albumDetailCache?.album?.itunes_collection_id);
+}
+
+function toggleTrackEditor(itunesTrackId) {
+  document.getElementById("admin-editor-" + itunesTrackId)?.classList.toggle("open");
+}
+
+async function setTrackInstrumental(itunesTrackId, instrumental) {
+  const track = albumDetailCache?.tracks?.find(t => Number(t.itunes_track_id) === Number(itunesTrackId));
+  if (instrumental && track?.has_lyrics && !confirm(`Mark “${track.track_name}” instrumental? This replaces its saved lyrics.`)) return;
+  const r = await fetch(API, { method:"POST", headers:{"Content-Type":"application/json","x-admin-password":pw}, body:JSON.stringify({action:"set-instrumental",itunesTrackId,instrumental}) });
+  const d = await r.json().catch(() => ({}));
+  if (!r.ok) { alert(d.error || "Could not update instrumental status"); return; }
+  await openAlbum(albumDetailCache?.album?.itunes_collection_id);
+}
+
+async function saveAdminTrackLyrics(itunesTrackId) {
+  const track = albumDetailCache?.tracks?.find(t => Number(t.itunes_track_id) === Number(itunesTrackId));
+  const album = albumDetailCache?.album || {};
+  const lrc = document.getElementById("admin-lrc-" + itunesTrackId)?.value.trim() || "";
+  const msg = document.getElementById("admin-msg-" + itunesTrackId);
+  if (!lrc) { msg.textContent = "Paste lyrics first."; msg.className = "lrc-msg err"; return; }
+  const isSynced = /\[\d{2}:\d{2}\.\d+\]/.test(lrc);
+  const r = await fetch(API, { method:"POST", headers:{"Content-Type":"application/json","x-admin-password":pw}, body:JSON.stringify({
+    action:"submit-lyrics", trackName:track.track_name, artistName:album.artist_name, albumName:album.album_name,
+    duration:Math.max(1, Math.round((track.duration_ms || 1000) / 1000)),
+    syncedLyrics:isSynced ? lrc : undefined, plainLyrics:isSynced ? undefined : lrc, itunesTrackId
+  }) });
+  const d = await r.json().catch(() => ({}));
+  if (!r.ok) { msg.textContent = d.error || "Could not save"; msg.className = "lrc-msg err"; return; }
+  msg.textContent = "Saved ✓"; msg.className = "lrc-msg ok";
+  setTimeout(() => openAlbum(album.itunes_collection_id), 500);
 }
 
 // ── Track-order editor ─────────────────────────────────────────────────────
@@ -1000,6 +1060,7 @@ async function openMissingLyrics() {
               <div class="lrc-track-row" onclick="toggleLrcTrack('${tid}')">
                 <div class="lrc-track-name">${esc(t.track_name)}</div>
                 ${t.has_plain ? `<span style="flex-shrink:0;font-size:10px;font-weight:700;letter-spacing:0.5px;color:var(--gold);background:rgba(212,168,70,0.12);border:1px solid rgba(212,168,70,0.3);border-radius:8px;padding:2px 8px;margin-right:8px">PLAIN ONLY</span>` : `<span style="flex-shrink:0;font-size:10px;font-weight:700;letter-spacing:0.5px;color:#e07070;background:rgba(224,112,112,0.1);border:1px solid rgba(224,112,112,0.3);border-radius:8px;padding:2px 8px;margin-right:8px">NO LYRICS</span>`}
+                <button class="back-btn" style="margin:0 8px 0 0;padding:5px 9px;flex-shrink:0" onclick="event.stopPropagation();markMissingInstrumental(${t.itunes_track_id||0},'${tid}')">♪ Instrumental</button>
                 <div class="lrc-track-dur">${fmt_dur(t.duration_ms)}</div>
                 <div class="lrc-chevron" id="lrc-tc-${tid}">›</div>
               </div>
@@ -1040,6 +1101,18 @@ async function copySearch(el) {
     sel.removeAllRanges();
     sel.addRange(range);
   }
+}
+
+async function markMissingInstrumental(itunesTrackId, rowId) {
+  const r = await fetch(API, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", "x-admin-password": pw },
+    body: JSON.stringify({ action: "set-instrumental", itunesTrackId, instrumental: true }),
+  });
+  const d = await r.json().catch(() => ({}));
+  if (!r.ok) { alert(d.error || "Could not mark this track instrumental"); return; }
+  const row = document.getElementById("lrc-t-" + rowId);
+  if (row) { row.style.opacity = "0.3"; row.style.pointerEvents = "none"; }
 }
 
 function toggleLrcAlbum(cid) {

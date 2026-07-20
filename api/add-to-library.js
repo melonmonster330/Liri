@@ -1,13 +1,13 @@
 // Liri — Add Album to Library (Vercel)
 //
 // HYBRID data model:
-//   • iTunes/Apple is the SOURCE OF TRUTH for album + track data (clean
-//     canonical artwork, one version per album, and — crucially — the same
-//     catalog ShazamKit recognizes against, so recognition titles line up
-//     with our stored tracklist).
-//   • Discogs is used ONLY to enrich with vinyl side/position data (A1, B2…),
-//     overlaid onto the iTunes tracklist behind the scenes. If Discogs has no
-//     clean match, the album still works — it just lacks automatic side flips.
+//   • iTunes/Apple supplies canonical album metadata, artwork, stable song IDs,
+//     durations, and the titles ShazamKit recognizes.
+//   • A confidently matched Discogs vinyl layout is the physical source of
+//     truth. It supplies the ordered songs and side positions, which prevents
+//     Apple-only messages/digital bonuses from appearing as record tracks.
+//   • When Discogs is ambiguous, we preserve the complete iTunes list rather
+//     than silently hiding a real song.
 //
 // Flow (iTunes path):
 //   1. Fetch iTunes album lookup → collection meta + ordered tracklist
@@ -186,16 +186,54 @@ async function fetchDiscogsRelease(releaseId) {
 
 // Search Discogs for a vinyl release matching this album, return its full
 // detail (with tracklist+positions) or null. Best-effort — never throws.
-async function findDiscogsVinyl(artistName, albumName) {
+function physicalTracklist(detail) {
+  return (detail?.tracklist || []).filter(t => t.position && /^[A-Za-z]+\d+/.test(t.position));
+}
+
+function layoutSignature(tracks) {
+  return tracks.map(t => `${String(t.position).toUpperCase()}:${norm(t.title)}`).join("|");
+}
+
+// Match a physical list onto Apple's stable song records. Projection is only
+// safe when every physical track has one unique Apple match. It is deliberately
+// conservative: combined/split titles and genuinely different editions fall
+// back to Apple's list until a human selects the pressing.
+function projectPhysicalTracks(itunesTracks, discogsTracks) {
+  const used = new Set();
+  const projected = [];
+  for (const dt of discogsTracks) {
+    const wanted = norm(dt.title);
+    let idx = itunesTracks.findIndex((t, i) => !used.has(i) && norm(t.title) === wanted);
+    if (idx < 0 && wanted.length >= 6) {
+      const fuzzy = itunesTracks
+        .map((t, i) => ({ i, title: norm(t.title) }))
+        .filter(x => !used.has(x.i) && x.title.length >= 6 && (x.title.includes(wanted) || wanted.includes(x.title)));
+      if (fuzzy.length === 1) idx = fuzzy[0].i;
+    }
+    if (idx < 0) return null;
+    used.add(idx);
+    projected.push({
+      ...itunesTracks[idx],
+      track_number: projected.length + 1,
+      disc_number: 1,
+    });
+  }
+  // A candidate with far fewer tracks is probably a different edition, not a
+  // harmless digital extra. Allow only a small number of Apple-only entries.
+  if (projected.length < 2 || projected.length / itunesTracks.length < 0.75 || itunesTracks.length - projected.length > 3) return null;
+  return projected;
+}
+
+async function findDiscogsVinyl(artistName, albumName, itunesTracks = []) {
   try {
     const q = `${artistName} ${albumName}`.trim();
     const searchUrl = `https://api.discogs.com/database/search`
-      + `?q=${encodeURIComponent(q)}&type=release&format=Vinyl&per_page=5`;
+      + `?q=${encodeURIComponent(q)}&type=release&format=Vinyl&per_page=10`;
     const { data } = await httpsGet(searchUrl, discogsHeaders());
     const candidates = data?.results || [];
     if (!candidates.length) return null;
 
-    // Prefer a candidate whose title contains the album name.
+    // Prefer exact album/artist metadata before looking at layouts.
     const nAlbum = norm(albumName);
     const ranked = candidates.sort((a, b) => {
       const am = norm(a.title || "").includes(nAlbum) ? 1 : 0;
@@ -203,12 +241,31 @@ async function findDiscogsVinyl(artistName, albumName) {
       return bm - am;
     });
 
-    for (const c of ranked.slice(0, 3)) {
+    const viable = [];
+    for (const c of ranked.slice(0, 6)) {
       const detail = await fetchDiscogsRelease(c.id);
-      const tracks = (detail?.tracklist || []).filter(t => t.position && /\d/.test(t.position));
-      if (tracks.length) return { release: detail, tracks };
+      const tracks = physicalTracklist(detail);
+      const detailAlbum = norm(detail?.title || "");
+      const detailArtist = norm((detail?.artists?.[0]?.name || "").replace(/\s*\(\d+\)$/, ""));
+      if (!tracks.length || detailAlbum !== nAlbum || detailArtist !== norm(artistName)) continue;
+      const projection = itunesTracks.length ? projectPhysicalTracks(itunesTracks, tracks) : null;
+      viable.push({ release: detail, tracks, projection, signature: layoutSignature(tracks) });
     }
-    return null;
+    if (!viable.length) return null;
+
+    // Collapse pressings with identical physical layouts. The most commonly
+    // represented layout wins; ties favor the one closest to Apple's count.
+    const groups = new Map();
+    for (const item of viable) {
+      const group = groups.get(item.signature) || [];
+      group.push(item);
+      groups.set(item.signature, group);
+    }
+    const chosenGroup = [...groups.values()].sort((a, b) =>
+      b.length - a.length
+      || Math.abs(itunesTracks.length - a[0].tracks.length) - Math.abs(itunesTracks.length - b[0].tracks.length)
+    )[0];
+    return chosenGroup.find(x => x.projection) || chosenGroup[0];
   } catch (e) {
     console.warn("[add-to-library] Discogs vinyl search failed (non-fatal):", e.message);
     return null;
@@ -406,6 +463,11 @@ module.exports = async (req, res) => {
 
       const artistSortName = await fetchArtistSortName(album.artistName);
 
+      // Resolve the physical layout before saving tracks. Only a complete,
+      // unique projection is allowed to remove Apple-only digital entries.
+      const vinyl = await findDiscogsVinyl(album.artistName, album.albumName, album.tracks);
+      const physicalTracks = vinyl?.projection || album.tracks;
+
       await upsert("catalogue", {
         itunes_collection_id: collectionId,
         album_name:    album.albumName,
@@ -413,30 +475,29 @@ module.exports = async (req, res) => {
         artist_sort_name: artistSortName,
         artwork_url:   album.artworkUrl,
         release_year:  album.year,
-        track_count:   album.tracks.length,
+        track_count:   physicalTracks.length,
         last_synced_at: new Date().toISOString(),
       }, "itunes_collection_id");
 
-      await saveTracksAndLyrics(collectionId, album.artistName, album.albumName, album.tracks, auth.userId, auth.email, null);
+      await saveTracksAndLyrics(collectionId, album.artistName, album.albumName, physicalTracks, auth.userId, auth.email, null);
 
       // ── Enrich with Discogs vinyl side data (best-effort) ──────────────────
-      let unplaced = album.tracks; // assume none placed until proven otherwise
+      let unplaced = physicalTracks; // assume none placed until proven otherwise
       let discogsReleaseId = null;
-      const vinyl = await findDiscogsVinyl(album.artistName, album.albumName);
       if (vinyl) {
         discogsReleaseId = vinyl.release?.id || null;
         try {
           unplaced = await saveSidesFromDiscogs(
             collectionId,
             { releaseId: discogsReleaseId, masterId: vinyl.release?.master_id || null },
-            album.tracks,
+            physicalTracks,
             vinyl.tracks
           );
         } catch (e) {
           console.warn("[add-to-library] vinyl_sides overlay failed (non-fatal):", e.message);
         }
       }
-      await fileMissingSidesBug(auth.userId, auth.email, collectionId, album.albumName, album.artistName, album.tracks.length, unplaced, discogsReleaseId);
+      await fileMissingSidesBug(auth.userId, auth.email, collectionId, album.albumName, album.artistName, physicalTracks.length, unplaced, discogsReleaseId);
 
     } else if (!alreadyExists) {
       // ── Legacy Discogs-primary path (back-compat) ──────────────────────────
