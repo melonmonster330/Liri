@@ -54,9 +54,10 @@ const APP_VERSION = "1.5.14";
 // honest clock the 2s lead made every line feel rushed).
 const LYRIC_LEAD_SECONDS = 1;
 // Give the listener an early visual cue during an instrumental intro without
-// advancing the timing of every later line. The first lyric fades from the
-// neutral intro state to fully highlighted over these final two seconds.
+// advancing the timing of every later line. The first lyric starts lighting up
+// two seconds early, then remains fully highlighted until the next line.
 const FIRST_LYRIC_PRELIGHT_SECONDS = 2;
+const FIRST_LYRIC_FADE_SECONDS = 0.35;
 // Switch the UI to the next track as soon as the current duration ends, then
 // park its lyric clock at 0:00 for the physical inter-track groove.
 const TRACK_GAP_MS = 1000;
@@ -184,7 +185,7 @@ function Liri() {
     : firstLyricTime != null && currentIndex === 0
       ? Math.max(0, Math.min(1,
         (playbackTime - (firstLyricTime - FIRST_LYRIC_PRELIGHT_SECONDS))
-          / FIRST_LYRIC_PRELIGHT_SECONDS))
+          / FIRST_LYRIC_FADE_SECONDS))
       : 1;
   const layoutLyricFontScale = menuOpen
     ? 1.1 * Math.max(0.72, Math.min(1, lyricAreaW / 640))

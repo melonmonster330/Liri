@@ -1470,6 +1470,7 @@
   var APP_VERSION = "1.5.14";
   var LYRIC_LEAD_SECONDS = 1;
   var FIRST_LYRIC_PRELIGHT_SECONDS = 2;
+  var FIRST_LYRIC_FADE_SECONDS = 0.35;
   var TRACK_GAP_MS = 1e3;
   var SIDE_END_HANDOFF_MS = 650;
   var FLIP_NEEDLE_DROP_MS = 1e4;
@@ -1561,7 +1562,7 @@
     const firstLyricTime = Number.isFinite(lyrics[0]?.time) ? lyrics[0].time : null;
     const lyricFocusStrength = currentIndex < 0 ? 0 : firstLyricTime != null && currentIndex === 0 ? Math.max(0, Math.min(
       1,
-      (playbackTime - (firstLyricTime - FIRST_LYRIC_PRELIGHT_SECONDS)) / FIRST_LYRIC_PRELIGHT_SECONDS
+      (playbackTime - (firstLyricTime - FIRST_LYRIC_PRELIGHT_SECONDS)) / FIRST_LYRIC_FADE_SECONDS
     )) : 1;
     const layoutLyricFontScale = menuOpen ? 1.1 * Math.max(0.72, Math.min(1, lyricAreaW / 640)) : 1.25;
     const lyricPanelWidth = isLandscape ? lyricAreaW : winW;
