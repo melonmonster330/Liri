@@ -3508,10 +3508,15 @@ Move closer to your speakers and try again.`);
       const sideEnds = getSideEndsFromSidesMap(tracks, vinylSidesRef.current) ?? (dbRelease?.vinyl_tracks?.length > 0 ? getDbSideEndIndices(tracks, dbRelease.vinyl_tracks) : getSideEndIndices(tracks, effectiveTps));
       for (let s = 0; s < sideEnds.length; s++) {
         if (curIdx <= sideEnds[s] && sideEnds[s] + 1 < tracks.length) {
-          const curDisc = tracks[curIdx] ? tracks[curIdx].discNumber || 1 : 1;
-          const nextDisc = tracks[sideEnds[s] + 1] ? tracks[sideEnds[s] + 1].discNumber || 1 : 1;
-          const nextSide = "ABCDEFGH"[s + 1] || null;
-          return { isNewDisc: nextDisc !== curDisc, nextDisc, nextSide };
+          const nextSideIndex = s + 1;
+          const nextSide = "ABCDEFGH"[nextSideIndex] || null;
+          const currentDisc = Math.floor(s / 2) + 1;
+          const nextDisc = Math.floor(nextSideIndex / 2) + 1;
+          return {
+            isNewDisc: nextDisc !== currentDisc,
+            nextDisc,
+            nextSide
+          };
         }
       }
       return null;

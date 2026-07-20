@@ -2593,10 +2593,18 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
       ?? (dbRelease?.vinyl_tracks?.length > 0 ? getDbSideEndIndices(tracks, dbRelease.vinyl_tracks) : getSideEndIndices(tracks, effectiveTps));
     for (let s = 0; s < sideEnds.length; s++) {
       if (curIdx <= sideEnds[s] && sideEnds[s] + 1 < tracks.length) {
-        const curDisc = tracks[curIdx] ? (tracks[curIdx].discNumber || 1) : 1;
-        const nextDisc = tracks[sideEnds[s] + 1] ? (tracks[sideEnds[s] + 1].discNumber || 1) : 1;
-        const nextSide = "ABCDEFGH"[s + 1] || null;
-        return { isNewDisc: nextDisc !== curDisc, nextDisc: nextDisc, nextSide: nextSide };
+        const nextSideIndex = s + 1;
+        const nextSide = "ABCDEFGH"[nextSideIndex] || null;
+        // Vinyl side letters are authoritative for physical-disc boundaries:
+        // A/B = LP 1, C/D = LP 2, E/F = LP 3. Digital releases commonly mark
+        // every track discNumber=1, which incorrectly labelled B→C as a flip.
+        const currentDisc = Math.floor(s / 2) + 1;
+        const nextDisc = Math.floor(nextSideIndex / 2) + 1;
+        return {
+          isNewDisc: nextDisc !== currentDisc,
+          nextDisc,
+          nextSide,
+        };
       }
     }
     return null;
