@@ -67,13 +67,9 @@ Dashboard → Advisors before merging.
 For reference, these are already locked down — don't worry about them:
 
 - `/admin` route: gated on `ADMIN_PASSWORD` env var with `safeCompare`
-- Stripe webhook (`api/stripe-webhook.js`): signature verified via
-  `constructWebhookEvent` (rejects unsigned requests)
 - All other API endpoints under `api/`: JWT-verified via
   `api/_lib/auth.js`, except `api/image-proxy.js` (Discogs domain
   allowlist) and `api/itunes-lookup.js` (CORS origin allowlist, no
   data to leak)
 - Supabase anon key in client code (`sb_publishable_…`): publishable
   by design — RLS is the actual gate
-- `subscriptions` table: RLS'd in `20260408_subscriptions.sql`,
-  read-own-only, writes service_role only

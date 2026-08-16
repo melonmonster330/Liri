@@ -346,7 +346,6 @@ async function getAdminStats(days = 3) {
     totalLibResp,
     eventsResp,
     libResp,
-    subsResp,
     releasesResp,
     flipsResp,
     bugsResp,
@@ -361,7 +360,6 @@ async function getAdminStats(days = 3) {
     sbGet("user_library?select=id&limit=1",                                      { "Prefer": "count=exact" }),
     sbGetAll(`listening_events?select=user_id,platform,source,album_name,artist_name,itunes_collection_id,listened_at${dWin ? `&listened_at=gte.${dWin}` : ""}&order=listened_at.desc`),
     sbGetAll("user_library?select=user_id"),
-    sbGet("subscriptions?select=tier,status"),
     sbGet("vinyl_releases?select=id&limit=1",                                    { "Prefer": "count=exact" }),
     sbGet("flip_events?select=id&limit=1",                                       { "Prefer": "count=exact" }),
     // Default to open bugs only — backlog/fixed/wontfix are hidden from the
@@ -432,13 +430,6 @@ async function getAdminStats(days = 3) {
     .slice(0, 10)
     .map(([uid, count]) => ({ email: maskEmail(emailById[uid]) || uid.slice(0, 8) + "…", count }));
 
-  // Subscriptions
-  const subs        = Array.isArray(subsResp.body) ? subsResp.body : [];
-  const premiumUsers = subs.filter(s =>
-    (s.tier === "premium" && ["active", "trialing"].includes(s.status))
-    || (s.tier === "lifetime" && s.status === "active")
-  ).length;
-
   // Catalogue & flips
   const catalogueTotal = parseInt(releasesResp.headers?.["content-range"]?.split("/")[1] || "0", 10);
   const totalFlips     = parseInt(flipsResp.headers?.["content-range"]?.split("/")[1] || "0", 10);
@@ -447,7 +438,7 @@ async function getAdminStats(days = 3) {
     .map(b => ({ ...b, user_email: maskEmail(b.user_email) }));
 
   return {
-    users:    { total: totalUsers, new7d: newUsers7d, new30d: newUsers30d, premium: premiumUsers, recentSignups },
+    users:    { total: totalUsers, new7d: newUsers7d, new30d: newUsers30d, recentSignups },
     library:  { totalAlbums, uniqueUsers: uniqueLibUsers, avgAlbums },
     plays:    { total: totalPlays, window: playsWindow, last7d: plays7d, songsTotal: totalSongs, web: webPlays, ios: iosPlays, otherPlatform: otherPlatformPlays, recognition: recogPlays, autoAdvance: autoPlays, otherSource: otherSourcePlays },
     days,
@@ -495,12 +486,10 @@ async function getUsersList() {
     allUsers.push(...batch);
     if (batch.length < 1000) break;
   }
-  const [libRows, eventRows, subscriptionRows] = await Promise.all([
+  const [libRows, eventRows] = await Promise.all([
     sbGetAll("user_library?select=user_id"),
     sbGetAll("listening_events?select=user_id,platform,source"),
-    sbGetAll("subscriptions?select=user_id,tier,status"),
   ]);
-  const subscriptionByUid = new Map(subscriptionRows.map(s => [s.user_id, s]));
   const albumByUid = {};
   for (const r of libRows) albumByUid[r.user_id] = (albumByUid[r.user_id] || 0) + 1;
   // A "play" = an album load, so exclude auto_advance (per-track continuations).
@@ -526,13 +515,7 @@ async function getUsersList() {
   return {
     users: allUsers
       .sort((a, b) => (b.created_at || "").localeCompare(a.created_at || ""))
-      .map(u => {
-        const subscription = subscriptionByUid.get(u.id);
-        const isPremium = !!subscription && (
-          (subscription.tier === "premium" && ["active", "trialing"].includes(subscription.status))
-          || (subscription.tier === "lifetime" && subscription.status === "active")
-        );
-        return {
+      .map(u => ({
         id:         u.id,
         email:      maskEmail(u.email),
         created_at: u.created_at,
@@ -544,11 +527,7 @@ async function getUsersList() {
         // from the platforms their plays came from (older accounts).
         signup_platform:   u.user_metadata?.signup_platform || null,
         platform_inferred: inferPlatform(u.id),
-        is_premium: isPremium,
-        subscription_tier: isPremium ? subscription.tier : "free",
-        subscription_status: subscription?.status || null,
-      };
-      }),
+      })),
   };
 }
 

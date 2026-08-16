@@ -31,7 +31,7 @@ liri/
 │
 ├── docs/
 │   ├── ARCHITECTURE.md        ← How the code works and why
-│   ├── ROADMAP.md             ← Big picture: TV app, growth, monetization
+│   ├── ROADMAP.md             ← Big picture: TV app, growth
 │   ├── LEGAL.md               ← Licensing notes: lyrics, fingerprinting
 │   └── ACTION_PLAN.md         ← Near-term priorities
 │
@@ -159,4 +159,4 @@ See `docs/ROADMAP.md` for what's next.
 
 - **Persistent sync across navigation** — lyrics should keep following the song even if the user taps away to add-vinyl or another page and then comes back. Likely implemented with a service worker or shared React context that survives navigation.
 - **Fix onboarding flag** — `showOnboarding` is `useState(true)` (forced for testing). Before launch, switch to `useState(() => !localStorage.getItem("liri_onboarding_done"))`.
-- **Lyrics provider** — consider switching from LRCLib to Musixmatch before monetization for better coverage and licensing.
+- **Lyrics provider** — consider switching from LRCLib to Musixmatch before any commercial use, for better coverage and licensing.

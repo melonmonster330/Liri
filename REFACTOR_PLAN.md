@@ -15,7 +15,8 @@ inline functions, and a 503-`createElement` render. That's the #1 bottleneck.
   order, plain-lyrics fallback, button/listening/flip/auto-post logging) —
   all good. Still owed: `npm run sync` + on-device iOS test (not yet run).
 - [x] **Phase 2 — Feature hooks.** Done in commit `b9170db`. Created
-  `hooks/usePayments.js` (userTier/albumCount/IAP/Stripe),
+  `hooks/usePayments.js` (userTier/albumCount/IAP/Stripe — since deleted
+  along with the rest of the payment system),
   `hooks/useNowPlaying.js` (cross-tab persistence + heartbeat),
   `hooks/useLyricScroll.js` (auto-scroll/tap-to-seek/re-follow). `main.js`
   6716 → 6429 lines. `APP_VERSION` → 1.5.4. Not yet build/device-tested —
@@ -54,7 +55,6 @@ app/src/
   main.js            # just <Liri/> shell: wires hooks + screens together (~300 lines)
   hooks/             # NEW — stateful React logic, one domain per file
     useAuth.js
-    usePayments.js         # Apple IAP + Stripe
     useTurntable.js        # album select, track load, side data
     useTrackAdvance.js     # advance / flip / manual jump / resync
     useListening.js        # Shazam + speech-recognition match flow
@@ -67,7 +67,6 @@ app/src/
     match.js               # NEW: vinyl-aware + consecutive-word matching
     analytics.js           # NEW: all listening/flip/button event logging
     sides.js               # EXTEND: fold in side-flip point detection
-    payments.js            # NEW: Stripe checkout + IAP plumbing (non-React parts)
   base/components/   # EXISTING — grow these
     ControlsPanel.js       # nudge / skip / speed / follow cluster
     Tracklist.js
@@ -99,7 +98,6 @@ Extract top-level/near-pure functions to `base/lib`:
 
 ### Phase 2 — Self-contained feature logic → hooks ✅ DONE (commit `b9170db`)
 Move a domain's state + effects into a `use*` hook, return what render needs:
-- `usePayments` — Apple IAP + Stripe upgrade (~788–1032)
 - `useNowPlaying` — persistence + heartbeat (~2170–2336)
 - `useLyricScroll` — scroll effects (~1415–1520, ~2337–2408)
 Do **one hook per commit**; verify playback after each.

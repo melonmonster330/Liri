@@ -37,7 +37,7 @@ toolbar (Chrome: Ctrl/Cmd+Shift+M), pick an iPhone.
 
 ### iOS (Mac only)
 
-ShazamKit recognition, NativeAudio, and IAP are **native** and only run in the iOS
+ShazamKit recognition and NativeAudio are **native** and only run in the iOS
 build. Test those in Xcode:
 
 ```bash
@@ -80,8 +80,8 @@ SwiftUI.** Reasons:
 - ~90% of the GUI is genuinely shared (auth, feed, onboarding, library, lyric sync).
 - Web is part of the product (getliri.com, landing/waitlist, TV cast) — going native
   would mean maintaining two full frontends forever.
-- The divergence is small and contained: recognition, audio, IAP, and some `IS_IOS`
-  GUI copy. Native bridges live in `app/ios/` (`shazam.js`, `audio.js`, `iap.js`).
+- The divergence is small and contained: recognition, audio, and some `IS_IOS`
+  GUI copy. Native bridges live in `app/ios/` (`shazam.js`, `audio.js`).
 - Platform branching today: `IS_IOS = !!window.Capacitor` (~line 24), ~36 branches.
 
 **If we ever want them *more* different:** the cheap, sustainable path is to split
@@ -98,5 +98,5 @@ engine (Supabase/auth, lyric-sync, LRC parsing, feed data) — NOT a native rewr
 | Bucket | Examples | Test where |
 |---|---|---|
 | Shared | auth, social feed, onboarding, library, lyric sync | Windows/Mac browser |
-| iOS-only | Shazam recognition, NativeAudio, IAP, `IS_IOS` copy | Mac + Simulator/device |
+| iOS-only | Shazam recognition, NativeAudio, `IS_IOS` copy | Mac + Simulator/device |
 | Web-only | ACRCloud `/api/recognize` | Browser, but needs `vercel dev` |

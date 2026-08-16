@@ -5,11 +5,9 @@
 //
 // Flow:
 //   1. Verify JWT
-//   2. Cancel active Stripe subscription (if any) immediately
-//   3. Delete user from Supabase auth.users — cascades to all user tables
+//   2. Delete user from Supabase auth.users — cascades to all user tables
 
 const { verifyAuth } = require("./_lib/auth");
-const { stripeRequest } = require("./_lib/stripe");
 const https = require("https");
 
 const ALLOWED_ORIGINS = ["https://getliri.com", "https://www.getliri.com", "capacitor://localhost"];
@@ -87,21 +85,6 @@ module.exports = async (req, res) => {
   if (!auth || auth._authError || !auth.userId) return res.status(401).json({ error: "Unauthorized" });
 
   try {
-    // Cancel Stripe subscription if active
-    const subRows = await supabaseRequest(
-      "GET",
-      `subscriptions?user_id=eq.${encodeURIComponent(auth.userId)}&select=stripe_subscription_id,status&limit=1`
-    );
-    const sub = Array.isArray(subRows.body) && subRows.body[0];
-    if (sub?.stripe_subscription_id && ["active", "trialing"].includes(sub.status)) {
-      try {
-        await stripeRequest("DELETE", `/v1/subscriptions/${sub.stripe_subscription_id}`);
-      } catch (stripeErr) {
-        // Log but don't block — user should still be able to delete their account
-        console.error("[delete-account] stripe cancel error:", stripeErr.message);
-      }
-    }
-
     // Delete user — cascades to all user_vinyl_library, user_usage, song_history, etc.
     const statusCode = await supabaseAdminDeleteUser(auth.userId);
     if (statusCode >= 400) {

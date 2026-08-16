@@ -68,7 +68,6 @@
   .signup-row:last-child { border-bottom: none; }
   .signup-email { color: rgba(255,255,255,0.7); }
   .signup-date { color: var(--muted); font-size: 11px; }
-  .premium-badge { display:inline-flex; align-items:center; border:1px solid rgba(212,168,70,.32); background:rgba(212,168,70,.1); color:var(--gold); border-radius:20px; padding:3px 8px; font-size:10px; font-weight:700; text-transform:uppercase; letter-spacing:.04em; }
   .user-columns { display:flex; align-items:center; gap:12px; padding:0 0 7px; border-bottom:1px solid var(--border); }
   .user-columns-label { flex:1; font-size:10px; color:var(--muted); text-transform:uppercase; letter-spacing:.06em; }
   .sort-btn { width:54px; padding:4px 2px; border:0; background:transparent; color:var(--muted); font:700 10px/1 inherit; text-transform:uppercase; letter-spacing:.04em; cursor:pointer; text-align:right; }
@@ -304,11 +303,6 @@ function render(d) {
         <div class="card-value">${fmt(users.total)}</div>
         <div class="card-sub">+${users.new7d} this week · +${users.new30d} this month</div>
       </div>
-      <div class="card clickable" role="button" tabindex="0" onclick="openUsers()">
-        <div class="card-label">Premium</div>
-        <div class="card-value">${fmt(users.premium)}</div>
-        <div class="card-sub">${pct(users.premium, users.total)}% of users</div>
-      </div>
       <div class="card clickable" onclick="openAlbums()">
         <div class="card-label">Avg Albums / User</div>
         <div class="card-value">${library.avgAlbums}</div>
@@ -479,7 +473,6 @@ function signupPlatform(u) {
 }
 
 let usersCache = [];
-let userTierFilter = "all";
 let userSort = { field: null, direction: null };
 
 async function openUsers() {
@@ -490,13 +483,7 @@ async function openUsers() {
   if (!r.ok) { c.innerHTML = `<div class="loading">Error loading users</div>`; return; }
   const d = await r.json();
   usersCache = d.users || [];
-  userTierFilter = "all";
   userSort = { field: null, direction: null };
-  renderUsers();
-}
-
-function setUserTierFilter(filter) {
-  userTierFilter = filter;
   renderUsers();
 }
 
@@ -518,9 +505,7 @@ function userSortLabel(field) {
 
 function renderUsers() {
   const c = document.getElementById("content");
-  const premiumCount = usersCache.filter(u => u.is_premium).length;
-  const filteredUsers = userTierFilter === "premium" ? usersCache.filter(u => u.is_premium) : usersCache;
-  const users = [...filteredUsers];
+  const users = [...usersCache];
   if (userSort.field && userSort.direction) {
     const multiplier = userSort.direction === "desc" ? -1 : 1;
     users.sort((a, b) => {
@@ -547,21 +532,17 @@ function renderUsers() {
     <button class="back-btn" onclick="load()">← Back to dashboard</button>
     <div class="section">
       <div class="section-title">Users — ${sortDescription}</div>
-      <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:14px">
-        <button class="back-btn" style="margin:0;${userTierFilter === 'all' ? 'color:var(--gold);border-color:rgba(212,168,70,.45)' : ''}" onclick="setUserTierFilter('all')">All (${usersCache.length})</button>
-        <button class="back-btn" style="margin:0;${userTierFilter === 'premium' ? 'color:var(--gold);border-color:rgba(212,168,70,.45)' : ''}" onclick="setUserTierFilter('premium')">Premium (${premiumCount})</button>
-      </div>
       <div class="user-columns">
         <div class="user-columns-label">User</div>
         <button class="sort-btn${userSort.field === 'plays' ? ' active' : ''}" aria-label="Sort users by plays" aria-pressed="${userSort.field === 'plays'}" onclick="cycleUserSort('plays')">Plays${userSortLabel('plays')}</button>
         <button class="sort-btn${userSort.field === 'albums' ? ' active' : ''}" aria-label="Sort users by albums" aria-pressed="${userSort.field === 'albums'}" onclick="cycleUserSort('albums')">Albums${userSortLabel('albums')}</button>
         <button class="sort-btn last-login${userSort.field === 'last_sign_in_at' ? ' active' : ''}" aria-label="Sort users by last login" aria-pressed="${userSort.field === 'last_sign_in_at'}" onclick="cycleUserSort('last_sign_in_at')">Last login${userSortLabel('last_sign_in_at')}</button>
       </div>
-      ${users.length === 0 ? `<div style="color:var(--muted);font-size:13px">${userTierFilter === 'premium' ? 'No premium users' : 'No users yet'}</div>` :
+      ${users.length === 0 ? `<div style="color:var(--muted);font-size:13px">No users yet</div>` :
         users.map(u => `
           <div class="album-row" onclick="openUser('${esc(u.id)}')">
             <div class="album-info">
-              <div class="album-name" style="display:flex;align-items:center;gap:8px">${esc(u.email)} ${u.is_premium ? `<span class="premium-badge">${u.subscription_tier === 'lifetime' ? 'Lifetime' : 'Premium'}</span>` : ''}</div>
+              <div class="album-name">${esc(u.email)}</div>
               <div class="album-artist">${esc(u.provider)} · joined ${timeAgo(u.created_at)}</div>
               <div class="album-artist" style="margin-top:2px">${signupPlatform(u)}</div>
             </div>

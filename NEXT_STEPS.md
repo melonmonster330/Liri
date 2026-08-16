@@ -118,7 +118,7 @@ When an album is added to the library, pre-fetch and cache all lyrics in `liri_l
 |---|---|
 | Right now (prototype/beta) | Fine. AudD free tier + lrclib is OK for testing. |
 | Before public beta | Upgrade AudD to a paid commercial tier (audd.io/pricing). |
-| Before charging users | Music licensing attorney consultation (~$500). Negotiate MusixMatch commercial API license (~$500+/mo). lrclib is NOT licensed for commercial use — must switch before monetizing. |
+| Before any commercial use | Music licensing attorney consultation (~$500). Negotiate MusixMatch commercial API license (~$500+/mo). lrclib is NOT licensed for commercial use — must switch first. |
 | Samsung TV submission | Samsung requires proof of rights clearance during review. |
 
 > Taylor Swift's catalog is controlled by UMPG and they are aggressive about enforcement. Get licensed before you charge a dollar.

@@ -8,7 +8,6 @@ import {
   logButtonEvent as libLogButtonEvent,
 } from "../base/lib/analytics.js";
 import { IS_IOS, TRANSCRIBE_PROXY, ITUNES_PROXY, PLAYBACK_OFFSET_CORRECTION, AUTO_ADVANCE_OFFSET, SYNC_PLAYBACK_RATE } from "../base/lib/config.js";
-import { usePayments } from "./hooks/usePayments.js";
 import { useNowPlaying } from "./hooks/useNowPlaying.js";
 import { useLyricScroll } from "./hooks/useLyricScroll.js";
 import { useCast } from "./hooks/useCast.js";
@@ -206,7 +205,6 @@ function Liri() {
   const [bugText, setBugText] = useState("");
   const [bugSending, setBugSending] = useState(false);
   const [bugSent, setBugSent] = useState(false);
-  const [showPremiumInfo, setShowPremiumInfo] = useState(false);
   const [showDeleteAccount, setShowDeleteAccount] = useState(false);
   const [deleteWorking, setDeleteWorking] = useState(false);
   const [deleteError, setDeleteError] = useState(null);
@@ -241,15 +239,6 @@ function Liri() {
 
   // ── Auth token ref — kept current for API Authorization headers ──
   const sessionTokenRef = useRef(null);
-
-  // ── Payments: subscription tier + Apple IAP + Stripe — hooks/usePayments.js ──
-  const {
-    userTier, setUserTier,
-    albumCount, setAlbumCount,
-    upgradeWorking,
-    iapPrice, premiumPlan, setPremiumPlan, iapWorking,
-    syncAppleSubscription, upgradeWithApple, restoreApplePurchases, upgradeToStripe,
-  } = usePayments({ sb, sessionTokenRef });
 
   // ── History ──
   const [history, setHistory] = useState([]);
@@ -343,6 +332,9 @@ function Liri() {
   const [sideDataMissing, setSideDataMissing] = useState(false);
   const [showSideInfoSheet, setShowSideInfoSheet] = useState(false);
   const [showLyricsEditor, setShowLyricsEditor] = useState(false);
+  const [wrongLyricsReporting, setWrongLyricsReporting] = useState(false);
+  const [wrongLyricsReportedId, setWrongLyricsReportedId] = useState(null);
+  const [wrongLyricsReportError, setWrongLyricsReportError] = useState(null);
   const [userMetaSaving, setUserMetaSaving] = useState(false);
   const [userMetaError, setUserMetaError] = useState(null);
 
@@ -773,9 +765,6 @@ function Liri() {
         fetchUsage(u);
         fetchHistory(u);
         fetchAutoPostPref(u);
-        fetch(`${window.Capacitor ? "https://www.getliri.com" : ""}/api/subscription-status`, { headers: { "Authorization": `Bearer ${session.access_token}` } })
-          .then(r => r.ok ? r.json() : null).then(d => { if (d?.tier) { setUserTier(d.tier); setAlbumCount(d.albumCount || 0); } }).catch(() => {});
-        syncAppleSubscription(session.access_token);
       }
     });
     const {
@@ -797,14 +786,10 @@ function Liri() {
         fetchUsage(u);
         fetchHistory(u);
         fetchAutoPostPref(u);
-        fetch(`${window.Capacitor ? "https://www.getliri.com" : ""}/api/subscription-status`, { headers: { "Authorization": `Bearer ${s.access_token}` } })
-          .then(r => r.ok ? r.json() : null).then(d => { if (d?.tier) setUserTier(d.tier); }).catch(() => {});
       }
     });
     return () => subscription.unsubscribe();
   }, []);
-  // ── Apple IAP + Stripe upgrade — extracted to hooks/usePayments.js ──
-
   const handleAuth = async () => {
     setAuthError(null);
     // ── Client-side validation ──
@@ -1251,6 +1236,38 @@ function Liri() {
     setUserMetaSaving(false);
   };
 
+  const handleReportWrongLyrics = async () => {
+    const track = currentTrackIndex >= 0 ? turntableTracksRef.current[currentTrackIndex] : null;
+    if (!track?.trackId || wrongLyricsReporting) return;
+    setWrongLyricsReporting(true);
+    setWrongLyricsReportError(null);
+    try {
+      const { error } = await sb.from("bug_reports").insert({
+        user_id: user?.id || null,
+        user_email: user?.email || null,
+        app_version: APP_VERSION,
+        platform: window.Capacitor ? "ios" : "web",
+        description: `Wrong lyrics reported for ${track.trackName || detectedSong?.title || "Unknown song"}`,
+        meta: {
+          category: "wrong_lyrics",
+          report_source: "sync_player",
+          itunes_track_id: String(track.trackId),
+          track_name: track.trackName || detectedSong?.title || null,
+          artist_name: track.artistName || detectedSong?.artist || null,
+          album_name: track.collectionName || turntableAlbum?.albumName || null,
+          lyric_source: turntableLyricsCacheRef.current[String(track.trackId)]?.source || null,
+          mode,
+        },
+      });
+      if (error) throw error;
+      setWrongLyricsReportedId(String(track.trackId));
+      logButtonEvent("wrong_lyrics_reported");
+    } catch (err) {
+      setWrongLyricsReportError(err?.message || "Couldn't send report — try again");
+    }
+    setWrongLyricsReporting(false);
+  };
+
   const handleSaveUserSides = async letters => {
     const alb = turntableAlbumRef.current;
     const tracks = turntableTracksRef.current;
@@ -1385,40 +1402,13 @@ function Liri() {
     }
   }, [mode, detectedSong]);
 
-  // ── Silence gap detection: auto-advance track when vinyl gap is heard (iOS only) ──
-  // Vinyl records have a ~1-2s silent gap between tracks. ShazamPlugin monitors mic
-  // amplitude via waitForSilence() and we advance to the next track when it resolves.
-  useEffect(() => {
-    if (!window.Capacitor) return;
-    if (mode !== "syncing") return;
-
-    let cancelled = false;
-    // Small delay so Shazam's audio session has time to fully tear down first
-    const startTimer = setTimeout(async () => {
-      if (cancelled) return;
-      try {
-        // waitForSilence resolves when a gap is detected or times out (5 min)
-        const result = await Shazam.waitForSilence({ timeout: 300000 });
-        if (cancelled || !result.silence) return;
-        console.log("[silence] gap detected — advancing track");
-        const tTracks = turntableTracksRef.current;
-        const tIdx = turntableMatchedIdxRef.current;
-        // Include the final album track too; advanceToNextTrack decides whether
-        // this is a side flip or the album-end screen.
-        if (tTracks.length > 0 && tIdx >= 0 && tIdx < tTracks.length) {
-          advanceToNextTrack(tTracks, tIdx);
-        }
-      } catch (e) {
-        console.warn("[silence] waitForSilence failed:", e);
-      }
-    }, 2000);
-
-    return () => {
-      cancelled = true;
-      clearTimeout(startTimer);
-      Shazam.cancel();
-    };
-  }, [mode]);
+  // ── Silence gap detection removed (mic only runs during Shazam identify) ──
+  // This effect used to run Shazam.waitForSilence() during playback to hear the
+  // ~1-2s vinyl gap between tracks and auto-advance. It held the mic open for the
+  // whole side, so the iOS mic indicator stayed lit the entire time lyrics were
+  // showing. The mic now opens only during Shazam identification (findMatch) and
+  // closes as soon as a song is matched. Track auto-advance still works via the
+  // known track-duration clock in the effect below (no mic required).
 
   // ── Lyric scroll behavior — hooks/useLyricScroll.js ──
   const { lyricsUnsynced, lyricsScrollRef, seekToLine, browseToLine, refollow, noteUserScroll, refollowDirection } = useLyricScroll({
@@ -4600,54 +4590,8 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
         color: "rgba(255,255,255,0.3)",
         marginTop: "2px"
       }
-    }, userTier === "premium" ? /*#__PURE__*/React.createElement("span", {
-      onClick: () => { setShowSettings(false); setShowPremiumInfo(true); },
-      style: { cursor: "pointer", color: "#d4a846", display: "inline-flex", alignItems: "center", gap: "4px" }
-    }, /*#__PURE__*/React.createElement("svg", { width: "10", height: "10", viewBox: "0 0 24 24", fill: "#d4a846" }, /*#__PURE__*/React.createElement("path", { d: "M12 2l2.4 7.4H22l-6.2 4.5 2.4 7.4L12 17l-6.2 4.3 2.4-7.4L2 9.4h7.6z" })), "Liri Premium") : "Liri"))));
+    }, "Liri"))));
   })(),
-
-  /* ── Plan card ── */
-  userTier !== "premium" ? /*#__PURE__*/React.createElement("div", {
-    style: { background: "rgba(212,168,70,0.06)", border: "1px solid rgba(212,168,70,0.15)", borderRadius: "16px", padding: "14px 16px", marginBottom: "16px" }
-  },
-    /*#__PURE__*/React.createElement("div", { style: { display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: "10px" } },
-      /*#__PURE__*/React.createElement("div", null,
-        /*#__PURE__*/React.createElement("div", { style: { fontSize: "13px", fontWeight: "600", color: "#f0e6d3" } }, "Free plan"),
-        /*#__PURE__*/React.createElement("div", { style: { fontSize: "11px", color: "rgba(255,255,255,0.3)", marginTop: "2px" } }, `${albumCount}/10 records used`)
-      ),
-      IS_IOS
-        ? /*#__PURE__*/React.createElement("button", {
-            onClick: upgradeWithApple,
-            disabled: iapWorking,
-            style: { background: "linear-gradient(135deg,#d4a846,#c9807a)", color: "#080810", border: "none", borderRadius: "50px", padding: "7px 14px", fontSize: "12px", fontWeight: "700", cursor: "pointer", fontFamily: "inherit", whiteSpace: "nowrap", opacity: iapWorking ? 0.6 : 1 }
-          }, iapWorking ? "…" : `${iapPrice}`)
-        : /*#__PURE__*/React.createElement("button", {
-            onClick: () => { window.location.href = "/library?upgrade=true"; },
-            style: { background: "linear-gradient(135deg,#d4a846,#c9807a)", color: "#080810", border: "none", borderRadius: "50px", padding: "7px 14px", fontSize: "12px", fontWeight: "700", cursor: "pointer", fontFamily: "inherit", whiteSpace: "nowrap" }
-          }, "Upgrade →")
-    ),
-    /*#__PURE__*/React.createElement("div", { style: { width: "100%", height: "3px", borderRadius: "2px", background: "rgba(255,255,255,0.08)", overflow: "hidden" } },
-      /*#__PURE__*/React.createElement("div", { style: { height: "100%", borderRadius: "2px", background: albumCount >= 8 ? "#c9807a" : "#d4a846", width: `${Math.min(100, (albumCount / 10) * 100)}%`, transition: "width 0.4s ease" } })
-    )
-  ) : null,
-
-  /* ── Liri Premium row (always visible) ── */
-  /*#__PURE__*/React.createElement("button", {
-    onClick: () => { setShowSettings(false); setShowPremiumInfo(true); },
-    style: { width: "100%", display: "flex", alignItems: "center", justifyContent: "space-between", background: userTier === "premium" ? "rgba(212,168,70,0.06)" : "rgba(255,255,255,0.04)", border: `1px solid ${userTier === "premium" ? "rgba(212,168,70,0.2)" : "rgba(255,255,255,0.08)"}`, borderRadius: "16px", padding: "14px 16px", marginBottom: "16px", cursor: "pointer", fontFamily: "inherit", textAlign: "left" }
-  },
-    /*#__PURE__*/React.createElement("div", { style: { display: "flex", alignItems: "center", gap: "12px" } },
-      /*#__PURE__*/React.createElement("svg", { width: "16", height: "16", viewBox: "0 0 24 24", fill: "#d4a846" }, /*#__PURE__*/React.createElement("path", { d: "M12 2l2.4 7.4H22l-6.2 4.5 2.4 7.4L12 17l-6.2 4.3 2.4-7.4L2 9.4h7.6z" })),
-      /*#__PURE__*/React.createElement("div", null,
-        /*#__PURE__*/React.createElement("div", { style: { fontSize: "13px", fontWeight: "600", color: userTier === "premium" ? "#d4a846" : "#f0e6d3" } }, "Liri Premium"),
-        /*#__PURE__*/React.createElement("div", { style: { fontSize: "11px", color: "rgba(255,255,255,0.3)", marginTop: "2px" } }, userTier === "premium" ? "Active · Unlimited access" : "Unlimited library, lyrics & more")
-      )
-    ),
-    /*#__PURE__*/React.createElement("div", { style: { display: "flex", alignItems: "center", gap: "6px" } },
-      userTier === "premium" && /*#__PURE__*/React.createElement("div", { style: { fontSize: "10px", color: "rgba(212,168,70,0.6)", fontWeight: "700", letterSpacing: "0.5px" } }, "ACTIVE"),
-      /*#__PURE__*/React.createElement("svg", { width: "14", height: "14", viewBox: "0 0 24 24", fill: "none", stroke: "rgba(255,255,255,0.2)", strokeWidth: "2", strokeLinecap: "round" }, /*#__PURE__*/React.createElement("polyline", { points: "9 18 15 12 9 6" }))
-    )
-  ),
 
   /*#__PURE__*/React.createElement("div", {
     style: {
@@ -5023,11 +4967,7 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
       cursor: "pointer",
       fontFamily: "inherit"
     }
-  }, "Sign Out"), IS_IOS && /*#__PURE__*/React.createElement("button", {
-    onClick: restoreApplePurchases,
-    disabled: iapWorking,
-    style: { width: "100%", background: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.08)", color: "rgba(255,255,255,0.4)", borderRadius: "14px", padding: "14px", fontSize: "14px", cursor: "pointer", fontFamily: "inherit", marginTop: "8px", opacity: iapWorking ? 0.6 : 1 }
-  }, "Restore Purchases"), /*#__PURE__*/React.createElement("button", {
+  }, "Sign Out"), /*#__PURE__*/React.createElement("button", {
     onClick: () => { setShowDeleteAccount(true); setDeleteError(null); },
     style: {
       width: "100%",
@@ -5048,77 +4988,7 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
       fontSize: "11px",
       color: "rgba(255,255,255,0.1)"
     }
-  }, "Liri v", APP_VERSION, " \xB7 getliri.com")))), showPremiumInfo && /*#__PURE__*/React.createElement("div", {
-    onClick: () => setShowPremiumInfo(false),
-    style: { position: "fixed", inset: 0, zIndex: 400, background: "rgba(0,0,0,0.7)", backdropFilter: "blur(4px)", display: "flex", alignItems: "flex-end", justifyContent: "center" }
-  }, /*#__PURE__*/React.createElement("div", {
-    onClick: e => e.stopPropagation(),
-    style: { background: "#0f0f1c", borderRadius: "24px 24px 0 0", padding: "28px 28px max(40px,calc(env(safe-area-inset-bottom)+28px))", maxWidth: "520px", width: "100%", border: "1px solid rgba(255,255,255,0.07)" }
-  },
-    /*#__PURE__*/React.createElement("div", { style: { width: "40px", height: "4px", borderRadius: "2px", background: "rgba(255,255,255,0.12)", margin: "0 auto 24px" } }),
-    /*#__PURE__*/React.createElement("div", { style: { display: "flex", alignItems: "center", gap: "10px", marginBottom: "6px" } },
-      /*#__PURE__*/React.createElement("svg", { width: "18", height: "18", viewBox: "0 0 24 24", fill: "#d4a846" }, /*#__PURE__*/React.createElement("path", { d: "M12 2l2.4 7.4H22l-6.2 4.5 2.4 7.4L12 17l-6.2 4.3 2.4-7.4L2 9.4h7.6z" })),
-      /*#__PURE__*/React.createElement("div", { style: { fontSize: "18px", fontWeight: "700", color: "#f0e6d3" } }, "Liri Premium")
-    ),
-    /*#__PURE__*/React.createElement("div", { style: { fontSize: "13px", color: "rgba(255,255,255,0.35)", marginBottom: "24px" } }, userTier === "premium" ? "Your plan includes:" : "Everything in Premium:"),
-    /*#__PURE__*/React.createElement("div", { style: { background: "rgba(255,255,255,0.03)", border: "1px solid rgba(255,255,255,0.06)", borderRadius: "16px", padding: "4px 0", marginBottom: "24px" } },
-      [["Unlimited vinyl library", "Add as many records as you want"],
-       ["Lyrics for every track", "Synced line by line as your record plays"],
-       ["Play history & stats", "See everything you've synced"],
-       ["Flip reminders", "Sound and notification alerts"],
-       ["Cancel anytime", "Manage in iOS Settings → Subscriptions"]
-      ].map(([title, sub], i, arr) =>
-        /*#__PURE__*/React.createElement("div", { key: title, style: { display: "flex", alignItems: "center", gap: "14px", padding: "13px 18px", borderBottom: i < arr.length - 1 ? "1px solid rgba(255,255,255,0.04)" : "none" } },
-          /*#__PURE__*/React.createElement("svg", { width: "14", height: "14", viewBox: "0 0 24 24", fill: "none", stroke: "#d4a846", strokeWidth: "2.5", strokeLinecap: "round", flexShrink: "0" }, /*#__PURE__*/React.createElement("path", { d: "M20 6L9 17l-5-5" })),
-          /*#__PURE__*/React.createElement("div", null,
-            /*#__PURE__*/React.createElement("div", { style: { fontSize: "13px", color: "#f0e6d3", fontWeight: "500" } }, title),
-            /*#__PURE__*/React.createElement("div", { style: { fontSize: "11px", color: "rgba(255,255,255,0.3)", marginTop: "2px" } }, sub)
-          )
-        )
-      )
-    ),
-    userTier === "premium" || userTier === "lifetime"
-      ? (IS_IOS && userTier === "premium" && /*#__PURE__*/React.createElement("button", {
-          onClick: () => window.open("https://apps.apple.com/account/subscriptions", "_system"),
-          style: { width: "100%", background: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.08)", color: "rgba(255,255,255,0.4)", borderRadius: "14px", padding: "14px", fontSize: "14px", cursor: "pointer", fontFamily: "inherit", marginBottom: "8px" }
-        }, "Manage Subscription"))
-      : /*#__PURE__*/React.createElement(React.Fragment, null,
-          /* Monthly / Lifetime toggle */
-          /*#__PURE__*/React.createElement("div", {
-            style: { display: "flex", gap: "6px", background: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.06)", borderRadius: "50px", padding: "4px", marginBottom: "16px" }
-          },
-            ["monthly", "lifetime"].map(p =>
-              /*#__PURE__*/React.createElement("button", {
-                key: p,
-                onClick: () => setPremiumPlan(p),
-                style: { flex: "1", background: premiumPlan === p ? "linear-gradient(135deg,#d4a846,#c9807a)" : "transparent", color: premiumPlan === p ? "#080810" : "rgba(255,255,255,0.5)", border: "none", borderRadius: "50px", padding: "9px 12px", fontSize: "12px", fontWeight: "700", cursor: "pointer", fontFamily: "inherit" }
-              }, p === "monthly" ? "Monthly" : "Lifetime")
-            )
-          ),
-          IS_IOS
-            ? /*#__PURE__*/React.createElement("button", {
-                onClick: () => upgradeWithApple(premiumPlan),
-                disabled: iapWorking,
-                style: { width: "100%", background: iapWorking ? "rgba(255,255,255,0.05)" : "linear-gradient(135deg,#d4a846,#c9807a)", color: iapWorking ? "rgba(255,255,255,0.3)" : "#080810", border: "none", borderRadius: "14px", padding: "17px", fontSize: "16px", fontWeight: "700", cursor: iapWorking ? "default" : "pointer", fontFamily: "inherit", marginBottom: "12px" }
-              }, iapWorking ? "Opening…" : (premiumPlan === "monthly" ? `Get Premium · ${iapPrice}` : "Get Lifetime · $24.99"))
-            : /*#__PURE__*/React.createElement("button", {
-                onClick: () => upgradeToStripe(premiumPlan),
-                disabled: upgradeWorking,
-                style: { width: "100%", background: upgradeWorking ? "rgba(255,255,255,0.05)" : "linear-gradient(135deg,#d4a846,#c9807a)", color: upgradeWorking ? "rgba(255,255,255,0.3)" : "#080810", border: "none", borderRadius: "14px", padding: "17px", fontSize: "16px", fontWeight: "700", cursor: upgradeWorking ? "default" : "pointer", fontFamily: "inherit", marginBottom: "12px" }
-              }, upgradeWorking ? "Opening checkout…" : (premiumPlan === "monthly" ? "Get Premium · $2/mo" : "Get Lifetime · $20"))
-        ),
-    /*#__PURE__*/React.createElement("p", { style: { fontSize: "11px", color: "rgba(255,255,255,0.25)", textAlign: "center", margin: "12px 0 4px", lineHeight: "1.6" } },
-      "By subscribing you agree to the ",
-      /*#__PURE__*/React.createElement("a", { href: "https://www.apple.com/legal/internet-services/itunes/dev/stdeula/", target: "_blank", rel: "noopener", style: { color: "rgba(255,255,255,0.45)", textDecoration: "underline" } }, "Terms of Use"),
-      " and ",
-      /*#__PURE__*/React.createElement("a", { href: "https://getliri.com/privacy", target: "_blank", rel: "noopener", style: { color: "rgba(255,255,255,0.45)", textDecoration: "underline" } }, "Privacy Policy"),
-      "."
-    ),
-    /*#__PURE__*/React.createElement("button", {
-      onClick: () => setShowPremiumInfo(false),
-      style: { width: "100%", background: "none", border: "none", color: "rgba(255,255,255,0.2)", fontSize: "13px", cursor: "pointer", fontFamily: "inherit", padding: "8px" }
-    }, "Close")
-  )), showChangePw && /*#__PURE__*/React.createElement("div", {
+  }, "Liri \xB7 getliri.com")))), showChangePw && /*#__PURE__*/React.createElement("div", {
     onClick: () => { if (!changePwWorking && !changePwDone) setShowChangePw(false); },
     style: { position: "fixed", inset: 0, zIndex: 400, background: "rgba(0,0,0,0.7)", backdropFilter: "blur(4px)", display: "flex", alignItems: "flex-end", justifyContent: "center" }
   }, /*#__PURE__*/React.createElement("div", {
@@ -6080,7 +5950,26 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
       fontFamily: "inherit",
       opacity: isResyncing ? 0.4 : 1
     }
-  }, "\u21BB Resync")), (() => {
+  }, "\u21BB Resync"), lyricsEditorTrack?.trackId && lyrics.length > 0 && /*#__PURE__*/React.createElement("button", {
+    onClick: handleReportWrongLyrics,
+    disabled: wrongLyricsReporting || wrongLyricsReportedId === String(lyricsEditorTrack.trackId),
+    style: {
+      background: "rgba(255,255,255,0.04)",
+      border: "1px solid rgba(255,255,255,0.12)",
+      color: wrongLyricsReportedId === String(lyricsEditorTrack.trackId) ? "rgba(212,168,70,0.8)" : "rgba(255,255,255,0.48)",
+      borderRadius: "50px",
+      padding: isLandscape ? "7px 14px" : "10px 22px",
+      fontSize: isLandscape ? "11px" : "12px",
+      fontWeight: "500",
+      cursor: wrongLyricsReporting ? "wait" : "pointer",
+      fontFamily: "inherit",
+      opacity: wrongLyricsReporting ? 0.55 : 1
+    }
+  }, wrongLyricsReportedId === String(lyricsEditorTrack.trackId)
+    ? "Report sent \u2713"
+    : wrongLyricsReporting ? "Sending\u2026" : "Report wrong lyrics"), wrongLyricsReportError && /*#__PURE__*/React.createElement("div", {
+    style: { width: "100%", color: "#c9807a", fontSize: "11px", textAlign: "center", marginTop: "4px" }
+  }, wrongLyricsReportError)), (() => {
     // Prefer library (turntableTracksRef) over iTunes (albumTracks) whenever available
     const hasTT = turntableAlbum && turntableTracksRef.current.length > 0 && turntableMatchedIdxRef.current >= 0;
     const isTT = !vinylMode && hasTT;
@@ -6217,7 +6106,7 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
       color: "rgba(255,255,255,0.1)",
       letterSpacing: "1px"
     }
-  }, "v", APP_VERSION))), !isSyncing && /*#__PURE__*/React.createElement("div", {
+  }))), !isSyncing && /*#__PURE__*/React.createElement("div", {
     style: {
       position: "relative",
       zIndex: 10,
@@ -6254,7 +6143,7 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
       color: "rgba(255,255,255,0.15)",
       fontWeight: "400"
     }
-  }, "v", APP_VERSION), /*#__PURE__*/React.createElement("div", {
+  }), /*#__PURE__*/React.createElement("div", {
     style: {
       fontSize: "16px",
       letterSpacing: "10px",
@@ -7108,85 +6997,7 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
       key: i,
       style: { overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }
     }, (i + 1) + ". " + (t.trackName || ""))))))));
-  })()), mode === "limit" && /*#__PURE__*/React.createElement("div", {
-    style: {
-      maxWidth: "300px",
-      animation: "fade-up 0.3s ease both",
-      textAlign: "center"
-    }
-  }, /*#__PURE__*/React.createElement(Vinyl, {
-    size: 100,
-    spinning: false
-  }), /*#__PURE__*/React.createElement("div", {
-    style: {
-      marginTop: "32px",
-      fontSize: "22px",
-      fontWeight: "700",
-      color: "#f0e6d3",
-      marginBottom: "12px"
-    }
-  }, "Your free crate is full"), /*#__PURE__*/React.createElement("div", {
-    style: {
-      color: "rgba(255,255,255,0.4)",
-      marginBottom: "36px",
-      lineHeight: "1.8",
-      fontSize: "15px"
-    }
-  }, "You've added 10 free records.", /*#__PURE__*/React.createElement("br", null), "Upgrade to keep building your collection."),
-  /* Monthly / Lifetime toggle */
-  /*#__PURE__*/React.createElement("div", {
-    style: { display: "flex", gap: "6px", background: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.06)", borderRadius: "50px", padding: "4px", marginBottom: "16px" }
-  },
-    ["monthly", "lifetime"].map(p =>
-      /*#__PURE__*/React.createElement("button", {
-        key: p,
-        onClick: () => setPremiumPlan(p),
-        style: { flex: "1", background: premiumPlan === p ? "linear-gradient(135deg,#d4a846,#c9807a)" : "transparent", color: premiumPlan === p ? "#080810" : "rgba(255,255,255,0.5)", border: "none", borderRadius: "50px", padding: "9px 12px", fontSize: "12px", fontWeight: "700", cursor: "pointer", fontFamily: "inherit" }
-      }, p === "monthly" ? "Monthly" : "Lifetime")
-    )
-  ),
-  IS_IOS
-    ? /*#__PURE__*/React.createElement(React.Fragment, null,
-        /*#__PURE__*/React.createElement("button", {
-          onClick: () => upgradeWithApple(premiumPlan),
-          disabled: iapWorking,
-          style: { background: "linear-gradient(135deg,#d4a846,#c9807a)", color: "#080810", border: "none", borderRadius: "50px", padding: "14px 32px", fontSize: "14px", fontWeight: "700", cursor: "pointer", fontFamily: "inherit", marginBottom: "8px", width: "100%", opacity: iapWorking ? 0.6 : 1 }
-        }, iapWorking ? "Processing…" : (premiumPlan === "monthly" ? `Subscribe · ${iapPrice}` : "Get Lifetime · $24.99")),
-        /*#__PURE__*/React.createElement("button", {
-          onClick: restoreApplePurchases,
-          disabled: iapWorking,
-          style: { background: "none", border: "none", color: "rgba(255,255,255,0.3)", fontSize: "12px", cursor: "pointer", fontFamily: "inherit", padding: "8px", marginBottom: "4px" }
-        }, "Restore Purchases"))
-    : /*#__PURE__*/React.createElement("button", {
-        onClick: () => upgradeToStripe(premiumPlan),
-        disabled: upgradeWorking,
-        style: {
-          background: "linear-gradient(135deg,#d4a846,#c9807a)",
-          color: "#080810",
-          border: "none",
-          borderRadius: "50px",
-          padding: "14px 32px",
-          fontSize: "14px",
-          fontWeight: "700",
-          cursor: "pointer",
-          fontFamily: "inherit",
-          marginBottom: "12px",
-          width: "100%",
-          opacity: upgradeWorking ? 0.6 : 1
-        }
-      }, upgradeWorking ? "Opening checkout…" : (premiumPlan === "monthly" ? "Upgrade to Premium · $2/mo" : "Get Lifetime · $20")), /*#__PURE__*/React.createElement("button", {
-    onClick: () => setMode("idle"),
-    style: {
-      background: "none",
-      border: "1px solid rgba(255,255,255,0.1)",
-      color: "rgba(255,255,255,0.3)",
-      borderRadius: "50px",
-      padding: "10px 28px",
-      fontSize: "13px",
-      cursor: "pointer",
-      fontFamily: "inherit"
-    }
-  }, "Maybe later")))));
+  })()))));
 }
 ReactDOM.createRoot(document.getElementById("root")).render(
   /*#__PURE__*/React.createElement(React.Fragment, null,

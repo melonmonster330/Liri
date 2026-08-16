@@ -160,8 +160,8 @@ CREATE POLICY "Auth insert lyric cache"
 
 -- -----------------------------------------------------------
 -- user_usage
--- Freemium recognition counter per user.
--- 10 free recognitions per account; test@test.com is unlimited.
+-- Legacy recognition counter per user.
+-- No limit is enforced any more — recognition is free and unlimited.
 -- Read and upserted by index.html on every recognition.
 -- -----------------------------------------------------------
 CREATE TABLE IF NOT EXISTS user_usage (

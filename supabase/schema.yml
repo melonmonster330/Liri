@@ -88,8 +88,8 @@ tables:
   # ── Per-user data ─────────────────────────────────────────────────────────────
 
   user_usage:
-    purpose: Freemium recognition counter. 10 free recognitions per account.
-             test@test.com is hardcoded as unlimited in the app.
+    purpose: Legacy recognition counter. No limit is enforced any more —
+             recognition is free and unlimited for everyone.
     written_by: index.html (insert on first use, upsert on every recognition)
     read_by: index.html (on auth load)
     rls: users read/write only their own row

@@ -14,7 +14,7 @@
 -- zero joins.
 --
 -- Lyric posts additionally store the quoted text and an optional
--- timestamp window (start/end ms) so a future premium feature can play
+-- timestamp window (start/end ms) so a future feature can play
 -- the matching ~seconds of audio for that line.
 --
 -- Visibility is per-post (an auto-post can be private even on a public

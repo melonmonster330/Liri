@@ -137,7 +137,7 @@
   var IS_IOS = !!window.Capacitor;
   var TRANSCRIBE_PROXY = window.Capacitor ? "https://www.getliri.com/api/transcribe" : "/api/transcribe";
   var ITUNES_PROXY = window.Capacitor ? "https://www.getliri.com/api/itunes-lookup" : "/api/itunes-lookup";
-  var SYNC_PLAYBACK_RATE = 1.0315;
+  var SYNC_PLAYBACK_RATE = 1.028;
 
   // app/ios/iap.js
   function getLiriIAP() {
@@ -407,7 +407,7 @@
   }
 
   // app/src/hooks/useLyricScroll.js
-  var { useRef: useRef2, useEffect: useEffect3, useLayoutEffect } = React;
+  var { useRef: useRef2, useState: useState2, useEffect: useEffect3, useLayoutEffect } = React;
   var ACTIVE_LINE_CENTER_OFFSET_PX = 48;
   function useLyricScroll({
     mode,
@@ -437,6 +437,7 @@
     const rollRafRef = useRef2(null);
     const centeredLineRef = useRef2(null);
     const lastActiveIndexRef = useRef2(currentIndex);
+    const [refollowDirection, setRefollowDirection] = useState2("up");
     const focusStrengthRef = useRef2(focusStrength);
     focusStrengthRef.current = focusStrength;
     const updateLyricEmphasis = () => {
@@ -444,16 +445,16 @@
       if (!container || lyricsUnsynced) return;
       const lines = Array.from(container.querySelectorAll("[data-lyric-line]"));
       if (!lines.length) return;
-      const containerRect = container.getBoundingClientRect();
-      const focusY = containerRect.top + container.clientHeight / 2 - ACTIVE_LINE_CENTER_OFFSET_PX;
+      const activeLine = currentLineRef.current;
+      const activeIndex = activeLine ? lines.indexOf(activeLine) : -1;
       const strength = focusStrengthRef.current;
-      const updates = lines.map((line) => {
-        const rect = line.getBoundingClientRect();
-        const distance = Math.abs(rect.top + rect.height / 2 - focusY);
+      const updates = lines.map((line, index) => {
+        const distance = activeIndex >= 0 ? Math.abs(index - activeIndex) : Infinity;
         let targetOpacity;
-        if (distance <= 22) targetOpacity = 1;
-        else if (distance <= 70) targetOpacity = 1 - (distance - 22) / 48 * 0.75;
-        else if (distance <= 165) targetOpacity = 0.25 - (distance - 70) / 95 * 0.15;
+        if (distance === 0) targetOpacity = 1;
+        else if (distance === 1) targetOpacity = 0.25;
+        else if (distance === 2) targetOpacity = 0.15;
+        else if (distance === 3) targetOpacity = 0.08;
         else targetOpacity = 0.04;
         if (line.dataset.creditLine === "true") {
           targetOpacity = Math.min(0.55, targetOpacity);
@@ -466,6 +467,15 @@
           line.style.setProperty("--lyric-opacity", opacity);
         }
       });
+    };
+    const updateRefollowDirection = () => {
+      const container = lyricsScrollRef.current;
+      const line = currentLineRef.current;
+      if (!container || !line || lyricsUnsynced) return;
+      const containerRect = container.getBoundingClientRect();
+      const lineRect = line.getBoundingClientRect();
+      const focusY = containerRect.top + container.clientHeight / 2 - ACTIVE_LINE_CENTER_OFFSET_PX;
+      setRefollowDirection(lineRect.top + lineRect.height / 2 > focusY ? "down" : "up");
     };
     const centerActiveLine = () => {
       const container = lyricsScrollRef.current;
@@ -520,6 +530,7 @@
       if (isEnteringFromIntro || isNewVisibleLine) rollActiveLineToCenter();
       else if (line && (!previousLine || !previousLine.isConnected)) centerActiveLine();
       updateLyricEmphasis();
+      if (userScrollingRef.current) updateRefollowDirection();
     }, [currentIndex, mode, lyricsUnsynced, lyrics.length, Math.floor(playbackTime), focusStrength]);
     useEffect3(() => {
       const container = lyricsScrollRef.current;
@@ -596,6 +607,7 @@
       setPlaybackTime(targetTime);
       userScrollingRef.current = false;
       setUserScrolling(false);
+      clearTimeout(refollowTimerRef.current);
     };
     const refollow = () => {
       userScrollingRef.current = false;
@@ -609,6 +621,7 @@
       rollRafRef.current = null;
       userScrollingRef.current = true;
       setUserScrolling(true);
+      updateRefollowDirection();
       clearTimeout(refollowTimerRef.current);
       refollowTimerRef.current = setTimeout(() => refollow(), 1e4);
     };
@@ -621,14 +634,13 @@
       const lineRect = line.getBoundingClientRect();
       const lineCenter = lineRect.top - containerRect.top + container.scrollTop + lineRect.height / 2;
       container.scrollTop = Math.max(0, lineCenter - container.clientHeight / 2 + ACTIVE_LINE_CENTER_OFFSET_PX);
-      updateLyricEmphasis();
       return true;
     };
-    return { lyricsUnsynced, lyricsScrollRef, seekToLine, browseToLine, refollow, noteUserScroll };
+    return { lyricsUnsynced, lyricsScrollRef, seekToLine, browseToLine, refollow, noteUserScroll, refollowDirection };
   }
 
   // app/src/hooks/useCast.js
-  var { useState: useState2, useEffect: useEffect4, useRef: useRef3, useCallback } = React;
+  var { useState: useState3, useEffect: useEffect4, useRef: useRef3, useCallback } = React;
   var CAST_APP_ID = "2FBB66AA";
   var CAST_NAMESPACE = "urn:x-cast:com.getliri.lyrics";
   var CAST_SDK_URL = "https://www.gstatic.com/cv/js/sender/v1/cast_sender.js?loadCastFramework=1";
@@ -673,10 +685,10 @@
   }
   function useCast({ mode, song, lyrics, playbackTime, isPaused }) {
     const supported = !window.Capacitor && !!window.chrome;
-    const [ready, setReady] = useState2(false);
-    const [connected, setConnected] = useState2(false);
-    const [deviceName, setDeviceName] = useState2(null);
-    const [error, setError] = useState2(null);
+    const [ready, setReady] = useState3(false);
+    const [connected, setConnected] = useState3(false);
+    const [deviceName, setDeviceName] = useState3(null);
+    const [error, setError] = useState3(null);
     const snapshotRef = useRef3(null);
     const castSong = song ? {
       title: song.title || "",
@@ -1148,11 +1160,11 @@
   }
 
   // app/base/components/ProgressRing.js
-  var { useState: useState3, useEffect: useEffect6 } = React;
+  var { useState: useState4, useEffect: useEffect6 } = React;
   function ProgressRing({ size = 96 }) {
     const r = size / 2 - 5;
     const circ = 2 * Math.PI * r;
-    const [t, setT] = useState3(0);
+    const [t, setT] = useState4(0);
     useEffect6(() => {
       const start = Date.now();
       const id = setInterval(() => setT((Date.now() - start) % 3e4 / 3e4), 50);
@@ -1203,10 +1215,10 @@
   }
 
   // app/base/components/LyricsEditorSheet.js
-  var { useState: useState4 } = React;
+  var { useState: useState5 } = React;
   var e = React.createElement;
   function LyricsEditorSheet({ track, sites, saving, error, onSave, onClose }) {
-    const [text, setText] = useState4("");
+    const [text, setText] = useState5("");
     const openSite = (url) => window.open(url, window.Capacitor ? "_system" : "_blank");
     return e("div", {
       onClick: onClose,
@@ -1271,7 +1283,7 @@
       e(
         "div",
         {
-          style: { overflowY: "auto", flex: 1, minHeight: 0, padding: "8px 24px", WebkitOverflowScrolling: "touch", paddingBottom: "max(24px, env(safe-area-inset-bottom))" }
+          style: { overflowY: "auto", flex: 1, minHeight: 0, padding: "8px 24px", WebkitOverflowScrolling: "touch", paddingBottom: "max(32px, calc(env(safe-area-inset-bottom) + 24px))" }
         },
         e(
           "div",
@@ -1342,7 +1354,7 @@
   }
 
   // app/base/components/SideInfoSheet.js
-  var { useState: useState5 } = React;
+  var { useState: useState6 } = React;
   var e2 = React.createElement;
   function lettersFromBreaks(count, breakSet) {
     const out = [];
@@ -1354,7 +1366,7 @@
     return out;
   }
   function SideInfoSheet({ tracks, initialBreaks, saving, error, onSave, onClose }) {
-    const [breaks, setBreaks] = useState5(() => {
+    const [breaks, setBreaks] = useState6(() => {
       if (initialBreaks?.length) return new Set(initialBreaks.filter((i) => i > 0));
       return /* @__PURE__ */ new Set([Math.ceil((tracks?.length || 0) / 2)]);
     });
@@ -1430,7 +1442,7 @@
       e2(
         "div",
         {
-          style: { overflowY: "auto", flex: 1, minHeight: 0, padding: "8px 24px", WebkitOverflowScrolling: "touch" }
+          style: { overflowY: "auto", flex: 1, minHeight: 0, padding: "8px 24px 32px", WebkitOverflowScrolling: "touch" }
         },
         (tracks || []).map((t, i) => {
           const startsSide = i === 0 || breaks.has(i);
@@ -1550,7 +1562,7 @@
 
   // app/src/main.js
   var {
-    useState: useState6,
+    useState: useState7,
     useEffect: useEffect7,
     useRef: useRef5,
     useCallback: useCallback2
@@ -1646,27 +1658,27 @@
     );
   }
   function Liri() {
-    const [mode, setMode] = useState6("idle");
-    const [detectedSong, setDetectedSong] = useState6(null);
-    const [identifiedBy, setIdentifiedBy] = useState6(null);
-    const [songDuration, setSongDuration] = useState6(null);
-    const [lyrics, setLyrics] = useState6([]);
-    const [currentIndex, setCurrentIndex] = useState6(0);
-    const [playbackTime, setPlaybackTime] = useState6(0);
-    const [error, setError] = useState6(null);
-    const [listenProgress, setListenProgress] = useState6(0);
-    const [liveTranscript, setLiveTranscript] = useState6("");
-    const [listenAttempt, setListenAttempt] = useState6(0);
-    const [listenSecs, setListenSecs] = useState6(0);
-    const [showSettings, setShowSettings] = useState6(false);
-    const [isWide, setIsWide] = useState6(() => window.innerWidth >= 768);
+    const [mode, setMode] = useState7("idle");
+    const [detectedSong, setDetectedSong] = useState7(null);
+    const [identifiedBy, setIdentifiedBy] = useState7(null);
+    const [songDuration, setSongDuration] = useState7(null);
+    const [lyrics, setLyrics] = useState7([]);
+    const [currentIndex, setCurrentIndex] = useState7(0);
+    const [playbackTime, setPlaybackTime] = useState7(0);
+    const [error, setError] = useState7(null);
+    const [listenProgress, setListenProgress] = useState7(0);
+    const [liveTranscript, setLiveTranscript] = useState7("");
+    const [listenAttempt, setListenAttempt] = useState7(0);
+    const [listenSecs, setListenSecs] = useState7(0);
+    const [showSettings, setShowSettings] = useState7(false);
+    const [isWide, setIsWide] = useState7(() => window.innerWidth >= 768);
     useEffect7(() => {
       const onResize = () => setIsWide(window.innerWidth >= 768);
       window.addEventListener("resize", onResize);
       return () => window.removeEventListener("resize", onResize);
     }, []);
-    const [isLandscape, setIsLandscape] = useState6(() => window.innerWidth > window.innerHeight && window.innerWidth >= 600);
-    const [winW, setWinW] = useState6(window.innerWidth);
+    const [isLandscape, setIsLandscape] = useState7(() => window.innerWidth > window.innerHeight && window.innerWidth >= 600);
+    const [winW, setWinW] = useState7(window.innerWidth);
     useEffect7(() => {
       const onResize = () => {
         setIsLandscape(window.innerWidth > window.innerHeight && window.innerWidth >= 600);
@@ -1675,7 +1687,7 @@
       window.addEventListener("resize", onResize);
       return () => window.removeEventListener("resize", onResize);
     }, []);
-    const [controlsVisible, setControlsVisible] = useState6(false);
+    const [controlsVisible, setControlsVisible] = useState7(false);
     const menuWasOpenRef = useRef5(false);
     const railW = Math.min(270, Math.max(190, Math.round(winW * 0.26)));
     const menuOpen = isLandscape && controlsVisible;
@@ -1692,41 +1704,41 @@
       2,
       Math.max(1.6, 1.6 + (lyricPanelWidth - 320) / 500 * 0.4)
     );
-    const [showBugReport, setShowBugReport] = useState6(false);
-    const [bugText, setBugText] = useState6("");
-    const [bugSending, setBugSending] = useState6(false);
-    const [bugSent, setBugSent] = useState6(false);
-    const [showPremiumInfo, setShowPremiumInfo] = useState6(false);
-    const [showDeleteAccount, setShowDeleteAccount] = useState6(false);
-    const [deleteWorking, setDeleteWorking] = useState6(false);
-    const [deleteError, setDeleteError] = useState6(null);
-    const [showChangePw, setShowChangePw] = useState6(false);
-    const [changePwNew, setChangePwNew] = useState6("");
-    const [changePwConfirm, setChangePwConfirm] = useState6("");
-    const [changePwWorking, setChangePwWorking] = useState6(false);
-    const [changePwError, setChangePwError] = useState6(null);
-    const [changePwDone, setChangePwDone] = useState6(false);
-    const [showHistory, setShowHistory] = useState6(false);
-    const [showTrackList, setShowTrackList] = useState6(false);
-    const [showNowPlayingList, setShowNowPlayingList] = useState6(false);
-    const [collapsedSides, setCollapsedSides] = useState6(/* @__PURE__ */ new Set());
+    const [showBugReport, setShowBugReport] = useState7(false);
+    const [bugText, setBugText] = useState7("");
+    const [bugSending, setBugSending] = useState7(false);
+    const [bugSent, setBugSent] = useState7(false);
+    const [showPremiumInfo, setShowPremiumInfo] = useState7(false);
+    const [showDeleteAccount, setShowDeleteAccount] = useState7(false);
+    const [deleteWorking, setDeleteWorking] = useState7(false);
+    const [deleteError, setDeleteError] = useState7(null);
+    const [showChangePw, setShowChangePw] = useState7(false);
+    const [changePwNew, setChangePwNew] = useState7("");
+    const [changePwConfirm, setChangePwConfirm] = useState7("");
+    const [changePwWorking, setChangePwWorking] = useState7(false);
+    const [changePwError, setChangePwError] = useState7(null);
+    const [changePwDone, setChangePwDone] = useState7(false);
+    const [showHistory, setShowHistory] = useState7(false);
+    const [showTrackList, setShowTrackList] = useState7(false);
+    const [showNowPlayingList, setShowNowPlayingList] = useState7(false);
+    const [collapsedSides, setCollapsedSides] = useState7(/* @__PURE__ */ new Set());
     const toggleSideCollapse = (side) => setCollapsedSides((prev) => {
       const n = new Set(prev);
       n.has(side) ? n.delete(side) : n.add(side);
       return n;
     });
-    const [user, setUser] = useState6(null);
-    const [authLoading, setAuthLoading] = useState6(true);
-    const [authMode, setAuthMode] = useState6("signin");
-    const [authEmail, setAuthEmail] = useState6("");
-    const [authPassword, setAuthPassword] = useState6("");
-    const [showPw, setShowPw] = useState6(false);
-    const [authConfirmPw, setAuthConfirmPw] = useState6("");
-    const [authName, setAuthName] = useState6("");
-    const [authError, setAuthError] = useState6(null);
-    const [authWorking, setAuthWorking] = useState6(false);
-    const [authSheet, setAuthSheet] = useState6(null);
-    const [authVerifyPending, setAuthVerifyPending] = useState6(false);
+    const [user, setUser] = useState7(null);
+    const [authLoading, setAuthLoading] = useState7(true);
+    const [authMode, setAuthMode] = useState7("signin");
+    const [authEmail, setAuthEmail] = useState7("");
+    const [authPassword, setAuthPassword] = useState7("");
+    const [showPw, setShowPw] = useState7(false);
+    const [authConfirmPw, setAuthConfirmPw] = useState7("");
+    const [authName, setAuthName] = useState7("");
+    const [authError, setAuthError] = useState7(null);
+    const [authWorking, setAuthWorking] = useState7(false);
+    const [authSheet, setAuthSheet] = useState7(null);
+    const [authVerifyPending, setAuthVerifyPending] = useState7(false);
     const isUnlimited = (u) => true;
     const sessionTokenRef = useRef5(null);
     const {
@@ -1744,83 +1756,86 @@
       restoreApplePurchases,
       upgradeToStripe
     } = usePayments({ sb, sessionTokenRef });
-    const [history, setHistory] = useState6([]);
-    const [historyLoading, setHistoryLoading] = useState6(false);
+    const [history, setHistory] = useState7([]);
+    const [historyLoading, setHistoryLoading] = useState7(false);
     const vinylMode = true;
     const autoAdvanceFiredRef = useRef5(false);
     const sideEndTimerRef = useRef5(null);
-    const [turntableAlbum, setTurntableAlbum] = useState6(() => {
+    const [turntableAlbum, setTurntableAlbum] = useState7(() => {
       try {
         return JSON.parse(localStorage.getItem("liri_turntable") || "null");
       } catch {
         return null;
       }
     });
-    const [showAlbumPicker, setShowAlbumPicker] = useState6(false);
-    const [userLibrary, setUserLibrary] = useState6([]);
-    const [libLoading, setLibLoading] = useState6(false);
-    const [recentPlayedIds, setRecentPlayedIds] = useState6([]);
-    const [turntableTracksLoading, setTurntableTracksLoading] = useState6(false);
-    const [turntableTracksProgress, setTurntableTracksProgress] = useState6({ percent: 0, stage: "" });
+    const [showAlbumPicker, setShowAlbumPicker] = useState7(false);
+    const [userLibrary, setUserLibrary] = useState7([]);
+    const [libLoading, setLibLoading] = useState7(false);
+    const [recentPlayedIds, setRecentPlayedIds] = useState7([]);
+    const [turntableTracksLoading, setTurntableTracksLoading] = useState7(false);
+    const [turntableTracksProgress, setTurntableTracksProgress] = useState7({ percent: 0, stage: "" });
     const turntableAlbumRef = useRef5(turntableAlbum);
     const turntableTracksRef = useRef5([]);
     const turntableMatchedIdxRef = useRef5(-1);
     const turntableLyricsCacheRef = useRef5({});
     const wordsDataRef = useRef5({});
     const autoRetryCountRef = useRef5(0);
-    const [albumTracks, setAlbumTracks] = useState6([]);
-    const [currentTrackIndex, setCurrentTrackIndex] = useState6(-1);
+    const [albumTracks, setAlbumTracks] = useState7([]);
+    const [currentTrackIndex, setCurrentTrackIndex] = useState7(-1);
     const albumTracksRef = useRef5([]);
     const currentTrackIndexRef = useRef5(-1);
-    const [isResyncing, setIsResyncing] = useState6(false);
-    const [isNeedleDrop, setIsNeedleDrop] = useState6(false);
-    const [keepScreenAwake, setKeepScreenAwake] = useState6(() => localStorage.getItem("liri_keep_awake") === "true");
+    const [isResyncing, setIsResyncing] = useState7(false);
+    const [isNeedleDrop, setIsNeedleDrop] = useState7(false);
+    const [keepScreenAwake, setKeepScreenAwake] = useState7(() => localStorage.getItem("liri_keep_awake") === "true");
     const wakeLockRef = useRef5(null);
-    const [isPaused, setIsPaused] = useState6(false);
-    const [showCast, setShowCast] = useState6(false);
+    const [isPaused, setIsPaused] = useState7(false);
+    const [showCast, setShowCast] = useState7(false);
     const cast = useCast({ mode, song: detectedSong, lyrics, playbackTime, isPaused });
-    const [kbToast, setKbToast] = useState6(null);
+    const [kbToast, setKbToast] = useState7(null);
     const kbToastTimerRef = useRef5(null);
     const lyricTypeaheadRef = useRef5("");
     const lyricTypeaheadTimerRef = useRef5(null);
-    const [shouldAdvanceTrack, setShouldAdvanceTrack] = useState6(false);
-    const [sideEndReason, setSideEndReason] = useState6("failed");
-    const [sideEndNextDiscInfo, setSideEndNextDiscInfo] = useState6(null);
-    const [showSideEndPicker, setShowSideEndPicker] = useState6(false);
+    const [shouldAdvanceTrack, setShouldAdvanceTrack] = useState7(false);
+    const [sideEndReason, setSideEndReason] = useState7("failed");
+    const [sideEndNextDiscInfo, setSideEndNextDiscInfo] = useState7(null);
+    const [showSideEndPicker, setShowSideEndPicker] = useState7(false);
     const flipChimeTimersRef = useRef5([]);
     const flipStartDelayMsRef = useRef5(0);
-    const [albumCollectionId, setAlbumCollectionId] = useState6(null);
+    const [albumCollectionId, setAlbumCollectionId] = useState7(null);
     const albumCollectionIdRef = useRef5(null);
     const albumTpsRef = useRef5(0);
-    const [vinylDbRelease, setVinylDbRelease] = useState6(null);
+    const [vinylDbRelease, setVinylDbRelease] = useState7(null);
     const vinylDbReleaseRef = useRef5(null);
     const vinylSidesRef = useRef5([]);
-    const [sideDataMissing, setSideDataMissing] = useState6(false);
-    const [showSideInfoSheet, setShowSideInfoSheet] = useState6(false);
-    const [showLyricsEditor, setShowLyricsEditor] = useState6(false);
-    const [userMetaSaving, setUserMetaSaving] = useState6(false);
-    const [userMetaError, setUserMetaError] = useState6(null);
-    const [scrollSpeed, setScrollSpeed] = useState6(() => {
+    const [sideDataMissing, setSideDataMissing] = useState7(false);
+    const [showSideInfoSheet, setShowSideInfoSheet] = useState7(false);
+    const [showLyricsEditor, setShowLyricsEditor] = useState7(false);
+    const [wrongLyricsReporting, setWrongLyricsReporting] = useState7(false);
+    const [wrongLyricsReportedId, setWrongLyricsReportedId] = useState7(null);
+    const [wrongLyricsReportError, setWrongLyricsReportError] = useState7(null);
+    const [userMetaSaving, setUserMetaSaving] = useState7(false);
+    const [userMetaError, setUserMetaError] = useState7(null);
+    const [scrollSpeed, setScrollSpeed] = useState7(() => {
       const v = parseFloat(localStorage.getItem("liri_scroll_speed"));
       return isNaN(v) ? 1 : Math.min(4, Math.max(0.25, v));
     });
     const scrollSpeedRef = useRef5(scrollSpeed);
-    const [lyricFontScale, setLyricFontScale] = useState6(() => {
+    const [lyricFontScale, setLyricFontScale] = useState7(() => {
       const v = parseFloat(localStorage.getItem("liri_lyric_font_scale"));
       return isNaN(v) ? 1 : Math.min(2, Math.max(0.8, v));
     });
     const responsiveLyricFontScale = Math.min(lyricFontScale, responsiveLyricFontScaleCap);
     const effectiveLyricFontScale = responsiveLyricFontScale * layoutLyricFontScale;
-    const [flipSound, setFlipSound] = useState6(() => localStorage.getItem("liri_flip_sound") !== "false");
-    const [flipNotify, setFlipNotify] = useState6(() => localStorage.getItem("liri_flip_notify") === "true");
-    const [notifyDenied, setNotifyDenied] = useState6(false);
-    const [keepAwakeError, setKeepAwakeError] = useState6(false);
-    const [nudgeMenu, setNudgeMenu] = useState6(null);
+    const [flipSound, setFlipSound] = useState7(() => localStorage.getItem("liri_flip_sound") !== "false");
+    const [flipNotify, setFlipNotify] = useState7(() => localStorage.getItem("liri_flip_notify") === "true");
+    const [notifyDenied, setNotifyDenied] = useState7(false);
+    const [keepAwakeError, setKeepAwakeError] = useState7(false);
+    const [nudgeMenu, setNudgeMenu] = useState7(null);
     const nudgeMenuTimerRef = useRef5(null);
-    const [showOnboarding, setShowOnboarding] = useState6(false);
-    const [onboardingStep, setOnboardingStep] = useState6(0);
+    const [showOnboarding, setShowOnboarding] = useState7(false);
+    const [onboardingStep, setOnboardingStep] = useState7(0);
     const ONBOARDING_STEPS = 6;
-    const [coachStep, setCoachStep] = useState6(0);
+    const [coachStep, setCoachStep] = useState7(0);
     const dismissOnboarding = () => {
       localStorage.setItem("liri_onboarding_done", "true");
       setShowOnboarding(false);
@@ -1861,7 +1876,7 @@
     const currentLineRef = useRef5(null);
     const creditsRef = useRef5(null);
     const userScrollingRef = useRef5(false);
-    const [userScrolling, setUserScrolling] = useState6(false);
+    const [userScrolling, setUserScrolling] = useState7(false);
     const refollowTimerRef = useRef5(null);
     const scrollInhibitTimer = useRef5(null);
     const listenSessionRef = useRef5(0);
@@ -1871,9 +1886,9 @@
     const lastRawMatchRef = useRef5(null);
     const autoPostVisRef = useRef5("off");
     const autoPostedAlbumsRef = useRef5(/* @__PURE__ */ new Set());
-    const [audioLevel, setAudioLevel] = useState6(0);
-    const [lastSong, setLastSong] = useState6(null);
-    const [hoverNudge, setHoverNudge] = useState6(null);
+    const [audioLevel, setAudioLevel] = useState7(0);
+    const [lastSong, setLastSong] = useState7(null);
+    const [hoverNudge, setHoverNudge] = useState7(null);
     useEffect7(() => {
       lyricsRef.current = lyrics;
     }, [lyrics]);
@@ -2565,6 +2580,37 @@
       }
       setUserMetaSaving(false);
     };
+    const handleReportWrongLyrics = async () => {
+      const track = currentTrackIndex >= 0 ? turntableTracksRef.current[currentTrackIndex] : null;
+      if (!track?.trackId || wrongLyricsReporting) return;
+      setWrongLyricsReporting(true);
+      setWrongLyricsReportError(null);
+      try {
+        const { error: error2 } = await sb.from("bug_reports").insert({
+          user_id: user?.id || null,
+          user_email: user?.email || null,
+          app_version: APP_VERSION,
+          platform: window.Capacitor ? "ios" : "web",
+          description: `Wrong lyrics reported for ${track.trackName || detectedSong?.title || "Unknown song"}`,
+          meta: {
+            category: "wrong_lyrics",
+            report_source: "sync_player",
+            itunes_track_id: String(track.trackId),
+            track_name: track.trackName || detectedSong?.title || null,
+            artist_name: track.artistName || detectedSong?.artist || null,
+            album_name: track.collectionName || turntableAlbum?.albumName || null,
+            lyric_source: turntableLyricsCacheRef.current[String(track.trackId)]?.source || null,
+            mode
+          }
+        });
+        if (error2) throw error2;
+        setWrongLyricsReportedId(String(track.trackId));
+        logButtonEvent2("wrong_lyrics_reported");
+      } catch (err) {
+        setWrongLyricsReportError(err?.message || "Couldn't send report \u2014 try again");
+      }
+      setWrongLyricsReporting(false);
+    };
     const handleSaveUserSides = async (letters) => {
       const alb = turntableAlbumRef.current;
       const tracks = turntableTracksRef.current;
@@ -2676,32 +2722,7 @@
         setUserScrolling(false);
       }
     }, [mode, detectedSong]);
-    useEffect7(() => {
-      if (!window.Capacitor) return;
-      if (mode !== "syncing") return;
-      let cancelled = false;
-      const startTimer = setTimeout(async () => {
-        if (cancelled) return;
-        try {
-          const result = await Shazam.waitForSilence({ timeout: 3e5 });
-          if (cancelled || !result.silence) return;
-          console.log("[silence] gap detected \u2014 advancing track");
-          const tTracks = turntableTracksRef.current;
-          const tIdx = turntableMatchedIdxRef.current;
-          if (tTracks.length > 0 && tIdx >= 0 && tIdx < tTracks.length) {
-            advanceToNextTrack(tTracks, tIdx);
-          }
-        } catch (e3) {
-          console.warn("[silence] waitForSilence failed:", e3);
-        }
-      }, 2e3);
-      return () => {
-        cancelled = true;
-        clearTimeout(startTimer);
-        Shazam.cancel();
-      };
-    }, [mode]);
-    const { lyricsUnsynced, lyricsScrollRef, seekToLine, browseToLine, refollow, noteUserScroll } = useLyricScroll({
+    const { lyricsUnsynced, lyricsScrollRef, seekToLine, browseToLine, refollow, noteUserScroll, refollowDirection } = useLyricScroll({
       mode,
       lyrics,
       lyricsRef,
@@ -5271,7 +5292,7 @@ Move closer to your speakers and try again.`);
         padding: "0 24px",
         flex: 1,
         minHeight: 0,
-        paddingBottom: "max(24px, env(safe-area-inset-bottom))",
+        paddingBottom: "max(32px, calc(env(safe-area-inset-bottom) + 24px))",
         WebkitOverflowScrolling: "touch"
       }
     }, turntableAlbum && /* @__PURE__ */ React.createElement("button", {
@@ -5417,7 +5438,7 @@ Move closer to your speakers and try again.`);
       onClick: () => setShowTrackList(false),
       style: { background: "rgba(255,255,255,0.07)", border: "none", color: "rgba(255,255,255,0.5)", width: 30, height: 30, borderRadius: "50%", cursor: "pointer", fontSize: 18, lineHeight: "1", display: "flex", alignItems: "center", justifyContent: "center", fontFamily: "inherit" }
     }, "\xD7")), /* @__PURE__ */ React.createElement("div", {
-      style: { flex: 1, minHeight: 0, overflowY: "auto", WebkitOverflowScrolling: "touch", padding: "0 24px 40px", display: "flex", flexDirection: "column", gap: "20px" }
+      style: { flex: 1, minHeight: 0, overflowY: "auto", WebkitOverflowScrolling: "touch", padding: "0 24px max(40px, calc(env(safe-area-inset-bottom) + 32px))", display: "flex", flexDirection: "column", gap: "20px" }
     }, (() => {
       const _wt = turntableTracksRef.current;
       if (!_wt.length) return null;
@@ -5464,6 +5485,7 @@ Move closer to your speakers and try again.`);
         borderRadius: "20px 0 0 20px",
         overflowY: "auto",
         WebkitOverflowScrolling: "touch",
+        paddingBottom: "max(32px, calc(env(safe-area-inset-bottom) + 24px))",
         boxShadow: "-8px 0 48px rgba(0,0,0,0.7)",
         animation: "slide-right 0.28s cubic-bezier(0.4,0,0.2,1)",
         zIndex: 201
@@ -5477,6 +5499,7 @@ Move closer to your speakers and try again.`);
         maxHeight: "88vh",
         overflowY: "auto",
         WebkitOverflowScrolling: "touch",
+        paddingBottom: "max(32px, calc(env(safe-area-inset-bottom) + 24px))",
         boxShadow: "0 -8px 48px rgba(0,0,0,0.6)",
         animation: "slide-up 0.3s ease",
         zIndex: 201
@@ -6109,7 +6132,7 @@ Move closer to your speakers and try again.`);
           fontSize: "11px",
           color: "rgba(255,255,255,0.1)"
         }
-      }, "Liri v", APP_VERSION, " \xB7 getliri.com")
+      }, "Liri \xB7 getliri.com")
     ))), showPremiumInfo && /* @__PURE__ */ React.createElement("div", {
       onClick: () => setShowPremiumInfo(false),
       style: { position: "fixed", inset: 0, zIndex: 400, background: "rgba(0,0,0,0.7)", backdropFilter: "blur(4px)", display: "flex", alignItems: "flex-end", justifyContent: "center" }
@@ -6296,7 +6319,7 @@ Move closer to your speakers and try again.`);
         flex: 1,
         minHeight: 0,
         WebkitOverflowScrolling: "touch",
-        padding: "0 24px max(24px, calc(env(safe-area-inset-bottom) + 16px))"
+        padding: "0 24px max(32px, calc(env(safe-area-inset-bottom) + 24px))"
       }
     }, historyLoading ? /* @__PURE__ */ React.createElement("div", {
       style: {
@@ -6704,7 +6727,27 @@ Move closer to your speakers and try again.`);
         fontWeight: "600",
         color: "rgba(255,255,255,0.7)"
       }
-    }, "Resyncing\u2026")), /* @__PURE__ */ React.createElement("div", {
+    }, "Resyncing\u2026")), userScrolling && !lyricsUnsynced && /* @__PURE__ */ React.createElement("button", {
+      onClick: refollow,
+      style: {
+        position: "fixed",
+        top: "max(62px, calc(env(safe-area-inset-top) + 50px))",
+        left: isLandscape ? lyricAreaLeft + lyricAreaW / 2 + "px" : "50%",
+        transform: "translateX(-50%)",
+        zIndex: 30,
+        background: "rgba(15,15,28,0.92)",
+        border: "1px solid rgba(212,168,70,0.45)",
+        boxShadow: "0 6px 22px rgba(0,0,0,0.38)",
+        color: "#d4a846",
+        borderRadius: "50px",
+        padding: "8px 16px",
+        fontSize: "12px",
+        fontWeight: "700",
+        cursor: "pointer",
+        fontFamily: "inherit",
+        whiteSpace: "nowrap"
+      }
+    }, (refollowDirection === "down" ? "\u2193" : "\u2191") + " Sync Lyrics"), /* @__PURE__ */ React.createElement("div", {
       ref: lyricsScrollRef,
       style: {
         overflowY: "auto",
@@ -7131,20 +7174,7 @@ Move closer to your speakers and try again.`);
         cursor: responsiveLyricFontScale >= responsiveLyricFontScaleCap - 1e-3 ? "default" : "pointer",
         opacity: responsiveLyricFontScale >= responsiveLyricFontScaleCap - 1e-3 ? 0.35 : 1
       }
-    }, "A+")), userScrolling && /* @__PURE__ */ React.createElement("button", {
-      onClick: refollow,
-      style: {
-        background: "rgba(212,168,70,0.12)",
-        border: "1px solid rgba(212,168,70,0.3)",
-        color: "rgba(212,168,70,0.8)",
-        borderRadius: "50px",
-        padding: isLandscape ? "7px 14px" : "10px 22px",
-        fontSize: isLandscape ? "12px" : "13px",
-        fontWeight: "500",
-        cursor: "pointer",
-        fontFamily: "inherit"
-      }
-    }, "\u2193 Follow"), /* @__PURE__ */ React.createElement("button", {
+    }, "A+")), /* @__PURE__ */ React.createElement("button", {
       onClick: togglePause,
       style: {
         background: isPaused ? "rgba(212,168,70,0.15)" : "rgba(255,255,255,0.07)",
@@ -7175,7 +7205,24 @@ Move closer to your speakers and try again.`);
         fontFamily: "inherit",
         opacity: isResyncing ? 0.4 : 1
       }
-    }, "\u21BB Resync")), (() => {
+    }, "\u21BB Resync"), lyricsEditorTrack?.trackId && lyrics.length > 0 && /* @__PURE__ */ React.createElement("button", {
+      onClick: handleReportWrongLyrics,
+      disabled: wrongLyricsReporting || wrongLyricsReportedId === String(lyricsEditorTrack.trackId),
+      style: {
+        background: "rgba(255,255,255,0.04)",
+        border: "1px solid rgba(255,255,255,0.12)",
+        color: wrongLyricsReportedId === String(lyricsEditorTrack.trackId) ? "rgba(212,168,70,0.8)" : "rgba(255,255,255,0.48)",
+        borderRadius: "50px",
+        padding: isLandscape ? "7px 14px" : "10px 22px",
+        fontSize: isLandscape ? "11px" : "12px",
+        fontWeight: "500",
+        cursor: wrongLyricsReporting ? "wait" : "pointer",
+        fontFamily: "inherit",
+        opacity: wrongLyricsReporting ? 0.55 : 1
+      }
+    }, wrongLyricsReportedId === String(lyricsEditorTrack.trackId) ? "Report sent \u2713" : wrongLyricsReporting ? "Sending\u2026" : "Report wrong lyrics"), wrongLyricsReportError && /* @__PURE__ */ React.createElement("div", {
+      style: { width: "100%", color: "#c9807a", fontSize: "11px", textAlign: "center", marginTop: "4px" }
+    }, wrongLyricsReportError)), (() => {
       const hasTT = turntableAlbum && turntableTracksRef.current.length > 0 && turntableMatchedIdxRef.current >= 0;
       const isTT = !vinylMode && hasTT;
       const isVM = vinylMode && (hasTT || albumTracks.length > 0) && currentTrackIndex >= 0;
@@ -7286,7 +7333,7 @@ Move closer to your speakers and try again.`);
           "div",
           {
             onClick: (e3) => e3.stopPropagation(),
-            style: { background: "#0e0e1a", borderRadius: "20px 20px 0 0", border: "1px solid rgba(255,255,255,0.09)", maxHeight: "80vh", overflow: "hidden", display: "flex", flexDirection: "column", paddingBottom: "max(24px, calc(env(safe-area-inset-bottom) + 12px))" }
+            style: { background: "#0e0e1a", borderRadius: "20px 20px 0 0", border: "1px solid rgba(255,255,255,0.09)", maxHeight: "80vh", overflow: "hidden", display: "flex", flexDirection: "column", paddingBottom: "max(32px, calc(env(safe-area-inset-bottom) + 24px))" }
           },
           /* @__PURE__ */ React.createElement(
             "div",
@@ -7347,7 +7394,7 @@ Move closer to your speakers and try again.`);
         color: "rgba(255,255,255,0.1)",
         letterSpacing: "1px"
       }
-    }, "v", APP_VERSION))), !isSyncing && /* @__PURE__ */ React.createElement("div", {
+    }))), !isSyncing && /* @__PURE__ */ React.createElement("div", {
       style: {
         position: "relative",
         zIndex: 10,
@@ -7384,7 +7431,7 @@ Move closer to your speakers and try again.`);
         color: "rgba(255,255,255,0.15)",
         fontWeight: "400"
       }
-    }, "v", APP_VERSION), /* @__PURE__ */ React.createElement("div", {
+    }), /* @__PURE__ */ React.createElement("div", {
       style: {
         fontSize: "16px",
         letterSpacing: "10px",
@@ -7699,6 +7746,7 @@ Move closer to your speakers and try again.`);
           overflowY: showTrackList ? "auto" : "visible",
           maxHeight: showTrackList ? "75vh" : "none",
           width: "100%",
+          paddingBottom: showTrackList ? "max(32px, calc(env(safe-area-inset-bottom) + 24px))" : 0,
           WebkitOverflowScrolling: "touch"
         }
       },
@@ -7766,7 +7814,7 @@ Move closer to your speakers and try again.`);
           // Warning when no curated/Discogs side data exists — track grouping is estimated
           !hasSideData(vinylSidesRef.current, vinylDbRelease?.vinyl_tracks) && (isWeb || showTrackList) && /* @__PURE__ */ React.createElement("div", { style: { fontSize: 11, color: "rgba(255,180,0,0.75)", marginBottom: 10, padding: "6px 11px", background: "rgba(255,180,0,0.07)", borderRadius: 8, border: "1px solid rgba(255,180,0,0.2)" } }, "\u26A0\uFE0E Side data pending \u2014 track order is estimated"),
           (isWeb || showTrackList) && /* @__PURE__ */ React.createElement("div", {
-            style: { display: "flex", flexDirection: "column", gap: "12px", maxHeight: isWeb ? "60vh" : "45vh", overflowY: "auto", WebkitOverflowScrolling: "touch" }
+            style: { display: "flex", flexDirection: "column", gap: "12px", maxHeight: isWeb ? "60vh" : "45vh", overflowY: "auto", WebkitOverflowScrolling: "touch", paddingBottom: "max(32px, calc(env(safe-area-inset-bottom) + 24px))" }
           }, groups.map(
             ({ side, tracks }) => /* @__PURE__ */ React.createElement(
               "div",
@@ -8241,7 +8289,7 @@ Move closer to your speakers and try again.`);
               background: "rgba(0,0,0,0.35)",
               border: "1px solid rgba(255,255,255,0.07)",
               borderRadius: "12px",
-              padding: "8px",
+              padding: "8px 8px max(32px, calc(env(safe-area-inset-bottom) + 24px))",
               maxHeight: "32vh",
               overflowY: "auto",
               WebkitOverflowScrolling: "touch",

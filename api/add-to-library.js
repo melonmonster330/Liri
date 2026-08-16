@@ -24,10 +24,8 @@
 //   SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, DISCOGS_KEY, DISCOGS_SECRET
 
 const https = require("https");
-const { verifyAuth, getSubscriptionTier } = require("./_lib/auth");
+const { verifyAuth } = require("./_lib/auth");
 const { fetchLyrics, parseLrcToWords, lrcToPlain } = require("./_lib/lyrics");
-
-const FREE_ALBUM_LIMIT = 10;
 
 // ── Generic HTTPS GET ─────────────────────────────────────────────────────────
 
@@ -430,27 +428,6 @@ module.exports = async (req, res) => {
   if (!Number.isFinite(collectionId))
     return res.status(400).json({ error: "Invalid collection id" });
 
-  // ── Free tier limit ────────────────────────────────────────────────────────
-  {
-    const tier = await getSubscriptionTier(auth.userId);
-    if (tier === "free") {
-      const { data: everRows } = await sbRequest(
-        "GET",
-        `user_library_ever?user_id=eq.${encodeURIComponent(auth.userId)}&itunes_collection_id=eq.${collectionId}&select=id&limit=1`
-      );
-      const wasEverAdded = Array.isArray(everRows) && everRows.length > 0;
-      if (!wasEverAdded) {
-        const { data: allEverRows } = await sbRequest(
-          "GET", `user_library_ever?user_id=eq.${encodeURIComponent(auth.userId)}&select=id`
-        );
-        const everCount = Array.isArray(allEverRows) ? allEverRows.length : 0;
-        if (everCount >= FREE_ALBUM_LIMIT) {
-          return res.status(403).json({ error: "free_limit_reached", limit: FREE_ALBUM_LIMIT, count: everCount });
-        }
-      }
-    }
-  }
-
   try {
     const alreadyExists = await exists("catalogue", "itunes_collection_id", collectionId);
 
@@ -573,12 +550,6 @@ module.exports = async (req, res) => {
       user_id:              auth.userId,
       itunes_collection_id: collectionId,
       added_at:             new Date().toISOString(),
-    }, "user_id,itunes_collection_id");
-
-    await upsert("user_library_ever", {
-      user_id:              auth.userId,
-      itunes_collection_id: collectionId,
-      first_added_at:       new Date().toISOString(),
     }, "user_id,itunes_collection_id");
 
     return res.status(200).json({ success: true, cached: alreadyExists });
