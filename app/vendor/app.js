@@ -139,147 +139,8 @@
   var ITUNES_PROXY = window.Capacitor ? "https://www.getliri.com/api/itunes-lookup" : "/api/itunes-lookup";
   var SYNC_PLAYBACK_RATE = 1.028;
 
-  // app/ios/iap.js
-  function getLiriIAP() {
-    return window.Capacitor?.Plugins?.LiriIAP ?? null;
-  }
-
-  // app/src/hooks/usePayments.js
-  var { useState, useEffect } = React;
-  function usePayments({ sb: sb2, sessionTokenRef }) {
-    const [userTier, setUserTier] = useState("free");
-    const [albumCount, setAlbumCount] = useState(0);
-    const [upgradeWorking, setUpgradeWorking] = useState(false);
-    const [iapPrice, setIapPrice] = useState("$2.99/mo");
-    const [premiumPlan, setPremiumPlan] = useState("monthly");
-    const [iapWorking, setIapWorking] = useState(false);
-    useEffect(() => {
-      const iap = getLiriIAP();
-      if (!IS_IOS || !iap) return;
-      iap.fetchProduct().then((p) => {
-        if (p?.displayPrice) setIapPrice(`${p.displayPrice}/mo`);
-      }).catch(() => {
-      });
-    }, []);
-    const syncAppleSubscription = async (token) => {
-      const iap = getLiriIAP();
-      if (!IS_IOS || !iap) return;
-      try {
-        const status = await iap.getSubscriptionStatus();
-        if (status?.isActive && status?.signedTransaction) {
-          const r = await fetch("https://www.getliri.com/api/stripe-checkout", {
-            method: "POST",
-            headers: { "Content-Type": "application/json", "Authorization": `Bearer ${token}` },
-            body: JSON.stringify({ appleTransaction: status.signedTransaction })
-          });
-          if (r.ok) setUserTier("premium");
-        }
-      } catch {
-      }
-    };
-    const upgradeWithApple = async (plan = "monthly") => {
-      const iap = getLiriIAP();
-      if (!iap) {
-        alert("In-app purchases are not available right now. Please try again or contact support.");
-        return;
-      }
-      setIapWorking(true);
-      try {
-        const result = plan === "lifetime" ? await iap.purchaseLifetime() : await iap.purchase();
-        if (result?.signedTransaction) {
-          const token = sessionTokenRef.current;
-          const r = await fetch("https://www.getliri.com/api/stripe-checkout", {
-            method: "POST",
-            headers: { "Content-Type": "application/json", "Authorization": `Bearer ${token}` },
-            body: JSON.stringify({ appleTransaction: result.signedTransaction, plan })
-          });
-          const data = await r.json();
-          if (data.tier === "premium" || data.tier === "lifetime") {
-            setUserTier(data.tier);
-            setAlbumCount((prev) => prev);
-          } else {
-            alert(data.error || "Could not verify purchase. Please contact support.");
-          }
-        }
-      } catch (e3) {
-        if (e3?.message !== "cancelled") alert("Purchase failed. Please try again.");
-      } finally {
-        setIapWorking(false);
-      }
-    };
-    const restoreApplePurchases = async () => {
-      const iap = getLiriIAP();
-      if (!iap) {
-        alert("Restore is not available right now.");
-        return;
-      }
-      setIapWorking(true);
-      try {
-        const status = await iap.restorePurchases();
-        if (status?.isActive && status?.signedTransaction) {
-          const token = sessionTokenRef.current;
-          const plan = status.isLifetime ? "lifetime" : "monthly";
-          const r = await fetch("https://www.getliri.com/api/stripe-checkout", {
-            method: "POST",
-            headers: { "Content-Type": "application/json", "Authorization": `Bearer ${token}` },
-            body: JSON.stringify({ appleTransaction: status.signedTransaction, plan })
-          });
-          const data = await r.json();
-          if (data.tier === "premium" || data.tier === "lifetime") setUserTier(data.tier);
-          else alert("No active subscription found.");
-        } else {
-          alert("No active subscription found.");
-        }
-      } catch {
-        alert("Restore failed. Please try again.");
-      } finally {
-        setIapWorking(false);
-      }
-    };
-    const upgradeToStripe = async (plan = "monthly") => {
-      setUpgradeWorking(true);
-      try {
-        const { data: { session: s } } = await sb2.auth.getSession();
-        const token = s?.access_token || sessionTokenRef.current;
-        const res = await fetch("/api/stripe-checkout", {
-          method: "POST",
-          headers: { "Content-Type": "application/json", "Authorization": `Bearer ${token}` },
-          body: JSON.stringify({ plan })
-        });
-        const json = await res.json().catch(() => ({}));
-        if (json.url) {
-          window.location.href = json.url;
-        } else {
-          alert(json.error || "Could not start checkout. Please try again.");
-          setUpgradeWorking(false);
-        }
-      } catch {
-        alert("Network error \u2014 please try again.");
-        setUpgradeWorking(false);
-      }
-    };
-    return {
-      userTier,
-      setUserTier,
-      albumCount,
-      setAlbumCount,
-      upgradeWorking,
-      setUpgradeWorking,
-      iapPrice,
-      setIapPrice,
-      premiumPlan,
-      setPremiumPlan,
-      iapWorking,
-      setIapWorking,
-      syncAppleSubscription,
-      upgradeWithApple,
-      restoreApplePurchases,
-      upgradeToStripe
-    };
-  }
-
   // app/src/hooks/useNowPlaying.js
-  var { useRef, useEffect: useEffect2 } = React;
+  var { useRef, useEffect } = React;
   function useNowPlaying({
     sessionTabId: sessionTabId2,
     mode,
@@ -304,7 +165,7 @@
     syncCalcRef
   }) {
     const nowPlayingSnapshotRef = useRef(null);
-    useEffect2(() => {
+    useEffect(() => {
       if (mode === "syncing" || mode === "confirmed") {
         nowPlayingSnapshotRef.current = {
           detectedSong,
@@ -334,7 +195,7 @@
         }
       }
     }, [mode, detectedSong, lyrics, songDuration, currentTrackIndex, albumCollectionId, identifiedBy]);
-    useEffect2(() => {
+    useEffect(() => {
       const onHide = () => {
         const snap = nowPlayingSnapshotRef.current;
         if (!snap || !snap.detectedSong) return;
@@ -352,7 +213,7 @@
       window.addEventListener("pagehide", onHide);
       return () => window.removeEventListener("pagehide", onHide);
     }, []);
-    useEffect2(() => {
+    useEffect(() => {
       if (mode !== "syncing") return;
       const beat = () => {
         try {
@@ -371,7 +232,7 @@
         }
       };
     }, [mode]);
-    useEffect2(() => {
+    useEffect(() => {
       let saved = null;
       try {
         saved = JSON.parse(sessionStorage.getItem("liri_nowplaying") || "null");
@@ -407,7 +268,7 @@
   }
 
   // app/src/hooks/useLyricScroll.js
-  var { useRef: useRef2, useState: useState2, useEffect: useEffect3, useLayoutEffect } = React;
+  var { useRef: useRef2, useState, useEffect: useEffect2, useLayoutEffect } = React;
   var ACTIVE_LINE_CENTER_OFFSET_PX = 48;
   function useLyricScroll({
     mode,
@@ -437,7 +298,7 @@
     const rollRafRef = useRef2(null);
     const centeredLineRef = useRef2(null);
     const lastActiveIndexRef = useRef2(currentIndex);
-    const [refollowDirection, setRefollowDirection] = useState2("up");
+    const [refollowDirection, setRefollowDirection] = useState("up");
     const focusStrengthRef = useRef2(focusStrength);
     focusStrengthRef.current = focusStrength;
     const updateLyricEmphasis = () => {
@@ -532,7 +393,7 @@
       updateLyricEmphasis();
       if (userScrollingRef.current) updateRefollowDirection();
     }, [currentIndex, mode, lyricsUnsynced, lyrics.length, Math.floor(playbackTime), focusStrength]);
-    useEffect3(() => {
+    useEffect2(() => {
       const container = lyricsScrollRef.current;
       if (!container || lyricsUnsynced) return;
       const update = () => updateLyricEmphasis();
@@ -540,8 +401,8 @@
       update();
       return () => container.removeEventListener("scroll", update);
     }, [mode, lyricsUnsynced, lyrics.length]);
-    useEffect3(() => () => cancelAnimationFrame(rollRafRef.current), []);
-    useEffect3(() => {
+    useEffect2(() => () => cancelAnimationFrame(rollRafRef.current), []);
+    useEffect2(() => {
       if (!isLandscape || mode !== "syncing" || lyricsUnsynced) return;
       let raf, start;
       const pin = (ts) => {
@@ -552,7 +413,7 @@
       raf = requestAnimationFrame(pin);
       return () => cancelAnimationFrame(raf);
     }, [controlsVisible, isLandscape, mode, lyricsUnsynced]);
-    useEffect3(() => {
+    useEffect2(() => {
       if (mode !== "syncing" || lyricsUnsynced) return;
       let recenterRaf = null;
       const recenter = () => {
@@ -573,7 +434,7 @@
         observer?.disconnect();
       };
     }, [mode, lyricsUnsynced, isLandscape, controlsVisible]);
-    useEffect3(() => {
+    useEffect2(() => {
       if (mode !== "syncing" || !lyricsUnsynced || isPaused) return;
       const el = lyricsScrollRef.current;
       if (!el) return;
@@ -640,7 +501,7 @@
   }
 
   // app/src/hooks/useCast.js
-  var { useState: useState3, useEffect: useEffect4, useRef: useRef3, useCallback } = React;
+  var { useState: useState2, useEffect: useEffect3, useRef: useRef3, useCallback } = React;
   var CAST_APP_ID = "2FBB66AA";
   var CAST_NAMESPACE = "urn:x-cast:com.getliri.lyrics";
   var CAST_SDK_URL = "https://www.gstatic.com/cv/js/sender/v1/cast_sender.js?loadCastFramework=1";
@@ -685,10 +546,10 @@
   }
   function useCast({ mode, song, lyrics, playbackTime, isPaused }) {
     const supported = !window.Capacitor && !!window.chrome;
-    const [ready, setReady] = useState3(false);
-    const [connected, setConnected] = useState3(false);
-    const [deviceName, setDeviceName] = useState3(null);
-    const [error, setError] = useState3(null);
+    const [ready, setReady] = useState2(false);
+    const [connected, setConnected] = useState2(false);
+    const [deviceName, setDeviceName] = useState2(null);
+    const [error, setError] = useState2(null);
     const snapshotRef = useRef3(null);
     const castSong = song ? {
       title: song.title || "",
@@ -719,7 +580,7 @@
       setConnected(!!session);
       setDeviceName(session?.getCastDevice?.()?.friendlyName || null);
     }, []);
-    useEffect4(() => {
+    useEffect3(() => {
       if (!supported) return;
       let active = true;
       let context = null;
@@ -755,7 +616,7 @@
         return false;
       }
     }, []);
-    useEffect4(() => {
+    useEffect3(() => {
       if (!connected) return;
       sendState();
       const timer = setInterval(sendState, 1e3);
@@ -1069,14 +930,14 @@
   }
 
   // app/base/components/WaveAnimation.js
-  var { useRef: useRef4, useEffect: useEffect5 } = React;
+  var { useRef: useRef4, useEffect: useEffect4 } = React;
   var BAR_MULTS = [0.55, 0.85, 1, 0.75, 0.95, 0.65, 0.9, 0.7, 1, 0.6, 0.8, 0.5];
   function WaveAnimation({ active, size = 1, analyserRef, level }) {
     const barRefs = useRef4([]);
     const rafRef = useRef4(null);
     const smoothRef = useRef4(new Float32Array(BAR_MULTS.length));
     const histRef = useRef4([]);
-    useEffect5(() => {
+    useEffect4(() => {
       if (!level || level <= 0) {
         histRef.current = [];
         return;
@@ -1085,7 +946,7 @@
       histRef.current.push({ t: now, v: level });
       histRef.current = histRef.current.filter((e3) => now - e3.t < 3e3);
     }, [level]);
-    useEffect5(() => {
+    useEffect4(() => {
       if (!active) {
         cancelAnimationFrame(rafRef.current);
         return;
@@ -1160,12 +1021,12 @@
   }
 
   // app/base/components/ProgressRing.js
-  var { useState: useState4, useEffect: useEffect6 } = React;
+  var { useState: useState3, useEffect: useEffect5 } = React;
   function ProgressRing({ size = 96 }) {
     const r = size / 2 - 5;
     const circ = 2 * Math.PI * r;
-    const [t, setT] = useState4(0);
-    useEffect6(() => {
+    const [t, setT] = useState3(0);
+    useEffect5(() => {
       const start = Date.now();
       const id = setInterval(() => setT((Date.now() - start) % 3e4 / 3e4), 50);
       return () => clearInterval(id);
@@ -1215,10 +1076,10 @@
   }
 
   // app/base/components/LyricsEditorSheet.js
-  var { useState: useState5 } = React;
+  var { useState: useState4 } = React;
   var e = React.createElement;
   function LyricsEditorSheet({ track, sites, saving, error, onSave, onClose }) {
-    const [text, setText] = useState5("");
+    const [text, setText] = useState4("");
     const openSite = (url) => window.open(url, window.Capacitor ? "_system" : "_blank");
     return e("div", {
       onClick: onClose,
@@ -1354,7 +1215,7 @@
   }
 
   // app/base/components/SideInfoSheet.js
-  var { useState: useState6 } = React;
+  var { useState: useState5 } = React;
   var e2 = React.createElement;
   function lettersFromBreaks(count, breakSet) {
     const out = [];
@@ -1366,7 +1227,7 @@
     return out;
   }
   function SideInfoSheet({ tracks, initialBreaks, saving, error, onSave, onClose }) {
-    const [breaks, setBreaks] = useState6(() => {
+    const [breaks, setBreaks] = useState5(() => {
       if (initialBreaks?.length) return new Set(initialBreaks.filter((i) => i > 0));
       return /* @__PURE__ */ new Set([Math.ceil((tracks?.length || 0) / 2)]);
     });
@@ -1562,8 +1423,8 @@
 
   // app/src/main.js
   var {
-    useState: useState7,
-    useEffect: useEffect7,
+    useState: useState6,
+    useEffect: useEffect6,
     useRef: useRef5,
     useCallback: useCallback2
   } = React;
@@ -1658,28 +1519,28 @@
     );
   }
   function Liri() {
-    const [mode, setMode] = useState7("idle");
-    const [detectedSong, setDetectedSong] = useState7(null);
-    const [identifiedBy, setIdentifiedBy] = useState7(null);
-    const [songDuration, setSongDuration] = useState7(null);
-    const [lyrics, setLyrics] = useState7([]);
-    const [currentIndex, setCurrentIndex] = useState7(0);
-    const [playbackTime, setPlaybackTime] = useState7(0);
-    const [error, setError] = useState7(null);
-    const [listenProgress, setListenProgress] = useState7(0);
-    const [liveTranscript, setLiveTranscript] = useState7("");
-    const [listenAttempt, setListenAttempt] = useState7(0);
-    const [listenSecs, setListenSecs] = useState7(0);
-    const [showSettings, setShowSettings] = useState7(false);
-    const [isWide, setIsWide] = useState7(() => window.innerWidth >= 768);
-    useEffect7(() => {
+    const [mode, setMode] = useState6("idle");
+    const [detectedSong, setDetectedSong] = useState6(null);
+    const [identifiedBy, setIdentifiedBy] = useState6(null);
+    const [songDuration, setSongDuration] = useState6(null);
+    const [lyrics, setLyrics] = useState6([]);
+    const [currentIndex, setCurrentIndex] = useState6(0);
+    const [playbackTime, setPlaybackTime] = useState6(0);
+    const [error, setError] = useState6(null);
+    const [listenProgress, setListenProgress] = useState6(0);
+    const [liveTranscript, setLiveTranscript] = useState6("");
+    const [listenAttempt, setListenAttempt] = useState6(0);
+    const [listenSecs, setListenSecs] = useState6(0);
+    const [showSettings, setShowSettings] = useState6(false);
+    const [isWide, setIsWide] = useState6(() => window.innerWidth >= 768);
+    useEffect6(() => {
       const onResize = () => setIsWide(window.innerWidth >= 768);
       window.addEventListener("resize", onResize);
       return () => window.removeEventListener("resize", onResize);
     }, []);
-    const [isLandscape, setIsLandscape] = useState7(() => window.innerWidth > window.innerHeight && window.innerWidth >= 600);
-    const [winW, setWinW] = useState7(window.innerWidth);
-    useEffect7(() => {
+    const [isLandscape, setIsLandscape] = useState6(() => window.innerWidth > window.innerHeight && window.innerWidth >= 600);
+    const [winW, setWinW] = useState6(window.innerWidth);
+    useEffect6(() => {
       const onResize = () => {
         setIsLandscape(window.innerWidth > window.innerHeight && window.innerWidth >= 600);
         setWinW(window.innerWidth);
@@ -1687,7 +1548,7 @@
       window.addEventListener("resize", onResize);
       return () => window.removeEventListener("resize", onResize);
     }, []);
-    const [controlsVisible, setControlsVisible] = useState7(false);
+    const [controlsVisible, setControlsVisible] = useState6(false);
     const menuWasOpenRef = useRef5(false);
     const railW = Math.min(270, Math.max(190, Math.round(winW * 0.26)));
     const menuOpen = isLandscape && controlsVisible;
@@ -1704,143 +1565,127 @@
       2,
       Math.max(1.6, 1.6 + (lyricPanelWidth - 320) / 500 * 0.4)
     );
-    const [showBugReport, setShowBugReport] = useState7(false);
-    const [bugText, setBugText] = useState7("");
-    const [bugSending, setBugSending] = useState7(false);
-    const [bugSent, setBugSent] = useState7(false);
-    const [showPremiumInfo, setShowPremiumInfo] = useState7(false);
-    const [showDeleteAccount, setShowDeleteAccount] = useState7(false);
-    const [deleteWorking, setDeleteWorking] = useState7(false);
-    const [deleteError, setDeleteError] = useState7(null);
-    const [showChangePw, setShowChangePw] = useState7(false);
-    const [changePwNew, setChangePwNew] = useState7("");
-    const [changePwConfirm, setChangePwConfirm] = useState7("");
-    const [changePwWorking, setChangePwWorking] = useState7(false);
-    const [changePwError, setChangePwError] = useState7(null);
-    const [changePwDone, setChangePwDone] = useState7(false);
-    const [showHistory, setShowHistory] = useState7(false);
-    const [showTrackList, setShowTrackList] = useState7(false);
-    const [showNowPlayingList, setShowNowPlayingList] = useState7(false);
-    const [collapsedSides, setCollapsedSides] = useState7(/* @__PURE__ */ new Set());
+    const [showBugReport, setShowBugReport] = useState6(false);
+    const [bugText, setBugText] = useState6("");
+    const [bugSending, setBugSending] = useState6(false);
+    const [bugSent, setBugSent] = useState6(false);
+    const [showDeleteAccount, setShowDeleteAccount] = useState6(false);
+    const [deleteWorking, setDeleteWorking] = useState6(false);
+    const [deleteError, setDeleteError] = useState6(null);
+    const [showChangePw, setShowChangePw] = useState6(false);
+    const [changePwNew, setChangePwNew] = useState6("");
+    const [changePwConfirm, setChangePwConfirm] = useState6("");
+    const [changePwWorking, setChangePwWorking] = useState6(false);
+    const [changePwError, setChangePwError] = useState6(null);
+    const [changePwDone, setChangePwDone] = useState6(false);
+    const [showHistory, setShowHistory] = useState6(false);
+    const [showTrackList, setShowTrackList] = useState6(false);
+    const [showNowPlayingList, setShowNowPlayingList] = useState6(false);
+    const [collapsedSides, setCollapsedSides] = useState6(/* @__PURE__ */ new Set());
     const toggleSideCollapse = (side) => setCollapsedSides((prev) => {
       const n = new Set(prev);
       n.has(side) ? n.delete(side) : n.add(side);
       return n;
     });
-    const [user, setUser] = useState7(null);
-    const [authLoading, setAuthLoading] = useState7(true);
-    const [authMode, setAuthMode] = useState7("signin");
-    const [authEmail, setAuthEmail] = useState7("");
-    const [authPassword, setAuthPassword] = useState7("");
-    const [showPw, setShowPw] = useState7(false);
-    const [authConfirmPw, setAuthConfirmPw] = useState7("");
-    const [authName, setAuthName] = useState7("");
-    const [authError, setAuthError] = useState7(null);
-    const [authWorking, setAuthWorking] = useState7(false);
-    const [authSheet, setAuthSheet] = useState7(null);
-    const [authVerifyPending, setAuthVerifyPending] = useState7(false);
+    const [user, setUser] = useState6(null);
+    const [authLoading, setAuthLoading] = useState6(true);
+    const [authMode, setAuthMode] = useState6("signin");
+    const [authEmail, setAuthEmail] = useState6("");
+    const [authPassword, setAuthPassword] = useState6("");
+    const [showPw, setShowPw] = useState6(false);
+    const [authConfirmPw, setAuthConfirmPw] = useState6("");
+    const [authName, setAuthName] = useState6("");
+    const [authError, setAuthError] = useState6(null);
+    const [authWorking, setAuthWorking] = useState6(false);
+    const [authSheet, setAuthSheet] = useState6(null);
+    const [authVerifyPending, setAuthVerifyPending] = useState6(false);
     const isUnlimited = (u) => true;
     const sessionTokenRef = useRef5(null);
-    const {
-      userTier,
-      setUserTier,
-      albumCount,
-      setAlbumCount,
-      upgradeWorking,
-      iapPrice,
-      premiumPlan,
-      setPremiumPlan,
-      iapWorking,
-      syncAppleSubscription,
-      upgradeWithApple,
-      restoreApplePurchases,
-      upgradeToStripe
-    } = usePayments({ sb, sessionTokenRef });
-    const [history, setHistory] = useState7([]);
-    const [historyLoading, setHistoryLoading] = useState7(false);
+    const [history, setHistory] = useState6([]);
+    const [historyLoading, setHistoryLoading] = useState6(false);
     const vinylMode = true;
     const autoAdvanceFiredRef = useRef5(false);
     const sideEndTimerRef = useRef5(null);
-    const [turntableAlbum, setTurntableAlbum] = useState7(() => {
+    const [turntableAlbum, setTurntableAlbum] = useState6(() => {
       try {
         return JSON.parse(localStorage.getItem("liri_turntable") || "null");
       } catch {
         return null;
       }
     });
-    const [showAlbumPicker, setShowAlbumPicker] = useState7(false);
-    const [userLibrary, setUserLibrary] = useState7([]);
-    const [libLoading, setLibLoading] = useState7(false);
-    const [recentPlayedIds, setRecentPlayedIds] = useState7([]);
-    const [turntableTracksLoading, setTurntableTracksLoading] = useState7(false);
-    const [turntableTracksProgress, setTurntableTracksProgress] = useState7({ percent: 0, stage: "" });
+    const [showAlbumPicker, setShowAlbumPicker] = useState6(false);
+    const [userLibrary, setUserLibrary] = useState6([]);
+    const [libLoading, setLibLoading] = useState6(false);
+    const [recentPlayedIds, setRecentPlayedIds] = useState6([]);
+    const [turntableTracksLoading, setTurntableTracksLoading] = useState6(false);
+    const [turntableTracksProgress, setTurntableTracksProgress] = useState6({ percent: 0, stage: "" });
     const turntableAlbumRef = useRef5(turntableAlbum);
     const turntableTracksRef = useRef5([]);
     const turntableMatchedIdxRef = useRef5(-1);
     const turntableLyricsCacheRef = useRef5({});
     const wordsDataRef = useRef5({});
     const autoRetryCountRef = useRef5(0);
-    const [albumTracks, setAlbumTracks] = useState7([]);
-    const [currentTrackIndex, setCurrentTrackIndex] = useState7(-1);
+    const [albumTracks, setAlbumTracks] = useState6([]);
+    const [currentTrackIndex, setCurrentTrackIndex] = useState6(-1);
     const albumTracksRef = useRef5([]);
     const currentTrackIndexRef = useRef5(-1);
-    const [isResyncing, setIsResyncing] = useState7(false);
-    const [isNeedleDrop, setIsNeedleDrop] = useState7(false);
-    const [keepScreenAwake, setKeepScreenAwake] = useState7(() => localStorage.getItem("liri_keep_awake") === "true");
+    const [isResyncing, setIsResyncing] = useState6(false);
+    const [isNeedleDrop, setIsNeedleDrop] = useState6(false);
+    const [keepScreenAwake, setKeepScreenAwake] = useState6(() => localStorage.getItem("liri_keep_awake") === "true");
     const wakeLockRef = useRef5(null);
-    const [isPaused, setIsPaused] = useState7(false);
-    const [showCast, setShowCast] = useState7(false);
+    const [isPaused, setIsPaused] = useState6(false);
+    const [showCast, setShowCast] = useState6(false);
     const cast = useCast({ mode, song: detectedSong, lyrics, playbackTime, isPaused });
-    const [kbToast, setKbToast] = useState7(null);
+    const [kbToast, setKbToast] = useState6(null);
     const kbToastTimerRef = useRef5(null);
     const lyricTypeaheadRef = useRef5("");
     const lyricTypeaheadTimerRef = useRef5(null);
-    const [shouldAdvanceTrack, setShouldAdvanceTrack] = useState7(false);
-    const [sideEndReason, setSideEndReason] = useState7("failed");
-    const [sideEndNextDiscInfo, setSideEndNextDiscInfo] = useState7(null);
-    const [showSideEndPicker, setShowSideEndPicker] = useState7(false);
+    const [shouldAdvanceTrack, setShouldAdvanceTrack] = useState6(false);
+    const [sideEndReason, setSideEndReason] = useState6("failed");
+    const [sideEndNextDiscInfo, setSideEndNextDiscInfo] = useState6(null);
+    const [showSideEndPicker, setShowSideEndPicker] = useState6(false);
     const flipChimeTimersRef = useRef5([]);
     const flipStartDelayMsRef = useRef5(0);
-    const [albumCollectionId, setAlbumCollectionId] = useState7(null);
+    const [albumCollectionId, setAlbumCollectionId] = useState6(null);
     const albumCollectionIdRef = useRef5(null);
     const albumTpsRef = useRef5(0);
-    const [vinylDbRelease, setVinylDbRelease] = useState7(null);
+    const [vinylDbRelease, setVinylDbRelease] = useState6(null);
     const vinylDbReleaseRef = useRef5(null);
     const vinylSidesRef = useRef5([]);
-    const [sideDataMissing, setSideDataMissing] = useState7(false);
-    const [showSideInfoSheet, setShowSideInfoSheet] = useState7(false);
-    const [showLyricsEditor, setShowLyricsEditor] = useState7(false);
-    const [wrongLyricsReporting, setWrongLyricsReporting] = useState7(false);
-    const [wrongLyricsReportedId, setWrongLyricsReportedId] = useState7(null);
-    const [wrongLyricsReportError, setWrongLyricsReportError] = useState7(null);
-    const [userMetaSaving, setUserMetaSaving] = useState7(false);
-    const [userMetaError, setUserMetaError] = useState7(null);
-    const [scrollSpeed, setScrollSpeed] = useState7(() => {
+    const [sideDataMissing, setSideDataMissing] = useState6(false);
+    const [showSideInfoSheet, setShowSideInfoSheet] = useState6(false);
+    const [showLyricsEditor, setShowLyricsEditor] = useState6(false);
+    const [wrongLyricsReporting, setWrongLyricsReporting] = useState6(false);
+    const [wrongLyricsReportedId, setWrongLyricsReportedId] = useState6(null);
+    const [wrongLyricsReportError, setWrongLyricsReportError] = useState6(null);
+    const [userMetaSaving, setUserMetaSaving] = useState6(false);
+    const [userMetaError, setUserMetaError] = useState6(null);
+    const [scrollSpeed, setScrollSpeed] = useState6(() => {
       const v = parseFloat(localStorage.getItem("liri_scroll_speed"));
       return isNaN(v) ? 1 : Math.min(4, Math.max(0.25, v));
     });
     const scrollSpeedRef = useRef5(scrollSpeed);
-    const [lyricFontScale, setLyricFontScale] = useState7(() => {
+    const [lyricFontScale, setLyricFontScale] = useState6(() => {
       const v = parseFloat(localStorage.getItem("liri_lyric_font_scale"));
       return isNaN(v) ? 1 : Math.min(2, Math.max(0.8, v));
     });
     const responsiveLyricFontScale = Math.min(lyricFontScale, responsiveLyricFontScaleCap);
     const effectiveLyricFontScale = responsiveLyricFontScale * layoutLyricFontScale;
-    const [flipSound, setFlipSound] = useState7(() => localStorage.getItem("liri_flip_sound") !== "false");
-    const [flipNotify, setFlipNotify] = useState7(() => localStorage.getItem("liri_flip_notify") === "true");
-    const [notifyDenied, setNotifyDenied] = useState7(false);
-    const [keepAwakeError, setKeepAwakeError] = useState7(false);
-    const [nudgeMenu, setNudgeMenu] = useState7(null);
+    const [flipSound, setFlipSound] = useState6(() => localStorage.getItem("liri_flip_sound") !== "false");
+    const [flipNotify, setFlipNotify] = useState6(() => localStorage.getItem("liri_flip_notify") === "true");
+    const [notifyDenied, setNotifyDenied] = useState6(false);
+    const [keepAwakeError, setKeepAwakeError] = useState6(false);
+    const [nudgeMenu, setNudgeMenu] = useState6(null);
     const nudgeMenuTimerRef = useRef5(null);
-    const [showOnboarding, setShowOnboarding] = useState7(false);
-    const [onboardingStep, setOnboardingStep] = useState7(0);
+    const [showOnboarding, setShowOnboarding] = useState6(false);
+    const [onboardingStep, setOnboardingStep] = useState6(0);
     const ONBOARDING_STEPS = 6;
-    const [coachStep, setCoachStep] = useState7(0);
+    const [coachStep, setCoachStep] = useState6(0);
     const dismissOnboarding = () => {
       localStorage.setItem("liri_onboarding_done", "true");
       setShowOnboarding(false);
     };
-    useEffect7(() => {
+    useEffect6(() => {
       if (user && !localStorage.getItem("liri_onboarding_done")) {
         setCoachStep(0);
         setOnboardingStep(0);
@@ -1876,7 +1721,7 @@
     const currentLineRef = useRef5(null);
     const creditsRef = useRef5(null);
     const userScrollingRef = useRef5(false);
-    const [userScrolling, setUserScrolling] = useState7(false);
+    const [userScrolling, setUserScrolling] = useState6(false);
     const refollowTimerRef = useRef5(null);
     const scrollInhibitTimer = useRef5(null);
     const listenSessionRef = useRef5(0);
@@ -1886,32 +1731,32 @@
     const lastRawMatchRef = useRef5(null);
     const autoPostVisRef = useRef5("off");
     const autoPostedAlbumsRef = useRef5(/* @__PURE__ */ new Set());
-    const [audioLevel, setAudioLevel] = useState7(0);
-    const [lastSong, setLastSong] = useState7(null);
-    const [hoverNudge, setHoverNudge] = useState7(null);
-    useEffect7(() => {
+    const [audioLevel, setAudioLevel] = useState6(0);
+    const [lastSong, setLastSong] = useState6(null);
+    const [hoverNudge, setHoverNudge] = useState6(null);
+    useEffect6(() => {
       lyricsRef.current = lyrics;
     }, [lyrics]);
-    useEffect7(() => {
+    useEffect6(() => {
       albumTracksRef.current = albumTracks;
     }, [albumTracks]);
-    useEffect7(() => {
+    useEffect6(() => {
       currentTrackIndexRef.current = currentTrackIndex;
     }, [currentTrackIndex]);
-    useEffect7(() => {
+    useEffect6(() => {
       vinylDbReleaseRef.current = vinylDbRelease;
     }, [vinylDbRelease]);
-    useEffect7(() => {
+    useEffect6(() => {
       albumCollectionIdRef.current = albumCollectionId;
     }, [albumCollectionId]);
-    useEffect7(() => {
+    useEffect6(() => {
       scrollSpeedRef.current = scrollSpeed;
       try {
         localStorage.setItem("liri_scroll_speed", String(scrollSpeed));
       } catch {
       }
     }, [scrollSpeed]);
-    useEffect7(() => {
+    useEffect6(() => {
       try {
         localStorage.setItem("liri_lyric_font_scale", String(lyricFontScale));
       } catch {
@@ -2114,7 +1959,7 @@
         }
       }
     };
-    useEffect7(() => {
+    useEffect6(() => {
       if (!IS_IOS || !flipNotify) return;
       getLocalNotif()?.checkPermissions?.().then(({ display }) => {
         if (display !== "granted") {
@@ -2159,7 +2004,7 @@
     const logListeningEvent2 = (params) => logListeningEvent(sb, sessionId, params);
     const maybeAutoPostPlay2 = (params) => maybeAutoPostPlay(sb, autoPostVisRef, autoPostedAlbumsRef, params);
     const logFlipEvent2 = (params) => logFlipEvent(sb, sessionId, params);
-    useEffect7(() => {
+    useEffect6(() => {
       sb.auth.getSession().then(({
         data: {
           session
@@ -2173,14 +2018,6 @@
           fetchUsage(u);
           fetchHistory(u);
           fetchAutoPostPref(u);
-          fetch(`${window.Capacitor ? "https://www.getliri.com" : ""}/api/subscription-status`, { headers: { "Authorization": `Bearer ${session.access_token}` } }).then((r) => r.ok ? r.json() : null).then((d) => {
-            if (d?.tier) {
-              setUserTier(d.tier);
-              setAlbumCount(d.albumCount || 0);
-            }
-          }).catch(() => {
-          });
-          syncAppleSubscription(session.access_token);
         }
       });
       const {
@@ -2202,10 +2039,6 @@
           fetchUsage(u);
           fetchHistory(u);
           fetchAutoPostPref(u);
-          fetch(`${window.Capacitor ? "https://www.getliri.com" : ""}/api/subscription-status`, { headers: { "Authorization": `Bearer ${s.access_token}` } }).then((r) => r.ok ? r.json() : null).then((d) => {
-            if (d?.tier) setUserTier(d.tier);
-          }).catch(() => {
-          });
         }
       });
       return () => subscription.unsubscribe();
@@ -2526,7 +2359,7 @@
       setTurntableTracksLoading(false);
       setTurntableTracksProgress({ percent: 100, stage: "" });
     };
-    useEffect7(() => {
+    useEffect6(() => {
       turntableAlbumRef.current = turntableAlbum;
       turntableMatchedIdxRef.current = -1;
       if (turntableAlbum) {
@@ -2703,10 +2536,10 @@
       }
       setLibLoading(false);
     };
-    useEffect7(() => {
+    useEffect6(() => {
       if (user) fetchUserLibrary(user.id, true);
     }, [user]);
-    useEffect7(() => {
+    useEffect6(() => {
       if (mode !== "listening") {
         setListenSecs(0);
         setShowTrackList(false);
@@ -2715,7 +2548,7 @@
       const id = setInterval(() => setListenSecs((s) => s + 1), 1e3);
       return () => clearInterval(id);
     }, [mode]);
-    useEffect7(() => {
+    useEffect6(() => {
       if (mode === "confirmed" && detectedSong) {
         startSync();
         userScrollingRef.current = false;
@@ -2753,7 +2586,7 @@
         endClockStartRef.current = Date.now();
       }
     });
-    useEffect7(() => {
+    useEffect6(() => {
       if (mode !== "syncing") return;
       if (turntableAlbumRef.current && turntableTracksLoading && turntableTracksRef.current.length === 0) return;
       const lastLyricTime = lyrics.length > 0 ? lyrics[lyrics.length - 1].time : null;
@@ -2782,7 +2615,7 @@
         setShouldAdvanceTrack(true);
       }
     }, [playbackTime, songDuration, lyrics, mode, isPaused, detectedSong?.title]);
-    useEffect7(() => {
+    useEffect6(() => {
       if (!shouldAdvanceTrack) return;
       setShouldAdvanceTrack(false);
       const tTracks = turntableTracksRef.current;
@@ -2799,14 +2632,14 @@
         setMode("side-end");
       }
     }, [shouldAdvanceTrack]);
-    useEffect7(() => () => {
+    useEffect6(() => () => {
       clearInterval(syncIntervalRef.current);
       clearInterval(progressTimerRef.current);
       clearTimeout(refollowTimerRef.current);
       clearTimeout(sideEndTimerRef.current);
       streamRef.current?.getTracks().forEach((t) => t.stop());
     }, []);
-    useEffect7(() => {
+    useEffect6(() => {
       if (mode !== "side-end") cancelFlipChimes();
     }, [mode]);
     const handleMatch = async (data, isAutoAdvance) => {
@@ -3259,7 +3092,7 @@ Move closer to your speakers and try again.`);
       setKbToast(msg);
       kbToastTimerRef.current = setTimeout(() => setKbToast(null), 1400);
     };
-    useEffect7(() => {
+    useEffect6(() => {
       const onKey = (e3) => {
         if (mode !== "syncing") return;
         if (e3.target.closest?.("input, textarea, select, [contenteditable='true']")) return;
@@ -3986,7 +3819,7 @@ Move closer to your speakers and try again.`);
         }
       }, detectedSong?.artist)), arrow(1, nav.canNext, "Next song"));
     };
-    useEffect7(() => {
+    useEffect6(() => {
       const acquire = async () => {
         if (!keepScreenAwake) return;
         setKeepAwakeError(false);
@@ -4021,7 +3854,7 @@ Move closer to your speakers and try again.`);
         document.removeEventListener("visibilitychange", onVisibility);
       };
     }, [keepScreenAwake]);
-    useEffect7(() => {
+    useEffect6(() => {
       if (mode === "syncing") setControlsVisible(false);
     }, [mode]);
     if (authLoading) return /* @__PURE__ */ React.createElement("div", {
@@ -5637,74 +5470,8 @@ Move closer to your speakers and try again.`);
             color: "rgba(255,255,255,0.3)",
             marginTop: "2px"
           }
-        }, userTier === "premium" ? /* @__PURE__ */ React.createElement("span", {
-          onClick: () => {
-            setShowSettings(false);
-            setShowPremiumInfo(true);
-          },
-          style: { cursor: "pointer", color: "#d4a846", display: "inline-flex", alignItems: "center", gap: "4px" }
-        }, /* @__PURE__ */ React.createElement("svg", { width: "10", height: "10", viewBox: "0 0 24 24", fill: "#d4a846" }, /* @__PURE__ */ React.createElement("path", { d: "M12 2l2.4 7.4H22l-6.2 4.5 2.4 7.4L12 17l-6.2 4.3 2.4-7.4L2 9.4h7.6z" })), "Liri Premium") : "Liri"))));
+        }, "Liri"))));
       })(),
-      /* ── Plan card ── */
-      userTier !== "premium" ? /* @__PURE__ */ React.createElement(
-        "div",
-        {
-          style: { background: "rgba(212,168,70,0.06)", border: "1px solid rgba(212,168,70,0.15)", borderRadius: "16px", padding: "14px 16px", marginBottom: "16px" }
-        },
-        /* @__PURE__ */ React.createElement(
-          "div",
-          { style: { display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: "10px" } },
-          /* @__PURE__ */ React.createElement(
-            "div",
-            null,
-            /* @__PURE__ */ React.createElement("div", { style: { fontSize: "13px", fontWeight: "600", color: "#f0e6d3" } }, "Free plan"),
-            /* @__PURE__ */ React.createElement("div", { style: { fontSize: "11px", color: "rgba(255,255,255,0.3)", marginTop: "2px" } }, `${albumCount}/10 records used`)
-          ),
-          IS_IOS ? /* @__PURE__ */ React.createElement("button", {
-            onClick: upgradeWithApple,
-            disabled: iapWorking,
-            style: { background: "linear-gradient(135deg,#d4a846,#c9807a)", color: "#080810", border: "none", borderRadius: "50px", padding: "7px 14px", fontSize: "12px", fontWeight: "700", cursor: "pointer", fontFamily: "inherit", whiteSpace: "nowrap", opacity: iapWorking ? 0.6 : 1 }
-          }, iapWorking ? "\u2026" : `${iapPrice}`) : /* @__PURE__ */ React.createElement("button", {
-            onClick: () => {
-              window.location.href = "/library?upgrade=true";
-            },
-            style: { background: "linear-gradient(135deg,#d4a846,#c9807a)", color: "#080810", border: "none", borderRadius: "50px", padding: "7px 14px", fontSize: "12px", fontWeight: "700", cursor: "pointer", fontFamily: "inherit", whiteSpace: "nowrap" }
-          }, "Upgrade \u2192")
-        ),
-        /* @__PURE__ */ React.createElement(
-          "div",
-          { style: { width: "100%", height: "3px", borderRadius: "2px", background: "rgba(255,255,255,0.08)", overflow: "hidden" } },
-          /* @__PURE__ */ React.createElement("div", { style: { height: "100%", borderRadius: "2px", background: albumCount >= 8 ? "#c9807a" : "#d4a846", width: `${Math.min(100, albumCount / 10 * 100)}%`, transition: "width 0.4s ease" } })
-        )
-      ) : null,
-      /* ── Liri Premium row (always visible) ── */
-      /* @__PURE__ */ React.createElement(
-        "button",
-        {
-          onClick: () => {
-            setShowSettings(false);
-            setShowPremiumInfo(true);
-          },
-          style: { width: "100%", display: "flex", alignItems: "center", justifyContent: "space-between", background: userTier === "premium" ? "rgba(212,168,70,0.06)" : "rgba(255,255,255,0.04)", border: `1px solid ${userTier === "premium" ? "rgba(212,168,70,0.2)" : "rgba(255,255,255,0.08)"}`, borderRadius: "16px", padding: "14px 16px", marginBottom: "16px", cursor: "pointer", fontFamily: "inherit", textAlign: "left" }
-        },
-        /* @__PURE__ */ React.createElement(
-          "div",
-          { style: { display: "flex", alignItems: "center", gap: "12px" } },
-          /* @__PURE__ */ React.createElement("svg", { width: "16", height: "16", viewBox: "0 0 24 24", fill: "#d4a846" }, /* @__PURE__ */ React.createElement("path", { d: "M12 2l2.4 7.4H22l-6.2 4.5 2.4 7.4L12 17l-6.2 4.3 2.4-7.4L2 9.4h7.6z" })),
-          /* @__PURE__ */ React.createElement(
-            "div",
-            null,
-            /* @__PURE__ */ React.createElement("div", { style: { fontSize: "13px", fontWeight: "600", color: userTier === "premium" ? "#d4a846" : "#f0e6d3" } }, "Liri Premium"),
-            /* @__PURE__ */ React.createElement("div", { style: { fontSize: "11px", color: "rgba(255,255,255,0.3)", marginTop: "2px" } }, userTier === "premium" ? "Active \xB7 Unlimited access" : "Unlimited library, lyrics & more")
-          )
-        ),
-        /* @__PURE__ */ React.createElement(
-          "div",
-          { style: { display: "flex", alignItems: "center", gap: "6px" } },
-          userTier === "premium" && /* @__PURE__ */ React.createElement("div", { style: { fontSize: "10px", color: "rgba(212,168,70,0.6)", fontWeight: "700", letterSpacing: "0.5px" } }, "ACTIVE"),
-          /* @__PURE__ */ React.createElement("svg", { width: "14", height: "14", viewBox: "0 0 24 24", fill: "none", stroke: "rgba(255,255,255,0.2)", strokeWidth: "2", strokeLinecap: "round" }, /* @__PURE__ */ React.createElement("polyline", { points: "9 18 15 12 9 6" }))
-        )
-      ),
       /* @__PURE__ */ React.createElement("div", {
         style: {
           background: "rgba(255,255,255,0.03)",
@@ -6102,11 +5869,6 @@ Move closer to your speakers and try again.`);
           fontFamily: "inherit"
         }
       }, "Sign Out"),
-      IS_IOS && /* @__PURE__ */ React.createElement("button", {
-        onClick: restoreApplePurchases,
-        disabled: iapWorking,
-        style: { width: "100%", background: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.08)", color: "rgba(255,255,255,0.4)", borderRadius: "14px", padding: "14px", fontSize: "14px", cursor: "pointer", fontFamily: "inherit", marginTop: "8px", opacity: iapWorking ? 0.6 : 1 }
-      }, "Restore Purchases"),
       /* @__PURE__ */ React.createElement("button", {
         onClick: () => {
           setShowDeleteAccount(true);
@@ -6133,90 +5895,7 @@ Move closer to your speakers and try again.`);
           color: "rgba(255,255,255,0.1)"
         }
       }, "Liri \xB7 getliri.com")
-    ))), showPremiumInfo && /* @__PURE__ */ React.createElement("div", {
-      onClick: () => setShowPremiumInfo(false),
-      style: { position: "fixed", inset: 0, zIndex: 400, background: "rgba(0,0,0,0.7)", backdropFilter: "blur(4px)", display: "flex", alignItems: "flex-end", justifyContent: "center" }
-    }, /* @__PURE__ */ React.createElement(
-      "div",
-      {
-        onClick: (e3) => e3.stopPropagation(),
-        style: { background: "#0f0f1c", borderRadius: "24px 24px 0 0", padding: "28px 28px max(40px,calc(env(safe-area-inset-bottom)+28px))", maxWidth: "520px", width: "100%", border: "1px solid rgba(255,255,255,0.07)" }
-      },
-      /* @__PURE__ */ React.createElement("div", { style: { width: "40px", height: "4px", borderRadius: "2px", background: "rgba(255,255,255,0.12)", margin: "0 auto 24px" } }),
-      /* @__PURE__ */ React.createElement(
-        "div",
-        { style: { display: "flex", alignItems: "center", gap: "10px", marginBottom: "6px" } },
-        /* @__PURE__ */ React.createElement("svg", { width: "18", height: "18", viewBox: "0 0 24 24", fill: "#d4a846" }, /* @__PURE__ */ React.createElement("path", { d: "M12 2l2.4 7.4H22l-6.2 4.5 2.4 7.4L12 17l-6.2 4.3 2.4-7.4L2 9.4h7.6z" })),
-        /* @__PURE__ */ React.createElement("div", { style: { fontSize: "18px", fontWeight: "700", color: "#f0e6d3" } }, "Liri Premium")
-      ),
-      /* @__PURE__ */ React.createElement("div", { style: { fontSize: "13px", color: "rgba(255,255,255,0.35)", marginBottom: "24px" } }, userTier === "premium" ? "Your plan includes:" : "Everything in Premium:"),
-      /* @__PURE__ */ React.createElement(
-        "div",
-        { style: { background: "rgba(255,255,255,0.03)", border: "1px solid rgba(255,255,255,0.06)", borderRadius: "16px", padding: "4px 0", marginBottom: "24px" } },
-        [
-          ["Unlimited vinyl library", "Add as many records as you want"],
-          ["Lyrics for every track", "Synced line by line as your record plays"],
-          ["Play history & stats", "See everything you've synced"],
-          ["Flip reminders", "Sound and notification alerts"],
-          ["Cancel anytime", "Manage in iOS Settings \u2192 Subscriptions"]
-        ].map(
-          ([title, sub], i, arr) => /* @__PURE__ */ React.createElement(
-            "div",
-            { key: title, style: { display: "flex", alignItems: "center", gap: "14px", padding: "13px 18px", borderBottom: i < arr.length - 1 ? "1px solid rgba(255,255,255,0.04)" : "none" } },
-            /* @__PURE__ */ React.createElement("svg", { width: "14", height: "14", viewBox: "0 0 24 24", fill: "none", stroke: "#d4a846", strokeWidth: "2.5", strokeLinecap: "round", flexShrink: "0" }, /* @__PURE__ */ React.createElement("path", { d: "M20 6L9 17l-5-5" })),
-            /* @__PURE__ */ React.createElement(
-              "div",
-              null,
-              /* @__PURE__ */ React.createElement("div", { style: { fontSize: "13px", color: "#f0e6d3", fontWeight: "500" } }, title),
-              /* @__PURE__ */ React.createElement("div", { style: { fontSize: "11px", color: "rgba(255,255,255,0.3)", marginTop: "2px" } }, sub)
-            )
-          )
-        )
-      ),
-      userTier === "premium" || userTier === "lifetime" ? IS_IOS && userTier === "premium" && /* @__PURE__ */ React.createElement("button", {
-        onClick: () => window.open("https://apps.apple.com/account/subscriptions", "_system"),
-        style: { width: "100%", background: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.08)", color: "rgba(255,255,255,0.4)", borderRadius: "14px", padding: "14px", fontSize: "14px", cursor: "pointer", fontFamily: "inherit", marginBottom: "8px" }
-      }, "Manage Subscription") : /* @__PURE__ */ React.createElement(
-        React.Fragment,
-        null,
-        /* Monthly / Lifetime toggle */
-        /* @__PURE__ */ React.createElement(
-          "div",
-          {
-            style: { display: "flex", gap: "6px", background: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.06)", borderRadius: "50px", padding: "4px", marginBottom: "16px" }
-          },
-          ["monthly", "lifetime"].map(
-            (p) => /* @__PURE__ */ React.createElement("button", {
-              key: p,
-              onClick: () => setPremiumPlan(p),
-              style: { flex: "1", background: premiumPlan === p ? "linear-gradient(135deg,#d4a846,#c9807a)" : "transparent", color: premiumPlan === p ? "#080810" : "rgba(255,255,255,0.5)", border: "none", borderRadius: "50px", padding: "9px 12px", fontSize: "12px", fontWeight: "700", cursor: "pointer", fontFamily: "inherit" }
-            }, p === "monthly" ? "Monthly" : "Lifetime")
-          )
-        ),
-        IS_IOS ? /* @__PURE__ */ React.createElement("button", {
-          onClick: () => upgradeWithApple(premiumPlan),
-          disabled: iapWorking,
-          style: { width: "100%", background: iapWorking ? "rgba(255,255,255,0.05)" : "linear-gradient(135deg,#d4a846,#c9807a)", color: iapWorking ? "rgba(255,255,255,0.3)" : "#080810", border: "none", borderRadius: "14px", padding: "17px", fontSize: "16px", fontWeight: "700", cursor: iapWorking ? "default" : "pointer", fontFamily: "inherit", marginBottom: "12px" }
-        }, iapWorking ? "Opening\u2026" : premiumPlan === "monthly" ? `Get Premium \xB7 ${iapPrice}` : "Get Lifetime \xB7 $24.99") : /* @__PURE__ */ React.createElement("button", {
-          onClick: () => upgradeToStripe(premiumPlan),
-          disabled: upgradeWorking,
-          style: { width: "100%", background: upgradeWorking ? "rgba(255,255,255,0.05)" : "linear-gradient(135deg,#d4a846,#c9807a)", color: upgradeWorking ? "rgba(255,255,255,0.3)" : "#080810", border: "none", borderRadius: "14px", padding: "17px", fontSize: "16px", fontWeight: "700", cursor: upgradeWorking ? "default" : "pointer", fontFamily: "inherit", marginBottom: "12px" }
-        }, upgradeWorking ? "Opening checkout\u2026" : premiumPlan === "monthly" ? "Get Premium \xB7 $2/mo" : "Get Lifetime \xB7 $20")
-      ),
-      /* @__PURE__ */ React.createElement(
-        "p",
-        { style: { fontSize: "11px", color: "rgba(255,255,255,0.25)", textAlign: "center", margin: "12px 0 4px", lineHeight: "1.6" } },
-        "By subscribing you agree to the ",
-        /* @__PURE__ */ React.createElement("a", { href: "https://www.apple.com/legal/internet-services/itunes/dev/stdeula/", target: "_blank", rel: "noopener", style: { color: "rgba(255,255,255,0.45)", textDecoration: "underline" } }, "Terms of Use"),
-        " and ",
-        /* @__PURE__ */ React.createElement("a", { href: "https://getliri.com/privacy", target: "_blank", rel: "noopener", style: { color: "rgba(255,255,255,0.45)", textDecoration: "underline" } }, "Privacy Policy"),
-        "."
-      ),
-      /* @__PURE__ */ React.createElement("button", {
-        onClick: () => setShowPremiumInfo(false),
-        style: { width: "100%", background: "none", border: "none", color: "rgba(255,255,255,0.2)", fontSize: "13px", cursor: "pointer", fontFamily: "inherit", padding: "8px" }
-      }, "Close")
-    )), showChangePw && /* @__PURE__ */ React.createElement("div", {
+    ))), showChangePw && /* @__PURE__ */ React.createElement("div", {
       onClick: () => {
         if (!changePwWorking && !changePwDone) setShowChangePw(false);
       },
@@ -8328,94 +8007,6 @@ Move closer to your speakers and try again.`);
           }, i + 1 + ". " + (t.trackName || "")))))))
         );
       })()
-    ), mode === "limit" && /* @__PURE__ */ React.createElement(
-      "div",
-      {
-        style: {
-          maxWidth: "300px",
-          animation: "fade-up 0.3s ease both",
-          textAlign: "center"
-        }
-      },
-      /* @__PURE__ */ React.createElement(Vinyl, {
-        size: 100,
-        spinning: false
-      }),
-      /* @__PURE__ */ React.createElement("div", {
-        style: {
-          marginTop: "32px",
-          fontSize: "22px",
-          fontWeight: "700",
-          color: "#f0e6d3",
-          marginBottom: "12px"
-        }
-      }, "Your free crate is full"),
-      /* @__PURE__ */ React.createElement("div", {
-        style: {
-          color: "rgba(255,255,255,0.4)",
-          marginBottom: "36px",
-          lineHeight: "1.8",
-          fontSize: "15px"
-        }
-      }, "You've added 10 free records.", /* @__PURE__ */ React.createElement("br", null), "Upgrade to keep building your collection."),
-      /* Monthly / Lifetime toggle */
-      /* @__PURE__ */ React.createElement(
-        "div",
-        {
-          style: { display: "flex", gap: "6px", background: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.06)", borderRadius: "50px", padding: "4px", marginBottom: "16px" }
-        },
-        ["monthly", "lifetime"].map(
-          (p) => /* @__PURE__ */ React.createElement("button", {
-            key: p,
-            onClick: () => setPremiumPlan(p),
-            style: { flex: "1", background: premiumPlan === p ? "linear-gradient(135deg,#d4a846,#c9807a)" : "transparent", color: premiumPlan === p ? "#080810" : "rgba(255,255,255,0.5)", border: "none", borderRadius: "50px", padding: "9px 12px", fontSize: "12px", fontWeight: "700", cursor: "pointer", fontFamily: "inherit" }
-          }, p === "monthly" ? "Monthly" : "Lifetime")
-        )
-      ),
-      IS_IOS ? /* @__PURE__ */ React.createElement(
-        React.Fragment,
-        null,
-        /* @__PURE__ */ React.createElement("button", {
-          onClick: () => upgradeWithApple(premiumPlan),
-          disabled: iapWorking,
-          style: { background: "linear-gradient(135deg,#d4a846,#c9807a)", color: "#080810", border: "none", borderRadius: "50px", padding: "14px 32px", fontSize: "14px", fontWeight: "700", cursor: "pointer", fontFamily: "inherit", marginBottom: "8px", width: "100%", opacity: iapWorking ? 0.6 : 1 }
-        }, iapWorking ? "Processing\u2026" : premiumPlan === "monthly" ? `Subscribe \xB7 ${iapPrice}` : "Get Lifetime \xB7 $24.99"),
-        /* @__PURE__ */ React.createElement("button", {
-          onClick: restoreApplePurchases,
-          disabled: iapWorking,
-          style: { background: "none", border: "none", color: "rgba(255,255,255,0.3)", fontSize: "12px", cursor: "pointer", fontFamily: "inherit", padding: "8px", marginBottom: "4px" }
-        }, "Restore Purchases")
-      ) : /* @__PURE__ */ React.createElement("button", {
-        onClick: () => upgradeToStripe(premiumPlan),
-        disabled: upgradeWorking,
-        style: {
-          background: "linear-gradient(135deg,#d4a846,#c9807a)",
-          color: "#080810",
-          border: "none",
-          borderRadius: "50px",
-          padding: "14px 32px",
-          fontSize: "14px",
-          fontWeight: "700",
-          cursor: "pointer",
-          fontFamily: "inherit",
-          marginBottom: "12px",
-          width: "100%",
-          opacity: upgradeWorking ? 0.6 : 1
-        }
-      }, upgradeWorking ? "Opening checkout\u2026" : premiumPlan === "monthly" ? "Upgrade to Premium \xB7 $2/mo" : "Get Lifetime \xB7 $20"),
-      /* @__PURE__ */ React.createElement("button", {
-        onClick: () => setMode("idle"),
-        style: {
-          background: "none",
-          border: "1px solid rgba(255,255,255,0.1)",
-          color: "rgba(255,255,255,0.3)",
-          borderRadius: "50px",
-          padding: "10px 28px",
-          fontSize: "13px",
-          cursor: "pointer",
-          fontFamily: "inherit"
-        }
-      }, "Maybe later")
     ))));
   }
   ReactDOM.createRoot(document.getElementById("root")).render(
