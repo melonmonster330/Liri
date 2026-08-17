@@ -8,6 +8,25 @@ Let a user sign in with their Discogs account and have **the records they actual
 own** show up in their Liri library — no duplicates, no bloat, as few Discogs API
 calls as possible.
 
+## Progress
+- ✅ **Slice 1 — OAuth handshake (backend).** `user_discogs_accounts` +
+  `discogs_oauth_pending` + `user_discogs_collection` tables
+  (`supabase/migrations/20260817_discogs_oauth.sql`), OAuth 1.0a PLAINTEXT helper
+  (`api/_lib/discogs-oauth.js`), and `discogs-oauth-start` / `-callback` / `discogs-status`
+  endpoints. Connects a logged-in user's Discogs account and stores their tokens
+  server-side. **Not yet wired into the UI; not yet tested end-to-end.**
+- ⏭️ Next: Settings "Connect Discogs" button → run the flow → then the import endpoint.
+
+### Manual setup needed before end-to-end testing
+- [ ] Register a Discogs application (discogs.com/settings/developers) and set
+      **`DISCOGS_KEY`** + **`DISCOGS_SECRET`** in Vercel (Preview + Production).
+      Only `DISCOGS_TOKEN` is currently set — OAuth needs the consumer key/secret.
+- [ ] Add the callback URL(s) to the Discogs app: the preview
+      (`https://liri-git-discogs-integration-…/api/discogs-oauth-callback`) and prod
+      (`https://www.getliri.com/api/discogs-oauth-callback`).
+- [ ] For testing on the preview URL, turn off Vercel deployment protection (or test on prod),
+      so Discogs can redirect the browser back without hitting the SSO wall.
+
 ---
 
 ## What already exists (don't rebuild)
