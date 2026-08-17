@@ -96,4 +96,3 @@ CREATE POLICY "Users read own discogs collection"
   USING (auth.uid() = user_id);
 
 -- Writes happen server-side (service role) during import/enrichment.
-</content>
