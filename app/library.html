@@ -474,6 +474,23 @@
     // 2 most-recently-played albums first (recency order), then the rest filed
     // record-shop style by artist sort key (ties: full artist name, then album).
     function orderLibrary(lib, recentIds) {
+      // Same-artist albums must file together even when some are enriched (they
+      // carry a "Lastname, First" sort name) and some are freshly imported from
+      // Discogs (they don't yet). Borrow a known sort name for the artist so both
+      // land in the same place — e.g. an imported "Fearless" files next to
+      // "Fearless (Taylor's Version)" under "Swift, Taylor", not down under "T".
+      const sortNameByArtist = new Map();
+      for (const a of (lib || [])) {
+        if (a.artist_sort_name) {
+          const key = foldName((a.artist_name || "").trim());
+          if (key && !sortNameByArtist.has(key)) sortNameByArtist.set(key, a.artist_sort_name);
+        }
+      }
+      const keyOf = a => foldName(
+        a.artist_sort_name
+        || sortNameByArtist.get(foldName((a.artist_name || "").trim()))
+        || (a.artist_name || "").trim().replace(/^the\s+/i, ""));
+
       const seen = new Set();
       const recent = [];
       for (const id of (recentIds || [])) {
@@ -483,7 +500,7 @@
       const rest = (lib || [])
         .filter(x => !seen.has(String(x.itunes_collection_id)))
         .sort((a, b) =>
-          cmpBase(artistSortKey(a), artistSortKey(b)) ||
+          cmpBase(keyOf(a), keyOf(b)) ||
           cmpBase(a.artist_name, b.artist_name) ||
           cmpBase(a.album_name, b.album_name));
       return [...recent, ...rest];
