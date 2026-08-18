@@ -1,7 +1,8 @@
 # Discogs Login + Collection Sync — working checklist
 
-> Feature branch: `discogs-integration`. Design/planning doc — the running list of
-> things we can't forget. Nothing here is built yet. Last updated: Aug 2026.
+> Built on the `discogs-integration` branch and **merged to `main` on 2026-08-18**
+> after an end-to-end pass on the preview build. The running list of things we
+> can't forget — remaining work is under "Possible next" and the iOS gap.
 
 ## The one-line goal
 Let a user sign in with their Discogs account and have **the records they actually
@@ -14,7 +15,7 @@ calls as possible.
   (`supabase/migrations/20260817_discogs_oauth.sql`), OAuth 1.0a PLAINTEXT helper
   (`api/_lib/discogs-oauth.js`), and `discogs-oauth-start` / `-callback` / `discogs-status`
   endpoints. Connects a logged-in user's Discogs account and stores their tokens
-  server-side. **Not yet wired into the UI; not yet tested end-to-end.**
+  server-side.
 - ✅ **Slice 2 — Import endpoint** (`api/discogs-import.js`): list-only, paginated,
   resumable pull of the owned collection into `user_discogs_collection`.
 - ✅ **Slice 3 — My Records connect flow** (`app/library.html`): greyed "Connect to
@@ -29,7 +30,10 @@ calls as possible.
 - ✅ **Slice 5 — Settings section.** `DiscogsSettings` in the Settings modal:
   username + email + collection size, resync, disconnect; Connect button when not
   set up. Backend stores/returns profile (email/avatar/num_collection, lazy
-  backfill) + `discogs-disconnect` endpoint.
+  backfill) + `discogs-disconnect` endpoint. The same panel also lives on the
+  standalone Profile → Settings page (`app/settings.html`), restyled to that
+  page's idiom. The two are independent components that each fetch their own
+  status, so they can disagree until a reload — deliberate for now.
 - ✅ **Slice 6 — Function consolidation.** The five `api/discogs-*.js` routes were
   merged into one `api/discogs.js` dispatching on `?action=`, with handlers in
   `api/_lib/discogs-handlers.js`. The Hobby plan caps a deployment at 12
@@ -57,7 +61,7 @@ web release; needs an in-app browser + deep link before shipping to iOS.
 - [x] Register a Discogs application (discogs.com/settings/developers) and set
       **`DISCOGS_KEY`** + **`DISCOGS_SECRET`** in Vercel — confirmed present on
       Preview + Production.
-- [ ] Add the callback URL(s) to the Discogs app: the preview
+- [x] Add the callback URL(s) to the Discogs app: the preview
       (`https://liri-git-discogs-integration-…/api/discogs-oauth-callback`) and prod
       (`https://www.getliri.com/api/discogs-oauth-callback`). Note the apex
       `getliri.com` 307-redirects to `www`, and Capacitor hardcodes `www`, so the
@@ -175,8 +179,9 @@ iTunes-matching becomes lazy background enrichment, not a gate on import.
 ---
 
 ## Guardrails
-- Work + test **only** on the `discogs-integration` branch. Nothing to `main` until it's
-  proven on the preview URL.
+- ~~Work + test **only** on the `discogs-integration` branch. Nothing to `main` until
+  it's proven on the preview URL.~~ Satisfied: the connect → import → enrich flow and
+  both Settings panels were walked through on the preview before the merge.
 - Preview URL (updates on every push to this branch):
   `https://liri-git-discogs-integration-melonmonster330s-projects.vercel.app`
 </content>
