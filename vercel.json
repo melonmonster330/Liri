@@ -38,6 +38,7 @@
     { "source": "/vinyl",        "destination": "/app/vinyl.html"   },
     { "source": "/tv",           "destination": "/tv.html"          },
     { "source": "/library",      "destination": "/app/library.html" },
+    { "source": "/library.html", "destination": "/app/library.html" },
     { "source": "/stats",        "destination": "/app/stats.html"   },
     { "source": "/privacy",      "destination": "/app/privacy.html" },
     { "source": "/support",      "destination": "/app/support.html" },

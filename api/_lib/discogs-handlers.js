@@ -304,6 +304,12 @@ async function importCollection(req, res) {
       if (status === 401) return res.status(401).json({ error: "Discogs access was revoked. Please reconnect." });
       if (status === 429) { await sleep(2000); page--; continue; }
       if (status !== 200 || !json) {
+        console.error("[discogs.import] collection read failed", {
+          status,
+          username: acct.discogs_username,
+          page,
+          response: json || null,
+        });
         return res.status(502).json({ error: "Couldn't read your Discogs collection. Please try again." });
       }
 
