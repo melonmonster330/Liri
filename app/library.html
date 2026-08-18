@@ -812,7 +812,7 @@
     }
 
     // ── Album Detail Sheet ─────────────────────────────────────────────────
-    function AlbumDetailSheet({ album, onClose, onMetaChanged, onFetchDiscogs }) {
+    function AlbumDetailSheet({ album, copies, onClose, onMetaChanged, onFetchDiscogs }) {
       const [tracks, setTracks]           = useState([]);
       const [loading, setLoading]         = useState(true);
       const [selectedTrack, setSelectedTrack] = useState(null);
@@ -1008,23 +1008,23 @@
             </div>
           </div>
 
-          {/* ── Discogs-only record: not yet matched to iTunes ── */}
-          {album._discogs && (
+          {/* ── Your Discogs copies of this record (shown even after enriching) ── */}
+          {copies && copies.length > 0 && (
             <div style={{ margin: "14px 24px 0", background: "rgba(212,168,70,0.06)", border: "1px solid rgba(212,168,70,0.25)", borderRadius: 14, padding: "12px 14px" }}>
               <div style={{ fontSize: 12, fontWeight: 600, color: "rgba(212,168,70,0.9)" }}>
-                In your Discogs library{album._discogsVersions && album._discogsVersions.length > 1 ? ` · ${album._discogsVersions.length} copies` : ""}
+                In your Discogs library{copies.length > 1 ? ` · ${copies.length} copies` : ""}
               </div>
-              <div style={{ fontSize: 11, color: "rgba(255,255,255,0.4)", marginTop: 3, lineHeight: 1.4 }}>Lyrics and side info aren't fetched yet — they'll load the first time you play this record.</div>
-              {album._discogsVersions && album._discogsVersions.length > 1 && (
-                <div style={{ marginTop: 10, display: "flex", flexDirection: "column", gap: 6 }}>
-                  {album._discogsVersions.map(v => (
-                    <div key={v.id} style={{ fontSize: 11, color: "rgba(255,255,255,0.55)", display: "flex", alignItems: "center", gap: 8 }}>
-                      <span style={{ color: "rgba(212,168,70,0.7)" }}>◦</span>
-                      {v.release_year ? `${v.release_year} · ` : ""}Discogs release {v.discogs_release_id}
-                    </div>
-                  ))}
-                </div>
+              {album._discogs && (
+                <div style={{ fontSize: 11, color: "rgba(255,255,255,0.4)", marginTop: 3, lineHeight: 1.4 }}>Lyrics and side info aren't fetched yet — they'll load the first time you play this record.</div>
               )}
+              <div style={{ marginTop: 10, display: "flex", flexDirection: "column", gap: 6 }}>
+                {copies.map(v => (
+                  <div key={v.id} style={{ fontSize: 11, color: "rgba(255,255,255,0.55)", display: "flex", alignItems: "center", gap: 8 }}>
+                    <span style={{ color: "rgba(212,168,70,0.7)" }}>◦</span>
+                    {v.release_year ? `${v.release_year} · ` : ""}Discogs release {v.discogs_release_id}
+                  </div>
+                ))}
+              </div>
             </div>
           )}
 
@@ -1198,6 +1198,7 @@
       // ── Discogs connection + import ──
       const [discogsStatus, setDiscogsStatus]   = useState(null); // null=unknown | { connected, username, ... }
       const [discogsPending, setDiscogsPending] = useState([]);   // imported records not yet matched to iTunes
+      const [discogsCopies, setDiscogsCopies]   = useState({});   // artist+album key → owned Discogs copies (even after enriching)
       const [discogsImport, setDiscogsImport]   = useState(null); // null | { running, imported, total, done, error }
       // True only for the load right after connecting: shows the separate
       // "From your Discogs collection" section. On any later load the imported
@@ -1307,13 +1308,29 @@
         if (!uid) return;
         try {
           const { data } = await sb.from("user_discogs_collection")
-            .select("id, discogs_release_id, artist_name, album_name, release_year, thumb_url")
+            .select("id, discogs_release_id, artist_name, album_name, release_year, thumb_url, itunes_collection_id")
             .eq("user_id", uid)
-            .is("itunes_collection_id", null)
             .order("added_at", { ascending: false });
-          setDiscogsPending(data || []);
+          const all = data || [];
+          const norm = s => (s || "").toLowerCase().replace(/[^a-z0-9]+/g, "");
+          // Copies of every owned album, keyed by artist+album — so the detail
+          // view can show "your Discogs copies" even after a record is enriched.
+          const copies = {};
+          for (const r of all) {
+            const k = `${norm(r.album_name)}|${norm(r.artist_name)}`;
+            (copies[k] = copies[k] || []).push(r);
+          }
+          setDiscogsCopies(copies);
+          // The merged list only wants records not yet matched to iTunes.
+          setDiscogsPending(all.filter(r => !r.itunes_collection_id));
         } catch (e) {}
       }, []);
+
+      // Normalized artist+album key used to look up a record's Discogs copies.
+      const dgAlbumKey = (a) => {
+        const norm = s => (s || "").toLowerCase().replace(/[^a-z0-9]+/g, "");
+        return `${norm(a && a.album_name)}|${norm(a && a.artist_name)}`;
+      };
 
       const connectDiscogs = useCallback(async () => {
         try {
@@ -2061,6 +2078,7 @@
           {selectedAlbum && (
             <AlbumDetailSheet
               album={selectedAlbum}
+              copies={discogsCopies[dgAlbumKey(selectedAlbum)] || selectedAlbum._discogsVersions || []}
               onClose={() => setSelectedAlbum(null)}
               onMetaChanged={() => scanMissingInfo(library)}
               onFetchDiscogs={(a) => fetchInBackground(a)}
