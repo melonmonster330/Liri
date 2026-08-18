@@ -131,6 +131,16 @@ async function getIdentity(accessToken, accessTokenSecret) {
   return json; // { id, username, resource_url, consumer_name }
 }
 
+// Full profile for the authenticated user. email is only returned when the
+// request is signed as that same user (which ours is). Returns null on failure.
+async function getProfile(username, accessToken, accessTokenSecret) {
+  const { status, json } = await signedGet(
+    `https://api.discogs.com/users/${encodeURIComponent(username)}`, accessToken, accessTokenSecret
+  );
+  if (status !== 200 || !json) return null;
+  return json; // { email, avatar_url, num_collection, num_wantlist, location, ... }
+}
+
 module.exports = {
   hasCredentials,
   getRequestToken,
@@ -138,4 +148,5 @@ module.exports = {
   getAccessToken,
   signedGet,
   getIdentity,
+  getProfile,
 };
