@@ -21,7 +21,9 @@
 //   WebM is self-contained per chunk, so we use a series of short
 //   independent recorders (cheap, and we get real chunk boundaries).
 
-const WHISPER_PROXY = window.Capacitor
+import { IS_IOS } from "./config.js";
+
+const WHISPER_PROXY = IS_IOS
   ? "https://www.getliri.com/api/whisper"
   : "/api/whisper";
 
@@ -29,7 +31,7 @@ export function startWhisperChunks(stream, onText, chunkMs, prompt) {
   let active = true;
 
   // ── iOS path ────────────────────────────────────────────────────────────────
-  if (window.Capacitor) {
+  if (IS_IOS) {
     const iosChunks = [];
     const recorder = new MediaRecorder(stream);
     recorder.ondataavailable = async (e) => {

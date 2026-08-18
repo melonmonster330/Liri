@@ -1,6 +1,8 @@
 // Desktop Chrome Google Cast sender for Liri's custom lyrics receiver.
 // Intentionally web-only: iOS/Capacitor sender support is a separate project.
 
+import { IS_IOS } from "../../base/lib/config.js";
+
 const { useState, useEffect, useRef, useCallback } = React;
 
 const CAST_APP_ID = "2FBB66AA";
@@ -13,7 +15,7 @@ let castLoadPromise = null;
 function loadCastSdk() {
   if (castLoadPromise) return castLoadPromise;
   castLoadPromise = new Promise((resolve, reject) => {
-    if (!window.chrome || window.Capacitor) {
+    if (!window.chrome || IS_IOS) {
       reject(new Error("Google Cast is available in desktop Chrome"));
       return;
     }
@@ -51,7 +53,7 @@ function loadCastSdk() {
 }
 
 export function useCast({ mode, song, lyrics, playbackTime, isPaused }) {
-  const supported = !window.Capacitor && !!window.chrome;
+  const supported = !IS_IOS && !!window.chrome;
   const [ready, setReady] = useState(false);
   const [connected, setConnected] = useState(false);
   const [deviceName, setDeviceName] = useState(null);

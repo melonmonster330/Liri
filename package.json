@@ -10,6 +10,8 @@
     "ios": "npx cap open ios"
   },
   "dependencies": {
+    "@capacitor/app": "^8.1.1",
+    "@capacitor/browser": "^8.0.4",
     "@capacitor/core": "^8.2.0",
     "@capacitor/local-notifications": "^8.0.2",
     "openai": "^6.34.0"

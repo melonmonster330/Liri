@@ -10,6 +10,8 @@
 // If the user hasn't enabled flip alerts (via the Settings → Flip reminders
 // toggle), these are no-ops.
 
+import { IS_IOS } from "./config.js";
+
 function getLocalNotif() {
   return window.Capacitor?.Plugins?.LocalNotifications ?? null;
 }
@@ -27,7 +29,7 @@ export function showFlipPushNotification(song, discInfo) {
   }
   const body  = song ? `${song.artist} — ${song.album || "Side A done"}` : "Your side has ended — flip the record";
 
-  if (!window.Capacitor) return;
+  if (!IS_IOS) return;
   try { getLocalNotif()?.schedule({ notifications: [{ id: 1001, title, body }] }); } catch {}
 }
 
@@ -37,7 +39,7 @@ export function showAlbumEndPushNotification(song) {
   const title = "That's the album! 🎶";
   const body  = song ? `${song.artist} — ${song.album || "Album complete"}` : "Put on your next record to keep going";
 
-  if (!window.Capacitor) return;
+  if (!IS_IOS) return;
   try { getLocalNotif()?.schedule({ notifications: [{ id: 1002, title, body }] }); } catch {}
 }
 

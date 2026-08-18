@@ -13,6 +13,8 @@
 //   onSave  — (text) => void
 //   onClose — () => void
 
+import { IS_IOS } from "../lib/config.js";
+
 const { useState } = React;
 
 const e = React.createElement;
@@ -20,7 +22,7 @@ const e = React.createElement;
 export function LyricsEditorSheet({ track, sites, saving, error, onSave, onClose }) {
   const [text, setText] = useState("");
 
-  const openSite = url => window.open(url, window.Capacitor ? "_system" : "_blank");
+  const openSite = url => window.open(url, IS_IOS ? "_system" : "_blank");
 
   return e("div", {
     onClick: onClose,

@@ -28,6 +28,8 @@ import { SideInfoSheet }     from "../base/components/SideInfoSheet.js";
 import { Shazam }         from "../ios/shazam.js";
 import { getNativeAudio } from "../ios/audio.js";
 import { getKeepAwake }   from "../ios/keep-awake.js";
+import { App as CapacitorApp } from "@capacitor/app";
+import { Browser as CapacitorBrowser } from "@capacitor/browser";
 
 const {
   useState,
@@ -47,7 +49,15 @@ const liriAuthStorage = {
   setItem: (k, v) => { try { sessionStorage.setItem(k, v); } catch {} try { localStorage.setItem(k, v); } catch {} },
   removeItem: k => { try { sessionStorage.removeItem(k); } catch {} try { localStorage.removeItem(k); } catch {} },
 };
-const sb = supabase.createClient("https://xjdjpaxgymgbvcwmvorc.supabase.co", "sb_publishable_C-NBnfg0ltAoUi46XQTUjA_ozjZW_Nd", { auth: { storage: liriAuthStorage } });
+const NATIVE_AUTH_CALLBACK = "liri://auth/callback";
+const authRedirectTo = () => IS_IOS ? NATIVE_AUTH_CALLBACK : `${window.location.origin}/app`;
+const openProviderUrl = async url => {
+  if (IS_IOS) await CapacitorBrowser.open({ url, presentationStyle: "popover" });
+  else window.location.href = url;
+};
+const sb = supabase.createClient("https://xjdjpaxgymgbvcwmvorc.supabase.co", "sb_publishable_C-NBnfg0ltAoUi46XQTUjA_ozjZW_Nd", {
+  auth: { storage: liriAuthStorage, flowType: "pkce", detectSessionInUrl: !IS_IOS },
+});
 const APP_VERSION = "1.5.14";
 
 // ── Discogs connection panel (Settings) ────────────────────────────────────
@@ -56,7 +66,7 @@ const APP_VERSION = "1.5.14";
 // through OAuth and back to the library, which imports your collection.
 function DiscogsSettings() {
   const h = React.createElement;
-  const API = window.Capacitor ? "https://www.getliri.com" : "";
+  const API = IS_IOS ? "https://www.getliri.com" : "";
   const [status, setStatus] = useState(null);   // null = loading | { connected, ... }
   const [busy, setBusy]     = useState(false);
   const [msg, setMsg]       = useState(null);
@@ -72,7 +82,11 @@ function DiscogsSettings() {
       if (r.ok) setStatus(await r.json()); else setStatus({ connected: false });
     } catch (e) { setStatus({ connected: false }); }
   };
-  useEffect(() => { load(); }, []);
+  useEffect(() => {
+    load();
+    window.addEventListener("liri:discogs-connected", load);
+    return () => window.removeEventListener("liri:discogs-connected", load);
+  }, []);
 
   const connect = async () => {
     try {
@@ -80,10 +94,10 @@ function DiscogsSettings() {
       const r = await fetch(`${API}/api/discogs-oauth-start`, {
         method: "POST",
         headers: { "Content-Type": "application/json", Authorization: `Bearer ${t}` },
-        body: JSON.stringify({ return_to: "/library" }),
+        body: JSON.stringify({ return_to: "/library", native: IS_IOS }),
       });
       const j = await r.json();
-      if (j.authorizeUrl) window.location.href = j.authorizeUrl;
+      if (j.authorizeUrl) await openProviderUrl(j.authorizeUrl);
       else alert(j.error || "Couldn't start Discogs sign-in.");
     } catch (e) { alert("Couldn't reach Discogs. Please try again."); }
   };
@@ -154,6 +168,99 @@ function DiscogsSettings() {
     h("div", { style: { display: "flex", gap: "10px", flexWrap: "wrap" } },
       h("button", { onClick: resync, disabled: busy, style: primary }, busy ? "Syncing…" : "Resync from Discogs"),
       h("button", { onClick: disconnect, disabled: busy, style: ghost }, "Disconnect")));
+}
+
+function ProviderIcon({ provider }) {
+  if (provider === "google") return /*#__PURE__*/React.createElement("svg", { width: 21, height: 21, viewBox: "0 0 24 24", "aria-hidden": "true" },
+    /*#__PURE__*/React.createElement("path", { fill: "#4285F4", d: "M21.6 12.23c0-.71-.06-1.4-.18-2.06H12v3.9h5.38a4.6 4.6 0 0 1-2 3.02v2.53h3.24c1.9-1.75 2.98-4.33 2.98-7.39Z" }),
+    /*#__PURE__*/React.createElement("path", { fill: "#34A853", d: "M12 22c2.7 0 4.98-.9 6.63-2.38l-3.25-2.53c-.9.6-2.05.97-3.38.97-2.61 0-4.82-1.77-5.61-4.14H3.04v2.61A10 10 0 0 0 12 22Z" }),
+    /*#__PURE__*/React.createElement("path", { fill: "#FBBC05", d: "M6.39 13.92A6.02 6.02 0 0 1 6.08 12c0-.67.11-1.32.31-1.92V7.47H3.04A10 10 0 0 0 2 12c0 1.62.39 3.15 1.04 4.53l3.35-2.61Z" }),
+    /*#__PURE__*/React.createElement("path", { fill: "#EA4335", d: "M12 5.94c1.47 0 2.79.5 3.83 1.5l2.87-2.87A9.64 9.64 0 0 0 12 2a10 10 0 0 0-8.96 5.47l3.35 2.61C7.18 7.71 9.39 5.94 12 5.94Z" }));
+  if (provider === "apple") return /*#__PURE__*/React.createElement("svg", { width: 21, height: 21, viewBox: "0 0 24 24", fill: "#f0e6d3", "aria-hidden": "true" },
+    /*#__PURE__*/React.createElement("path", { d: "M17.05 12.54c-.03-3.04 2.48-4.52 2.6-4.59-1.42-2.08-3.64-2.36-4.43-2.38-1.86-.2-3.67 1.12-4.62 1.12-.97 0-2.43-1.1-4.01-1.07-2.04.03-3.95 1.21-5 3.04-2.14 3.7-.55 9.14 1.51 12.13 1.03 1.47 2.23 3.1 3.81 3.04 1.54-.06 2.11-.98 3.97-.98 1.84 0 2.38.98 3.99.94 1.66-.03 2.7-1.47 3.69-2.95 1.19-1.69 1.67-3.35 1.69-3.44-.04-.01-3.17-1.21-3.2-4.82ZM14 3.59C14.82 2.57 15.38 1.18 15.22 0c-1.19.05-2.68.83-3.54 1.83-.76.88-1.44 2.32-1.26 3.45 1.34.1 2.72-.68 3.58-1.69Z", transform: "scale(.92) translate(1.1 .2)" }));
+  return /*#__PURE__*/React.createElement("svg", { width: 22, height: 22, viewBox: "0 0 24 24", fill: "none", "aria-hidden": "true" },
+    /*#__PURE__*/React.createElement("circle", { cx: 12, cy: 12, r: 9, stroke: "#f0e6d3", strokeWidth: 1.5 }),
+    /*#__PURE__*/React.createElement("circle", { cx: 12, cy: 12, r: 5.6, stroke: "rgba(240,230,211,.45)", strokeWidth: 1 }),
+    /*#__PURE__*/React.createElement("circle", { cx: 12, cy: 12, r: 2.2, fill: "#d4a846" }),
+    /*#__PURE__*/React.createElement("circle", { cx: 12, cy: 12, r: .65, fill: "#080810" }));
+}
+
+function ProviderButtons({ onError }) {
+  const h = React.createElement;
+  const [busy, setBusy] = useState(null);
+  const redirectTo = authRedirectTo();
+  const button = {
+    width: "100%", minHeight: "52px", background: "rgba(255,255,255,0.045)", color: "#f0e6d3",
+    border: "1px solid rgba(255,255,255,0.12)", borderRadius: "14px",
+    padding: "0 16px", fontSize: "14px", fontWeight: 600, cursor: "pointer",
+    fontFamily: "inherit", display: "grid", gridTemplateColumns: "28px 1fr 28px",
+    alignItems: "center", letterSpacing: "-0.1px",
+  };
+  const fail = e => { setBusy(null); onError?.(e?.message || "Couldn't start sign-in. Please try again."); };
+  const oauth = async provider => {
+    setBusy(provider);
+    const { data, error } = await sb.auth.signInWithOAuth({
+      provider,
+      options: { redirectTo, skipBrowserRedirect: IS_IOS },
+    });
+    if (error) fail(error);
+    else if (IS_IOS && data?.url) await openProviderUrl(data.url);
+  };
+  const discogs = async () => {
+    setBusy("discogs");
+    try {
+      const api = IS_IOS ? "https://www.getliri.com" : "";
+      const r = await fetch(`${api}/api/discogs-oauth-start`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ return_to: "/library", native: IS_IOS }),
+      });
+      const data = await r.json();
+      if (!r.ok || !data.authorizeUrl) throw new Error(data.error || "Couldn't start Discogs sign-in.");
+      await openProviderUrl(data.authorizeUrl);
+    } catch (e) { fail(e); }
+  };
+  const row = (key, label, action) => h("button", {
+    type: "button", disabled: !!busy, onClick: action, style: { ...button, opacity: busy ? 0.55 : 1 },
+  }, h("span", { style: { width: 28, height: 28, display: "flex", alignItems: "center", justifyContent: "center" } }, h(ProviderIcon, { provider: key })),
+    h("span", null, busy === key ? "Opening…" : label), h("span", null));
+
+  return h("div", { style: { display: "flex", flexDirection: "column", gap: "8px", marginBottom: "18px" } },
+    row("google", "Continue with Google", () => oauth("google")),
+    row("apple", "Continue with Apple", () => oauth("apple")),
+    row("discogs", "Continue with Discogs", discogs),
+    h("div", { style: { display: "flex", alignItems: "center", gap: "10px", margin: "5px 0 0", color: "rgba(255,255,255,0.2)", fontSize: "11px" } },
+      h("span", { style: { height: 1, background: "rgba(255,255,255,0.08)", flex: 1 } }), "or use email", h("span", { style: { height: 1, background: "rgba(255,255,255,0.08)", flex: 1 } })));
+}
+
+function LinkedLoginSettings({ user }) {
+  const h = React.createElement;
+  const [busy, setBusy] = useState(null);
+  const [message, setMessage] = useState(null);
+  const providers = new Set((user?.identities || []).map(i => i.provider));
+  const link = async provider => {
+    setBusy(provider); setMessage(null);
+    const { data, error } = await sb.auth.linkIdentity({
+      provider,
+      options: { redirectTo: authRedirectTo(), skipBrowserRedirect: IS_IOS },
+    });
+    if (error) { setMessage(error.message); setBusy(null); }
+    else if (IS_IOS && data?.url) await openProviderUrl(data.url);
+  };
+  const item = (provider, label) => {
+    const connected = providers.has(provider);
+    return h("div", { style: { display: "flex", alignItems: "center", justifyContent: "space-between", padding: "10px 0", borderTop: "1px solid rgba(255,255,255,0.05)" } },
+      h("div", null,
+        h("div", { style: { fontSize: "13px", color: "#f0e6d3" } }, label),
+        h("div", { style: { fontSize: "11px", color: connected ? "#6aaa8a" : "rgba(255,255,255,0.3)", marginTop: 2 } }, connected ? "Connected" : "Not connected")),
+      connected ? h("span", { style: { color: "#6aaa8a", fontSize: "16px" } }, "✓") :
+        h("button", { onClick: () => link(provider), disabled: !!busy, style: { background: "rgba(255,255,255,0.06)", border: "1px solid rgba(255,255,255,0.09)", color: "#d4a846", borderRadius: "50px", padding: "7px 13px", fontSize: "12px", fontFamily: "inherit" } }, busy === provider ? "Opening…" : "Connect"));
+  };
+  return h("div", { style: { background: "rgba(255,255,255,0.03)", border: "1px solid rgba(255,255,255,0.07)", borderRadius: "16px", padding: "16px 18px", marginBottom: "16px" } },
+    h("div", { style: { fontSize: "13px", color: "#d4a846", marginBottom: "4px" } }, "Ways to sign in"),
+    h("div", { style: { fontSize: "11px", color: "rgba(255,255,255,0.3)", marginBottom: "10px", lineHeight: 1.5 } }, "Connect more than one method to this same Liri account."),
+    item("google", "Google"), item("apple", "Apple"),
+    message ? h("div", { style: { color: "#e8a0a8", fontSize: "11px", marginTop: "8px", lineHeight: 1.5 } }, message) : null);
 }
 // Lyrics lead the audio clock by this many seconds — the highlighted line
 // switches slightly BEFORE its nominal timestamp. Displayed time / progress bar
@@ -858,11 +965,83 @@ function Liri() {
 
   // ── Auth setup ──
   useEffect(() => {
-    sb.auth.getSession().then(({
-      data: {
-        session
+    if (!IS_IOS) return;
+    let handle = null;
+    CapacitorApp.addListener("appUrlOpen", async ({ url }) => {
+      if (!url || !url.startsWith(NATIVE_AUTH_CALLBACK)) return;
+      await CapacitorBrowser.close().catch(() => {});
+      const parsed = new URL(url);
+      const query = parsed.searchParams;
+      const hash = new URLSearchParams(parsed.hash.replace(/^#/, ""));
+      const error = query.get("error_description") || hash.get("error_description") || query.get("error");
+      if (error) {
+        setAuthError(decodeURIComponent(error));
+        setAuthSheet("signin");
+        return;
       }
-    }) => {
+      if (query.get("discogs") === "error") {
+        const reason = query.get("reason");
+        setAuthError(reason === "already_linked"
+          ? "That Discogs account is already connected to another Liri account."
+          : "Discogs sign-in didn't finish. Please try again.");
+        setAuthSheet("signin");
+        return;
+      }
+      try {
+        const code = query.get("code");
+        const tokenHash = query.get("token_hash");
+        if (tokenHash) {
+          const { error: otpError } = await sb.auth.verifyOtp({
+            token_hash: tokenHash,
+            type: query.get("type") || "magiclink",
+          });
+          if (otpError) throw otpError;
+        } else if (code) {
+          const { error: exchangeError } = await sb.auth.exchangeCodeForSession(code);
+          if (exchangeError) throw exchangeError;
+        } else if (hash.get("access_token") && hash.get("refresh_token")) {
+          const { error: sessionError } = await sb.auth.setSession({
+            access_token: hash.get("access_token"),
+            refresh_token: hash.get("refresh_token"),
+          });
+          if (sessionError) throw sessionError;
+        }
+        if (query.get("discogs") === "connected") {
+          window.dispatchEvent(new Event("liri:discogs-connected"));
+        }
+      } catch (e) {
+        setAuthError(e?.message || "Sign-in couldn't be completed in the app.");
+        setAuthSheet("signin");
+      }
+    }).then(listener => { handle = listener; });
+    return () => { handle?.remove(); };
+  }, []);
+
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    if (params.get("discogs") === "error") {
+      const reason = params.get("reason");
+      const messages = {
+        already_linked: "That Discogs account is already connected to another Liri account. Delete the old test account or disconnect it there first.",
+        account_create_failed: "We couldn't create the Liri account. Please try again.",
+        account_lookup_failed: "We found the Discogs connection but couldn't open its Liri account.",
+        sign_in_failed: "Discogs was verified, but Liri couldn't finish signing you in.",
+        expired: "That Discogs sign-in expired. Please try again.",
+      };
+      setAuthError(messages[reason] || "Discogs sign-in didn't finish. Please try again.");
+      setAuthSheet("signin");
+    }
+    (async () => {
+      const tokenHash = params.get("token_hash");
+      if (tokenHash) {
+        const { error } = await sb.auth.verifyOtp({
+          token_hash: tokenHash,
+          type: params.get("type") || "magiclink",
+        });
+        if (error) setAuthError(error.message || "Discogs sign-in couldn't be completed.");
+        else window.history.replaceState({}, "", window.location.pathname);
+      }
+      const { data: { session } } = await sb.auth.getSession();
       const u = session?.user || null;
       sessionTokenRef.current = session?.access_token || null;
       setUser(u);
@@ -872,7 +1051,7 @@ function Liri() {
         fetchHistory(u);
         fetchAutoPostPref(u);
       }
-    });
+    })();
     const {
       data: {
         subscription
@@ -1017,7 +1196,7 @@ function Liri() {
       const { data: { session } } = await sb.auth.getSession();
       const token = session?.access_token || sessionTokenRef.current;
       if (!token) throw new Error("Not signed in");
-      const resp = await fetch(`${window.Capacitor ? "https://www.getliri.com" : ""}/api/delete-account`, {
+      const resp = await fetch(`${IS_IOS ? "https://www.getliri.com" : ""}/api/delete-account`, {
         method: "POST",
         headers: { "Content-Type": "application/json", "Authorization": `Bearer ${token}` },
       });
@@ -1057,7 +1236,7 @@ function Liri() {
         user_id: user?.id || null,
         user_email: user?.email || null,
         app_version: APP_VERSION,
-        platform: window.Capacitor ? "ios" : "web",
+        platform: IS_IOS ? "ios" : "web",
         description: bugText.trim(),
         meta: {
           userAgent: navigator.userAgent,
@@ -1250,7 +1429,7 @@ function Liri() {
                   // catches up with what the app displays — otherwise the admin
                   // "Missing Lyrics" list shows tracks as missing forever even
                   // though every listen gap-fills them live from lrclib.
-                  const apiBase = window.Capacitor ? "https://www.getliri.com" : "";
+                  const apiBase = IS_IOS ? "https://www.getliri.com" : "";
                   fetch(`${apiBase}/api/refresh-lyrics?action=track&id=${t.itunes_track_id}`, { method: "POST" }).catch(() => {});
                 }
               } catch {}
@@ -1352,7 +1531,7 @@ function Liri() {
         user_id: user?.id || null,
         user_email: user?.email || null,
         app_version: APP_VERSION,
-        platform: window.Capacitor ? "ios" : "web",
+        platform: IS_IOS ? "ios" : "web",
         description: `Wrong lyrics reported for ${track.trackName || detectedSong?.title || "Unknown song"}`,
         meta: {
           category: "wrong_lyrics",
@@ -1811,7 +1990,7 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
     if (!tracks.length) { setError("Album tracks still loading — try again in a moment."); setMode("error"); return; }
 
     const lrcCache = turntableLyricsCacheRef.current;
-    const isNative = !!window.Capacitor; // bridge is available by call time even if isNativePlatform() isn't
+    const isNative = IS_IOS;
 
     // Build wordsData so resync (Whisper-based fine-tune) can match against lyrics
     const wordsData = {};
@@ -3318,7 +3497,9 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
         padding: "8px 28px max(40px,calc(env(safe-area-inset-bottom)+28px))",
         animation: "slide-up 0.3s ease",
         maxWidth: "520px",
-        margin: "0 auto"
+        margin: "0 auto",
+        maxHeight: "92vh",
+        overflowY: "auto"
       }
     }, !authVerifyPending && /*#__PURE__*/React.createElement("div", {
       onClick: () => { if (authSheet !== "signup") setAuthSheet(null); },
@@ -3427,7 +3608,9 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
         textAlign: "center",
         marginBottom: "24px"
       }
-    }, "Free to start \u2014 no credit card"), /*#__PURE__*/React.createElement("div", {
+    }, "Free to start \u2014 no credit card"), /*#__PURE__*/React.createElement(ProviderButtons, {
+      onError: setAuthError
+    }), /*#__PURE__*/React.createElement("div", {
       style: {
         display: "flex",
         flexDirection: "column",
@@ -3525,7 +3708,9 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
         textAlign: "center",
         marginBottom: "24px"
       }
-    }, "Sign in to continue syncing"), /*#__PURE__*/React.createElement("div", {
+    }, "Sign in to continue syncing"), /*#__PURE__*/React.createElement(ProviderButtons, {
+      onError: setAuthError
+    }), /*#__PURE__*/React.createElement("div", {
       style: {
         display: "flex",
         flexDirection: "column",
@@ -4258,12 +4443,12 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
     // The ring's huge box-shadow dims everything except the highlighted target.
     // The tab bar rewrites hrefs to drop /app on iOS (pageHref), so match the
     // platform-correct path or the Feed-tab spotlight won't find its target.
-    const feedSel = window.Capacitor ? 'a[href="/feed.html"]' : 'a[href="/app/feed.html"]';
+    const feedSel = IS_IOS ? 'a[href="/feed.html"]' : 'a[href="/app/feed.html"]';
     const sel = coachStep === 1 ? "#liri-listen-cta" : feedSel;
     const el = typeof document !== "undefined" ? document.querySelector(sel) : null;
     const r = el ? el.getBoundingClientRect() : null;
     const isLast = coachStep === 2;
-    const advance = () => { if (isLast) { setCoachStep(0); window.location.href = window.Capacitor ? "/library.html" : "/library"; } else { setCoachStep(2); } };
+    const advance = () => { if (isLast) { setCoachStep(0); window.location.href = IS_IOS ? "/library.html" : "/library"; } else { setCoachStep(2); } };
     const copy = coachStep === 1
       ? { title: "Tap Sync Lyrics", body: "Put a record on, then hit Sync Lyrics — Liri finds your place and scrolls the lyrics in time.", cta: "Next →" }
       : { title: "Your Feed", body: "See what friends are spinning, share your own records, and post the lyric lines that hit. It lives right here.", cta: "Add your first record →" };
@@ -4473,7 +4658,7 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
       padding: "20px 0 4px"
     }
   }, /*#__PURE__*/React.createElement("a", {
-    href: window.Capacitor ? "/library.html?openSearch=1" : "/library?openSearch=1",
+    href: IS_IOS ? "/library.html?openSearch=1" : "/library?openSearch=1",
     style: {
       fontSize: 12,
       color: "rgba(255,255,255,0.3)",
@@ -4493,7 +4678,7 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
     error: userMetaError,
     onSave: handleSaveUserLyrics,
     onClose: () => setShowLyricsEditor(false)
-  }), showTrackList && !window.Capacitor && /*#__PURE__*/React.createElement("div", {
+  }), showTrackList && !IS_IOS && /*#__PURE__*/React.createElement("div", {
     onClick: () => setShowTrackList(false),
     style: { position: "fixed", inset: 0, zIndex: 201, background: "rgba(0,0,0,0.6)", backdropFilter: "blur(4px)", cursor: "pointer", display: "flex", alignItems: "flex-end", justifyContent: "center" }
   }, /*#__PURE__*/React.createElement("div", {
@@ -4690,7 +4875,7 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
         textOverflow: "ellipsis",
         whiteSpace: "nowrap"
       }
-    }, user?.email), /*#__PURE__*/React.createElement("div", {
+    }, user?.email?.endsWith("@auth.getliri.com") ? "Signed in with Discogs" : user?.email), /*#__PURE__*/React.createElement("div", {
       style: {
         fontSize: "12px",
         color: "rgba(255,255,255,0.3)",
@@ -4821,7 +5006,7 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
       marginBottom: "16px"
     }
   }, /*#__PURE__*/React.createElement("div", {
-    onClick: () => { window.location.href = window.Capacitor ? "/library.html" : "/library"; },
+    onClick: () => { window.location.href = IS_IOS ? "/library.html" : "/library"; },
     style: {
       display: "flex",
       alignItems: "center",
@@ -4844,7 +5029,9 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
       color: "rgba(212,168,70,0.5)",
       fontSize: "18px"
     }
-  }, "\u203A"))), /*#__PURE__*/React.createElement(DiscogsSettings, null), /*#__PURE__*/React.createElement("div", {
+  }, "\u203A"))), /*#__PURE__*/React.createElement(LinkedLoginSettings, {
+    user: user
+  }), /*#__PURE__*/React.createElement(DiscogsSettings, null), /*#__PURE__*/React.createElement("div", {
     style: {
       borderTop: "1px solid rgba(255,255,255,0.07)",
       paddingTop: "20px",
@@ -6559,7 +6746,7 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
       paddingBottom: showTrackList ? "max(32px, calc(env(safe-area-inset-bottom) + 24px))" : 0,
       WebkitOverflowScrolling: "touch"
     }
-  }, !(turntableAlbum && (!window.Capacitor || showTrackList)) && /*#__PURE__*/React.createElement("div", {
+  }, !(turntableAlbum && (!IS_IOS || showTrackList)) && /*#__PURE__*/React.createElement("div", {
     style: {
       position: "relative",
       width: "120px",
@@ -6602,13 +6789,13 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
       marginBottom: "10px",
       marginTop: !turntableAlbum && listenAttempt > MAX_ATTEMPTS ? "20px" : "0"
     }
-  }, turntableAlbum ? (window.Capacitor ? (showTrackList ? "Can't find it automatically" : "Finding your place…") : "Pick a track to start") : listenAttempt > MAX_ATTEMPTS ? "Matching by lyrics…" : "Listening…"),
+  }, turntableAlbum ? (IS_IOS ? (showTrackList ? "Can't find it automatically" : "Finding your place…") : "Pick a track to start") : listenAttempt > MAX_ATTEMPTS ? "Matching by lyrics…" : "Listening…"),
 
   /* ── Manual track picker with side grouping ── */
   turntableAlbum && turntableTracksRef.current.length > 0 && (() => {
     const allTracks = turntableTracksRef.current;
     const groups = getSideGroups(allTracks, vinylSidesRef.current, vinylDbRelease?.vinyl_tracks);
-    const isWeb = !window.Capacitor;
+    const isWeb = !IS_IOS;
     return /*#__PURE__*/React.createElement("div", {
       style: { marginTop: isWeb ? "8px" : "24px", width: "100%", maxWidth: "360px", textAlign: "left" }
     },

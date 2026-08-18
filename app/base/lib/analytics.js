@@ -3,6 +3,8 @@
 // these stay pure and testable in isolation. None of these ever throw —
 // analytics/social must never block or break playback.
 
+import { IS_IOS } from "./config.js";
+
 // ── Analytics: log a song play to listening_events ──
 // Called for both manual recognitions and vinyl auto-advances.
 export async function logListeningEvent(sb, sessionId, params) {
@@ -20,7 +22,7 @@ export async function logListeningEvent(sb, sessionId, params) {
       vinyl_release_id: params.vinylReleaseId || null,
       vinyl_mode_on: params.vinylModeOn ?? false,
       source: params.source || "recognition",
-      platform: window.Capacitor ? "ios" : "web",
+      platform: IS_IOS ? "ios" : "web",
       country_code: params.countryCode || null,
       playback_offset_s: params.offsetSecs != null ? Math.round(params.offsetSecs) : null,
       track_duration_s: params.durationSecs != null ? Math.round(params.durationSecs) : null,
@@ -105,7 +107,7 @@ export async function logButtonEvent(sb, ctx, buttonName) {
       artist_name: detectedSong?.artist || null,
       album_name: detectedSong?.album || null,
       itunes_collection_id: albumCollectionIdRef?.current ? Number(albumCollectionIdRef.current) : null,
-      platform: window.Capacitor ? "ios" : "web",
+      platform: IS_IOS ? "ios" : "web",
       identified_by: raw?.identified_by || null,
       raw_match_title: raw?.title || null,
       raw_match_artist: raw?.artist || null,

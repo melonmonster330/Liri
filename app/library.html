@@ -1250,15 +1250,32 @@
       useEffect(() => {
         // Handle URL params on load
         const params = new URLSearchParams(window.location.search);
-        sb.auth.getSession().then(({ data: { session } }) => {
+        (async () => {
+          // Discogs is a custom provider. Its callback sends a single-use
+          // Supabase OTP here so My Records can establish the Liri session and
+          // immediately continue into the existing collection-import effect.
+          const tokenHash = params.get("token_hash");
+          if (tokenHash) {
+            const { error } = await sb.auth.verifyOtp({
+              token_hash: tokenHash,
+              type: params.get("type") || "magiclink",
+            });
+            params.delete("token_hash");
+            params.delete("type");
+            const qs = params.toString();
+            window.history.replaceState({}, "", window.location.pathname + (qs ? "?" + qs : ""));
+            if (error) console.error("[discogs] Liri session exchange failed:", error.message);
+          }
+          const { data: { session } } = await sb.auth.getSession();
           setUser(session?.user ?? null);
           sessionTokenRef.current = session?.access_token || null;
           setAuthLoading(false);
-        });
-        sb.auth.onAuthStateChange((_e, s) => {
+        })();
+        const { data: { subscription } } = sb.auth.onAuthStateChange((_e, s) => {
           setUser(s?.user ?? null);
           sessionTokenRef.current = s?.access_token || null;
         });
+        return () => subscription.unsubscribe();
       }, []);
 
       // ── Fetch library ──

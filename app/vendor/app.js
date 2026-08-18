@@ -1,4 +1,609 @@
 (() => {
+  var __defProp = Object.defineProperty;
+  var __getOwnPropNames = Object.getOwnPropertyNames;
+  var __esm = (fn, res) => function __init() {
+    return fn && (res = (0, fn[__getOwnPropNames(fn)[0]])(fn = 0)), res;
+  };
+  var __export = (target, all) => {
+    for (var name in all)
+      __defProp(target, name, { get: all[name], enumerable: true });
+  };
+
+  // node_modules/@capacitor/core/dist/index.js
+  var ExceptionCode, CapacitorException, getPlatformId, createCapacitor, initCapacitorGlobal, Capacitor, registerPlugin, WebPlugin, encode, decode, CapacitorCookiesPluginWeb, CapacitorCookies, readBlobAsBase64, normalizeHttpHeaders, buildUrlParams, buildRequestInit, CapacitorHttpPluginWeb, CapacitorHttp, SystemBarsStyle, SystemBarType, SystemBarsPluginWeb, SystemBars;
+  var init_dist = __esm({
+    "node_modules/@capacitor/core/dist/index.js"() {
+      (function(ExceptionCode2) {
+        ExceptionCode2["Unimplemented"] = "UNIMPLEMENTED";
+        ExceptionCode2["Unavailable"] = "UNAVAILABLE";
+      })(ExceptionCode || (ExceptionCode = {}));
+      CapacitorException = class extends Error {
+        constructor(message, code, data) {
+          super(message);
+          this.message = message;
+          this.code = code;
+          this.data = data;
+        }
+      };
+      getPlatformId = (win) => {
+        var _a, _b;
+        if (win === null || win === void 0 ? void 0 : win.androidBridge) {
+          return "android";
+        } else if ((_b = (_a = win === null || win === void 0 ? void 0 : win.webkit) === null || _a === void 0 ? void 0 : _a.messageHandlers) === null || _b === void 0 ? void 0 : _b.bridge) {
+          return "ios";
+        } else {
+          return "web";
+        }
+      };
+      createCapacitor = (win) => {
+        const capCustomPlatform = win.CapacitorCustomPlatform || null;
+        const cap = win.Capacitor || {};
+        const Plugins = cap.Plugins = cap.Plugins || {};
+        const getPlatform = () => {
+          return capCustomPlatform !== null ? capCustomPlatform.name : getPlatformId(win);
+        };
+        const isNativePlatform = () => getPlatform() !== "web";
+        const isPluginAvailable = (pluginName) => {
+          const plugin = registeredPlugins.get(pluginName);
+          if (plugin === null || plugin === void 0 ? void 0 : plugin.platforms.has(getPlatform())) {
+            return true;
+          }
+          if (getPluginHeader(pluginName)) {
+            return true;
+          }
+          return false;
+        };
+        const getPluginHeader = (pluginName) => {
+          var _a;
+          return (_a = cap.PluginHeaders) === null || _a === void 0 ? void 0 : _a.find((h) => h.name === pluginName);
+        };
+        const handleError = (err) => win.console.error(err);
+        const registeredPlugins = /* @__PURE__ */ new Map();
+        const registerPlugin2 = (pluginName, jsImplementations = {}) => {
+          const registeredPlugin = registeredPlugins.get(pluginName);
+          if (registeredPlugin) {
+            console.warn(`Capacitor plugin "${pluginName}" already registered. Cannot register plugins twice.`);
+            return registeredPlugin.proxy;
+          }
+          const platform = getPlatform();
+          const pluginHeader = getPluginHeader(pluginName);
+          let jsImplementation;
+          const loadPluginImplementation = async () => {
+            if (!jsImplementation && platform in jsImplementations) {
+              jsImplementation = typeof jsImplementations[platform] === "function" ? jsImplementation = await jsImplementations[platform]() : jsImplementation = jsImplementations[platform];
+            } else if (capCustomPlatform !== null && !jsImplementation && "web" in jsImplementations) {
+              jsImplementation = typeof jsImplementations["web"] === "function" ? jsImplementation = await jsImplementations["web"]() : jsImplementation = jsImplementations["web"];
+            }
+            return jsImplementation;
+          };
+          const createPluginMethod = (impl, prop) => {
+            var _a, _b;
+            if (pluginHeader) {
+              const methodHeader = pluginHeader === null || pluginHeader === void 0 ? void 0 : pluginHeader.methods.find((m) => prop === m.name);
+              if (methodHeader) {
+                if (methodHeader.rtype === "promise") {
+                  return (options) => cap.nativePromise(pluginName, prop.toString(), options);
+                } else {
+                  return (options, callback) => cap.nativeCallback(pluginName, prop.toString(), options, callback);
+                }
+              } else if (impl) {
+                return (_a = impl[prop]) === null || _a === void 0 ? void 0 : _a.bind(impl);
+              }
+            } else if (impl) {
+              return (_b = impl[prop]) === null || _b === void 0 ? void 0 : _b.bind(impl);
+            } else {
+              throw new CapacitorException(`"${pluginName}" plugin is not implemented on ${platform}`, ExceptionCode.Unimplemented);
+            }
+          };
+          const createPluginMethodWrapper = (prop) => {
+            let remove;
+            const wrapper = (...args) => {
+              const p = loadPluginImplementation().then((impl) => {
+                const fn = createPluginMethod(impl, prop);
+                if (fn) {
+                  const p2 = fn(...args);
+                  remove = p2 === null || p2 === void 0 ? void 0 : p2.remove;
+                  return p2;
+                } else {
+                  throw new CapacitorException(`"${pluginName}.${prop}()" is not implemented on ${platform}`, ExceptionCode.Unimplemented);
+                }
+              });
+              if (prop === "addListener") {
+                p.remove = async () => remove();
+              }
+              return p;
+            };
+            wrapper.toString = () => `${prop.toString()}() { [capacitor code] }`;
+            Object.defineProperty(wrapper, "name", {
+              value: prop,
+              writable: false,
+              configurable: false
+            });
+            return wrapper;
+          };
+          const addListener = createPluginMethodWrapper("addListener");
+          const removeListener = createPluginMethodWrapper("removeListener");
+          const addListenerNative = (eventName, callback) => {
+            const call = addListener({ eventName }, callback);
+            const remove = async () => {
+              const callbackId = await call;
+              removeListener({
+                eventName,
+                callbackId
+              }, callback);
+            };
+            const p = new Promise((resolve) => call.then(() => resolve({ remove })));
+            p.remove = async () => {
+              console.warn(`Using addListener() without 'await' is deprecated.`);
+              await remove();
+            };
+            return p;
+          };
+          const proxy = new Proxy({}, {
+            get(_, prop) {
+              switch (prop) {
+                // https://github.com/facebook/react/issues/20030
+                case "$$typeof":
+                  return void 0;
+                case "toJSON":
+                  return () => ({});
+                case "addListener":
+                  return pluginHeader ? addListenerNative : addListener;
+                case "removeListener":
+                  return removeListener;
+                default:
+                  return createPluginMethodWrapper(prop);
+              }
+            }
+          });
+          Plugins[pluginName] = proxy;
+          registeredPlugins.set(pluginName, {
+            name: pluginName,
+            proxy,
+            platforms: /* @__PURE__ */ new Set([...Object.keys(jsImplementations), ...pluginHeader ? [platform] : []])
+          });
+          return proxy;
+        };
+        if (!cap.convertFileSrc) {
+          cap.convertFileSrc = (filePath) => filePath;
+        }
+        cap.getPlatform = getPlatform;
+        cap.handleError = handleError;
+        cap.isNativePlatform = isNativePlatform;
+        cap.isPluginAvailable = isPluginAvailable;
+        cap.registerPlugin = registerPlugin2;
+        cap.Exception = CapacitorException;
+        cap.DEBUG = !!cap.DEBUG;
+        cap.isLoggingEnabled = !!cap.isLoggingEnabled;
+        return cap;
+      };
+      initCapacitorGlobal = (win) => win.Capacitor = createCapacitor(win);
+      Capacitor = /* @__PURE__ */ initCapacitorGlobal(typeof globalThis !== "undefined" ? globalThis : typeof self !== "undefined" ? self : typeof window !== "undefined" ? window : typeof global !== "undefined" ? global : {});
+      registerPlugin = Capacitor.registerPlugin;
+      WebPlugin = class {
+        constructor() {
+          this.listeners = {};
+          this.retainedEventArguments = {};
+          this.windowListeners = {};
+        }
+        addListener(eventName, listenerFunc) {
+          let firstListener = false;
+          const listeners = this.listeners[eventName];
+          if (!listeners) {
+            this.listeners[eventName] = [];
+            firstListener = true;
+          }
+          this.listeners[eventName].push(listenerFunc);
+          const windowListener = this.windowListeners[eventName];
+          if (windowListener && !windowListener.registered) {
+            this.addWindowListener(windowListener);
+          }
+          if (firstListener) {
+            this.sendRetainedArgumentsForEvent(eventName);
+          }
+          const remove = async () => this.removeListener(eventName, listenerFunc);
+          const p = Promise.resolve({ remove });
+          return p;
+        }
+        async removeAllListeners() {
+          this.listeners = {};
+          for (const listener in this.windowListeners) {
+            this.removeWindowListener(this.windowListeners[listener]);
+          }
+          this.windowListeners = {};
+        }
+        notifyListeners(eventName, data, retainUntilConsumed) {
+          const listeners = this.listeners[eventName];
+          if (!listeners) {
+            if (retainUntilConsumed) {
+              let args = this.retainedEventArguments[eventName];
+              if (!args) {
+                args = [];
+              }
+              args.push(data);
+              this.retainedEventArguments[eventName] = args;
+            }
+            return;
+          }
+          listeners.forEach((listener) => listener(data));
+        }
+        hasListeners(eventName) {
+          var _a;
+          return !!((_a = this.listeners[eventName]) === null || _a === void 0 ? void 0 : _a.length);
+        }
+        registerWindowListener(windowEventName, pluginEventName) {
+          this.windowListeners[pluginEventName] = {
+            registered: false,
+            windowEventName,
+            pluginEventName,
+            handler: (event) => {
+              this.notifyListeners(pluginEventName, event);
+            }
+          };
+        }
+        unimplemented(msg = "not implemented") {
+          return new Capacitor.Exception(msg, ExceptionCode.Unimplemented);
+        }
+        unavailable(msg = "not available") {
+          return new Capacitor.Exception(msg, ExceptionCode.Unavailable);
+        }
+        async removeListener(eventName, listenerFunc) {
+          const listeners = this.listeners[eventName];
+          if (!listeners) {
+            return;
+          }
+          const index = listeners.indexOf(listenerFunc);
+          this.listeners[eventName].splice(index, 1);
+          if (!this.listeners[eventName].length) {
+            this.removeWindowListener(this.windowListeners[eventName]);
+          }
+        }
+        addWindowListener(handle) {
+          window.addEventListener(handle.windowEventName, handle.handler);
+          handle.registered = true;
+        }
+        removeWindowListener(handle) {
+          if (!handle) {
+            return;
+          }
+          window.removeEventListener(handle.windowEventName, handle.handler);
+          handle.registered = false;
+        }
+        sendRetainedArgumentsForEvent(eventName) {
+          const args = this.retainedEventArguments[eventName];
+          if (!args) {
+            return;
+          }
+          delete this.retainedEventArguments[eventName];
+          args.forEach((arg) => {
+            this.notifyListeners(eventName, arg);
+          });
+        }
+      };
+      encode = (str) => encodeURIComponent(str).replace(/%(2[346B]|5E|60|7C)/g, decodeURIComponent).replace(/[()]/g, escape);
+      decode = (str) => str.replace(/(%[\dA-F]{2})+/gi, decodeURIComponent);
+      CapacitorCookiesPluginWeb = class extends WebPlugin {
+        async getCookies() {
+          const cookies = document.cookie;
+          const cookieMap = {};
+          cookies.split(";").forEach((cookie) => {
+            if (cookie.length <= 0)
+              return;
+            let [key, value] = cookie.replace(/=/, "CAP_COOKIE").split("CAP_COOKIE");
+            key = decode(key).trim();
+            value = decode(value).trim();
+            cookieMap[key] = value;
+          });
+          return cookieMap;
+        }
+        async setCookie(options) {
+          try {
+            const encodedKey = encode(options.key);
+            const encodedValue = encode(options.value);
+            const expires = options.expires ? `; expires=${options.expires.replace("expires=", "")}` : "";
+            const path = (options.path || "/").replace("path=", "");
+            const domain = options.url != null && options.url.length > 0 ? `domain=${options.url}` : "";
+            document.cookie = `${encodedKey}=${encodedValue || ""}${expires}; path=${path}; ${domain};`;
+          } catch (error) {
+            return Promise.reject(error);
+          }
+        }
+        async deleteCookie(options) {
+          try {
+            document.cookie = `${options.key}=; Max-Age=0`;
+          } catch (error) {
+            return Promise.reject(error);
+          }
+        }
+        async clearCookies() {
+          try {
+            const cookies = document.cookie.split(";") || [];
+            for (const cookie of cookies) {
+              document.cookie = cookie.replace(/^ +/, "").replace(/=.*/, `=;expires=${(/* @__PURE__ */ new Date()).toUTCString()};path=/`);
+            }
+          } catch (error) {
+            return Promise.reject(error);
+          }
+        }
+        async clearAllCookies() {
+          try {
+            await this.clearCookies();
+          } catch (error) {
+            return Promise.reject(error);
+          }
+        }
+      };
+      CapacitorCookies = registerPlugin("CapacitorCookies", {
+        web: () => new CapacitorCookiesPluginWeb()
+      });
+      readBlobAsBase64 = async (blob) => new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => {
+          const base64String = reader.result;
+          resolve(base64String.indexOf(",") >= 0 ? base64String.split(",")[1] : base64String);
+        };
+        reader.onerror = (error) => reject(error);
+        reader.readAsDataURL(blob);
+      });
+      normalizeHttpHeaders = (headers = {}) => {
+        const originalKeys = Object.keys(headers);
+        const loweredKeys = Object.keys(headers).map((k) => k.toLocaleLowerCase());
+        const normalized = loweredKeys.reduce((acc, key, index) => {
+          acc[key] = headers[originalKeys[index]];
+          return acc;
+        }, {});
+        return normalized;
+      };
+      buildUrlParams = (params, shouldEncode = true) => {
+        if (!params)
+          return null;
+        const output = Object.entries(params).reduce((accumulator, entry) => {
+          const [key, value] = entry;
+          let encodedValue;
+          let item;
+          if (Array.isArray(value)) {
+            item = "";
+            value.forEach((str) => {
+              encodedValue = shouldEncode ? encodeURIComponent(str) : str;
+              item += `${key}=${encodedValue}&`;
+            });
+            item.slice(0, -1);
+          } else {
+            encodedValue = shouldEncode ? encodeURIComponent(value) : value;
+            item = `${key}=${encodedValue}`;
+          }
+          return `${accumulator}&${item}`;
+        }, "");
+        return output.substr(1);
+      };
+      buildRequestInit = (options, extra = {}) => {
+        const output = Object.assign({ method: options.method || "GET", headers: options.headers }, extra);
+        const headers = normalizeHttpHeaders(options.headers);
+        const type = headers["content-type"] || "";
+        if (typeof options.data === "string") {
+          output.body = options.data;
+        } else if (type.includes("application/x-www-form-urlencoded")) {
+          const params = new URLSearchParams();
+          for (const [key, value] of Object.entries(options.data || {})) {
+            params.set(key, value);
+          }
+          output.body = params.toString();
+        } else if (type.includes("multipart/form-data") || options.data instanceof FormData) {
+          const form = new FormData();
+          if (options.data instanceof FormData) {
+            options.data.forEach((value, key) => {
+              form.append(key, value);
+            });
+          } else {
+            for (const key of Object.keys(options.data)) {
+              form.append(key, options.data[key]);
+            }
+          }
+          output.body = form;
+          const headers2 = new Headers(output.headers);
+          headers2.delete("content-type");
+          output.headers = headers2;
+        } else if (type.includes("application/json") || typeof options.data === "object") {
+          output.body = JSON.stringify(options.data);
+        }
+        return output;
+      };
+      CapacitorHttpPluginWeb = class extends WebPlugin {
+        /**
+         * Perform an Http request given a set of options
+         * @param options Options to build the HTTP request
+         */
+        async request(options) {
+          const requestInit = buildRequestInit(options, options.webFetchExtra);
+          const urlParams = buildUrlParams(options.params, options.shouldEncodeUrlParams);
+          const url = urlParams ? `${options.url}?${urlParams}` : options.url;
+          const response = await fetch(url, requestInit);
+          const contentType = response.headers.get("content-type") || "";
+          let { responseType = "text" } = response.ok ? options : {};
+          if (contentType.includes("application/json")) {
+            responseType = "json";
+          }
+          let data;
+          let blob;
+          switch (responseType) {
+            case "arraybuffer":
+            case "blob":
+              blob = await response.blob();
+              data = await readBlobAsBase64(blob);
+              break;
+            case "json":
+              data = await response.json();
+              break;
+            case "document":
+            case "text":
+            default:
+              data = await response.text();
+          }
+          const headers = {};
+          response.headers.forEach((value, key) => {
+            headers[key] = value;
+          });
+          return {
+            data,
+            headers,
+            status: response.status,
+            url: response.url
+          };
+        }
+        /**
+         * Perform an Http GET request given a set of options
+         * @param options Options to build the HTTP request
+         */
+        async get(options) {
+          return this.request(Object.assign(Object.assign({}, options), { method: "GET" }));
+        }
+        /**
+         * Perform an Http POST request given a set of options
+         * @param options Options to build the HTTP request
+         */
+        async post(options) {
+          return this.request(Object.assign(Object.assign({}, options), { method: "POST" }));
+        }
+        /**
+         * Perform an Http PUT request given a set of options
+         * @param options Options to build the HTTP request
+         */
+        async put(options) {
+          return this.request(Object.assign(Object.assign({}, options), { method: "PUT" }));
+        }
+        /**
+         * Perform an Http PATCH request given a set of options
+         * @param options Options to build the HTTP request
+         */
+        async patch(options) {
+          return this.request(Object.assign(Object.assign({}, options), { method: "PATCH" }));
+        }
+        /**
+         * Perform an Http DELETE request given a set of options
+         * @param options Options to build the HTTP request
+         */
+        async delete(options) {
+          return this.request(Object.assign(Object.assign({}, options), { method: "DELETE" }));
+        }
+      };
+      CapacitorHttp = registerPlugin("CapacitorHttp", {
+        web: () => new CapacitorHttpPluginWeb()
+      });
+      (function(SystemBarsStyle2) {
+        SystemBarsStyle2["Dark"] = "DARK";
+        SystemBarsStyle2["Light"] = "LIGHT";
+        SystemBarsStyle2["Default"] = "DEFAULT";
+      })(SystemBarsStyle || (SystemBarsStyle = {}));
+      (function(SystemBarType2) {
+        SystemBarType2["StatusBar"] = "StatusBar";
+        SystemBarType2["NavigationBar"] = "NavigationBar";
+      })(SystemBarType || (SystemBarType = {}));
+      SystemBarsPluginWeb = class extends WebPlugin {
+        async setStyle() {
+          this.unavailable("not available for web");
+        }
+        async setAnimation() {
+          this.unavailable("not available for web");
+        }
+        async show() {
+          this.unavailable("not available for web");
+        }
+        async hide() {
+          this.unavailable("not available for web");
+        }
+      };
+      SystemBars = registerPlugin("SystemBars", {
+        web: () => new SystemBarsPluginWeb()
+      });
+    }
+  });
+
+  // node_modules/@capacitor/app/dist/esm/web.js
+  var web_exports = {};
+  __export(web_exports, {
+    AppWeb: () => AppWeb
+  });
+  var AppWeb;
+  var init_web = __esm({
+    "node_modules/@capacitor/app/dist/esm/web.js"() {
+      init_dist();
+      AppWeb = class extends WebPlugin {
+        constructor() {
+          super();
+          this.handleVisibilityChange = () => {
+            const data = {
+              isActive: document.hidden !== true
+            };
+            this.notifyListeners("appStateChange", data);
+            if (document.hidden) {
+              this.notifyListeners("pause", null);
+            } else {
+              this.notifyListeners("resume", null);
+            }
+          };
+          document.addEventListener("visibilitychange", this.handleVisibilityChange, false);
+        }
+        exitApp() {
+          throw this.unimplemented("Not implemented on web.");
+        }
+        async getInfo() {
+          throw this.unimplemented("Not implemented on web.");
+        }
+        async getLaunchUrl() {
+          return { url: "" };
+        }
+        async getState() {
+          return { isActive: document.hidden !== true };
+        }
+        async minimizeApp() {
+          throw this.unimplemented("Not implemented on web.");
+        }
+        async toggleBackButtonHandler() {
+          throw this.unimplemented("Not implemented on web.");
+        }
+        async getAppLanguage() {
+          return {
+            value: navigator.language.split("-")[0].toLowerCase()
+          };
+        }
+      };
+    }
+  });
+
+  // node_modules/@capacitor/browser/dist/esm/web.js
+  var web_exports2 = {};
+  __export(web_exports2, {
+    Browser: () => Browser,
+    BrowserWeb: () => BrowserWeb
+  });
+  var BrowserWeb, Browser;
+  var init_web2 = __esm({
+    "node_modules/@capacitor/browser/dist/esm/web.js"() {
+      init_dist();
+      BrowserWeb = class extends WebPlugin {
+        constructor() {
+          super();
+          this._lastWindow = null;
+        }
+        async open(options) {
+          this._lastWindow = window.open(options.url, options.windowName || "_blank");
+        }
+        async close() {
+          return new Promise((resolve, reject) => {
+            if (this._lastWindow != null) {
+              this._lastWindow.close();
+              this._lastWindow = null;
+              resolve();
+            } else {
+              reject("No active window to close!");
+            }
+          });
+        }
+      };
+      Browser = new BrowserWeb();
+    }
+  });
+
   // app/base/lib/text.js
   function parseLRC(lrc) {
     const re = /\[(\d{2}):(\d{2})[.:](\d{2,3})\](.*)/;
@@ -44,6 +649,11 @@
     return [...recent, ...rest];
   }
 
+  // app/base/lib/config.js
+  var IS_IOS = window.Capacitor?.getPlatform?.() === "ios";
+  var ITUNES_PROXY = IS_IOS ? "https://www.getliri.com/api/itunes-lookup" : "/api/itunes-lookup";
+  var SYNC_PLAYBACK_RATE = 1.028;
+
   // app/base/lib/analytics.js
   async function logListeningEvent(sb2, sessionId, params) {
     try {
@@ -60,7 +670,7 @@
         vinyl_release_id: params.vinylReleaseId || null,
         vinyl_mode_on: params.vinylModeOn ?? false,
         source: params.source || "recognition",
-        platform: window.Capacitor ? "ios" : "web",
+        platform: IS_IOS ? "ios" : "web",
         country_code: params.countryCode || null,
         playback_offset_s: params.offsetSecs != null ? Math.round(params.offsetSecs) : null,
         track_duration_s: params.durationSecs != null ? Math.round(params.durationSecs) : null,
@@ -124,7 +734,7 @@
         artist_name: detectedSong?.artist || null,
         album_name: detectedSong?.album || null,
         itunes_collection_id: albumCollectionIdRef?.current ? Number(albumCollectionIdRef.current) : null,
-        platform: window.Capacitor ? "ios" : "web",
+        platform: IS_IOS ? "ios" : "web",
         identified_by: raw?.identified_by || null,
         raw_match_title: raw?.title || null,
         raw_match_artist: raw?.artist || null
@@ -132,12 +742,6 @@
     } catch (e3) {
     }
   }
-
-  // app/base/lib/config.js
-  var IS_IOS = !!window.Capacitor;
-  var TRANSCRIBE_PROXY = window.Capacitor ? "https://www.getliri.com/api/transcribe" : "/api/transcribe";
-  var ITUNES_PROXY = window.Capacitor ? "https://www.getliri.com/api/itunes-lookup" : "/api/itunes-lookup";
-  var SYNC_PLAYBACK_RATE = 1.028;
 
   // app/src/hooks/useNowPlaying.js
   var { useRef, useEffect } = React;
@@ -510,7 +1114,7 @@
   function loadCastSdk() {
     if (castLoadPromise) return castLoadPromise;
     castLoadPromise = new Promise((resolve, reject) => {
-      if (!window.chrome || window.Capacitor) {
+      if (!window.chrome || IS_IOS) {
         reject(new Error("Google Cast is available in desktop Chrome"));
         return;
       }
@@ -545,7 +1149,7 @@
     return castLoadPromise;
   }
   function useCast({ mode, song, lyrics, playbackTime, isPaused }) {
-    const supported = !window.Capacitor && !!window.chrome;
+    const supported = !IS_IOS && !!window.chrome;
     const [ready, setReady] = useState2(false);
     const [connected, setConnected] = useState2(false);
     const [deviceName, setDeviceName] = useState2(null);
@@ -648,9 +1252,6 @@
     }, []);
     return { supported, ready, connected, deviceName, error, requestSession, stopSession };
   }
-
-  // app/base/lib/whisper.js
-  var WHISPER_PROXY = window.Capacitor ? "https://www.getliri.com/api/whisper" : "/api/whisper";
 
   // app/base/lib/sides.js
   function hasSideData(vinylSides, dbTracks) {
@@ -869,7 +1470,7 @@
       title = `Time for LP ${discInfo.nextDisc}! \u{1F4BF}`;
     }
     const body = song ? `${song.artist} \u2014 ${song.album || "Side A done"}` : "Your side has ended \u2014 flip the record";
-    if (!window.Capacitor) return;
+    if (!IS_IOS) return;
     try {
       getLocalNotif()?.schedule({ notifications: [{ id: 1001, title, body }] });
     } catch {
@@ -879,7 +1480,7 @@
     if (!userOptedIn()) return;
     const title = "That's the album! \u{1F3B6}";
     const body = song ? `${song.artist} \u2014 ${song.album || "Album complete"}` : "Put on your next record to keep going";
-    if (!window.Capacitor) return;
+    if (!IS_IOS) return;
     try {
       getLocalNotif()?.schedule({ notifications: [{ id: 1002, title, body }] });
     } catch {
@@ -1080,7 +1681,7 @@
   var e = React.createElement;
   function LyricsEditorSheet({ track, sites, saving, error, onSave, onClose }) {
     const [text, setText] = useState4("");
-    const openSite = (url) => window.open(url, window.Capacitor ? "_system" : "_blank");
+    const openSite = (url) => window.open(url, IS_IOS ? "_system" : "_blank");
     return e("div", {
       onClick: onClose,
       style: {
@@ -1421,6 +2022,18 @@
     return window.Capacitor.Plugins?.KeepAwake ?? window.Capacitor.registerPlugin?.("KeepAwake") ?? null;
   }
 
+  // node_modules/@capacitor/app/dist/esm/index.js
+  init_dist();
+  var App = registerPlugin("App", {
+    web: () => Promise.resolve().then(() => (init_web(), web_exports)).then((m) => new m.AppWeb())
+  });
+
+  // node_modules/@capacitor/browser/dist/esm/index.js
+  init_dist();
+  var Browser2 = registerPlugin("Browser", {
+    web: () => Promise.resolve().then(() => (init_web2(), web_exports2)).then((m) => new m.BrowserWeb())
+  });
+
   // app/src/main.js
   var {
     useState: useState6,
@@ -1461,11 +2074,19 @@
       }
     }
   };
-  var sb = supabase.createClient("https://xjdjpaxgymgbvcwmvorc.supabase.co", "sb_publishable_C-NBnfg0ltAoUi46XQTUjA_ozjZW_Nd", { auth: { storage: liriAuthStorage } });
+  var NATIVE_AUTH_CALLBACK = "liri://auth/callback";
+  var authRedirectTo = () => IS_IOS ? NATIVE_AUTH_CALLBACK : `${window.location.origin}/app`;
+  var openProviderUrl = async (url) => {
+    if (IS_IOS) await Browser2.open({ url, presentationStyle: "popover" });
+    else window.location.href = url;
+  };
+  var sb = supabase.createClient("https://xjdjpaxgymgbvcwmvorc.supabase.co", "sb_publishable_C-NBnfg0ltAoUi46XQTUjA_ozjZW_Nd", {
+    auth: { storage: liriAuthStorage, flowType: "pkce", detectSessionInUrl: !IS_IOS }
+  });
   var APP_VERSION = "1.5.14";
   function DiscogsSettings() {
     const h = React.createElement;
-    const API = window.Capacitor ? "https://www.getliri.com" : "";
+    const API = IS_IOS ? "https://www.getliri.com" : "";
     const [status, setStatus] = useState6(null);
     const [busy, setBusy] = useState6(false);
     const [msg, setMsg] = useState6(null);
@@ -1489,6 +2110,8 @@
     };
     useEffect6(() => {
       load();
+      window.addEventListener("liri:discogs-connected", load);
+      return () => window.removeEventListener("liri:discogs-connected", load);
     }, []);
     const connect = async () => {
       try {
@@ -1497,10 +2120,10 @@
         const r = await fetch(`${API}/api/discogs-oauth-start`, {
           method: "POST",
           headers: { "Content-Type": "application/json", Authorization: `Bearer ${t}` },
-          body: JSON.stringify({ return_to: "/library" })
+          body: JSON.stringify({ return_to: "/library", native: IS_IOS })
         });
         const j = await r.json();
-        if (j.authorizeUrl) window.location.href = j.authorizeUrl;
+        if (j.authorizeUrl) await openProviderUrl(j.authorizeUrl);
         else alert(j.error || "Couldn't start Discogs sign-in.");
       } catch (e3) {
         alert("Couldn't reach Discogs. Please try again.");
@@ -1601,6 +2224,147 @@
         h("button", { onClick: resync, disabled: busy, style: primary }, busy ? "Syncing\u2026" : "Resync from Discogs"),
         h("button", { onClick: disconnect, disabled: busy, style: ghost }, "Disconnect")
       )
+    );
+  }
+  function ProviderIcon({ provider }) {
+    if (provider === "google") return /* @__PURE__ */ React.createElement(
+      "svg",
+      { width: 21, height: 21, viewBox: "0 0 24 24", "aria-hidden": "true" },
+      /* @__PURE__ */ React.createElement("path", { fill: "#4285F4", d: "M21.6 12.23c0-.71-.06-1.4-.18-2.06H12v3.9h5.38a4.6 4.6 0 0 1-2 3.02v2.53h3.24c1.9-1.75 2.98-4.33 2.98-7.39Z" }),
+      /* @__PURE__ */ React.createElement("path", { fill: "#34A853", d: "M12 22c2.7 0 4.98-.9 6.63-2.38l-3.25-2.53c-.9.6-2.05.97-3.38.97-2.61 0-4.82-1.77-5.61-4.14H3.04v2.61A10 10 0 0 0 12 22Z" }),
+      /* @__PURE__ */ React.createElement("path", { fill: "#FBBC05", d: "M6.39 13.92A6.02 6.02 0 0 1 6.08 12c0-.67.11-1.32.31-1.92V7.47H3.04A10 10 0 0 0 2 12c0 1.62.39 3.15 1.04 4.53l3.35-2.61Z" }),
+      /* @__PURE__ */ React.createElement("path", { fill: "#EA4335", d: "M12 5.94c1.47 0 2.79.5 3.83 1.5l2.87-2.87A9.64 9.64 0 0 0 12 2a10 10 0 0 0-8.96 5.47l3.35 2.61C7.18 7.71 9.39 5.94 12 5.94Z" })
+    );
+    if (provider === "apple") return /* @__PURE__ */ React.createElement(
+      "svg",
+      { width: 21, height: 21, viewBox: "0 0 24 24", fill: "#f0e6d3", "aria-hidden": "true" },
+      /* @__PURE__ */ React.createElement("path", { d: "M17.05 12.54c-.03-3.04 2.48-4.52 2.6-4.59-1.42-2.08-3.64-2.36-4.43-2.38-1.86-.2-3.67 1.12-4.62 1.12-.97 0-2.43-1.1-4.01-1.07-2.04.03-3.95 1.21-5 3.04-2.14 3.7-.55 9.14 1.51 12.13 1.03 1.47 2.23 3.1 3.81 3.04 1.54-.06 2.11-.98 3.97-.98 1.84 0 2.38.98 3.99.94 1.66-.03 2.7-1.47 3.69-2.95 1.19-1.69 1.67-3.35 1.69-3.44-.04-.01-3.17-1.21-3.2-4.82ZM14 3.59C14.82 2.57 15.38 1.18 15.22 0c-1.19.05-2.68.83-3.54 1.83-.76.88-1.44 2.32-1.26 3.45 1.34.1 2.72-.68 3.58-1.69Z", transform: "scale(.92) translate(1.1 .2)" })
+    );
+    return /* @__PURE__ */ React.createElement(
+      "svg",
+      { width: 22, height: 22, viewBox: "0 0 24 24", fill: "none", "aria-hidden": "true" },
+      /* @__PURE__ */ React.createElement("circle", { cx: 12, cy: 12, r: 9, stroke: "#f0e6d3", strokeWidth: 1.5 }),
+      /* @__PURE__ */ React.createElement("circle", { cx: 12, cy: 12, r: 5.6, stroke: "rgba(240,230,211,.45)", strokeWidth: 1 }),
+      /* @__PURE__ */ React.createElement("circle", { cx: 12, cy: 12, r: 2.2, fill: "#d4a846" }),
+      /* @__PURE__ */ React.createElement("circle", { cx: 12, cy: 12, r: 0.65, fill: "#080810" })
+    );
+  }
+  function ProviderButtons({ onError }) {
+    const h = React.createElement;
+    const [busy, setBusy] = useState6(null);
+    const redirectTo = authRedirectTo();
+    const button = {
+      width: "100%",
+      minHeight: "52px",
+      background: "rgba(255,255,255,0.045)",
+      color: "#f0e6d3",
+      border: "1px solid rgba(255,255,255,0.12)",
+      borderRadius: "14px",
+      padding: "0 16px",
+      fontSize: "14px",
+      fontWeight: 600,
+      cursor: "pointer",
+      fontFamily: "inherit",
+      display: "grid",
+      gridTemplateColumns: "28px 1fr 28px",
+      alignItems: "center",
+      letterSpacing: "-0.1px"
+    };
+    const fail = (e3) => {
+      setBusy(null);
+      onError?.(e3?.message || "Couldn't start sign-in. Please try again.");
+    };
+    const oauth = async (provider) => {
+      setBusy(provider);
+      const { data, error } = await sb.auth.signInWithOAuth({
+        provider,
+        options: { redirectTo, skipBrowserRedirect: IS_IOS }
+      });
+      if (error) fail(error);
+      else if (IS_IOS && data?.url) await openProviderUrl(data.url);
+    };
+    const discogs = async () => {
+      setBusy("discogs");
+      try {
+        const api = IS_IOS ? "https://www.getliri.com" : "";
+        const r = await fetch(`${api}/api/discogs-oauth-start`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ return_to: "/library", native: IS_IOS })
+        });
+        const data = await r.json();
+        if (!r.ok || !data.authorizeUrl) throw new Error(data.error || "Couldn't start Discogs sign-in.");
+        await openProviderUrl(data.authorizeUrl);
+      } catch (e3) {
+        fail(e3);
+      }
+    };
+    const row = (key, label, action) => h(
+      "button",
+      {
+        type: "button",
+        disabled: !!busy,
+        onClick: action,
+        style: { ...button, opacity: busy ? 0.55 : 1 }
+      },
+      h("span", { style: { width: 28, height: 28, display: "flex", alignItems: "center", justifyContent: "center" } }, h(ProviderIcon, { provider: key })),
+      h("span", null, busy === key ? "Opening\u2026" : label),
+      h("span", null)
+    );
+    return h(
+      "div",
+      { style: { display: "flex", flexDirection: "column", gap: "8px", marginBottom: "18px" } },
+      row("google", "Continue with Google", () => oauth("google")),
+      row("apple", "Continue with Apple", () => oauth("apple")),
+      row("discogs", "Continue with Discogs", discogs),
+      h(
+        "div",
+        { style: { display: "flex", alignItems: "center", gap: "10px", margin: "5px 0 0", color: "rgba(255,255,255,0.2)", fontSize: "11px" } },
+        h("span", { style: { height: 1, background: "rgba(255,255,255,0.08)", flex: 1 } }),
+        "or use email",
+        h("span", { style: { height: 1, background: "rgba(255,255,255,0.08)", flex: 1 } })
+      )
+    );
+  }
+  function LinkedLoginSettings({ user }) {
+    const h = React.createElement;
+    const [busy, setBusy] = useState6(null);
+    const [message, setMessage] = useState6(null);
+    const providers = new Set((user?.identities || []).map((i) => i.provider));
+    const link = async (provider) => {
+      setBusy(provider);
+      setMessage(null);
+      const { data, error } = await sb.auth.linkIdentity({
+        provider,
+        options: { redirectTo: authRedirectTo(), skipBrowserRedirect: IS_IOS }
+      });
+      if (error) {
+        setMessage(error.message);
+        setBusy(null);
+      } else if (IS_IOS && data?.url) await openProviderUrl(data.url);
+    };
+    const item = (provider, label) => {
+      const connected = providers.has(provider);
+      return h(
+        "div",
+        { style: { display: "flex", alignItems: "center", justifyContent: "space-between", padding: "10px 0", borderTop: "1px solid rgba(255,255,255,0.05)" } },
+        h(
+          "div",
+          null,
+          h("div", { style: { fontSize: "13px", color: "#f0e6d3" } }, label),
+          h("div", { style: { fontSize: "11px", color: connected ? "#6aaa8a" : "rgba(255,255,255,0.3)", marginTop: 2 } }, connected ? "Connected" : "Not connected")
+        ),
+        connected ? h("span", { style: { color: "#6aaa8a", fontSize: "16px" } }, "\u2713") : h("button", { onClick: () => link(provider), disabled: !!busy, style: { background: "rgba(255,255,255,0.06)", border: "1px solid rgba(255,255,255,0.09)", color: "#d4a846", borderRadius: "50px", padding: "7px 13px", fontSize: "12px", fontFamily: "inherit" } }, busy === provider ? "Opening\u2026" : "Connect")
+      );
+    };
+    return h(
+      "div",
+      { style: { background: "rgba(255,255,255,0.03)", border: "1px solid rgba(255,255,255,0.07)", borderRadius: "16px", padding: "16px 18px", marginBottom: "16px" } },
+      h("div", { style: { fontSize: "13px", color: "#d4a846", marginBottom: "4px" } }, "Ways to sign in"),
+      h("div", { style: { fontSize: "11px", color: "rgba(255,255,255,0.3)", marginBottom: "10px", lineHeight: 1.5 } }, "Connect more than one method to this same Liri account."),
+      item("google", "Google"),
+      item("apple", "Apple"),
+      message ? h("div", { style: { color: "#e8a0a8", fontSize: "11px", marginTop: "8px", lineHeight: 1.5 } }, message) : null
     );
   }
   var LYRIC_LEAD_SECONDS = 1;
@@ -2145,11 +2909,85 @@
     const maybeAutoPostPlay2 = (params) => maybeAutoPostPlay(sb, autoPostVisRef, autoPostedAlbumsRef, params);
     const logFlipEvent2 = (params) => logFlipEvent(sb, sessionId, params);
     useEffect6(() => {
-      sb.auth.getSession().then(({
-        data: {
-          session
+      if (!IS_IOS) return;
+      let handle = null;
+      App.addListener("appUrlOpen", async ({ url }) => {
+        if (!url || !url.startsWith(NATIVE_AUTH_CALLBACK)) return;
+        await Browser2.close().catch(() => {
+        });
+        const parsed = new URL(url);
+        const query = parsed.searchParams;
+        const hash = new URLSearchParams(parsed.hash.replace(/^#/, ""));
+        const error2 = query.get("error_description") || hash.get("error_description") || query.get("error");
+        if (error2) {
+          setAuthError(decodeURIComponent(error2));
+          setAuthSheet("signin");
+          return;
         }
-      }) => {
+        if (query.get("discogs") === "error") {
+          const reason = query.get("reason");
+          setAuthError(reason === "already_linked" ? "That Discogs account is already connected to another Liri account." : "Discogs sign-in didn't finish. Please try again.");
+          setAuthSheet("signin");
+          return;
+        }
+        try {
+          const code = query.get("code");
+          const tokenHash = query.get("token_hash");
+          if (tokenHash) {
+            const { error: otpError } = await sb.auth.verifyOtp({
+              token_hash: tokenHash,
+              type: query.get("type") || "magiclink"
+            });
+            if (otpError) throw otpError;
+          } else if (code) {
+            const { error: exchangeError } = await sb.auth.exchangeCodeForSession(code);
+            if (exchangeError) throw exchangeError;
+          } else if (hash.get("access_token") && hash.get("refresh_token")) {
+            const { error: sessionError } = await sb.auth.setSession({
+              access_token: hash.get("access_token"),
+              refresh_token: hash.get("refresh_token")
+            });
+            if (sessionError) throw sessionError;
+          }
+          if (query.get("discogs") === "connected") {
+            window.dispatchEvent(new Event("liri:discogs-connected"));
+          }
+        } catch (e3) {
+          setAuthError(e3?.message || "Sign-in couldn't be completed in the app.");
+          setAuthSheet("signin");
+        }
+      }).then((listener) => {
+        handle = listener;
+      });
+      return () => {
+        handle?.remove();
+      };
+    }, []);
+    useEffect6(() => {
+      const params = new URLSearchParams(window.location.search);
+      if (params.get("discogs") === "error") {
+        const reason = params.get("reason");
+        const messages = {
+          already_linked: "That Discogs account is already connected to another Liri account. Delete the old test account or disconnect it there first.",
+          account_create_failed: "We couldn't create the Liri account. Please try again.",
+          account_lookup_failed: "We found the Discogs connection but couldn't open its Liri account.",
+          sign_in_failed: "Discogs was verified, but Liri couldn't finish signing you in.",
+          expired: "That Discogs sign-in expired. Please try again."
+        };
+        setAuthError(messages[reason] || "Discogs sign-in didn't finish. Please try again.");
+        setAuthSheet("signin");
+      }
+      (async () => {
+        const tokenHash = params.get("token_hash");
+        if (tokenHash) {
+          const { error: error2 } = await sb.auth.verifyOtp({
+            token_hash: tokenHash,
+            type: params.get("type") || "magiclink"
+          });
+          if (error2) setAuthError(error2.message || "Discogs sign-in couldn't be completed.");
+          else window.history.replaceState({}, "", window.location.pathname);
+        }
+        const { data: { session } } = await sb.auth.getSession();
         const u = session?.user || null;
         sessionTokenRef.current = session?.access_token || null;
         setUser(u);
@@ -2159,7 +2997,7 @@
           fetchHistory(u);
           fetchAutoPostPref(u);
         }
-      });
+      })();
       const {
         data: {
           subscription
@@ -2316,7 +3154,7 @@
         const { data: { session } } = await sb.auth.getSession();
         const token = session?.access_token || sessionTokenRef.current;
         if (!token) throw new Error("Not signed in");
-        const resp = await fetch(`${window.Capacitor ? "https://www.getliri.com" : ""}/api/delete-account`, {
+        const resp = await fetch(`${IS_IOS ? "https://www.getliri.com" : ""}/api/delete-account`, {
           method: "POST",
           headers: { "Content-Type": "application/json", "Authorization": `Bearer ${token}` }
         });
@@ -2339,7 +3177,7 @@
           user_id: user?.id || null,
           user_email: user?.email || null,
           app_version: APP_VERSION,
-          platform: window.Capacitor ? "ios" : "web",
+          platform: IS_IOS ? "ios" : "web",
           description: bugText.trim(),
           meta: {
             userAgent: navigator.userAgent,
@@ -2466,7 +3304,7 @@
                   if (d?.syncedLyrics || d?.plainLyrics) {
                     if (cache[String(t.itunes_track_id)]?.source === "instrumental") return;
                     cache[String(t.itunes_track_id)] = { lrc_raw: d.syncedLyrics || null, words_json: null, lyrics_plain: d.plainLyrics || null };
-                    const apiBase = window.Capacitor ? "https://www.getliri.com" : "";
+                    const apiBase = IS_IOS ? "https://www.getliri.com" : "";
                     fetch(`${apiBase}/api/refresh-lyrics?action=track&id=${t.itunes_track_id}`, { method: "POST" }).catch(() => {
                     });
                   }
@@ -2563,7 +3401,7 @@
           user_id: user?.id || null,
           user_email: user?.email || null,
           app_version: APP_VERSION,
-          platform: window.Capacitor ? "ios" : "web",
+          platform: IS_IOS ? "ios" : "web",
           description: `Wrong lyrics reported for ${track.trackName || detectedSong?.title || "Unknown song"}`,
           meta: {
             category: "wrong_lyrics",
@@ -2931,7 +3769,7 @@ Move closer to your speakers and try again.`);
         return;
       }
       const lrcCache = turntableLyricsCacheRef.current;
-      const isNative = !!window.Capacitor;
+      const isNative = IS_IOS;
       const wordsData = {};
       for (const track of tracks) {
         if (!track.trackId) continue;
@@ -4207,7 +5045,9 @@ Move closer to your speakers and try again.`);
           padding: "8px 28px max(40px,calc(env(safe-area-inset-bottom)+28px))",
           animation: "slide-up 0.3s ease",
           maxWidth: "520px",
-          margin: "0 auto"
+          margin: "0 auto",
+          maxHeight: "92vh",
+          overflowY: "auto"
         }
       }, !authVerifyPending && /* @__PURE__ */ React.createElement("div", {
         onClick: () => {
@@ -4317,7 +5157,9 @@ Move closer to your speakers and try again.`);
             textAlign: "center",
             marginBottom: "24px"
           }
-        }, "Free to start \u2014 no credit card"), /* @__PURE__ */ React.createElement("div", {
+        }, "Free to start \u2014 no credit card"), /* @__PURE__ */ React.createElement(ProviderButtons, {
+          onError: setAuthError
+        }), /* @__PURE__ */ React.createElement("div", {
           style: {
             display: "flex",
             flexDirection: "column",
@@ -4415,7 +5257,9 @@ Move closer to your speakers and try again.`);
             textAlign: "center",
             marginBottom: "24px"
           }
-        }, "Sign in to continue syncing"), /* @__PURE__ */ React.createElement("div", {
+        }, "Sign in to continue syncing"), /* @__PURE__ */ React.createElement(ProviderButtons, {
+          onError: setAuthError
+        }), /* @__PURE__ */ React.createElement("div", {
           style: {
             display: "flex",
             flexDirection: "column",
@@ -5144,7 +5988,7 @@ Move closer to your speakers and try again.`);
         cursor: "pointer"
       }
     })))), coachStep > 0 && (() => {
-      const feedSel = window.Capacitor ? 'a[href="/feed.html"]' : 'a[href="/app/feed.html"]';
+      const feedSel = IS_IOS ? 'a[href="/feed.html"]' : 'a[href="/app/feed.html"]';
       const sel = coachStep === 1 ? "#liri-listen-cta" : feedSel;
       const el = typeof document !== "undefined" ? document.querySelector(sel) : null;
       const r = el ? el.getBoundingClientRect() : null;
@@ -5152,7 +5996,7 @@ Move closer to your speakers and try again.`);
       const advance = () => {
         if (isLast) {
           setCoachStep(0);
-          window.location.href = window.Capacitor ? "/library.html" : "/library";
+          window.location.href = IS_IOS ? "/library.html" : "/library";
         } else {
           setCoachStep(2);
         }
@@ -5373,7 +6217,7 @@ Move closer to your speakers and try again.`);
         padding: "20px 0 4px"
       }
     }, /* @__PURE__ */ React.createElement("a", {
-      href: window.Capacitor ? "/library.html?openSearch=1" : "/library?openSearch=1",
+      href: IS_IOS ? "/library.html?openSearch=1" : "/library?openSearch=1",
       style: {
         fontSize: 12,
         color: "rgba(255,255,255,0.3)",
@@ -5393,7 +6237,7 @@ Move closer to your speakers and try again.`);
       error: userMetaError,
       onSave: handleSaveUserLyrics,
       onClose: () => setShowLyricsEditor(false)
-    }), showTrackList && !window.Capacitor && /* @__PURE__ */ React.createElement("div", {
+    }), showTrackList && !IS_IOS && /* @__PURE__ */ React.createElement("div", {
       onClick: () => setShowTrackList(false),
       style: { position: "fixed", inset: 0, zIndex: 201, background: "rgba(0,0,0,0.6)", backdropFilter: "blur(4px)", cursor: "pointer", display: "flex", alignItems: "flex-end", justifyContent: "center" }
     }, /* @__PURE__ */ React.createElement("div", {
@@ -5604,7 +6448,7 @@ Move closer to your speakers and try again.`);
             textOverflow: "ellipsis",
             whiteSpace: "nowrap"
           }
-        }, user?.email), /* @__PURE__ */ React.createElement("div", {
+        }, user?.email?.endsWith("@auth.getliri.com") ? "Signed in with Discogs" : user?.email), /* @__PURE__ */ React.createElement("div", {
           style: {
             fontSize: "12px",
             color: "rgba(255,255,255,0.3)",
@@ -5736,7 +6580,7 @@ Move closer to your speakers and try again.`);
         }
       }, /* @__PURE__ */ React.createElement("div", {
         onClick: () => {
-          window.location.href = window.Capacitor ? "/library.html" : "/library";
+          window.location.href = IS_IOS ? "/library.html" : "/library";
         },
         style: {
           display: "flex",
@@ -5761,6 +6605,9 @@ Move closer to your speakers and try again.`);
           fontSize: "18px"
         }
       }, "\u203A"))),
+      /* @__PURE__ */ React.createElement(LinkedLoginSettings, {
+        user
+      }),
       /* @__PURE__ */ React.createElement(DiscogsSettings, null),
       /* @__PURE__ */ React.createElement("div", {
         style: {
@@ -7570,7 +8417,7 @@ Move closer to your speakers and try again.`);
           WebkitOverflowScrolling: "touch"
         }
       },
-      !(turntableAlbum && (!window.Capacitor || showTrackList)) && /* @__PURE__ */ React.createElement("div", {
+      !(turntableAlbum && (!IS_IOS || showTrackList)) && /* @__PURE__ */ React.createElement("div", {
         style: {
           position: "relative",
           width: "120px",
@@ -7615,12 +8462,12 @@ Move closer to your speakers and try again.`);
           marginBottom: "10px",
           marginTop: !turntableAlbum && listenAttempt > MAX_ATTEMPTS ? "20px" : "0"
         }
-      }, turntableAlbum ? window.Capacitor ? showTrackList ? "Can't find it automatically" : "Finding your place\u2026" : "Pick a track to start" : listenAttempt > MAX_ATTEMPTS ? "Matching by lyrics\u2026" : "Listening\u2026"),
+      }, turntableAlbum ? IS_IOS ? showTrackList ? "Can't find it automatically" : "Finding your place\u2026" : "Pick a track to start" : listenAttempt > MAX_ATTEMPTS ? "Matching by lyrics\u2026" : "Listening\u2026"),
       /* ── Manual track picker with side grouping ── */
       turntableAlbum && turntableTracksRef.current.length > 0 && (() => {
         const allTracks = turntableTracksRef.current;
         const groups = getSideGroups(allTracks, vinylSidesRef.current, vinylDbRelease?.vinyl_tracks);
-        const isWeb = !window.Capacitor;
+        const isWeb = !IS_IOS;
         return /* @__PURE__ */ React.createElement(
           "div",
           {
@@ -8159,3 +9006,8 @@ Move closer to your speakers and try again.`);
     )
   );
 })();
+/*! Bundled license information:
+
+@capacitor/core/dist/index.js:
+  (*! Capacitor: https://capacitorjs.com/ - MIT License *)
+*/
