@@ -30,9 +30,22 @@ calls as possible.
   username + email + collection size, resync, disconnect; Connect button when not
   set up. Backend stores/returns profile (email/avatar/num_collection, lazy
   backfill) + `discogs-disconnect` endpoint.
+- ✅ **Slice 6 — Function consolidation.** The five `api/discogs-*.js` routes were
+  merged into one `api/discogs.js` dispatching on `?action=`, with handlers in
+  `api/_lib/discogs-handlers.js`. The Hobby plan caps a deployment at 12
+  serverless functions and the separate routes pushed it over (two failed
+  builds). Old paths still work via rewrites in `vercel.json`, so the registered
+  OAuth callback URL is unchanged. `api/` is now at 9 functions.
 - ⏭️ Possible next: edition-aware enrichment (deluxe vs standard tracklist);
   persist "enriching" state across reloads; the "sign up with Discogs creates a
   Liri account" flow (checklist #1).
+
+### Known gap — iOS / Capacitor
+Connecting from the native app does `window.location.href = authorizeUrl`, which
+navigates the webview off `capacitor://localhost` to discogs.com; the callback
+then lands on `https://www.getliri.com/library`. So the user finishes the flow in
+the **web** app inside the native shell, not back in the native app. Fine for the
+web release; needs an in-app browser + deep link before shipping to iOS.
 
 ### Migrations to run (Supabase SQL editor), in order
 1. `20260817_discogs_oauth.sql` — core tables
@@ -40,15 +53,22 @@ calls as possible.
 3. `20260818_discogs_collection_write_rls.sql` — user update/delete on the collection
 4. `20260818b_discogs_profile.sql` — profile columns (email/avatar/num_collection)
 
-### Manual setup needed before end-to-end testing
-- [ ] Register a Discogs application (discogs.com/settings/developers) and set
-      **`DISCOGS_KEY`** + **`DISCOGS_SECRET`** in Vercel (Preview + Production).
-      Only `DISCOGS_TOKEN` is currently set — OAuth needs the consumer key/secret.
+### Manual setup
+- [x] Register a Discogs application (discogs.com/settings/developers) and set
+      **`DISCOGS_KEY`** + **`DISCOGS_SECRET`** in Vercel — confirmed present on
+      Preview + Production.
 - [ ] Add the callback URL(s) to the Discogs app: the preview
       (`https://liri-git-discogs-integration-…/api/discogs-oauth-callback`) and prod
-      (`https://www.getliri.com/api/discogs-oauth-callback`).
-- [ ] For testing on the preview URL, turn off Vercel deployment protection (or test on prod),
-      so Discogs can redirect the browser back without hitting the SSO wall.
+      (`https://www.getliri.com/api/discogs-oauth-callback`). Note the apex
+      `getliri.com` 307-redirects to `www`, and Capacitor hardcodes `www`, so the
+      **`www`** form is the only prod callback that needs registering.
+- [x] Vercel deployment protection isn't blocking the preview — the API routes
+      answer unauthenticated requests directly.
+
+### Verified on the preview build
+All five legacy paths resolve through the `vercel.json` rewrites to the
+consolidated function (401 for `discogs-status`, 405 for the POST-only routes —
+no 404s), and `npm run build` reproduces `app/vendor/app.js` with no drift.
 
 ---
 
