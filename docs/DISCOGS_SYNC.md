@@ -15,7 +15,16 @@ calls as possible.
   (`api/_lib/discogs-oauth.js`), and `discogs-oauth-start` / `-callback` / `discogs-status`
   endpoints. Connects a logged-in user's Discogs account and stores their tokens
   server-side. **Not yet wired into the UI; not yet tested end-to-end.**
-- ⏭️ Next: Settings "Connect Discogs" button → run the flow → then the import endpoint.
+- ✅ **Slice 2 — Import endpoint** (`api/discogs-import.js`): list-only, paginated,
+  resumable pull of the owned collection into `user_discogs_collection`.
+- ✅ **Slice 3 — My Records connect flow** (`app/library.html`): greyed "Connect to
+  Discogs" link at the bottom of the list (hidden once connected) → OAuth → returns
+  to /library → import with a live progress banner → imported records shown in a
+  "From your Discogs collection" section ("Lyrics not fetched yet"). Backend
+  `return_to` support added (migration `20260817b_discogs_return.sql`).
+- ⏭️ Next: (a) merge imported records into the main list as normal cards +
+  click-to-fetch enrichment (iTunes match + lyrics on demand); (b) the Settings
+  Discogs section (connected info + email + refresh button).
 
 ### Manual setup needed before end-to-end testing
 - [ ] Register a Discogs application (discogs.com/settings/developers) and set
