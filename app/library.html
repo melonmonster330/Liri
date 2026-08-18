@@ -471,6 +471,18 @@
       }) || null;
     }
 
+    // Canonical key for grouping/matching a record across the library and the
+    // imported Discogs collection. Strips common edition qualifiers so an
+    // enriched "evermore (deluxe version)" still matches the imported copy titled
+    // just "Evermore". Kept narrow (deluxe/expanded/remaster/etc.) so it never
+    // merges a genuinely different album like "Red (Taylor's Version)".
+    function dgKeyOf(albumName, artistName) {
+      const norm = s => (s || "").toLowerCase().replace(/[^a-z0-9]+/g, "");
+      const al = norm(albumName).replace(
+        /(deluxeversion|deluxeedition|deluxe|expandededition|expanded|remastered|remaster|anniversaryedition|specialedition|bonustrackversion|bonustrack)$/, "");
+      return `${al}|${norm(artistName)}`;
+    }
+
     // 2 most-recently-played albums first (recency order), then the rest filed
     // record-shop style by artist sort key (ties: full artist name, then album).
     function orderLibrary(lib, recentIds) {
@@ -1198,7 +1210,7 @@
       // ── Discogs connection + import ──
       const [discogsStatus, setDiscogsStatus]   = useState(null); // null=unknown | { connected, username, ... }
       const [discogsPending, setDiscogsPending] = useState([]);   // imported records not yet matched to iTunes
-      const [discogsCopies, setDiscogsCopies]   = useState({});   // artist+album key → owned Discogs copies (even after enriching)
+      const [discogsCopies, setDiscogsCopies]   = useState({ byCid: {}, byKey: {} }); // owned Discogs copies, lookup by iTunes id or artist+album
       const [discogsImport, setDiscogsImport]   = useState(null); // null | { running, imported, total, done, error }
       // True only for the load right after connecting: shows the separate
       // "From your Discogs collection" section. On any later load the imported
@@ -1312,24 +1324,32 @@
             .eq("user_id", uid)
             .order("added_at", { ascending: false });
           const all = data || [];
-          const norm = s => (s || "").toLowerCase().replace(/[^a-z0-9]+/g, "");
-          // Copies of every owned album, keyed by artist+album — so the detail
-          // view can show "your Discogs copies" even after a record is enriched.
-          const copies = {};
+          // Two lookups so the detail view finds a record's copies whether it's
+          // been enriched (match by iTunes id) or not (match by artist+album).
+          const byCid = {}, byKey = {};
           for (const r of all) {
-            const k = `${norm(r.album_name)}|${norm(r.artist_name)}`;
-            (copies[k] = copies[k] || []).push(r);
+            const k = dgKeyOf(r.album_name, r.artist_name);
+            (byKey[k] = byKey[k] || []).push(r);
+            if (r.itunes_collection_id) {
+              const c = String(r.itunes_collection_id);
+              (byCid[c] = byCid[c] || []).push(r);
+            }
           }
-          setDiscogsCopies(copies);
+          setDiscogsCopies({ byCid, byKey });
           // The merged list only wants records not yet matched to iTunes.
           setDiscogsPending(all.filter(r => !r.itunes_collection_id));
         } catch (e) {}
       }, []);
 
-      // Normalized artist+album key used to look up a record's Discogs copies.
-      const dgAlbumKey = (a) => {
-        const norm = s => (s || "").toLowerCase().replace(/[^a-z0-9]+/g, "");
-        return `${norm(a && a.album_name)}|${norm(a && a.artist_name)}`;
+      // Find the owned Discogs copies for an album (library or imported): match
+      // by iTunes id once enriched, else by the edition-aware artist+album key.
+      const copiesFor = (a) => {
+        if (!a) return [];
+        const c = a.itunes_collection_id && discogsCopies.byCid[String(a.itunes_collection_id)];
+        if (c && c.length) return c;
+        const k = discogsCopies.byKey[dgKeyOf(a.album_name, a.artist_name)];
+        if (k && k.length) return k;
+        return a._discogsVersions || [];
       };
 
       const connectDiscogs = useCallback(async () => {
@@ -1398,10 +1418,9 @@
       // uses the separate section with Discogs thumbs).
       useEffect(() => {
         if (discogsJustConnected || !discogsPending.length) return;
-        const norm = s => (s || "").toLowerCase().replace(/[^a-z0-9]+/g, "");
         const groups = new Map();
         for (const a of discogsPending) {
-          const k = `${norm(a.album_name)}|${norm(a.artist_name)}`;
+          const k = dgKeyOf(a.album_name, a.artist_name);
           if (!groups.has(k)) groups.set(k, a);
         }
         let cancelled = false;
@@ -1896,8 +1915,7 @@
                   // to iTunes) into the one list, deduped against the library by
                   // artist+album. Right after connecting we skip the merge — the
                   // separate "From your Discogs collection" section shows instead.
-                  const dgNorm = s => (s || "").toLowerCase().replace(/[^a-z0-9]+/g, "");
-                  const dgKey = a => `${dgNorm(a.album_name)}|${dgNorm(a.artist_name)}`;
+                  const dgKey = a => dgKeyOf(a.album_name, a.artist_name);
                   const libKeys = new Set(library.map(dgKey));
                   // Collapse multiple owned copies/pressings of the same album into
                   // one row; the copies live on _discogsVersions for the detail view.
@@ -2078,7 +2096,7 @@
           {selectedAlbum && (
             <AlbumDetailSheet
               album={selectedAlbum}
-              copies={discogsCopies[dgAlbumKey(selectedAlbum)] || selectedAlbum._discogsVersions || []}
+              copies={copiesFor(selectedAlbum)}
               onClose={() => setSelectedAlbum(null)}
               onMetaChanged={() => scanMissingInfo(library)}
               onFetchDiscogs={(a) => fetchInBackground(a)}
