@@ -54,8 +54,176 @@
 
     const USERNAME_RE = /^[a-z0-9_]{3,20}$/;
 
+    const API_BASE = window.Capacitor ? "https://www.getliri.com" : "";
+
     function Spinner({ size = 22 }) {
       return <div style={{ width: size, height: size, border: "2px solid rgba(255,255,255,0.15)", borderTopColor: "#f0e6d3", borderRadius: "50%", animation: "spin 0.8s linear infinite" }} />;
+    }
+
+    // ── Discogs connection ───────────────────────────────────────────────────
+    // Mirrors the panel in the in-app settings pop-out (app/src/main.js), restyled
+    // to this page's idiom. Deliberately rendered OUTSIDE the profile form:
+    // connect / resync / disconnect all act immediately, so they must not look
+    // like they're waiting on "Save changes".
+
+    const syncedAgo = (iso) => {
+      const secs = Math.floor((Date.now() - new Date(iso).getTime()) / 1000);
+      if (!isFinite(secs) || secs < 0) return null;
+      if (secs < 60)    return "just now";
+      if (secs < 3600)  return `${Math.floor(secs / 60)}m ago`;
+      if (secs < 86400) return `${Math.floor(secs / 3600)}h ago`;
+      return `${Math.floor(secs / 86400)}d ago`;
+    };
+
+    function DiscogsSettings() {
+      const [status, setStatus] = useState(null);   // null = loading | { connected, ... }
+      const [busy, setBusy]     = useState(false);
+      const [msg, setMsg]       = useState(null);
+
+      const token = async () => {
+        const { data: { session } } = await sb.auth.getSession();
+        return session?.access_token || null;
+      };
+
+      const load = useCallback(async () => {
+        try {
+          const t = await token();
+          if (!t) { setStatus({ connected: false }); return; }
+          const r = await fetch(`${API_BASE}/api/discogs-status`, { headers: { Authorization: `Bearer ${t}` } });
+          setStatus(r.ok ? await r.json() : { connected: false });
+        } catch (e) { setStatus({ connected: false }); }
+      }, []);
+
+      useEffect(() => { load(); }, [load]);
+
+      // Returns to /library rather than back here: that page already runs the
+      // import-on-return flow with its progress banner, so connecting lands you
+      // watching your collection actually arrive instead of on a static form.
+      const connect = async () => {
+        try {
+          const t = await token();
+          if (!t) return;
+          const r = await fetch(`${API_BASE}/api/discogs-oauth-start`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json", Authorization: `Bearer ${t}` },
+            body: JSON.stringify({ return_to: "/library" }),
+          });
+          const j = await r.json();
+          if (j.authorizeUrl) window.location.href = j.authorizeUrl;
+          else alert(j.error || "Couldn't start Discogs sign-in.");
+        } catch (e) { alert("Couldn't reach Discogs. Please try again."); }
+      };
+
+      const resync = async () => {
+        setBusy(true); setMsg("Syncing…");
+        let page = 1, added = 0;
+        try {
+          while (true) {
+            const t = await token();
+            const r = await fetch(`${API_BASE}/api/discogs-import`, {
+              method: "POST",
+              headers: { "Content-Type": "application/json", Authorization: `Bearer ${t}` },
+              body: JSON.stringify({ page }),
+            });
+            const j = await r.json();
+            if (!r.ok) { setMsg(j.error || "Sync failed."); break; }
+            added += j.imported || 0;
+            if (j.done) {
+              setMsg(added > 0
+                ? `Added ${added} new record${added !== 1 ? "s" : ""} — open My Records to see them.`
+                : "Your library is already up to date.");
+              break;
+            }
+            page = j.nextPage;
+          }
+        } catch (e) { setMsg("Sync failed."); }
+        setBusy(false);
+        load();
+      };
+
+      const disconnect = async () => {
+        if (!window.confirm("Disconnect your Discogs account? Records already imported stay in your library.")) return;
+        setBusy(true);
+        try {
+          const t = await token();
+          await fetch(`${API_BASE}/api/discogs-disconnect`, { method: "POST", headers: { Authorization: `Bearer ${t}` } });
+          setStatus({ connected: false }); setMsg(null);
+        } catch (e) {}
+        setBusy(false);
+      };
+
+      const primary = {
+        background: "linear-gradient(135deg,#d4a846,#c9807a)", color: "#080810",
+        border: "none", borderRadius: 50, padding: "11px 20px", fontSize: 13,
+        fontWeight: 700, fontFamily: "inherit", opacity: busy ? 0.6 : 1,
+      };
+      const ghost = {
+        background: "rgba(255,255,255,0.05)", border: "1px solid rgba(255,255,255,0.1)",
+        color: "rgba(255,255,255,0.45)", borderRadius: 50, padding: "11px 18px",
+        fontSize: 13, fontFamily: "inherit",
+      };
+      const card = {
+        padding: "16px", borderRadius: 12, background: "rgba(255,255,255,0.03)",
+        border: "1px solid rgba(255,255,255,0.1)",
+      };
+
+      return (
+        <div>
+          <div style={label}>Discogs</div>
+
+          {!status ? (
+            <div style={{ ...card, display: "flex", alignItems: "center", gap: 10 }}>
+              <Spinner size={16} />
+              <span style={{ fontSize: 13, color: "rgba(255,255,255,0.35)" }}>Checking your connection…</span>
+            </div>
+          ) : !status.connected ? (
+            <div style={card}>
+              <div style={{ fontSize: 13, color: "rgba(255,255,255,0.45)", lineHeight: 1.5, marginBottom: 14 }}>
+                Connect your Discogs account to import the records you own straight into your library.
+              </div>
+              <button onClick={connect} disabled={busy} style={primary}>Connect Discogs</button>
+            </div>
+          ) : (
+            <div style={card}>
+              <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 10 }}>
+                {status.avatar_url && (
+                  <img src={status.avatar_url} alt="" style={{ width: 40, height: 40, borderRadius: "50%", objectFit: "cover", flexShrink: 0 }} />
+                )}
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{ fontSize: 14, fontWeight: 700, color: "#f0e6d3", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                    {status.username}
+                  </div>
+                  {status.email && (
+                    <div style={{ fontSize: 12, color: "rgba(255,255,255,0.4)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                      {status.email}
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              <div style={{ fontSize: 12, color: "rgba(255,255,255,0.35)", marginBottom: 14 }}>
+                {status.num_collection != null
+                  ? `${status.num_collection.toLocaleString()} record${status.num_collection !== 1 ? "s" : ""} in your Discogs collection`
+                  : "Connected"}
+                {status.last_synced_at && syncedAgo(status.last_synced_at) ? ` · synced ${syncedAgo(status.last_synced_at)}` : ""}
+              </div>
+
+              {msg && <div style={{ fontSize: 12, color: "#d4a846", marginBottom: 12, lineHeight: 1.5 }}>{msg}</div>}
+
+              <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
+                <button onClick={resync} disabled={busy} style={primary}>
+                  {busy ? "Syncing…" : "Resync from Discogs"}
+                </button>
+                <button onClick={disconnect} disabled={busy} style={ghost}>Disconnect</button>
+              </div>
+            </div>
+          )}
+
+          <div style={help}>
+            Imported records stay in your library if you disconnect — they just stop syncing.
+          </div>
+        </div>
+      );
     }
 
     function App() {
@@ -277,6 +445,10 @@
             </button>
 
             {showSavedToast && <div style={{ textAlign: "center", fontSize: 13, color: "rgba(120,220,150,0.9)" }}>Saved ✓</div>}
+
+            <div style={{ borderTop: "1px solid rgba(255,255,255,0.07)", paddingTop: 22 }}>
+              <DiscogsSettings />
+            </div>
 
             <div style={{ textAlign:"center", padding:"24px 0 16px", fontSize:"11px", color:"rgba(255,255,255,0.1)" }}>Liri v{APP_VERSION}</div>
           </div>

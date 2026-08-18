@@ -49,6 +49,112 @@ const liriAuthStorage = {
 };
 const sb = supabase.createClient("https://xjdjpaxgymgbvcwmvorc.supabase.co", "sb_publishable_C-NBnfg0ltAoUi46XQTUjA_ozjZW_Nd", { auth: { storage: liriAuthStorage } });
 const APP_VERSION = "1.5.14";
+
+// ── Discogs connection panel (Settings) ────────────────────────────────────
+// Self-contained: shows who you're connected as (username, email, collection
+// size), a resync button, and disconnect. Connect (when not set up) sends you
+// through OAuth and back to the library, which imports your collection.
+function DiscogsSettings() {
+  const h = React.createElement;
+  const API = window.Capacitor ? "https://www.getliri.com" : "";
+  const [status, setStatus] = useState(null);   // null = loading | { connected, ... }
+  const [busy, setBusy]     = useState(false);
+  const [msg, setMsg]       = useState(null);
+
+  const token = async () => {
+    const { data: { session } } = await sb.auth.getSession();
+    return session?.access_token || null;
+  };
+  const load = async () => {
+    try {
+      const t = await token(); if (!t) { setStatus({ connected: false }); return; }
+      const r = await fetch(`${API}/api/discogs-status`, { headers: { Authorization: `Bearer ${t}` } });
+      if (r.ok) setStatus(await r.json()); else setStatus({ connected: false });
+    } catch (e) { setStatus({ connected: false }); }
+  };
+  useEffect(() => { load(); }, []);
+
+  const connect = async () => {
+    try {
+      const t = await token(); if (!t) return;
+      const r = await fetch(`${API}/api/discogs-oauth-start`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${t}` },
+        body: JSON.stringify({ return_to: "/library" }),
+      });
+      const j = await r.json();
+      if (j.authorizeUrl) window.location.href = j.authorizeUrl;
+      else alert(j.error || "Couldn't start Discogs sign-in.");
+    } catch (e) { alert("Couldn't reach Discogs. Please try again."); }
+  };
+
+  const resync = async () => {
+    setBusy(true); setMsg("Syncing…");
+    let page = 1, added = 0;
+    try {
+      while (true) {
+        const t = await token();
+        const r = await fetch(`${API}/api/discogs-import`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json", Authorization: `Bearer ${t}` },
+          body: JSON.stringify({ page }),
+        });
+        const j = await r.json();
+        if (!r.ok) { setMsg(j.error || "Sync failed."); break; }
+        added += j.imported || 0;
+        if (j.done) { setMsg(added > 0 ? `Added ${added} new record${added !== 1 ? "s" : ""} — open My Records to see them.` : "Your library is already up to date."); break; }
+        page = j.nextPage;
+      }
+    } catch (e) { setMsg("Sync failed."); }
+    setBusy(false);
+    load();
+  };
+
+  const disconnect = async () => {
+    if (!window.confirm("Disconnect your Discogs account? Records already imported stay in your library.")) return;
+    setBusy(true);
+    try {
+      const t = await token();
+      await fetch(`${API}/api/discogs-disconnect`, { method: "POST", headers: { Authorization: `Bearer ${t}` } });
+      setStatus({ connected: false }); setMsg(null);
+    } catch (e) {}
+    setBusy(false);
+  };
+
+  const box  = { background: "rgba(255,255,255,0.03)", border: "1px solid rgba(255,255,255,0.07)", borderRadius: "16px", padding: "16px 18px", marginBottom: "16px" };
+  const head = { fontSize: "13px", color: "#d4a846", marginBottom: "12px" };
+  const primary = { background: "linear-gradient(135deg,#d4a846,#c9807a)", color: "#080810", border: "none", borderRadius: "50px", padding: "9px 18px", fontSize: "13px", fontWeight: 700, cursor: busy ? "wait" : "pointer", fontFamily: "inherit", opacity: busy ? 0.6 : 1 };
+  const ghost   = { background: "rgba(255,255,255,0.05)", border: "1px solid rgba(255,255,255,0.08)", color: "rgba(255,255,255,0.4)", borderRadius: "50px", padding: "9px 16px", fontSize: "13px", cursor: "pointer", fontFamily: "inherit" };
+
+  if (!status) {
+    return h("div", { style: box },
+      h("div", { style: head }, "Discogs"),
+      h("div", { style: { fontSize: "12px", color: "rgba(255,255,255,0.3)" } }, "Loading…"));
+  }
+
+  if (!status.connected) {
+    return h("div", { style: box },
+      h("div", { style: head }, "Discogs"),
+      h("div", { style: { fontSize: "12px", color: "rgba(255,255,255,0.4)", marginBottom: "12px", lineHeight: 1.5 } },
+        "Connect your Discogs account to import the records you own straight into your library."),
+      h("button", { onClick: connect, disabled: busy, style: primary }, "Connect Discogs"));
+  }
+
+  return h("div", { style: box },
+    h("div", { style: head }, "Discogs"),
+    h("div", { style: { display: "flex", alignItems: "center", gap: "12px", marginBottom: "10px" } },
+      status.avatar_url ? h("img", { src: status.avatar_url, alt: "", style: { width: 40, height: 40, borderRadius: "50%", objectFit: "cover", flexShrink: 0 } }) : null,
+      h("div", { style: { flex: 1, minWidth: 0 } },
+        h("div", { style: { fontSize: "14px", color: "#f0e6d3", fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" } }, status.username),
+        status.email ? h("div", { style: { fontSize: "12px", color: "rgba(255,255,255,0.4)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" } }, status.email) : null)),
+    h("div", { style: { fontSize: "12px", color: "rgba(255,255,255,0.35)", marginBottom: "14px" } },
+      (status.num_collection != null ? `${status.num_collection.toLocaleString()} record${status.num_collection !== 1 ? "s" : ""} in your Discogs collection` : "Connected"),
+      status.last_synced_at ? ` · synced ${timeAgo(status.last_synced_at)}` : ""),
+    msg ? h("div", { style: { fontSize: "12px", color: "#d4a846", marginBottom: "12px" } }, msg) : null,
+    h("div", { style: { display: "flex", gap: "10px", flexWrap: "wrap" } },
+      h("button", { onClick: resync, disabled: busy, style: primary }, busy ? "Syncing…" : "Resync from Discogs"),
+      h("button", { onClick: disconnect, disabled: busy, style: ghost }, "Disconnect")));
+}
 // Lyrics lead the audio clock by this many seconds — the highlighted line
 // switches slightly BEFORE its nominal timestamp. Displayed time / progress bar
 // are unaffected (we only add this to the line-matching comparison). Helps the
@@ -4738,7 +4844,7 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
       color: "rgba(212,168,70,0.5)",
       fontSize: "18px"
     }
-  }, "\u203A"))), /*#__PURE__*/React.createElement("div", {
+  }, "\u203A"))), /*#__PURE__*/React.createElement(DiscogsSettings, null), /*#__PURE__*/React.createElement("div", {
     style: {
       borderTop: "1px solid rgba(255,255,255,0.07)",
       paddingTop: "20px",

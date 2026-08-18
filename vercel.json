@@ -29,6 +29,11 @@
     }
   ],
   "rewrites": [
+    { "source": "/api/discogs-oauth-start",    "destination": "/api/discogs?action=start" },
+    { "source": "/api/discogs-oauth-callback", "destination": "/api/discogs?action=callback" },
+    { "source": "/api/discogs-status",         "destination": "/api/discogs?action=status" },
+    { "source": "/api/discogs-import",         "destination": "/api/discogs?action=import" },
+    { "source": "/api/discogs-disconnect",     "destination": "/api/discogs?action=disconnect" },
     { "source": "/app",          "destination": "/app/index.html"   },
     { "source": "/vinyl",        "destination": "/app/vinyl.html"   },
     { "source": "/tv",           "destination": "/tv.html"          },

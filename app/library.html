@@ -454,9 +454,55 @@
 
     const cmpBase = (a, b) => (a || "").localeCompare(b || "", undefined, { sensitivity: "base" });
 
+    // Pick the iTunes album result that genuinely matches a given album+artist.
+    // Conservative on purpose: a loose "first result" match sends tricky names
+    // like "The 1975" to the wrong record (wrong cover, wrong lyrics). Requires
+    // both artist and album to line up; returns null when nothing is confident.
+    function itunesAlbumMatch(results, albumName, artistName) {
+      const n = s => (s || "").toLowerCase().replace(/[^a-z0-9]+/g, "");
+      const wantAl = n(albumName), wantAr = n(artistName);
+      if (!wantAl || !wantAr) return null;
+      return (results || []).find(x => {
+        const ca = n(x.collectionName), cr = n(x.artistName);
+        if (!ca || !cr) return false;
+        const artistOk = cr === wantAr || cr.includes(wantAr) || wantAr.includes(cr);
+        const albumOk  = ca === wantAl || ca.startsWith(wantAl) || wantAl.startsWith(ca);
+        return artistOk && albumOk;
+      }) || null;
+    }
+
+    // Canonical key for grouping/matching a record across the library and the
+    // imported Discogs collection. Strips common edition qualifiers so an
+    // enriched "evermore (deluxe version)" still matches the imported copy titled
+    // just "Evermore". Kept narrow (deluxe/expanded/remaster/etc.) so it never
+    // merges a genuinely different album like "Red (Taylor's Version)".
+    function dgKeyOf(albumName, artistName) {
+      const norm = s => (s || "").toLowerCase().replace(/[^a-z0-9]+/g, "");
+      const al = norm(albumName).replace(
+        /(deluxeversion|deluxeedition|deluxe|expandededition|expanded|remastered|remaster|anniversaryedition|specialedition|bonustrackversion|bonustrack)$/, "");
+      return `${al}|${norm(artistName)}`;
+    }
+
     // 2 most-recently-played albums first (recency order), then the rest filed
     // record-shop style by artist sort key (ties: full artist name, then album).
     function orderLibrary(lib, recentIds) {
+      // Same-artist albums must file together even when some are enriched (they
+      // carry a "Lastname, First" sort name) and some are freshly imported from
+      // Discogs (they don't yet). Borrow a known sort name for the artist so both
+      // land in the same place — e.g. an imported "Fearless" files next to
+      // "Fearless (Taylor's Version)" under "Swift, Taylor", not down under "T".
+      const sortNameByArtist = new Map();
+      for (const a of (lib || [])) {
+        if (a.artist_sort_name) {
+          const key = foldName((a.artist_name || "").trim());
+          if (key && !sortNameByArtist.has(key)) sortNameByArtist.set(key, a.artist_sort_name);
+        }
+      }
+      const keyOf = a => foldName(
+        a.artist_sort_name
+        || sortNameByArtist.get(foldName((a.artist_name || "").trim()))
+        || (a.artist_name || "").trim().replace(/^the\s+/i, ""));
+
       const seen = new Set();
       const recent = [];
       for (const id of (recentIds || [])) {
@@ -466,7 +512,7 @@
       const rest = (lib || [])
         .filter(x => !seen.has(String(x.itunes_collection_id)))
         .sort((a, b) =>
-          cmpBase(artistSortKey(a), artistSortKey(b)) ||
+          cmpBase(keyOf(a), keyOf(b)) ||
           cmpBase(a.artist_name, b.artist_name) ||
           cmpBase(a.album_name, b.album_name));
       return [...recent, ...rest];
@@ -778,7 +824,7 @@
     }
 
     // ── Album Detail Sheet ─────────────────────────────────────────────────
-    function AlbumDetailSheet({ album, onClose, onMetaChanged }) {
+    function AlbumDetailSheet({ album, copies, onClose, onMetaChanged, onFetchDiscogs }) {
       const [tracks, setTracks]           = useState([]);
       const [loading, setLoading]         = useState(true);
       const [selectedTrack, setSelectedTrack] = useState(null);
@@ -974,6 +1020,26 @@
             </div>
           </div>
 
+          {/* ── Your Discogs copies of this record (shown even after enriching) ── */}
+          {copies && copies.length > 0 && (
+            <div style={{ margin: "14px 24px 0", background: "rgba(212,168,70,0.06)", border: "1px solid rgba(212,168,70,0.25)", borderRadius: 14, padding: "12px 14px" }}>
+              <div style={{ fontSize: 12, fontWeight: 600, color: "rgba(212,168,70,0.9)" }}>
+                In your Discogs library{copies.length > 1 ? ` · ${copies.length} copies` : ""}
+              </div>
+              {album._discogs && (
+                <div style={{ fontSize: 11, color: "rgba(255,255,255,0.4)", marginTop: 3, lineHeight: 1.4 }}>Lyrics and side info aren't fetched yet — they'll load the first time you play this record.</div>
+              )}
+              <div style={{ marginTop: 10, display: "flex", flexDirection: "column", gap: 6 }}>
+                {copies.map(v => (
+                  <div key={v.id} style={{ fontSize: 11, color: "rgba(255,255,255,0.55)", display: "flex", alignItems: "center", gap: 8 }}>
+                    <span style={{ color: "rgba(212,168,70,0.7)" }}>◦</span>
+                    {v.release_year ? `${v.release_year} · ` : ""}Discogs release {v.discogs_release_id}
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
           {/* ── Missing side info banner ── */}
           {!loading && tracks.length > 0 && vinylSource === "estimated" && (
             <div style={{ margin: "14px 24px 0", background: "rgba(212,168,70,0.06)", border: "1px solid rgba(212,168,70,0.25)", borderRadius: 14, padding: "10px 14px", display: "flex", alignItems: "center", gap: 10 }}>
@@ -995,9 +1061,21 @@
                 <Spinner />
               </div>
             ) : tracks.length === 0 ? (
-              <div style={{ textAlign: "center", padding: "48px 24px", color: "rgba(255,255,255,0.2)", fontSize: 14 }}>
-                Couldn't load tracks
-              </div>
+              album._discogs ? (
+                <div style={{ textAlign: "center", padding: "40px 24px" }}>
+                  <div style={{ color: "rgba(255,255,255,0.4)", fontSize: 13, marginBottom: 18, lineHeight: 1.5 }}>
+                    Lyrics and side info for this record haven't been fetched yet.
+                  </div>
+                  <button onClick={() => { if (onFetchDiscogs) onFetchDiscogs(album); onClose(); }}
+                    style={{ background: "linear-gradient(135deg,#d4a846,#c9807a)", color: "#080810", border: "none", borderRadius: 50, padding: "11px 24px", fontSize: 14, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>
+                    Fetch lyrics & side info
+                  </button>
+                </div>
+              ) : (
+                <div style={{ textAlign: "center", padding: "48px 24px", color: "rgba(255,255,255,0.2)", fontSize: 14 }}>
+                  Couldn't load tracks
+                </div>
+              )
             ) : (
               sideOrder.map(side => (
                 <div key={side}>
@@ -1129,6 +1207,21 @@
       const searchTimer                   = useRef(null);
       const sessionTokenRef               = useRef(null);
 
+      // ── Discogs connection + import ──
+      const [discogsStatus, setDiscogsStatus]   = useState(null); // null=unknown | { connected, username, ... }
+      const [discogsPending, setDiscogsPending] = useState([]);   // imported records not yet matched to iTunes
+      const [discogsCopies, setDiscogsCopies]   = useState({ byCid: {}, byKey: {} }); // owned Discogs copies, lookup by iTunes id or artist+album
+      const [discogsImport, setDiscogsImport]   = useState(null); // null | { running, imported, total, done, error }
+      // True only for the load right after connecting: shows the separate
+      // "From your Discogs collection" section. On any later load the imported
+      // records merge into the one list instead.
+      const [discogsJustConnected, setDiscogsJustConnected] = useState(false);
+      // Full-screen "fetching…" overlay shown while a Discogs record is enriched
+      // (iTunes match → side info + lyrics → added) before handing off to sync.
+      const [enriching, setEnriching] = useState(null); // null | { album, stage, error? }
+      const [discogsArt, setDiscogsArt] = useState({});  // group key → iTunes artwork url
+      const [enrichingKeys, setEnrichingKeys] = useState({}); // group key → true while fetching in background
+
       // Persist before navigation can tear this page down. This also lets an
       // add whose keepalive response was lost be reconciled/retried on return.
       useEffect(() => {
@@ -1206,6 +1299,149 @@
           setRecentPlayedIds(ids);
         } catch (e) {}
       }, []);
+
+      // ── Discogs: connect, status, import ──
+      const authToken = useCallback(async () => {
+        const { data: { session } } = await sb.auth.getSession();
+        return session?.access_token || sessionTokenRef.current;
+      }, []);
+
+      const fetchDiscogsStatus = useCallback(async () => {
+        try {
+          const token = await authToken();
+          if (!token) return;
+          const r = await fetch(`${API_BASE}/api/discogs-status`, { headers: { Authorization: `Bearer ${token}` } });
+          if (r.ok) setDiscogsStatus(await r.json());
+        } catch (e) {}
+      }, [authToken]);
+
+      // Imported records still waiting for an iTunes match (lyrics not fetched yet).
+      const fetchDiscogsPending = useCallback(async (uid) => {
+        if (!uid) return;
+        try {
+          const { data } = await sb.from("user_discogs_collection")
+            .select("id, discogs_release_id, artist_name, album_name, release_year, thumb_url, itunes_collection_id")
+            .eq("user_id", uid)
+            .order("added_at", { ascending: false });
+          const all = data || [];
+          // Two lookups so the detail view finds a record's copies whether it's
+          // been enriched (match by iTunes id) or not (match by artist+album).
+          const byCid = {}, byKey = {};
+          for (const r of all) {
+            const k = dgKeyOf(r.album_name, r.artist_name);
+            (byKey[k] = byKey[k] || []).push(r);
+            if (r.itunes_collection_id) {
+              const c = String(r.itunes_collection_id);
+              (byCid[c] = byCid[c] || []).push(r);
+            }
+          }
+          setDiscogsCopies({ byCid, byKey });
+          // The merged list only wants records not yet matched to iTunes.
+          setDiscogsPending(all.filter(r => !r.itunes_collection_id));
+        } catch (e) {}
+      }, []);
+
+      // Find the owned Discogs copies for an album (library or imported): match
+      // by iTunes id once enriched, else by the edition-aware artist+album key.
+      const copiesFor = (a) => {
+        if (!a) return [];
+        const c = a.itunes_collection_id && discogsCopies.byCid[String(a.itunes_collection_id)];
+        if (c && c.length) return c;
+        const k = discogsCopies.byKey[dgKeyOf(a.album_name, a.artist_name)];
+        if (k && k.length) return k;
+        return a._discogsVersions || [];
+      };
+
+      const connectDiscogs = useCallback(async () => {
+        try {
+          const token = await authToken();
+          if (!token) return;
+          const r = await fetch(`${API_BASE}/api/discogs-oauth-start`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+            body: JSON.stringify({ return_to: "/library" }),
+          });
+          const j = await r.json();
+          if (j.authorizeUrl) window.location.href = j.authorizeUrl;
+          else alert(j.error || "Couldn't start Discogs sign-in.");
+        } catch (e) { alert("Couldn't reach Discogs. Please try again."); }
+      }, [authToken]);
+
+      // Pull the whole owned collection, page by page, until done.
+      const runDiscogsImport = useCallback(async (uid) => {
+        setDiscogsImport({ running: true, imported: 0, total: null });
+        let page = 1, total = 0, grand = null;
+        try {
+          while (true) {
+            const token = await authToken();
+            const r = await fetch(`${API_BASE}/api/discogs-import`, {
+              method: "POST",
+              headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+              body: JSON.stringify({ page }),
+            });
+            const j = await r.json();
+            if (!r.ok) { setDiscogsImport({ running: false, error: j.error || "Import failed." }); return; }
+            total += j.imported || 0;
+            grand = j.total != null ? j.total : grand;
+            setDiscogsImport({ running: !j.done, imported: total, total: grand });
+            if (j.done) break;
+            page = j.nextPage;
+          }
+          setDiscogsImport({ running: false, done: true, imported: total, total: grand });
+          fetchDiscogsStatus();
+          fetchDiscogsPending(uid);
+          if (uid) fetchLibrary(uid);
+        } catch (e) { setDiscogsImport({ running: false, error: "Import failed." }); }
+      }, [authToken, fetchDiscogsStatus, fetchDiscogsPending, fetchLibrary]);
+
+      // On load: check connection. If we just came back from Discogs, import.
+      useEffect(() => {
+        if (!user?.id) return;
+        const params = new URLSearchParams(window.location.search);
+        const d = params.get("discogs");
+        if (d) {
+          ["discogs", "u", "reason"].forEach(k => params.delete(k));
+          const qs = params.toString();
+          window.history.replaceState({}, "", window.location.pathname + (qs ? "?" + qs : ""));
+          fetchDiscogsStatus();
+          fetchDiscogsPending(user.id);
+          if (d === "connected") { setDiscogsJustConnected(true); runDiscogsImport(user.id); }
+          else if (d === "error") setDiscogsImport({ running: false, error: "Discogs connection didn't complete. Please try again." });
+        } else {
+          fetchDiscogsStatus();
+          fetchDiscogsPending(user.id);
+        }
+      }, [user?.id]);
+
+      // Fetch iTunes artwork for each imported album (nicer than Discogs thumbs),
+      // once per unique artist+album. Skipped right after connecting (that view
+      // uses the separate section with Discogs thumbs).
+      useEffect(() => {
+        if (discogsJustConnected || !discogsPending.length) return;
+        const groups = new Map();
+        for (const a of discogsPending) {
+          const k = dgKeyOf(a.album_name, a.artist_name);
+          if (!groups.has(k)) groups.set(k, a);
+        }
+        let cancelled = false;
+        (async () => {
+          for (const [k, a] of groups) {
+            if (discogsArt[k]) continue;
+            try {
+              const term = encodeURIComponent(`${a.artist_name} ${a.album_name}`);
+              const r = await fetch(`${API_BASE}/api/itunes-lookup?term=${term}&entity=album&limit=5`);
+              const j = await r.json();
+              // Only use the cover if a result actually matches this album + artist.
+              // Otherwise iTunes' first hit can be a completely different record
+              // (e.g. "The 1975" pulling a wrong cover). Fall back to the Discogs thumb.
+              const match = itunesAlbumMatch(j.results, a.album_name, a.artist_name);
+              const art = match?.artworkUrl100?.replace("100x100bb", "300x300bb");
+              if (art && !cancelled) setDiscogsArt(prev => ({ ...prev, [k]: art }));
+            } catch (e) {}
+          }
+        })();
+        return () => { cancelled = true; };
+      }, [discogsPending, discogsJustConnected]);
 
       // ── Missing-info scan — drives the "needs info" badges + filter ──
       // One pass over the whole library: which albums lack side data, and how
@@ -1470,6 +1706,94 @@
         window.location.href = window.Capacitor ? "/index.html" : "/app";
       };
 
+      // ── Remove an imported Discogs record — all owned copies of it ──
+      const removeDiscogs = async (dgAlbum) => {
+        const versions = dgAlbum._discogsVersions || (dgAlbum._discogs ? [dgAlbum._discogs] : [dgAlbum]);
+        const ids = versions.map(v => v.id).filter(Boolean);
+        if (!ids.length) return;
+        setDiscogsPending(prev => prev.filter(x => !ids.includes(x.id)));
+        const { error } = await sb.from("user_discogs_collection").delete().in("id", ids);
+        if (error) { console.error("[discogs] remove failed:", error); fetchDiscogsPending(user.id); }
+      };
+
+      // ── Core enrichment: match a Discogs record to iTunes, add it officially
+      //    (fetches side info + lyrics), mark every owned copy ready. Returns the
+      //    final collection id. onStage(label) reports progress. Reuses
+      //    /api/itunes-lookup + /api/add-to-library.
+      const runEnrich = async (dgAlbum, onStage) => {
+        const d = dgAlbum._discogs;
+        const norm = s => (s || "").toLowerCase().replace(/[^a-z0-9]+/g, "");
+        const token = await authToken();
+        onStage && onStage("Finding your record…");
+
+        let collectionId = null;
+        try {
+          const term = encodeURIComponent(`${dgAlbum.artist_name} ${dgAlbum.album_name}`);
+          const r = await fetch(`${API_BASE}/api/itunes-lookup?term=${term}&entity=album&limit=5`);
+          const j = await r.json();
+          // Verified match only — a wrong iTunes hit would give this record the
+          // wrong tracklist + lyrics. No confident match → fall through to the
+          // Discogs release, which has the correct tracklist.
+          const match = itunesAlbumMatch(j.results, dgAlbum.album_name, dgAlbum.artist_name);
+          collectionId = match?.collectionId ? String(match.collectionId) : null;
+        } catch (e) {}
+
+        onStage && onStage("Fetching side info & lyrics…");
+        const body = collectionId
+          ? { itunes_collection_id: collectionId }
+          : { discogs_release_id: d.discogs_release_id };
+        const addRes = await fetch(`${API_BASE}/api/add-to-library`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+          body: JSON.stringify(body),
+        });
+        const addJson = await addRes.json().catch(() => ({}));
+        if (!addRes.ok) throw new Error(addJson.error || "Couldn't add this record. Please try again.");
+        const finalCid = collectionId || String(d.discogs_release_id);
+
+        try {
+          const ids = (dgAlbum._discogsVersions || [d]).map(v => v.id);
+          await sb.from("user_discogs_collection")
+            .update({ itunes_collection_id: finalCid, enrichment_status: "ready" })
+            .in("id", ids);
+        } catch (e) {}
+
+        onStage && onStage("Added to your library!");
+        return finalCid;
+      };
+
+      // Tap "Sync" on a Discogs record → full-screen loading bar, then play it.
+      const enrichAndListen = async (dgAlbum) => {
+        setEnriching({ album: dgAlbum, stage: "Finding your record…" });
+        try {
+          const finalCid = await runEnrich(dgAlbum, s => setEnriching({ album: dgAlbum, stage: s }));
+          listenTo({
+            itunes_collection_id: finalCid,
+            album_name:  dgAlbum.album_name,
+            artist_name: dgAlbum.artist_name,
+            artwork_url: dgAlbum.artwork_url,
+          });
+        } catch (e) {
+          setEnriching({ album: dgAlbum, stage: "error", error: e.message || "Something went wrong. Please try again." });
+        }
+      };
+
+      // Tap "Fetch" in the detail sheet → enrich in the background. The library
+      // row shows a "Fetching…" state until it's done, then becomes a real album.
+      const fetchInBackground = async (dgAlbum) => {
+        const key = dgAlbum._dgKey;
+        if (!key) return;
+        setEnrichingKeys(prev => ({ ...prev, [key]: true }));
+        try {
+          await runEnrich(dgAlbum, null);
+        } catch (e) {
+          console.warn("[discogs] background fetch failed:", e.message);
+        } finally {
+          setEnrichingKeys(prev => { const n = { ...prev }; delete n[key]; return n; });
+          if (user) { fetchLibrary(user.id); fetchDiscogsPending(user.id); }
+        }
+      };
+
       // ── Auto-sync from /library?sync=NNN (email deep link) ──
       useEffect(() => {
         if (!syncCid || !user || libLoading || !library.length) return;
@@ -1587,8 +1911,37 @@
                   </div>
                 ))}
                 {(() => {
-                  const visible = orderLibrary(library, recentPlayedIds)
-                    .filter(album => !needsInfoOnly || metaFlags[String(album.itunes_collection_id)]);
+                  // On a normal load, merge owned Discogs records (not yet matched
+                  // to iTunes) into the one list, deduped against the library by
+                  // artist+album. Right after connecting we skip the merge — the
+                  // separate "From your Discogs collection" section shows instead.
+                  const dgKey = a => dgKeyOf(a.album_name, a.artist_name);
+                  const libKeys = new Set(library.map(dgKey));
+                  // Collapse multiple owned copies/pressings of the same album into
+                  // one row; the copies live on _discogsVersions for the detail view.
+                  const dgGroups = new Map();
+                  if (!discogsJustConnected) {
+                    for (const a of discogsPending) {
+                      const k = dgKey(a);
+                      if (libKeys.has(k)) continue; // already an enriched library album
+                      if (!dgGroups.has(k)) dgGroups.set(k, []);
+                      dgGroups.get(k).push(a);
+                    }
+                  }
+                  const discogsExtra = [...dgGroups.entries()].map(([k, versions]) => {
+                    const first = versions[0];
+                    return {
+                      id: `dg-${first.id}`,
+                      album_name:  first.album_name,
+                      artist_name: first.artist_name,
+                      artwork_url: discogsArt[k] || first.thumb_url, // prefer iTunes art
+                      _discogs: first,
+                      _discogsVersions: versions,
+                      _dgKey: k,
+                    };
+                  });
+                  const visible = orderLibrary(library.concat(discogsExtra), recentPlayedIds)
+                    .filter(album => !needsInfoOnly || album._discogs || metaFlags[String(album.itunes_collection_id)]);
                   const recentSet = new Set((recentPlayedIds || []).map(String));
                   const recent = visible.filter(a => recentSet.has(String(a.itunes_collection_id)));
                   const rest   = visible.filter(a => !recentSet.has(String(a.itunes_collection_id)));
@@ -1623,35 +1976,28 @@
                           <div style={{ flex: 1, minWidth: 0 }}>
                             <div style={{ fontSize: 14, fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{album.album_name}</div>
                             <div style={{ fontSize: 12, color: "rgba(255,255,255,0.4)", marginTop: 2, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{album.artist_name}</div>
-                            {isRecent && (
-                              <div style={{ fontSize: 10, color: "rgba(212,168,70,0.85)", marginTop: 4, fontWeight: 600, display: "flex", alignItems: "center", gap: 4 }}>
-                                <svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg>
-                                Recently played{plays > 0 ? ` · ${plays} play${plays !== 1 ? "s" : ""}` : ""}
-                              </div>
-                            )}
-                            {!isRecent && plays > 0 && (
-                              <div style={{ fontSize: 10, color: "rgba(212,168,70,0.6)", marginTop: 4 }}>{plays} play{plays !== 1 ? "s" : ""} on Liri</div>
-                            )}
-                            {flagText && (
-                              <div style={{ fontSize: 10, color: "rgba(212,168,70,0.75)", marginTop: 4, display: "flex", alignItems: "center", gap: 4 }}>
-                                <svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round"><path d="M12 9v4"/><path d="M12 17h.01"/><circle cx="12" cy="12" r="10"/></svg>
-                                missing {flagText}
-                              </div>
-                            )}
                           </div>
                         </div>
 
-                        {/* Action buttons */}
+                        {/* Action buttons — same for every row. Discogs-only rows
+                            enrich (fetch side info + lyrics) before syncing, or show
+                            a "Fetching…" state while enriching in the background. */}
+                        {album._discogs && enrichingKeys[album._dgKey] ? (
+                          <div style={{ display: "flex", alignItems: "center", gap: 8, color: "rgba(212,168,70,0.9)", fontSize: 12, fontWeight: 600, padding: "8px 12px", flexShrink: 0 }}>
+                            <Spinner size={14} /> Fetching…
+                          </div>
+                        ) : (
                         <div style={{ display: "flex", gap: 8, flexShrink: 0 }}>
-                          <button onClick={() => listenTo(album)}
+                          <button onClick={() => album._discogs ? enrichAndListen(album) : listenTo(album)}
                             style={{ background: "linear-gradient(135deg,#d4a846,#c9807a)", color: "#080810", border: "none", borderRadius: 50, padding: "8px 16px", fontSize: 12, fontWeight: 700, cursor: "pointer", fontFamily: "inherit", whiteSpace: "nowrap" }}>
                             Sync →
                           </button>
-                          <button onClick={() => removeAlbum(album.itunes_collection_id)} disabled={isRemoving}
+                          <button onClick={() => album._discogs ? removeDiscogs(album) : removeAlbum(album.itunes_collection_id)} disabled={isRemoving}
                             style={{ background: "rgba(255,255,255,0.05)", border: "1px solid rgba(255,255,255,0.08)", color: "rgba(255,255,255,0.3)", borderRadius: 50, padding: "8px 12px", fontSize: 12, cursor: isRemoving ? "wait" : "pointer", fontFamily: "inherit", opacity: isRemoving ? 0.4 : 1 }}>
                             {isRemoving ? "…" : <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>}
                           </button>
                         </div>
+                        )}
                       </div>
                     );
                   };
@@ -1667,7 +2013,76 @@
                 })()}
               </div>
             )}
+
+            {/* ── Discogs: import progress, imported records, connect link ── */}
+            {discogsImport && (
+              <div style={{ marginTop: 16, padding: "12px 14px", borderRadius: 12, background: "rgba(212,168,70,0.08)", border: "1px solid rgba(212,168,70,0.25)", fontSize: 13, color: "rgba(255,255,255,0.7)", display: "flex", alignItems: "center", gap: 10 }}>
+                {discogsImport.running && <Spinner size={16} />}
+                {discogsImport.error
+                  ? <span style={{ color: "#e8a0a8" }}>{discogsImport.error}</span>
+                  : discogsImport.running
+                    ? <span>Syncing your Discogs collection…</span>
+                    : discogsImport.imported > 0
+                      ? <span>Added {discogsImport.imported} new record{discogsImport.imported !== 1 ? "s" : ""} from Discogs. Lyrics load the first time you play each one.</span>
+                      : <span>Your Discogs library is already up to date.</span>}
+              </div>
+            )}
+
+            {discogsJustConnected && discogsPending.length > 0 && (
+              <div style={{ marginTop: 22 }}>
+                <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: 0.7, textTransform: "uppercase", color: "rgba(255,255,255,0.3)", padding: "0 2px 8px" }}>
+                  From your Discogs collection
+                </div>
+                {discogsPending.map((a) => (
+                  <div key={`dg-${a.id}`} style={{ display: "flex", alignItems: "center", gap: 14, padding: "12px 0", borderBottom: "1px solid rgba(255,255,255,0.04)" }}>
+                    <AlbumArt src={a.thumb_url} size={56} radius={8} />
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <div style={{ fontSize: 14, fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{a.album_name}</div>
+                      <div style={{ fontSize: 12, color: "rgba(255,255,255,0.4)", marginTop: 2, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{a.artist_name}</div>
+                      <div style={{ fontSize: 10, color: "rgba(212,168,70,0.7)", marginTop: 4 }}>Lyrics not fetched yet</div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            {user && discogsStatus && !discogsStatus.connected && !(discogsImport && discogsImport.running) && (
+              <div onClick={connectDiscogs}
+                style={{ textAlign: "center", padding: "24px 0 8px", color: "rgba(255,255,255,0.3)", fontSize: 13, cursor: "pointer" }}>
+                Connect to Discogs to import your collection
+              </div>
+            )}
+
+            {user && discogsStatus && discogsStatus.connected && !(discogsImport && discogsImport.running) && (
+              <div onClick={() => runDiscogsImport(user.id)}
+                style={{ textAlign: "center", padding: "24px 0 8px", color: "rgba(255,255,255,0.3)", fontSize: 13, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", gap: 7 }}>
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 2v6h-6"/><path d="M3 12a9 9 0 0 1 15-6.7L21 8"/><path d="M3 22v-6h6"/><path d="M21 12a9 9 0 0 1-15 6.7L3 16"/></svg>
+                Resync from Discogs
+              </div>
+            )}
           </div>
+
+          {/* ── Discogs enrich → sync loading overlay ── */}
+          {enriching && (
+            <div style={{ position: "fixed", inset: 0, zIndex: 60, background: "#080810", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 16, padding: 24, animation: "fade-up 0.2s ease" }}>
+              <AlbumArt src={enriching.album.artwork_url} size={120} radius={16} />
+              <div style={{ fontSize: 17, fontWeight: 700, textAlign: "center", maxWidth: 320 }}>{enriching.album.album_name}</div>
+              <div style={{ fontSize: 13, color: "rgba(255,255,255,0.45)", marginTop: -8 }}>{enriching.album.artist_name}</div>
+              {enriching.stage === "error" ? (
+                <div style={{ textAlign: "center", marginTop: 8 }}>
+                  <div style={{ color: "#e8a0a8", fontSize: 13 }}>{enriching.error}</div>
+                  <button onClick={() => setEnriching(null)} style={{ marginTop: 16, background: "rgba(255,255,255,0.08)", border: "none", color: "#f0e6d3", borderRadius: 50, padding: "8px 18px", fontSize: 13, cursor: "pointer", fontFamily: "inherit" }}>Back</button>
+                </div>
+              ) : (
+                <>
+                  <div style={{ width: 220, height: 5, borderRadius: 3, background: "rgba(255,255,255,0.1)", overflow: "hidden", marginTop: 10 }}>
+                    <div style={{ height: "100%", borderRadius: 3, background: "linear-gradient(90deg,#d4a846,#c9807a)", transition: "width 0.5s ease", width: (enriching.stage === "Finding your record…" ? "25%" : enriching.stage === "Fetching side info & lyrics…" ? "70%" : "100%") }} />
+                  </div>
+                  <div style={{ fontSize: 13, color: "rgba(212,168,70,0.9)", marginTop: 4 }}>{enriching.stage}</div>
+                </>
+              )}
+            </div>
+          )}
 
           {/* ── Undo toast ── */}
           {undoAlbum && (
@@ -1681,8 +2096,10 @@
           {selectedAlbum && (
             <AlbumDetailSheet
               album={selectedAlbum}
+              copies={copiesFor(selectedAlbum)}
               onClose={() => setSelectedAlbum(null)}
               onMetaChanged={() => scanMissingInfo(library)}
+              onFetchDiscogs={(a) => fetchInBackground(a)}
             />
           )}
 
