@@ -37,6 +37,12 @@ module.exports = async (req, res) => {
   const host = req.headers.host;
   const callbackUrl = `https://${host}/api/discogs-oauth-callback`;
 
+  // Where to send the user after they authorize. Same-site paths only — reject
+  // anything that isn't a plain "/path" to avoid an open redirect.
+  const rawReturn = req.body && req.body.return_to;
+  const returnTo = (typeof rawReturn === "string" && rawReturn.startsWith("/") && !rawReturn.startsWith("//"))
+    ? rawReturn : "/app";
+
   try {
     const { oauth_token, oauth_token_secret } = await discogs.getRequestToken(callbackUrl);
 
@@ -46,6 +52,7 @@ module.exports = async (req, res) => {
       oauth_token,
       oauth_token_secret,
       user_id: auth.userId,
+      return_to: returnTo,
     });
     if (status >= 300) {
       console.error("[discogs-oauth-start] failed to store pending token, status", status);

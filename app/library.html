@@ -1129,6 +1129,11 @@
       const searchTimer                   = useRef(null);
       const sessionTokenRef               = useRef(null);
 
+      // ── Discogs connection + import ──
+      const [discogsStatus, setDiscogsStatus]   = useState(null); // null=unknown | { connected, username, ... }
+      const [discogsPending, setDiscogsPending] = useState([]);   // imported records not yet matched to iTunes
+      const [discogsImport, setDiscogsImport]   = useState(null); // null | { running, imported, total, done, error }
+
       // Persist before navigation can tear this page down. This also lets an
       // add whose keepalive response was lost be reconciled/retried on return.
       useEffect(() => {
@@ -1206,6 +1211,95 @@
           setRecentPlayedIds(ids);
         } catch (e) {}
       }, []);
+
+      // ── Discogs: connect, status, import ──
+      const authToken = useCallback(async () => {
+        const { data: { session } } = await sb.auth.getSession();
+        return session?.access_token || sessionTokenRef.current;
+      }, []);
+
+      const fetchDiscogsStatus = useCallback(async () => {
+        try {
+          const token = await authToken();
+          if (!token) return;
+          const r = await fetch(`${API_BASE}/api/discogs-status`, { headers: { Authorization: `Bearer ${token}` } });
+          if (r.ok) setDiscogsStatus(await r.json());
+        } catch (e) {}
+      }, [authToken]);
+
+      // Imported records still waiting for an iTunes match (lyrics not fetched yet).
+      const fetchDiscogsPending = useCallback(async (uid) => {
+        if (!uid) return;
+        try {
+          const { data } = await sb.from("user_discogs_collection")
+            .select("id, discogs_release_id, artist_name, album_name, release_year, thumb_url")
+            .eq("user_id", uid)
+            .is("itunes_collection_id", null)
+            .order("added_at", { ascending: false });
+          setDiscogsPending(data || []);
+        } catch (e) {}
+      }, []);
+
+      const connectDiscogs = useCallback(async () => {
+        try {
+          const token = await authToken();
+          if (!token) return;
+          const r = await fetch(`${API_BASE}/api/discogs-oauth-start`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+            body: JSON.stringify({ return_to: "/library" }),
+          });
+          const j = await r.json();
+          if (j.authorizeUrl) window.location.href = j.authorizeUrl;
+          else alert(j.error || "Couldn't start Discogs sign-in.");
+        } catch (e) { alert("Couldn't reach Discogs. Please try again."); }
+      }, [authToken]);
+
+      // Pull the whole owned collection, page by page, until done.
+      const runDiscogsImport = useCallback(async (uid) => {
+        setDiscogsImport({ running: true, imported: 0, total: null });
+        let page = 1, total = 0, grand = null;
+        try {
+          while (true) {
+            const token = await authToken();
+            const r = await fetch(`${API_BASE}/api/discogs-import`, {
+              method: "POST",
+              headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+              body: JSON.stringify({ page }),
+            });
+            const j = await r.json();
+            if (!r.ok) { setDiscogsImport({ running: false, error: j.error || "Import failed." }); return; }
+            total += j.imported || 0;
+            grand = j.total != null ? j.total : grand;
+            setDiscogsImport({ running: !j.done, imported: total, total: grand });
+            if (j.done) break;
+            page = j.nextPage;
+          }
+          setDiscogsImport({ running: false, done: true, imported: total, total: grand });
+          fetchDiscogsStatus();
+          fetchDiscogsPending(uid);
+          if (uid) fetchLibrary(uid);
+        } catch (e) { setDiscogsImport({ running: false, error: "Import failed." }); }
+      }, [authToken, fetchDiscogsStatus, fetchDiscogsPending, fetchLibrary]);
+
+      // On load: check connection. If we just came back from Discogs, import.
+      useEffect(() => {
+        if (!user?.id) return;
+        const params = new URLSearchParams(window.location.search);
+        const d = params.get("discogs");
+        if (d) {
+          ["discogs", "u", "reason"].forEach(k => params.delete(k));
+          const qs = params.toString();
+          window.history.replaceState({}, "", window.location.pathname + (qs ? "?" + qs : ""));
+          fetchDiscogsStatus();
+          fetchDiscogsPending(user.id);
+          if (d === "connected") runDiscogsImport(user.id);
+          else if (d === "error") setDiscogsImport({ running: false, error: "Discogs connection didn't complete. Please try again." });
+        } else {
+          fetchDiscogsStatus();
+          fetchDiscogsPending(user.id);
+        }
+      }, [user?.id]);
 
       // ── Missing-info scan — drives the "needs info" badges + filter ──
       // One pass over the whole library: which albums lack side data, and how
@@ -1665,6 +1759,43 @@
                     </>
                   );
                 })()}
+              </div>
+            )}
+
+            {/* ── Discogs: import progress, imported records, connect link ── */}
+            {discogsImport && (
+              <div style={{ marginTop: 16, padding: "12px 14px", borderRadius: 12, background: "rgba(212,168,70,0.08)", border: "1px solid rgba(212,168,70,0.25)", fontSize: 13, color: "rgba(255,255,255,0.7)", display: "flex", alignItems: "center", gap: 10 }}>
+                {discogsImport.running && <Spinner size={16} />}
+                {discogsImport.error
+                  ? <span style={{ color: "#e8a0a8" }}>{discogsImport.error}</span>
+                  : discogsImport.running
+                    ? <span>Importing your Discogs collection… {discogsImport.imported}{discogsImport.total ? ` of ${discogsImport.total}` : ""}</span>
+                    : <span>Imported {discogsImport.imported} record{discogsImport.imported !== 1 ? "s" : ""} from Discogs. Lyrics load the first time you play each one.</span>}
+              </div>
+            )}
+
+            {discogsPending.length > 0 && (
+              <div style={{ marginTop: 22 }}>
+                <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: 0.7, textTransform: "uppercase", color: "rgba(255,255,255,0.3)", padding: "0 2px 8px" }}>
+                  From your Discogs collection
+                </div>
+                {discogsPending.map((a) => (
+                  <div key={`dg-${a.id}`} style={{ display: "flex", alignItems: "center", gap: 14, padding: "12px 0", borderBottom: "1px solid rgba(255,255,255,0.04)" }}>
+                    <AlbumArt src={a.thumb_url} size={56} radius={8} />
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <div style={{ fontSize: 14, fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{a.album_name}</div>
+                      <div style={{ fontSize: 12, color: "rgba(255,255,255,0.4)", marginTop: 2, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{a.artist_name}</div>
+                      <div style={{ fontSize: 10, color: "rgba(212,168,70,0.7)", marginTop: 4 }}>Lyrics not fetched yet</div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            {user && discogsStatus && !discogsStatus.connected && !(discogsImport && discogsImport.running) && (
+              <div onClick={connectDiscogs}
+                style={{ textAlign: "center", padding: "24px 0 8px", color: "rgba(255,255,255,0.3)", fontSize: 13, cursor: "pointer" }}>
+                Connect to Discogs to import your collection
               </div>
             )}
           </div>

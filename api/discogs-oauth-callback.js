@@ -14,10 +14,13 @@ const { sbRequest, sbUpsert } = require("./_lib/supabase");
 const discogs                 = require("./_lib/discogs-oauth");
 
 // Redirect the browser back into the app with a status flag the UI can read.
-function backToApp(res, host, params) {
+// `path` is where the user started the flow (e.g. /library); default /app.
+// Same-site paths only — reject anything that isn't a plain "/path".
+function backToApp(res, host, path, params) {
+  const safePath = (typeof path === "string" && path.startsWith("/") && !path.startsWith("//")) ? path : "/app";
   const qs = new URLSearchParams(params).toString();
   res.statusCode = 302;
-  res.setHeader("Location", `https://${host}/app?${qs}`);
+  res.setHeader("Location", `https://${host}${safePath}?${qs}`);
   res.end();
 }
 
@@ -28,17 +31,19 @@ module.exports = async (req, res) => {
   const verifier   = url.searchParams.get("oauth_verifier");
   const denied     = url.searchParams.get("denied"); // Discogs sends this if the user declines
 
-  if (denied) return backToApp(res, host, { discogs: "cancelled" });
-  if (!oauthToken || !verifier) return backToApp(res, host, { discogs: "error", reason: "missing_params" });
+  if (denied) return backToApp(res, host, "/app", { discogs: "cancelled" });
+  if (!oauthToken || !verifier) return backToApp(res, host, "/app", { discogs: "error", reason: "missing_params" });
 
   try {
-    // Recover the request-token secret + which user started this flow.
+    // Recover the request-token secret, which user started this flow, and where
+    // to send them back to.
     const { data } = await sbRequest(
       "GET",
-      `discogs_oauth_pending?oauth_token=eq.${encodeURIComponent(oauthToken)}&select=oauth_token_secret,user_id&limit=1`
+      `discogs_oauth_pending?oauth_token=eq.${encodeURIComponent(oauthToken)}&select=oauth_token_secret,user_id,return_to&limit=1`
     );
     const pending = Array.isArray(data) ? data[0] : null;
-    if (!pending) return backToApp(res, host, { discogs: "error", reason: "expired" });
+    if (!pending) return backToApp(res, host, "/app", { discogs: "error", reason: "expired" });
+    const returnTo = pending.return_to || "/app";
 
     // Exchange for the long-lived access token.
     const access = await discogs.getAccessToken(oauthToken, pending.oauth_token_secret, verifier);
@@ -57,16 +62,16 @@ module.exports = async (req, res) => {
     }, "user_id");
     if (up.status >= 300) {
       console.error("[discogs-oauth-callback] store failed, status", up.status, up.data);
-      return backToApp(res, host, { discogs: "error", reason: "store_failed" });
+      return backToApp(res, host, returnTo, { discogs: "error", reason: "store_failed" });
     }
 
     // Clean up the one-time request token.
     await sbRequest("DELETE", `discogs_oauth_pending?oauth_token=eq.${encodeURIComponent(oauthToken)}`)
       .catch(() => {});
 
-    return backToApp(res, host, { discogs: "connected", u: identity.username });
+    return backToApp(res, host, returnTo, { discogs: "connected", u: identity.username });
   } catch (e) {
     console.error("[discogs-oauth-callback] error:", e.message);
-    return backToApp(res, host, { discogs: "error", reason: "exchange_failed" });
+    return backToApp(res, host, "/app", { discogs: "error", reason: "exchange_failed" });
   }
 };
