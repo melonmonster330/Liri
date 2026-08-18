@@ -1670,10 +1670,14 @@
         window.location.href = window.Capacitor ? "/index.html" : "/app";
       };
 
-      // ── Remove an imported (not-yet-enriched) Discogs record ──
-      const removeDiscogs = async (d) => {
-        setDiscogsPending(prev => prev.filter(x => x.id !== d.id));
-        try { await sb.from("user_discogs_collection").delete().eq("id", d.id); } catch (e) {}
+      // ── Remove an imported Discogs record — all owned copies of it ──
+      const removeDiscogs = async (dgAlbum) => {
+        const versions = dgAlbum._discogsVersions || (dgAlbum._discogs ? [dgAlbum._discogs] : [dgAlbum]);
+        const ids = versions.map(v => v.id).filter(Boolean);
+        if (!ids.length) return;
+        setDiscogsPending(prev => prev.filter(x => !ids.includes(x.id)));
+        const { error } = await sb.from("user_discogs_collection").delete().in("id", ids);
+        if (error) { console.error("[discogs] remove failed:", error); fetchDiscogsPending(user.id); }
       };
 
       // ── Core enrichment: match a Discogs record to iTunes, add it officially
@@ -1953,7 +1957,7 @@
                             style={{ background: "linear-gradient(135deg,#d4a846,#c9807a)", color: "#080810", border: "none", borderRadius: 50, padding: "8px 16px", fontSize: 12, fontWeight: 700, cursor: "pointer", fontFamily: "inherit", whiteSpace: "nowrap" }}>
                             Sync →
                           </button>
-                          <button onClick={() => album._discogs ? removeDiscogs(album._discogs) : removeAlbum(album.itunes_collection_id)} disabled={isRemoving}
+                          <button onClick={() => album._discogs ? removeDiscogs(album) : removeAlbum(album.itunes_collection_id)} disabled={isRemoving}
                             style={{ background: "rgba(255,255,255,0.05)", border: "1px solid rgba(255,255,255,0.08)", color: "rgba(255,255,255,0.3)", borderRadius: 50, padding: "8px 12px", fontSize: 12, cursor: isRemoving ? "wait" : "pointer", fontFamily: "inherit", opacity: isRemoving ? 0.4 : 1 }}>
                             {isRemoving ? "…" : <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>}
                           </button>
