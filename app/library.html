@@ -454,6 +454,23 @@
 
     const cmpBase = (a, b) => (a || "").localeCompare(b || "", undefined, { sensitivity: "base" });
 
+    // Pick the iTunes album result that genuinely matches a given album+artist.
+    // Conservative on purpose: a loose "first result" match sends tricky names
+    // like "The 1975" to the wrong record (wrong cover, wrong lyrics). Requires
+    // both artist and album to line up; returns null when nothing is confident.
+    function itunesAlbumMatch(results, albumName, artistName) {
+      const n = s => (s || "").toLowerCase().replace(/[^a-z0-9]+/g, "");
+      const wantAl = n(albumName), wantAr = n(artistName);
+      if (!wantAl || !wantAr) return null;
+      return (results || []).find(x => {
+        const ca = n(x.collectionName), cr = n(x.artistName);
+        if (!ca || !cr) return false;
+        const artistOk = cr === wantAr || cr.includes(wantAr) || wantAr.includes(cr);
+        const albumOk  = ca === wantAl || ca.startsWith(wantAl) || wantAl.startsWith(ca);
+        return artistOk && albumOk;
+      }) || null;
+    }
+
     // 2 most-recently-played albums first (recency order), then the rest filed
     // record-shop style by artist sort key (ties: full artist name, then album).
     function orderLibrary(lib, recentIds) {
@@ -1359,9 +1376,13 @@
             if (discogsArt[k]) continue;
             try {
               const term = encodeURIComponent(`${a.artist_name} ${a.album_name}`);
-              const r = await fetch(`${API_BASE}/api/itunes-lookup?term=${term}&entity=album&limit=1`);
+              const r = await fetch(`${API_BASE}/api/itunes-lookup?term=${term}&entity=album&limit=5`);
               const j = await r.json();
-              const art = j.results?.[0]?.artworkUrl100?.replace("100x100bb", "300x300bb");
+              // Only use the cover if a result actually matches this album + artist.
+              // Otherwise iTunes' first hit can be a completely different record
+              // (e.g. "The 1975" pulling a wrong cover). Fall back to the Discogs thumb.
+              const match = itunesAlbumMatch(j.results, a.album_name, a.artist_name);
+              const art = match?.artworkUrl100?.replace("100x100bb", "300x300bb");
               if (art && !cancelled) setDiscogsArt(prev => ({ ...prev, [k]: art }));
             } catch (e) {}
           }
@@ -1653,11 +1674,10 @@
           const term = encodeURIComponent(`${dgAlbum.artist_name} ${dgAlbum.album_name}`);
           const r = await fetch(`${API_BASE}/api/itunes-lookup?term=${term}&entity=album&limit=5`);
           const j = await r.json();
-          const wantAl = norm(dgAlbum.album_name), wantAr = norm(dgAlbum.artist_name);
-          const results = (j.results || []).filter(x => x.collectionId);
-          const match = results.find(x =>
-            norm(x.collectionName).includes(wantAl.slice(0, 10)) &&
-            norm(x.artistName).includes(wantAr.slice(0, 6))) || results[0];
+          // Verified match only — a wrong iTunes hit would give this record the
+          // wrong tracklist + lyrics. No confident match → fall through to the
+          // Discogs release, which has the correct tracklist.
+          const match = itunesAlbumMatch(j.results, dgAlbum.album_name, dgAlbum.artist_name);
           collectionId = match?.collectionId ? String(match.collectionId) : null;
         } catch (e) {}
 
