@@ -977,8 +977,20 @@
           {/* ── Discogs-only record: not yet matched to iTunes ── */}
           {album._discogs && (
             <div style={{ margin: "14px 24px 0", background: "rgba(212,168,70,0.06)", border: "1px solid rgba(212,168,70,0.25)", borderRadius: 14, padding: "12px 14px" }}>
-              <div style={{ fontSize: 12, fontWeight: 600, color: "rgba(212,168,70,0.9)" }}>In your Discogs library</div>
+              <div style={{ fontSize: 12, fontWeight: 600, color: "rgba(212,168,70,0.9)" }}>
+                In your Discogs library{album._discogsVersions && album._discogsVersions.length > 1 ? ` · ${album._discogsVersions.length} copies` : ""}
+              </div>
               <div style={{ fontSize: 11, color: "rgba(255,255,255,0.4)", marginTop: 3, lineHeight: 1.4 }}>Lyrics and side info aren't fetched yet — they'll load the first time you play this record.</div>
+              {album._discogsVersions && album._discogsVersions.length > 1 && (
+                <div style={{ marginTop: 10, display: "flex", flexDirection: "column", gap: 6 }}>
+                  {album._discogsVersions.map(v => (
+                    <div key={v.id} style={{ fontSize: 11, color: "rgba(255,255,255,0.55)", display: "flex", alignItems: "center", gap: 8 }}>
+                      <span style={{ color: "rgba(212,168,70,0.7)" }}>◦</span>
+                      {v.release_year ? `${v.release_year} · ` : ""}Discogs release {v.discogs_release_id}
+                    </div>
+                  ))}
+                </div>
+              )}
             </div>
           )}
 
@@ -1148,6 +1160,7 @@
       // Full-screen "fetching…" overlay shown while a Discogs record is enriched
       // (iTunes match → side info + lyrics → added) before handing off to sync.
       const [enriching, setEnriching] = useState(null); // null | { album, stage, error? }
+      const [discogsArt, setDiscogsArt] = useState({});  // group key → iTunes artwork url
 
       // Persist before navigation can tear this page down. This also lets an
       // add whose keepalive response was lost be reconciled/retried on return.
@@ -1315,6 +1328,33 @@
           fetchDiscogsPending(user.id);
         }
       }, [user?.id]);
+
+      // Fetch iTunes artwork for each imported album (nicer than Discogs thumbs),
+      // once per unique artist+album. Skipped right after connecting (that view
+      // uses the separate section with Discogs thumbs).
+      useEffect(() => {
+        if (discogsJustConnected || !discogsPending.length) return;
+        const norm = s => (s || "").toLowerCase().replace(/[^a-z0-9]+/g, "");
+        const groups = new Map();
+        for (const a of discogsPending) {
+          const k = `${norm(a.album_name)}|${norm(a.artist_name)}`;
+          if (!groups.has(k)) groups.set(k, a);
+        }
+        let cancelled = false;
+        (async () => {
+          for (const [k, a] of groups) {
+            if (discogsArt[k]) continue;
+            try {
+              const term = encodeURIComponent(`${a.artist_name} ${a.album_name}`);
+              const r = await fetch(`${API_BASE}/api/itunes-lookup?term=${term}&entity=album&limit=1`);
+              const j = await r.json();
+              const art = j.results?.[0]?.artworkUrl100?.replace("100x100bb", "300x300bb");
+              if (art && !cancelled) setDiscogsArt(prev => ({ ...prev, [k]: art }));
+            } catch (e) {}
+          }
+        })();
+        return () => { cancelled = true; };
+      }, [discogsPending, discogsJustConnected]);
 
       // ── Missing-info scan — drives the "needs info" badges + filter ──
       // One pass over the whole library: which albums lack side data, and how
@@ -1627,11 +1667,13 @@
           }
           const finalCid = collectionId || String(d.discogs_release_id);
 
-          // 3. Mark the staging row enriched so it drops out of the pending set.
+          // 3. Mark every owned copy of this album enriched so the whole group
+          //    drops out of the pending set.
           try {
+            const ids = (dgAlbum._discogsVersions || [d]).map(v => v.id);
             await sb.from("user_discogs_collection")
               .update({ itunes_collection_id: finalCid, enrichment_status: "ready" })
-              .eq("id", d.id);
+              .in("id", ids);
           } catch (e) {}
 
           // 4. Hand off to the player, synced to this album.
@@ -1769,10 +1811,30 @@
                   // artist+album. Right after connecting we skip the merge — the
                   // separate "From your Discogs collection" section shows instead.
                   const dgNorm = s => (s || "").toLowerCase().replace(/[^a-z0-9]+/g, "");
-                  const libKeys = new Set(library.map(a => `${dgNorm(a.album_name)}|${dgNorm(a.artist_name)}`));
-                  const discogsExtra = discogsJustConnected ? [] : discogsPending
-                    .filter(a => !libKeys.has(`${dgNorm(a.album_name)}|${dgNorm(a.artist_name)}`))
-                    .map(a => ({ id: `dg-${a.id}`, album_name: a.album_name, artist_name: a.artist_name, artwork_url: a.thumb_url, _discogs: a }));
+                  const dgKey = a => `${dgNorm(a.album_name)}|${dgNorm(a.artist_name)}`;
+                  const libKeys = new Set(library.map(dgKey));
+                  // Collapse multiple owned copies/pressings of the same album into
+                  // one row; the copies live on _discogsVersions for the detail view.
+                  const dgGroups = new Map();
+                  if (!discogsJustConnected) {
+                    for (const a of discogsPending) {
+                      const k = dgKey(a);
+                      if (libKeys.has(k)) continue; // already an enriched library album
+                      if (!dgGroups.has(k)) dgGroups.set(k, []);
+                      dgGroups.get(k).push(a);
+                    }
+                  }
+                  const discogsExtra = [...dgGroups.entries()].map(([k, versions]) => {
+                    const first = versions[0];
+                    return {
+                      id: `dg-${first.id}`,
+                      album_name:  first.album_name,
+                      artist_name: first.artist_name,
+                      artwork_url: discogsArt[k] || first.thumb_url, // prefer iTunes art
+                      _discogs: first,
+                      _discogsVersions: versions,
+                    };
+                  });
                   const visible = orderLibrary(library.concat(discogsExtra), recentPlayedIds)
                     .filter(album => !needsInfoOnly || album._discogs || metaFlags[String(album.itunes_collection_id)]);
                   const recentSet = new Set((recentPlayedIds || []).map(String));
