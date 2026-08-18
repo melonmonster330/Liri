@@ -90,15 +90,21 @@ module.exports = async (req, res) => {
       const items = Array.isArray(json.releases) ? json.releases : [];
       if (items.length) {
         const rows = items.map(it => toRow(auth.userId, it)).filter(r => r.discogs_release_id);
-        const up = await sbUpsert(
-          "user_discogs_collection", rows,
-          "user_id,discogs_release_id,discogs_instance_id"
+        // ignore-duplicates + return=representation → the response contains only
+        // the rows actually inserted, so its length is the count of NEW records.
+        // (Also leaves already-imported/enriched rows untouched.)
+        const onConflict = encodeURIComponent("user_id,discogs_release_id,discogs_instance_id");
+        const up = await sbRequest(
+          "POST",
+          `user_discogs_collection?on_conflict=${onConflict}`,
+          rows,
+          "resolution=ignore-duplicates,return=representation"
         );
         if (up.status >= 300) {
-          console.error("[discogs-import] upsert failed, status", up.status, up.data);
+          console.error("[discogs-import] insert failed, status", up.status, up.data);
           return res.status(500).json({ error: "Couldn't save your collection. Please try again." });
         }
-        imported += rows.length;
+        imported += Array.isArray(up.data) ? up.data.length : 0;
       }
 
       if (totalPages != null && page >= totalPages) break; // reached the last page

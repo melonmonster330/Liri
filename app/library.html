@@ -1986,8 +1986,10 @@
                 {discogsImport.error
                   ? <span style={{ color: "#e8a0a8" }}>{discogsImport.error}</span>
                   : discogsImport.running
-                    ? <span>Importing your Discogs collection… {discogsImport.imported}{discogsImport.total ? ` of ${discogsImport.total}` : ""}</span>
-                    : <span>Imported {discogsImport.imported} record{discogsImport.imported !== 1 ? "s" : ""} from Discogs. Lyrics load the first time you play each one.</span>}
+                    ? <span>Syncing your Discogs collection…</span>
+                    : discogsImport.imported > 0
+                      ? <span>Added {discogsImport.imported} new record{discogsImport.imported !== 1 ? "s" : ""} from Discogs. Lyrics load the first time you play each one.</span>
+                      : <span>Your Discogs library is already up to date.</span>}
               </div>
             )}
 
