@@ -22,9 +22,23 @@ calls as possible.
   to /library → import with a live progress banner → imported records shown in a
   "From your Discogs collection" section ("Lyrics not fetched yet"). Backend
   `return_to` support added (migration `20260817b_discogs_return.sql`).
-- ⏭️ Next: (a) merge imported records into the main list as normal cards +
-  click-to-fetch enrichment (iTunes match + lyrics on demand); (b) the Settings
-  Discogs section (connected info + email + refresh button).
+- ✅ **Slice 4 — Enrichment.** Sync (enrich + play) and Fetch (background enrich)
+  via `runEnrich`; grouped copies; iTunes artwork with verified matching; copies
+  shown in detail (by iTunes id or edition-aware key); resync button; new-records-
+  only count; ordering fix (imported albums borrow the artist sort name).
+- ✅ **Slice 5 — Settings section.** `DiscogsSettings` in the Settings modal:
+  username + email + collection size, resync, disconnect; Connect button when not
+  set up. Backend stores/returns profile (email/avatar/num_collection, lazy
+  backfill) + `discogs-disconnect` endpoint.
+- ⏭️ Possible next: edition-aware enrichment (deluxe vs standard tracklist);
+  persist "enriching" state across reloads; the "sign up with Discogs creates a
+  Liri account" flow (checklist #1).
+
+### Migrations to run (Supabase SQL editor), in order
+1. `20260817_discogs_oauth.sql` — core tables
+2. `20260817b_discogs_return.sql` — return_to column
+3. `20260818_discogs_collection_write_rls.sql` — user update/delete on the collection
+4. `20260818b_discogs_profile.sql` — profile columns (email/avatar/num_collection)
 
 ### Manual setup needed before end-to-end testing
 - [ ] Register a Discogs application (discogs.com/settings/developers) and set
