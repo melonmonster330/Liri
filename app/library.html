@@ -778,7 +778,7 @@
     }
 
     // ── Album Detail Sheet ─────────────────────────────────────────────────
-    function AlbumDetailSheet({ album, onClose, onMetaChanged }) {
+    function AlbumDetailSheet({ album, onClose, onMetaChanged, onFetchDiscogs }) {
       const [tracks, setTracks]           = useState([]);
       const [loading, setLoading]         = useState(true);
       const [selectedTrack, setSelectedTrack] = useState(null);
@@ -1015,9 +1015,21 @@
                 <Spinner />
               </div>
             ) : tracks.length === 0 ? (
-              <div style={{ textAlign: "center", padding: "48px 24px", color: "rgba(255,255,255,0.2)", fontSize: 14 }}>
-                Couldn't load tracks
-              </div>
+              album._discogs ? (
+                <div style={{ textAlign: "center", padding: "40px 24px" }}>
+                  <div style={{ color: "rgba(255,255,255,0.4)", fontSize: 13, marginBottom: 18, lineHeight: 1.5 }}>
+                    Lyrics and side info for this record haven't been fetched yet.
+                  </div>
+                  <button onClick={() => { if (onFetchDiscogs) onFetchDiscogs(album); onClose(); }}
+                    style={{ background: "linear-gradient(135deg,#d4a846,#c9807a)", color: "#080810", border: "none", borderRadius: 50, padding: "11px 24px", fontSize: 14, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>
+                    Fetch lyrics & side info
+                  </button>
+                </div>
+              ) : (
+                <div style={{ textAlign: "center", padding: "48px 24px", color: "rgba(255,255,255,0.2)", fontSize: 14 }}>
+                  Couldn't load tracks
+                </div>
+              )
             ) : (
               sideOrder.map(side => (
                 <div key={side}>
@@ -1161,6 +1173,7 @@
       // (iTunes match → side info + lyrics → added) before handing off to sync.
       const [enriching, setEnriching] = useState(null); // null | { album, stage, error? }
       const [discogsArt, setDiscogsArt] = useState({});  // group key → iTunes artwork url
+      const [enrichingKeys, setEnrichingKeys] = useState({}); // group key → true while fetching in background
 
       // Persist before navigation can tear this page down. This also lets an
       // add whose keepalive response was lost be reconciled/retried on return.
@@ -1625,59 +1638,58 @@
         try { await sb.from("user_discogs_collection").delete().eq("id", d.id); } catch (e) {}
       };
 
-      // ── Tap "Sync" on a Discogs record: fetch side info + lyrics, add it
-      //    officially, then hand off to the player synced to it. Shows a
-      //    full-screen loading bar with the stages so it feels like work is
-      //    happening, not lag. Reuses /api/itunes-lookup + /api/add-to-library.
-      const enrichAndListen = async (dgAlbum) => {
+      // ── Core enrichment: match a Discogs record to iTunes, add it officially
+      //    (fetches side info + lyrics), mark every owned copy ready. Returns the
+      //    final collection id. onStage(label) reports progress. Reuses
+      //    /api/itunes-lookup + /api/add-to-library.
+      const runEnrich = async (dgAlbum, onStage) => {
         const d = dgAlbum._discogs;
         const norm = s => (s || "").toLowerCase().replace(/[^a-z0-9]+/g, "");
+        const token = await authToken();
+        onStage && onStage("Finding your record…");
+
+        let collectionId = null;
+        try {
+          const term = encodeURIComponent(`${dgAlbum.artist_name} ${dgAlbum.album_name}`);
+          const r = await fetch(`${API_BASE}/api/itunes-lookup?term=${term}&entity=album&limit=5`);
+          const j = await r.json();
+          const wantAl = norm(dgAlbum.album_name), wantAr = norm(dgAlbum.artist_name);
+          const results = (j.results || []).filter(x => x.collectionId);
+          const match = results.find(x =>
+            norm(x.collectionName).includes(wantAl.slice(0, 10)) &&
+            norm(x.artistName).includes(wantAr.slice(0, 6))) || results[0];
+          collectionId = match?.collectionId ? String(match.collectionId) : null;
+        } catch (e) {}
+
+        onStage && onStage("Fetching side info & lyrics…");
+        const body = collectionId
+          ? { itunes_collection_id: collectionId }
+          : { discogs_release_id: d.discogs_release_id };
+        const addRes = await fetch(`${API_BASE}/api/add-to-library`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+          body: JSON.stringify(body),
+        });
+        const addJson = await addRes.json().catch(() => ({}));
+        if (!addRes.ok) throw new Error(addJson.error || "Couldn't add this record. Please try again.");
+        const finalCid = collectionId || String(d.discogs_release_id);
+
+        try {
+          const ids = (dgAlbum._discogsVersions || [d]).map(v => v.id);
+          await sb.from("user_discogs_collection")
+            .update({ itunes_collection_id: finalCid, enrichment_status: "ready" })
+            .in("id", ids);
+        } catch (e) {}
+
+        onStage && onStage("Added to your library!");
+        return finalCid;
+      };
+
+      // Tap "Sync" on a Discogs record → full-screen loading bar, then play it.
+      const enrichAndListen = async (dgAlbum) => {
         setEnriching({ album: dgAlbum, stage: "Finding your record…" });
         try {
-          const token = await authToken();
-
-          // 1. Match the Discogs record to an iTunes album (for artwork + lyrics).
-          let collectionId = null;
-          try {
-            const term = encodeURIComponent(`${dgAlbum.artist_name} ${dgAlbum.album_name}`);
-            const r = await fetch(`${API_BASE}/api/itunes-lookup?term=${term}&entity=album&limit=5`);
-            const j = await r.json();
-            const wantAl = norm(dgAlbum.album_name), wantAr = norm(dgAlbum.artist_name);
-            const results = (j.results || []).filter(x => x.collectionId);
-            const match = results.find(x =>
-              norm(x.collectionName).includes(wantAl.slice(0, 10)) &&
-              norm(x.artistName).includes(wantAr.slice(0, 6))) || results[0];
-            collectionId = match?.collectionId ? String(match.collectionId) : null;
-          } catch (e) {}
-
-          // 2. Add it officially — the pipeline fetches side info + lyrics.
-          setEnriching({ album: dgAlbum, stage: "Fetching side info & lyrics…" });
-          const body = collectionId
-            ? { itunes_collection_id: collectionId }
-            : { discogs_release_id: d.discogs_release_id };
-          const addRes = await fetch(`${API_BASE}/api/add-to-library`, {
-            method: "POST",
-            headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
-            body: JSON.stringify(body),
-          });
-          const addJson = await addRes.json().catch(() => ({}));
-          if (!addRes.ok) {
-            setEnriching({ album: dgAlbum, stage: "error", error: addJson.error || "Couldn't add this record. Please try again." });
-            return;
-          }
-          const finalCid = collectionId || String(d.discogs_release_id);
-
-          // 3. Mark every owned copy of this album enriched so the whole group
-          //    drops out of the pending set.
-          try {
-            const ids = (dgAlbum._discogsVersions || [d]).map(v => v.id);
-            await sb.from("user_discogs_collection")
-              .update({ itunes_collection_id: finalCid, enrichment_status: "ready" })
-              .in("id", ids);
-          } catch (e) {}
-
-          // 4. Hand off to the player, synced to this album.
-          setEnriching({ album: dgAlbum, stage: "Added to your library!" });
+          const finalCid = await runEnrich(dgAlbum, s => setEnriching({ album: dgAlbum, stage: s }));
           listenTo({
             itunes_collection_id: finalCid,
             album_name:  dgAlbum.album_name,
@@ -1685,7 +1697,23 @@
             artwork_url: dgAlbum.artwork_url,
           });
         } catch (e) {
-          setEnriching({ album: dgAlbum, stage: "error", error: "Something went wrong. Please try again." });
+          setEnriching({ album: dgAlbum, stage: "error", error: e.message || "Something went wrong. Please try again." });
+        }
+      };
+
+      // Tap "Fetch" in the detail sheet → enrich in the background. The library
+      // row shows a "Fetching…" state until it's done, then becomes a real album.
+      const fetchInBackground = async (dgAlbum) => {
+        const key = dgAlbum._dgKey;
+        if (!key) return;
+        setEnrichingKeys(prev => ({ ...prev, [key]: true }));
+        try {
+          await runEnrich(dgAlbum, null);
+        } catch (e) {
+          console.warn("[discogs] background fetch failed:", e.message);
+        } finally {
+          setEnrichingKeys(prev => { const n = { ...prev }; delete n[key]; return n; });
+          if (user) { fetchLibrary(user.id); fetchDiscogsPending(user.id); }
         }
       };
 
@@ -1833,6 +1861,7 @@
                       artwork_url: discogsArt[k] || first.thumb_url, // prefer iTunes art
                       _discogs: first,
                       _discogsVersions: versions,
+                      _dgKey: k,
                     };
                   });
                   const visible = orderLibrary(library.concat(discogsExtra), recentPlayedIds)
@@ -1875,7 +1904,13 @@
                         </div>
 
                         {/* Action buttons — same for every row. Discogs-only rows
-                            enrich (fetch side info + lyrics) before syncing. */}
+                            enrich (fetch side info + lyrics) before syncing, or show
+                            a "Fetching…" state while enriching in the background. */}
+                        {album._discogs && enrichingKeys[album._dgKey] ? (
+                          <div style={{ display: "flex", alignItems: "center", gap: 8, color: "rgba(212,168,70,0.9)", fontSize: 12, fontWeight: 600, padding: "8px 12px", flexShrink: 0 }}>
+                            <Spinner size={14} /> Fetching…
+                          </div>
+                        ) : (
                         <div style={{ display: "flex", gap: 8, flexShrink: 0 }}>
                           <button onClick={() => album._discogs ? enrichAndListen(album) : listenTo(album)}
                             style={{ background: "linear-gradient(135deg,#d4a846,#c9807a)", color: "#080810", border: "none", borderRadius: 50, padding: "8px 16px", fontSize: 12, fontWeight: 700, cursor: "pointer", fontFamily: "inherit", whiteSpace: "nowrap" }}>
@@ -1886,6 +1921,7 @@
                             {isRemoving ? "…" : <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>}
                           </button>
                         </div>
+                        )}
                       </div>
                     );
                   };
@@ -1976,6 +2012,7 @@
               album={selectedAlbum}
               onClose={() => setSelectedAlbum(null)}
               onMetaChanged={() => scanMissingInfo(library)}
+              onFetchDiscogs={(a) => fetchInBackground(a)}
             />
           )}
 
