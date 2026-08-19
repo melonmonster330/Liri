@@ -27,6 +27,10 @@ does not exist in `album_tracks` are classified as
 `blocked_missing_catalog_track`; lyrics cannot be written until that catalogue
 identity is repaired.
 
+A newly opted-in (`pending`) user submission automatically wakes the matching
+backlogged report during the next daily run. Unrelated backlog items remain
+untouched.
+
 The worker contains no model call and never generates, completes, paraphrases,
 or reconstructs lyrics.
 

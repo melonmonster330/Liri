@@ -179,6 +179,24 @@ module.exports = async (req, res) => {
     const bugs = await sb(
       `bug_reports?status=in.(${statuses})&meta->>category=eq.missing_lyrics&select=id,status,retry_count,meta&order=last_retried_at.asc.nullsfirst&limit=${BATCH_LIMIT}`
     );
+    // A newly opted-in user submission should wake its backlogged report on
+    // the next daily run. Do not retry unrelated backlog items automatically.
+    if (!includeBacklog && bugs.length < BATCH_LIMIT) {
+      const pending = await sb(
+        "user_track_lyrics?share_for_catalog=eq.true&review_status=eq.pending&select=itunes_track_id&limit=500"
+      );
+      const pendingIds = new Set((pending || []).map(row => String(row.itunes_track_id)));
+      if (pendingIds.size) {
+        const backlog = await sb(
+          "bug_reports?status=eq.backlog&meta->>category=eq.missing_lyrics&select=id,status,retry_count,meta&order=last_retried_at.asc.nullsfirst&limit=500"
+        );
+        const seen = new Set(bugs.map(bug => bug.id));
+        const woken = (backlog || []).filter(bug =>
+          !seen.has(bug.id) && pendingIds.has(String(bug.meta?.itunes_track_id))
+        );
+        bugs.push(...woken.slice(0, BATCH_LIMIT - bugs.length));
+      }
+    }
     const results = [];
     // Sequential provider research avoids hammering external lyric services.
     for (const bug of bugs || []) {
