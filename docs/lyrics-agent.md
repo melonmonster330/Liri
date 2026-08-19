@@ -30,4 +30,8 @@ Manual authenticated run:
 curl -H "x-cron-secret: $CRON_SECRET" https://www.getliri.com/api/lyrics-agent
 ```
 
+The endpoint requires `CRON_SECRET` either in `x-cron-secret` or as a bearer
+token. It does not trust `x-vercel-cron` alone. Vercel automatically sends the
+bearer token for scheduled jobs when the project secret is configured.
+
 Tune the daily batch with `LYRICS_AGENT_BATCH_LIMIT` (default 20, maximum 50).

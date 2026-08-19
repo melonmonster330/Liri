@@ -147,7 +147,10 @@ module.exports = async (req, res) => {
 
   const cronSecret = process.env.CRON_SECRET;
   const supplied = req.headers["x-cron-secret"] || req.headers.authorization?.replace(/^Bearer\s+/i, "");
-  const authorized = !!req.headers["x-vercel-cron"] || (cronSecret && supplied && safeCompare(cronSecret, supplied));
+  // Vercel Cron sends `Authorization: Bearer <CRON_SECRET>` when the project
+  // secret is configured. Never trust x-vercel-cron by itself: clients can
+  // spoof arbitrary request headers, and this endpoint writes canonical data.
+  const authorized = cronSecret && supplied && safeCompare(cronSecret, supplied);
   if (!authorized) return res.status(401).json({ error: "Unauthorized" });
 
   try {
