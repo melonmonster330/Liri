@@ -48,7 +48,9 @@ const liriAuthStorage = {
   removeItem: k => { try { sessionStorage.removeItem(k); } catch {} try { localStorage.removeItem(k); } catch {} },
 };
 const NATIVE_AUTH_CALLBACK = "liri://auth/callback";
-const authRedirectTo = () => IS_IOS ? NATIVE_AUTH_CALLBACK : `${window.location.origin}/app`;
+// Keep web OAuth on the canonical origin. Supabase matches redirect URLs
+// exactly, so deriving this from a www alias can otherwise fall back home.
+const authRedirectTo = () => IS_IOS ? NATIVE_AUTH_CALLBACK : "https://getliri.com/app";
 const openProviderUrl = async url => {
   if (IS_IOS) await CapacitorBrowser.open({ url, presentationStyle: "popover" });
   else window.location.href = url;

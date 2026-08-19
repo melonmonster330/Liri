@@ -2097,7 +2097,7 @@
     }
   };
   var NATIVE_AUTH_CALLBACK = "liri://auth/callback";
-  var authRedirectTo = () => IS_IOS ? NATIVE_AUTH_CALLBACK : `${window.location.origin}/app`;
+  var authRedirectTo = () => IS_IOS ? NATIVE_AUTH_CALLBACK : "https://getliri.com/app";
   var openProviderUrl = async (url) => {
     if (IS_IOS) await Browser2.open({ url, presentationStyle: "popover" });
     else window.location.href = url;
