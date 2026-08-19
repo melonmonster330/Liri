@@ -5,6 +5,7 @@
   "main": "index.html",
   "scripts": {
     "build": "esbuild app/src/main.js --bundle --format=iife --target=safari15 --outfile=app/vendor/app.js",
+    "test": "node --test test/*.test.js",
     "dev":   "esbuild app/src/main.js --bundle --format=iife --target=safari15 --outfile=app/vendor/app.js --watch",
     "sync": "npm run build && npx cap sync && node scripts/patch-ios-config.js",
     "ios": "npx cap open ios"

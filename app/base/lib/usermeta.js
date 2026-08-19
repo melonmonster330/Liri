@@ -1,9 +1,7 @@
-// User-contributed metadata — lyrics + vinyl side info.
+// User-contributed metadata — private lyrics + shared vinyl side info.
 //
-// RLS on track_lyrics and vinyl_sides already grants any authenticated user
-// insert/update (see supabase/migrations/20260513_rls_for_newer_tables.sql),
-// so these write straight from the client with the normal supabase client.
-// No API endpoint involved.
+// Lyrics write to owner-only user_track_lyrics rows. Vinyl side information
+// retains its existing shared authenticated-write model.
 //
 // Used by:
 //   • Sync tab (main.js) — "Add side info" warning pre-sync, "Add lyrics"
@@ -39,7 +37,7 @@ export function lrcToPlain(text) {
     .join("\n");
 }
 
-// Upsert user-pasted lyrics for one track. Returns the cache-shaped entry
+// Upsert owner-private lyrics for one track. Returns the cache-shaped entry
 // ({ lrc_raw, words_json, lyrics_plain }) or throws on DB error.
 // words_json stays null; user submissions are displayed directly from the
 // stored LRC or plain-text representation.
@@ -71,8 +69,7 @@ export async function saveUserLyrics(sb, trackId, text, { shareForCatalog = fals
   return { lrc_raw: row.lrc_raw, words_json: null, lyrics_plain: row.lyrics_plain, source: "personal", is_instrumental: false };
 }
 
-// Explicitly record that a track has no sung/spoken lyrics. A real cache row
-// prevents background gap-fill from repeatedly treating it as missing.
+// Record a private instrumental override for the signed-in owner.
 export async function saveUserInstrumental(sb, trackId) {
   if (!trackId) throw new Error("Track ID is required");
   const userId = await currentUserId(sb);
