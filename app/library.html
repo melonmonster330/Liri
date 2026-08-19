@@ -68,7 +68,7 @@
           if (text) lines.push({ time, text });
         }
       }
-      return lines;
+      return lines.length ? lines : lrc.split("\n").map(s => s.trim()).filter(Boolean).map(text => ({ time: null, text }));
     }
 
     function lyricsForVinylTrack(raw, track) {
@@ -252,28 +252,23 @@
 
     // Fetch synced lyrics: track_lyrics table (new schema) → LRCLib fallback
     async function fetchLyricsForTrack(trackId, trackName, artistName, albumName, durationMs, allowCache = true) {
-      // Check track_lyrics table (populated when album was added to library)
+      // The signed-in owner's private override always wins.
       if (trackId) {
+        const { data: personal } = await sb.from("user_track_lyrics")
+          .select("lrc_raw, lyrics_plain, is_instrumental")
+          .eq("itunes_track_id", trackId).maybeSingle();
+        if (personal?.is_instrumental) return null;
+        if (personal?.lrc_raw) return personal.lrc_raw;
+        if (personal?.lyrics_plain) return personal.lyrics_plain;
+
+        // Otherwise use the shared canonical catalogue.
         const { data } = await sb.from("track_lyrics")
           .select("lrc_raw, lyrics_plain").eq("itunes_track_id", trackId).maybeSingle();
         if (data?.lrc_raw) return data.lrc_raw;
         if (data?.lyrics_plain) return data.lyrics_plain;
       }
       const dur = durationMs ? Math.round(durationMs / 1000) : 0;
-      const remember = async raw => {
-        if (!raw || !trackId || !allowCache) return raw;
-        try {
-          await sb.from("track_lyrics").upsert({
-            itunes_track_id: trackId,
-            lrc_raw: raw,
-            lyrics_plain: lrcToPlain(raw),
-            words_json: null,
-            source: "lrclib",
-            fetched_at: new Date().toISOString(),
-          }, { onConflict: "itunes_track_id" });
-        } catch {}
-        return raw;
-      };
+      const remember = async raw => raw;
       try {
         const p = new URLSearchParams({ track_name: trackName, artist_name: artistName, album_name: albumName });
         if (dur) p.set("duration", dur);
@@ -313,33 +308,48 @@
     function lrcToPlain(text) {
       return (text || "").split("\n").map(l => l.replace(/\[[^\]]*\]/g, "").trim()).filter(Boolean).join("\n");
     }
-    async function saveUserLyrics(trackId, text) {
+    async function currentUserId() {
+      const { data, error } = await sb.auth.getUser();
+      if (error || !data?.user?.id) throw new Error("Sign in to save personal lyrics");
+      return data.user.id;
+    }
+    async function saveUserLyrics(trackId, text, shareForCatalog = false) {
       const trimmed = (text || "").trim();
       if (!trackId || !trimmed) throw new Error("Nothing to save");
+      const userId = await currentUserId();
       const isLrc = looksLikeLRC(trimmed);
       const row = {
+        user_id: userId,
         itunes_track_id: trackId,
         lrc_raw:      isLrc ? trimmed : null,
         lyrics_plain: isLrc ? lrcToPlain(trimmed) : trimmed,
-        words_json:   null,
-        source:       "user",
-        fetched_at:   new Date().toISOString(),
+        is_instrumental: false,
+        share_for_catalog: !!shareForCatalog,
+        review_status: shareForCatalog ? "pending" : "private",
+        review_note: null,
+        reviewed_at: null,
+        updated_at: new Date().toISOString(),
       };
-      const { error } = await sb.from("track_lyrics").upsert(row, { onConflict: "itunes_track_id" });
+      const { error } = await sb.from("user_track_lyrics").upsert(row, { onConflict: "user_id,itunes_track_id" });
       if (error) throw error;
       return row;
     }
     async function saveUserInstrumental(trackId) {
       if (!trackId) throw new Error("Track ID is required");
+      const userId = await currentUserId();
       const row = {
+        user_id: userId,
         itunes_track_id: trackId,
         lrc_raw: null,
         lyrics_plain: null,
-        words_json: [],
-        source: "instrumental",
-        fetched_at: new Date().toISOString(),
+        is_instrumental: true,
+        share_for_catalog: false,
+        review_status: "private",
+        review_note: null,
+        reviewed_at: null,
+        updated_at: new Date().toISOString(),
       };
-      const { error } = await sb.from("track_lyrics").upsert(row, { onConflict: "itunes_track_id" });
+      const { error } = await sb.from("user_track_lyrics").upsert(row, { onConflict: "user_id,itunes_track_id" });
       if (error) throw error;
       return row;
     }
@@ -525,6 +535,7 @@
       const [loading, setLoading] = useState(!track.isInstrumental);
       const [noLyrics, setNoLyrics] = useState(false);
       const [draft, setDraft]     = useState("");
+      const [shareForCatalog, setShareForCatalog] = useState(false);
       const [saving, setSaving]   = useState(false);
       const [saveError, setSaveError] = useState(null);
       const [reporting, setReporting] = useState(false);
@@ -533,7 +544,7 @@
       const saveDraft = async () => {
         setSaving(true); setSaveError(null);
         try {
-          const row = await saveUserLyrics(track.trackId, draft);
+          const row = await saveUserLyrics(track.lyricSourceId || track.trackId, draft, shareForCatalog);
           setLrc(parseLRC(row.lrc_raw || row.lyrics_plain));
           setNoLyrics(false);
           setInstrumental(false);
@@ -662,6 +673,10 @@
                       <textarea value={draft} onChange={e => setDraft(e.target.value)}
                         placeholder="Paste lyrics here…" rows={8}
                         style={{ width: "100%", boxSizing: "border-box", background: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.1)", borderRadius: 14, color: "#f0e6d3", fontFamily: "inherit", fontSize: 14, lineHeight: 1.6, padding: "12px 14px", resize: "vertical", minHeight: 130, outline: "none" }} />
+                      <label style={{ display: "flex", gap: 10, alignItems: "flex-start", marginTop: 12, color: "rgba(255,255,255,0.5)", fontSize: 12, lineHeight: 1.45, cursor: "pointer" }}>
+                        <input type="checkbox" checked={shareForCatalog} onChange={e => setShareForCatalog(e.target.checked)} style={{ marginTop: 2, accentColor: "#d4a846" }} />
+                        <span>Let Liri review my submission to help fill the shared catalogue. It stays private unless validated and promoted.</span>
+                      </label>
                       {saveError && <div style={{ color: "#c9807a", fontSize: 12, marginTop: 8 }}>{String(saveError)}</div>}
                       <button onClick={() => !saving && draft.trim() && saveDraft()} disabled={saving || !draft.trim()}
                         style={{
@@ -923,10 +938,22 @@
         const trackIds = [...new Set(trackList.map(t => t._lyricSourceId || t.itunes_track_id).filter(Boolean))];
         const lyricRows = await sbInChunked(
           "track_lyrics", "itunes_track_id, lrc_raw, lyrics_plain, source", "itunes_track_id", trackIds);
+        const personalLyricRows = await sbInChunked(
+          "user_track_lyrics", "itunes_track_id, lrc_raw, lyrics_plain, is_instrumental", "itunes_track_id", trackIds);
         const lyricSet = new Set(
           (lyricRows || []).filter(r => r.lrc_raw || r.lyrics_plain).map(r => String(r.itunes_track_id)));
         const instrumentalSet = new Set(
           (lyricRows || []).filter(r => r.source === "instrumental").map(r => String(r.itunes_track_id)));
+        for (const row of personalLyricRows || []) {
+          const id = String(row.itunes_track_id);
+          if (row.is_instrumental) {
+            lyricSet.delete(id);
+            instrumentalSet.add(id);
+          } else if (row.lrc_raw || row.lyrics_plain) {
+            lyricSet.add(id);
+            instrumentalSet.delete(id);
+          }
+        }
 
         const merged = trackList.map((t, i) => {
           let side, trackOnSide, position;
@@ -1478,13 +1505,23 @@
             sbInChunked("vinyl_releases", "itunes_collection_id, vinyl_tracks(side)", "itunes_collection_id", cids),
           ]);
           const allTrackIds = trackRows.map(t => t.itunes_track_id).filter(Boolean);
-          const lyricRows = await sbInChunked(
-            "track_lyrics", "itunes_track_id, lrc_raw, lyrics_plain, source", "itunes_track_id", allTrackIds);
+          const [lyricRows, personalRows] = await Promise.all([
+            sbInChunked("track_lyrics", "itunes_track_id, lrc_raw, lyrics_plain, source", "itunes_track_id", allTrackIds),
+            sbInChunked("user_track_lyrics", "itunes_track_id, lrc_raw, lyrics_plain, is_instrumental", "itunes_track_id", allTrackIds),
+          ]);
           if (seq !== metaScanSeq.current) return; // a newer scan superseded this one
           const lyricSet = new Set(
             lyricRows.filter(r => r.lrc_raw || r.lyrics_plain).map(r => String(r.itunes_track_id)));
           const instrumentalSet = new Set(
             lyricRows.filter(r => r.source === "instrumental").map(r => String(r.itunes_track_id)));
+          for (const row of personalRows || []) {
+            const id = String(row.itunes_track_id);
+            if (row.is_instrumental) {
+              lyricSet.delete(id); instrumentalSet.add(id);
+            } else if (row.lrc_raw || row.lyrics_plain) {
+              lyricSet.add(id); instrumentalSet.delete(id);
+            }
+          }
           const flags = {};
           for (const cid of cids) {
             const tracks = trackRows.filter(t => String(t.itunes_collection_id) === cid);

@@ -41,40 +41,56 @@ export function lrcToPlain(text) {
 
 // Upsert user-pasted lyrics for one track. Returns the cache-shaped entry
 // ({ lrc_raw, words_json, lyrics_plain }) or throws on DB error.
-// words_json stays null — the app derives words from lrc_raw / lyrics_plain
-// at listen time (see the fallback chain in startListeningSpeech).
-export async function saveUserLyrics(sb, trackId, text) {
+// words_json stays null; user submissions are displayed directly from the
+// stored LRC or plain-text representation.
+async function currentUserId(sb) {
+  const { data, error } = await sb.auth.getUser();
+  if (error || !data?.user?.id) throw new Error("Sign in to save personal lyrics");
+  return data.user.id;
+}
+
+export async function saveUserLyrics(sb, trackId, text, { shareForCatalog = false } = {}) {
   const trimmed = (text || "").trim();
   if (!trackId || !trimmed) throw new Error("Nothing to save");
+  const userId = await currentUserId(sb);
   const isLrc = looksLikeLRC(trimmed);
   const row = {
+    user_id: userId,
     itunes_track_id: trackId,
     lrc_raw:      isLrc ? trimmed : null,
     lyrics_plain: isLrc ? lrcToPlain(trimmed) : trimmed,
-    words_json:   null,
-    source:       "user",
-    fetched_at:   new Date().toISOString(),
+    is_instrumental: false,
+    share_for_catalog: !!shareForCatalog,
+    review_status: shareForCatalog ? "pending" : "private",
+    review_note: null,
+    reviewed_at: null,
+    updated_at: new Date().toISOString(),
   };
-  const { error } = await sb.from("track_lyrics").upsert(row, { onConflict: "itunes_track_id" });
+  const { error } = await sb.from("user_track_lyrics").upsert(row, { onConflict: "user_id,itunes_track_id" });
   if (error) throw error;
-  return { lrc_raw: row.lrc_raw, words_json: null, lyrics_plain: row.lyrics_plain, source: row.source };
+  return { lrc_raw: row.lrc_raw, words_json: null, lyrics_plain: row.lyrics_plain, source: "personal", is_instrumental: false };
 }
 
 // Explicitly record that a track has no sung/spoken lyrics. A real cache row
 // prevents background gap-fill from repeatedly treating it as missing.
 export async function saveUserInstrumental(sb, trackId) {
   if (!trackId) throw new Error("Track ID is required");
+  const userId = await currentUserId(sb);
   const row = {
+    user_id: userId,
     itunes_track_id: trackId,
     lrc_raw: null,
     lyrics_plain: null,
-    words_json: [],
-    source: "instrumental",
-    fetched_at: new Date().toISOString(),
+    is_instrumental: true,
+    share_for_catalog: false,
+    review_status: "private",
+    review_note: null,
+    reviewed_at: null,
+    updated_at: new Date().toISOString(),
   };
-  const { error } = await sb.from("track_lyrics").upsert(row, { onConflict: "itunes_track_id" });
+  const { error } = await sb.from("user_track_lyrics").upsert(row, { onConflict: "user_id,itunes_track_id" });
   if (error) throw error;
-  return { lrc_raw: null, words_json: [], lyrics_plain: null, source: row.source };
+  return { lrc_raw: null, words_json: [], lyrics_plain: null, source: "personal_instrumental", is_instrumental: true };
 }
 
 // Turn "which tracks start a new side" into per-track side letters.

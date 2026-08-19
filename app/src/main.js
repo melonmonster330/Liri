@@ -1,17 +1,15 @@
 import { parseLRC, formatTime, timeAgo, normText } from "../base/lib/text.js";
 import { plainToLines, orderLibrary } from "../base/lib/library.js";
-import { matchTranscriptToTracks } from "../base/lib/match.js";
 import {
   logListeningEvent as libLogListeningEvent,
   maybeAutoPostPlay as libMaybeAutoPostPlay,
   logFlipEvent as libLogFlipEvent,
   logButtonEvent as libLogButtonEvent,
 } from "../base/lib/analytics.js";
-import { IS_IOS, TRANSCRIBE_PROXY, ITUNES_PROXY, PLAYBACK_OFFSET_CORRECTION, AUTO_ADVANCE_OFFSET, SYNC_PLAYBACK_RATE } from "../base/lib/config.js";
+import { IS_IOS, ITUNES_PROXY, PLAYBACK_OFFSET_CORRECTION, AUTO_ADVANCE_OFFSET, SYNC_PLAYBACK_RATE } from "../base/lib/config.js";
 import { useNowPlaying } from "./hooks/useNowPlaying.js";
 import { useLyricScroll } from "./hooks/useLyricScroll.js";
 import { useCast } from "./hooks/useCast.js";
-import { startWhisperChunks } from "../base/lib/whisper.js";
 import { getSideGroups, hasSideData } from "../base/lib/sides.js";
 import {
   expandKnownVinylSplitTracks,
@@ -189,6 +187,25 @@ function ProviderButtons({ onError }) {
   const h = React.createElement;
   const [busy, setBusy] = useState(null);
   const redirectTo = authRedirectTo();
+  useEffect(() => {
+    const resetBusy = () => setBusy(null);
+    // WebKit may restore this component from the back/forward cache after an
+    // OAuth flow is abandoned, preserving the old "Opening…" state.
+    window.addEventListener("pageshow", resetBusy);
+    window.addEventListener("focus", resetBusy);
+
+    let browserFinished = null;
+    if (IS_IOS) {
+      CapacitorBrowser.addListener("browserFinished", resetBusy)
+        .then(listener => { browserFinished = listener; })
+        .catch(() => {});
+    }
+    return () => {
+      window.removeEventListener("pageshow", resetBusy);
+      window.removeEventListener("focus", resetBusy);
+      browserFinished?.remove();
+    };
+  }, []);
   const button = {
     width: "100%", minHeight: "52px", background: "rgba(255,255,255,0.045)", color: "#f0e6d3",
     border: "1px solid rgba(255,255,255,0.12)", borderRadius: "14px",
@@ -199,12 +216,14 @@ function ProviderButtons({ onError }) {
   const fail = e => { setBusy(null); onError?.(e?.message || "Couldn't start sign-in. Please try again."); };
   const oauth = async provider => {
     setBusy(provider);
-    const { data, error } = await sb.auth.signInWithOAuth({
-      provider,
-      options: { redirectTo, skipBrowserRedirect: IS_IOS },
-    });
-    if (error) fail(error);
-    else if (IS_IOS && data?.url) await openProviderUrl(data.url);
+    try {
+      const { data, error } = await sb.auth.signInWithOAuth({
+        provider,
+        options: { redirectTo, skipBrowserRedirect: IS_IOS },
+      });
+      if (error) fail(error);
+      else if (IS_IOS && data?.url) await openProviderUrl(data.url);
+    } catch (e) { fail(e); }
   };
   const discogs = async () => {
     setBusy("discogs");
@@ -341,7 +360,6 @@ function Liri() {
   const [playbackTime, setPlaybackTime] = useState(0);
   const [error, setError] = useState(null);
   const [listenProgress, setListenProgress] = useState(0);
-  const [liveTranscript, setLiveTranscript] = useState("");
   const [listenAttempt, setListenAttempt] = useState(0); // which rolling attempt we're on
   const [listenSecs, setListenSecs] = useState(0); // real-time seconds counter (UI only)
 
@@ -481,25 +499,9 @@ function Liri() {
   const turntableAlbumRef = useRef(turntableAlbum);
   const turntableTracksRef = useRef([]); // iTunes tracks for selected album (pre-fetched)
   const turntableMatchedIdxRef = useRef(-1); // 0-based index of last vinyl-matched track
-  // turntableLyricsCacheRef: raw DB rows fetched once per album in fetchTurntableTracks.
-  //   Shape: { [String(itunes_track_id)]: { lrc_raw, words_json, lyrics_plain } }
-  //   Populated at album-select time so that startListeningSpeech has zero network
-  //   latency when the mic opens. Lives for the lifetime of the selected album — reset
-  //   to {} at the top of fetchTurntableTracks so stale data from the previous album
-  //   never bleeds through.
-  //
-  // wordsDataRef: derived/processed form built at the START of each listening session
-  //   inside startListeningSpeech. Shape: { [trackId]: { words, lrc_raw, lyrics_plain } }
-  //   where `words` is a flat array of { word, start_ms } objects ready for matching.
-  //   The derivation step handles the fallback chain (words_json → lrc_raw → lyrics_plain)
-  //   so matchTranscriptToTracks only ever sees one consistent format.
-  //   Also kept alive after the listen so jumpToTrack / resync can reuse it without
-  //   another DB call.
-  //
-  // Summary: turntableLyricsCacheRef = "what came from the DB".
-  //          wordsDataRef            = "what the matcher actually uses".
-  const turntableLyricsCacheRef = useRef({}); // lrc_raw cache by trackId — loaded at album select, used in startListeningSpeech
-  const wordsDataRef = useRef({}); // trackId → { words, lrc_raw, lyrics_plain } from track_lyrics table
+  // Raw lyric rows fetched once per selected album. Reset before each album
+  // load so stale data from the previous record cannot bleed into playback.
+  const turntableLyricsCacheRef = useRef({});
   const autoRetryCountRef = useRef(0);
 
   // ── Album tracklist (for vinyl auto-advance without re-listening) ──
@@ -605,8 +607,8 @@ function Liri() {
   const initialPosRef = useRef(0);
   const userNudgeRef = useRef(0); // cumulative nudge applied by user this session
   // Deferred timing: identification paths store { startPos, phraseOffset, recStart } here.
-  // startSync reads it to compute initialPos at the last possible moment — capturing the
-  // full elapsed time from recording start through Whisper API + React render.
+  // startSync reads it to compute initialPos at the last possible moment, including
+  // the identification and React state-update delay.
   const syncCalcRef = useRef(null);
   const recordingStartRef = useRef(null); // wall-clock time when mic started recording
   const lyricsRef = useRef([]);
@@ -1243,8 +1245,7 @@ function Liri() {
 
     // Clear refs IMMEDIATELY before any await so that if the user switches albums
     // mid-flight the old album's data never bleeds into the new session.
-    // Without this a stale turntableTracksRef could cause matchTranscriptToTracks
-    // to score against the wrong album's word list.
+    // Clear the previous album before any asynchronous loading begins.
     turntableTracksRef.current = [];
     turntableLyricsCacheRef.current = {};
     vinylSidesRef.current = [];
@@ -1303,10 +1304,28 @@ function Liri() {
             };
           }
         }
+        // Owner-only rows overlay the shared catalogue for this signed-in user.
+        // RLS prevents these submissions from being visible to anyone else.
+        if (user?.id) {
+          const { data: personalRows } = await sb
+            .from("user_track_lyrics")
+            .select("itunes_track_id, lrc_raw, lyrics_plain, is_instrumental")
+            .eq("user_id", user.id)
+            .in("itunes_track_id", trackRows.map(t => t.itunes_track_id).filter(Boolean));
+          for (const row of personalRows || []) {
+            cache[String(row.itunes_track_id)] = {
+              lrc_raw: row.lrc_raw || null,
+              words_json: row.is_instrumental ? [] : null,
+              lyrics_plain: row.lyrics_plain || null,
+              source: row.is_instrumental ? "personal_instrumental" : "personal",
+              is_instrumental: !!row.is_instrumental,
+            };
+          }
+        }
         cache = expandKnownVinylSplitLyrics(cache, playbackTrackRows);
         console.log("[turntable] lrcRows:", (lrcRows || []).length, "cache entries:", Object.keys(cache).length, "tracks:", trackRows.length);
 
-        // Store in ref (not state) so startListeningSpeech can read it synchronously
+        // Store in a ref so the recognition and track-selection paths can read it synchronously
         // without a re-render cycle. React state would be stale inside the closure.
         // We store the cached rows NOW (before any network gap-fill) so the user can
         // start listening immediately; gap-fill below mutates this same object.
@@ -1386,8 +1405,8 @@ function Liri() {
         const missingTracks = trackRows.filter(t => t.itunes_track_id && !cache[String(t.itunes_track_id)]);
         (async () => {
           // Fill any missing lyrics from LRCLib (6s timeout each so one hung
-          // connection can't stall the batch). Non-fatal — a track with no
-          // lyrics just won't match.
+          // connection can't stall the batch). Non-fatal — the track simply
+          // remains without lyrics.
           if (missingTracks.length > 0) {
             await Promise.all(missingTracks.map(async t => {
               try {
@@ -1448,23 +1467,24 @@ function Liri() {
       setTurntableTracksLoading(false);
       setSideDataMissing(false);
     }
-  }, [turntableAlbum]);
+  }, [turntableAlbum, user?.id]);
 
   // ── User-contributed metadata: save handlers ──
   // The track currently on screen while syncing — used by the "Add lyrics"
   // flow on the no-lyrics playback screen. Only turntable (library) tracks
-  // have an itunes_track_id to key track_lyrics on.
+  // have an iTunes track ID that can key the owner's private lyric row.
   const lyricsEditorTrack = currentTrackIndex >= 0 ? turntableTracksRef.current[currentTrackIndex] : null;
   const currentTrackIsInstrumental = !!(lyricsEditorTrack?.trackId
-    && turntableLyricsCacheRef.current[String(lyricsEditorTrack.trackId)]?.source === "instrumental");
+    && ["instrumental", "personal_instrumental"].includes(
+      turntableLyricsCacheRef.current[String(lyricsEditorTrack.trackId)]?.source));
 
-  const handleSaveUserLyrics = async text => {
+  const handleSaveUserLyrics = async (text, options) => {
     const track = currentTrackIndex >= 0 ? turntableTracksRef.current[currentTrackIndex] : null;
     if (!track?.trackId) return;
     setUserMetaSaving(true);
     setUserMetaError(null);
     try {
-      const entry = await saveUserLyrics(sb, track.trackId, text);
+      const entry = await saveUserLyrics(sb, track.trackId, text, options);
       // Update the in-memory cache and swap the lyrics on screen immediately.
       turntableLyricsCacheRef.current[String(track.trackId)] = entry;
       const fresh = entry.lrc_raw ? parseLRC(entry.lrc_raw) : plainToLines(entry.lyrics_plain);
@@ -1901,10 +1921,6 @@ function Liri() {
     }).catch(() => {});
   };
 
-  // ── Vinyl-aware track matching ──────────────────────────────────────────────
-  // Extracted to base/lib/match.js (pure, no React) — see that file for the
-  // full matching algorithm and its comments.
-
   // ── Analytics: log a button tap (resync / wrong_song) — base/lib/analytics.js ──
   const logButtonEvent = buttonName => libLogButtonEvent(
     sb,
@@ -1934,12 +1950,9 @@ function Liri() {
 
   const MAX_ATTEMPTS = 6; // used in listening UI progress display
 
-  // ── Turntable mode: real-time speech recognition → lyric word match ──────────
-  // When an album is selected in the library, Liri already has all lyrics cached.
-  // Instead of recording + sending to ACRCloud/Whisper, we use the Web Speech API
-  // to transcribe words in real time and match them against the known lyrics.
-  // No server calls, no delays — match fires the moment enough words are recognised.
-const startListeningSpeech = async (isAutoAdvance = false) => {
+  // ── Turntable recognition ───────────────────────────────────────────────────
+  // iOS uses ShazamKit; web falls back to the manual track picker.
+const startListeningWithShazam = async (isAutoAdvance = false) => {
     // Unlock the chime AudioContext during this user-gesture window so it can
     // play later (auto-advance) without being blocked by autoplay policy.
     if (!isAutoAdvance) {
@@ -1960,7 +1973,6 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
     setShowTrackList(false);
     setMode("listening");
     setListenProgress(0);
-    setLiveTranscript("");
     setListenAttempt(1);
     setAudioLevel(0);
     clearInterval(syncIntervalRef.current);
@@ -1970,33 +1982,6 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
 
     const lrcCache = turntableLyricsCacheRef.current;
     const isNative = IS_IOS;
-
-    // Build wordsData so resync (Whisper-based fine-tune) can match against lyrics
-    const wordsData = {};
-    for (const track of tracks) {
-      if (!track.trackId) continue;
-      const entry = lrcCache[String(track.trackId)];
-      if (!entry) continue;
-      let words = Array.isArray(entry.words_json) ? entry.words_json : [];
-      if (!words.length && entry.lrc_raw) {
-        for (const line of parseLRC(entry.lrc_raw)) {
-          for (const raw of (line.text || "").split(/\s+/)) {
-            const word = raw.toLowerCase().replace(/[^a-z0-9']/g, "");
-            if (word) words.push({ word, start_ms: Math.round(line.time * 1000) });
-          }
-        }
-      }
-      if (!words.length && entry.lyrics_plain) {
-        entry.lyrics_plain.split("\n").filter(l => l.trim()).forEach((line, li) => {
-          for (const raw of line.split(/\s+/)) {
-            const word = raw.toLowerCase().replace(/[^a-z0-9']/g, "");
-            if (word) words.push({ word, start_ms: li * 4000 });
-          }
-        });
-      }
-      wordsData[track.trackId] = { words, lrc_raw: entry.lrc_raw, lyrics_plain: entry.lyrics_plain };
-    }
-    wordsDataRef.current = wordsData;
 
     // ── Web: no fingerprinting available — show track list inside idle screen ───
     // Keep mode as "idle" so the idle container (which holds the track picker)
@@ -2123,12 +2108,27 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
       setMode("error");
       return;
     }
-    return startListeningSpeech(isAutoAdvance);
+    return startListeningWithShazam(isAutoAdvance);
   };
   const loadLyrics = async (trackId, title, artist) => {
-    // Load from track_lyrics table (pre-fetched when album was added to library)
+    // Personal lyrics override the shared catalogue for their owner.
     try {
       if (trackId) {
+        if (user?.id) {
+          const { data: personal } = await sb
+            .from("user_track_lyrics")
+            .select("lrc_raw, lyrics_plain, is_instrumental")
+            .eq("user_id", user.id)
+            .eq("itunes_track_id", trackId)
+            .maybeSingle();
+          if (personal?.is_instrumental) {
+            setLyrics([]); lyricsRef.current = []; return;
+          }
+          if (personal?.lrc_raw || personal?.lyrics_plain) {
+            const parsed = personal.lrc_raw ? parseLRC(personal.lrc_raw) : plainToLines(personal.lyrics_plain);
+            setLyrics(parsed); lyricsRef.current = parsed; return;
+          }
+        }
         const { data } = await sb
           .from("track_lyrics")
           .select("lrc_raw, lyrics_plain")
@@ -2156,12 +2156,12 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
     autoAdvanceFiredRef.current = false;
 
     // syncCalcRef deferred timing calculation.
-    // Why defer? When a match fires in onresult the React state update ("confirmed")
+    // Why defer? When identification completes, the React state update ("confirmed")
     // triggers a useEffect that calls startSync. By the time startSync actually runs,
     // (Date.now() - recStart) includes:
-    //   • the time spent in the onresult handler
+    //   • the time spent finalizing the identification result
     //   • React's reconciliation + paint cycle
-    //   • any Whisper API round-trip (for ACR-path matches)
+    //   • any native or network recognition delay
     // …which can add up to ~0.5–1.5 s beyond what the elapsed calculation inside
     // onresult captured. By storing {startPos, phraseOffset, recStart} in syncCalcRef
     // and doing the final arithmetic HERE (rather than in onresult), the full latency
@@ -2748,11 +2748,7 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
     detectedAtRef.current = Date.now();
     setDetectedSong(nextSong);
     setSongDuration(nextDuration);
-    // Load lyrics — prefer turntableLyricsCacheRef (always populated at album
-    // select) over wordsDataRef (only populated during a Shazam listen session,
-    // so empty on web and on any track that wasn't seen by startListeningSpeech).
-    const nextTrackData = turntableLyricsCacheRef.current?.[String(next.trackId)]
-      || wordsDataRef.current?.[next.trackId];
+    const nextTrackData = turntableLyricsCacheRef.current?.[String(next.trackId)];
     if (nextTrackData?.lrc_raw) {
       const parsed = parseLRC(nextTrackData.lrc_raw);
       setLyrics(parsed);
@@ -2823,10 +2819,7 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
     setDetectedSong(song);
     setSongDuration(track.trackTimeMillis ? track.trackTimeMillis / 1000 : null);
     setIdentifiedBy("manual");
-    // Load lyrics — prefer turntableLyricsCacheRef (always populated at album-select)
-    // over wordsDataRef (only populated during a listening session)
-    const lrcEntry = turntableLyricsCacheRef.current[String(track.trackId)]
-      || wordsDataRef.current?.[track.trackId];
+    const lrcEntry = turntableLyricsCacheRef.current[String(track.trackId)];
     if (lrcEntry?.lrc_raw) {
       const parsed = parseLRC(lrcEntry.lrc_raw);
       setLyrics(parsed); lyricsRef.current = parsed;
@@ -3078,10 +3071,7 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
         album: ta.album_name || "",
         artwork: ta.artwork_url || null
       };
-      // Prefer turntableLyricsCacheRef (populated at album select) over
-      // wordsDataRef (only populated during a Shazam session, empty on web).
-      const trackData = turntableLyricsCacheRef.current?.[String(track.trackId)]
-        || wordsDataRef.current?.[track.trackId];
+      const trackData = turntableLyricsCacheRef.current?.[String(track.trackId)];
       const lrc = trackData?.lrc_raw;
       const lyrics = lrc ? parseLRC(lrc) : (trackData?.lyrics_plain ? trackData.lyrics_plain.split("\n").filter(l => l.trim()).map((text, i) => ({ time: i * 4, text })) : []);
       const duration = track.trackTimeMillis ? track.trackTimeMillis / 1000 : null;
@@ -6158,7 +6148,7 @@ const startListeningSpeech = async (isAutoAdvance = false) => {
       marginBottom: "10px",
       marginTop: !turntableAlbum && listenAttempt > MAX_ATTEMPTS ? "20px" : "0"
     }
-  }, turntableAlbum ? (IS_IOS ? (showTrackList ? "Can't find it automatically" : "Finding your place…") : "Pick a track to start") : listenAttempt > MAX_ATTEMPTS ? "Matching by lyrics…" : "Listening…"),
+  }, turntableAlbum ? (IS_IOS ? (showTrackList ? "Can't find it automatically" : "Finding your place…") : "Pick a track to start") : "Listening…"),
 
   /* ── Manual track picker with side grouping ── */
   turntableAlbum && turntableTracksRef.current.length > 0 && (() => {

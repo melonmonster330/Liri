@@ -20,6 +20,8 @@
 		}
 	},
 	"packageClassList": [
+		"AppPlugin",
+		"CAPBrowserPlugin",
 		"LocalNotificationsPlugin",
 		"KeepAwakePlugin",
 		"NativeAudioPlugin",

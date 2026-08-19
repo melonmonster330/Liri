@@ -21,6 +21,7 @@ const e = React.createElement;
 
 export function LyricsEditorSheet({ track, sites, saving, error, onSave, onClose }) {
   const [text, setText] = useState("");
+  const [shareForCatalog, setShareForCatalog] = useState(false);
 
   const openSite = url => window.open(url, IS_IOS ? "_system" : "_blank");
 
@@ -80,9 +81,12 @@ export function LyricsEditorSheet({ track, sites, saving, error, onSave, onClose
           resize: "vertical", minHeight: 160, outline: "none",
         }
       }),
+      e("label", { style: { display: "flex", gap: 10, alignItems: "flex-start", marginTop: 12, color: "rgba(255,255,255,0.5)", fontSize: 12, lineHeight: 1.45, cursor: "pointer" } },
+        e("input", { type: "checkbox", checked: shareForCatalog, onChange: ev => setShareForCatalog(ev.target.checked), style: { marginTop: 2, accentColor: "#d4a846" } }),
+        e("span", null, "Let Liri review my submission to help fill the shared catalogue. It stays private unless it is validated and promoted.")),
       error && e("div", { style: { color: "#c9807a", fontSize: 12, marginTop: 8 } }, String(error)),
       e("button", {
-        onClick: () => !saving && text.trim() && onSave(text),
+        onClick: () => !saving && text.trim() && onSave(text, { shareForCatalog }),
         disabled: saving || !text.trim(),
         style: {
           width: "100%", marginTop: 14,

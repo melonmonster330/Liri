@@ -1402,35 +1402,50 @@
   function lrcToPlain2(text) {
     return (text || "").split("\n").map((l) => l.replace(/\[[^\]]*\]/g, "").trim()).filter(Boolean).join("\n");
   }
-  async function saveUserLyrics(sb2, trackId, text) {
+  async function currentUserId(sb2) {
+    const { data, error } = await sb2.auth.getUser();
+    if (error || !data?.user?.id) throw new Error("Sign in to save personal lyrics");
+    return data.user.id;
+  }
+  async function saveUserLyrics(sb2, trackId, text, { shareForCatalog = false } = {}) {
     const trimmed = (text || "").trim();
     if (!trackId || !trimmed) throw new Error("Nothing to save");
+    const userId = await currentUserId(sb2);
     const isLrc = looksLikeLRC(trimmed);
     const row = {
+      user_id: userId,
       itunes_track_id: trackId,
       lrc_raw: isLrc ? trimmed : null,
       lyrics_plain: isLrc ? lrcToPlain2(trimmed) : trimmed,
-      words_json: null,
-      source: "user",
-      fetched_at: (/* @__PURE__ */ new Date()).toISOString()
+      is_instrumental: false,
+      share_for_catalog: !!shareForCatalog,
+      review_status: shareForCatalog ? "pending" : "private",
+      review_note: null,
+      reviewed_at: null,
+      updated_at: (/* @__PURE__ */ new Date()).toISOString()
     };
-    const { error } = await sb2.from("track_lyrics").upsert(row, { onConflict: "itunes_track_id" });
+    const { error } = await sb2.from("user_track_lyrics").upsert(row, { onConflict: "user_id,itunes_track_id" });
     if (error) throw error;
-    return { lrc_raw: row.lrc_raw, words_json: null, lyrics_plain: row.lyrics_plain, source: row.source };
+    return { lrc_raw: row.lrc_raw, words_json: null, lyrics_plain: row.lyrics_plain, source: "personal", is_instrumental: false };
   }
   async function saveUserInstrumental(sb2, trackId) {
     if (!trackId) throw new Error("Track ID is required");
+    const userId = await currentUserId(sb2);
     const row = {
+      user_id: userId,
       itunes_track_id: trackId,
       lrc_raw: null,
       lyrics_plain: null,
-      words_json: [],
-      source: "instrumental",
-      fetched_at: (/* @__PURE__ */ new Date()).toISOString()
+      is_instrumental: true,
+      share_for_catalog: false,
+      review_status: "private",
+      review_note: null,
+      reviewed_at: null,
+      updated_at: (/* @__PURE__ */ new Date()).toISOString()
     };
-    const { error } = await sb2.from("track_lyrics").upsert(row, { onConflict: "itunes_track_id" });
+    const { error } = await sb2.from("user_track_lyrics").upsert(row, { onConflict: "user_id,itunes_track_id" });
     if (error) throw error;
-    return { lrc_raw: null, words_json: [], lyrics_plain: null, source: row.source };
+    return { lrc_raw: null, words_json: [], lyrics_plain: null, source: "personal_instrumental", is_instrumental: true };
   }
   function buildSideRows(collectionId, tracks, letters) {
     const perSideCount = {};
@@ -1681,6 +1696,7 @@
   var e = React.createElement;
   function LyricsEditorSheet({ track, sites, saving, error, onSave, onClose }) {
     const [text, setText] = useState4("");
+    const [shareForCatalog, setShareForCatalog] = useState4(false);
     const openSite = (url) => window.open(url, IS_IOS ? "_system" : "_blank");
     return e("div", {
       onClick: onClose,
@@ -1792,9 +1808,15 @@
             outline: "none"
           }
         }),
+        e(
+          "label",
+          { style: { display: "flex", gap: 10, alignItems: "flex-start", marginTop: 12, color: "rgba(255,255,255,0.5)", fontSize: 12, lineHeight: 1.45, cursor: "pointer" } },
+          e("input", { type: "checkbox", checked: shareForCatalog, onChange: (ev) => setShareForCatalog(ev.target.checked), style: { marginTop: 2, accentColor: "#d4a846" } }),
+          e("span", null, "Let Liri review my submission to help fill the shared catalogue. It stays private unless it is validated and promoted.")
+        ),
         error && e("div", { style: { color: "#c9807a", fontSize: 12, marginTop: 8 } }, String(error)),
         e("button", {
-          onClick: () => !saving && text.trim() && onSave(text),
+          onClick: () => !saving && text.trim() && onSave(text, { shareForCatalog }),
           disabled: saving || !text.trim(),
           style: {
             width: "100%",
@@ -2253,6 +2275,23 @@
     const h = React.createElement;
     const [busy, setBusy] = useState6(null);
     const redirectTo = authRedirectTo();
+    useEffect6(() => {
+      const resetBusy = () => setBusy(null);
+      window.addEventListener("pageshow", resetBusy);
+      window.addEventListener("focus", resetBusy);
+      let browserFinished = null;
+      if (IS_IOS) {
+        Browser2.addListener("browserFinished", resetBusy).then((listener) => {
+          browserFinished = listener;
+        }).catch(() => {
+        });
+      }
+      return () => {
+        window.removeEventListener("pageshow", resetBusy);
+        window.removeEventListener("focus", resetBusy);
+        browserFinished?.remove();
+      };
+    }, []);
     const button = {
       width: "100%",
       minHeight: "52px",
@@ -2276,12 +2315,16 @@
     };
     const oauth = async (provider) => {
       setBusy(provider);
-      const { data, error } = await sb.auth.signInWithOAuth({
-        provider,
-        options: { redirectTo, skipBrowserRedirect: IS_IOS }
-      });
-      if (error) fail(error);
-      else if (IS_IOS && data?.url) await openProviderUrl(data.url);
+      try {
+        const { data, error } = await sb.auth.signInWithOAuth({
+          provider,
+          options: { redirectTo, skipBrowserRedirect: IS_IOS }
+        });
+        if (error) fail(error);
+        else if (IS_IOS && data?.url) await openProviderUrl(data.url);
+      } catch (e3) {
+        fail(e3);
+      }
     };
     const discogs = async () => {
       setBusy("discogs");
@@ -2432,7 +2475,6 @@
     const [playbackTime, setPlaybackTime] = useState6(0);
     const [error, setError] = useState6(null);
     const [listenProgress, setListenProgress] = useState6(0);
-    const [liveTranscript, setLiveTranscript] = useState6("");
     const [listenAttempt, setListenAttempt] = useState6(0);
     const [listenSecs, setListenSecs] = useState6(0);
     const [showSettings, setShowSettings] = useState6(false);
@@ -2527,7 +2569,6 @@
     const turntableTracksRef = useRef5([]);
     const turntableMatchedIdxRef = useRef5(-1);
     const turntableLyricsCacheRef = useRef5({});
-    const wordsDataRef = useRef5({});
     const autoRetryCountRef = useRef5(0);
     const [albumTracks, setAlbumTracks] = useState6([]);
     const [currentTrackIndex, setCurrentTrackIndex] = useState6(-1);
@@ -3225,6 +3266,18 @@
               };
             }
           }
+          if (user?.id) {
+            const { data: personalRows } = await sb.from("user_track_lyrics").select("itunes_track_id, lrc_raw, lyrics_plain, is_instrumental").eq("user_id", user.id).in("itunes_track_id", trackRows.map((t) => t.itunes_track_id).filter(Boolean));
+            for (const row of personalRows || []) {
+              cache[String(row.itunes_track_id)] = {
+                lrc_raw: row.lrc_raw || null,
+                words_json: row.is_instrumental ? [] : null,
+                lyrics_plain: row.lyrics_plain || null,
+                source: row.is_instrumental ? "personal_instrumental" : "personal",
+                is_instrumental: !!row.is_instrumental
+              };
+            }
+          }
           cache = expandKnownVinylSplitLyrics(cache, playbackTrackRows);
           console.log("[turntable] lrcRows:", (lrcRows || []).length, "cache entries:", Object.keys(cache).length, "tracks:", trackRows.length);
           turntableLyricsCacheRef.current = cache;
@@ -3332,16 +3385,18 @@
         setTurntableTracksLoading(false);
         setSideDataMissing(false);
       }
-    }, [turntableAlbum]);
+    }, [turntableAlbum, user?.id]);
     const lyricsEditorTrack = currentTrackIndex >= 0 ? turntableTracksRef.current[currentTrackIndex] : null;
-    const currentTrackIsInstrumental = !!(lyricsEditorTrack?.trackId && turntableLyricsCacheRef.current[String(lyricsEditorTrack.trackId)]?.source === "instrumental");
-    const handleSaveUserLyrics = async (text) => {
+    const currentTrackIsInstrumental = !!(lyricsEditorTrack?.trackId && ["instrumental", "personal_instrumental"].includes(
+      turntableLyricsCacheRef.current[String(lyricsEditorTrack.trackId)]?.source
+    ));
+    const handleSaveUserLyrics = async (text, options) => {
       const track = currentTrackIndex >= 0 ? turntableTracksRef.current[currentTrackIndex] : null;
       if (!track?.trackId) return;
       setUserMetaSaving(true);
       setUserMetaError(null);
       try {
-        const entry = await saveUserLyrics(sb, track.trackId, text);
+        const entry = await saveUserLyrics(sb, track.trackId, text, options);
         turntableLyricsCacheRef.current[String(track.trackId)] = entry;
         const fresh = entry.lrc_raw ? parseLRC(entry.lrc_raw) : plainToLines(entry.lyrics_plain);
         if (fresh.length) {
@@ -3721,7 +3776,7 @@ Move closer to your speakers and try again.`);
       }
     };
     const MAX_ATTEMPTS = 6;
-    const startListeningSpeech = async (isAutoAdvance = false) => {
+    const startListeningWithShazam = async (isAutoAdvance = false) => {
       if (!isAutoAdvance) {
         try {
           if (!chimeCtxRef.current) {
@@ -3741,7 +3796,6 @@ Move closer to your speakers and try again.`);
       setShowTrackList(false);
       setMode("listening");
       setListenProgress(0);
-      setLiveTranscript("");
       setListenAttempt(1);
       setAudioLevel(0);
       clearInterval(syncIntervalRef.current);
@@ -3753,31 +3807,6 @@ Move closer to your speakers and try again.`);
       }
       const lrcCache = turntableLyricsCacheRef.current;
       const isNative = IS_IOS;
-      const wordsData = {};
-      for (const track of tracks) {
-        if (!track.trackId) continue;
-        const entry = lrcCache[String(track.trackId)];
-        if (!entry) continue;
-        let words = Array.isArray(entry.words_json) ? entry.words_json : [];
-        if (!words.length && entry.lrc_raw) {
-          for (const line of parseLRC(entry.lrc_raw)) {
-            for (const raw of (line.text || "").split(/\s+/)) {
-              const word = raw.toLowerCase().replace(/[^a-z0-9']/g, "");
-              if (word) words.push({ word, start_ms: Math.round(line.time * 1e3) });
-            }
-          }
-        }
-        if (!words.length && entry.lyrics_plain) {
-          entry.lyrics_plain.split("\n").filter((l) => l.trim()).forEach((line, li) => {
-            for (const raw of line.split(/\s+/)) {
-              const word = raw.toLowerCase().replace(/[^a-z0-9']/g, "");
-              if (word) words.push({ word, start_ms: li * 4e3 });
-            }
-          });
-        }
-        wordsData[track.trackId] = { words, lrc_raw: entry.lrc_raw, lyrics_plain: entry.lyrics_plain };
-      }
-      wordsDataRef.current = wordsData;
       if (!isNative) {
         setMode("idle");
         setShowTrackList(true);
@@ -3869,11 +3898,25 @@ Move closer to your speakers and try again.`);
         setMode("error");
         return;
       }
-      return startListeningSpeech(isAutoAdvance);
+      return startListeningWithShazam(isAutoAdvance);
     };
     const loadLyrics = async (trackId, title, artist) => {
       try {
         if (trackId) {
+          if (user?.id) {
+            const { data: personal } = await sb.from("user_track_lyrics").select("lrc_raw, lyrics_plain, is_instrumental").eq("user_id", user.id).eq("itunes_track_id", trackId).maybeSingle();
+            if (personal?.is_instrumental) {
+              setLyrics([]);
+              lyricsRef.current = [];
+              return;
+            }
+            if (personal?.lrc_raw || personal?.lyrics_plain) {
+              const parsed = personal.lrc_raw ? parseLRC(personal.lrc_raw) : plainToLines(personal.lyrics_plain);
+              setLyrics(parsed);
+              lyricsRef.current = parsed;
+              return;
+            }
+          }
           const { data } = await sb.from("track_lyrics").select("lrc_raw, lyrics_plain").eq("itunes_track_id", trackId).maybeSingle();
           if (data?.lrc_raw) {
             const parsed = parseLRC(data.lrc_raw);
@@ -4375,7 +4418,7 @@ Move closer to your speakers and try again.`);
       detectedAtRef.current = Date.now();
       setDetectedSong(nextSong);
       setSongDuration(nextDuration);
-      const nextTrackData = turntableLyricsCacheRef.current?.[String(next.trackId)] || wordsDataRef.current?.[next.trackId];
+      const nextTrackData = turntableLyricsCacheRef.current?.[String(next.trackId)];
       if (nextTrackData?.lrc_raw) {
         const parsed = parseLRC(nextTrackData.lrc_raw);
         setLyrics(parsed);
@@ -4433,7 +4476,7 @@ Move closer to your speakers and try again.`);
       setDetectedSong(song);
       setSongDuration(track.trackTimeMillis ? track.trackTimeMillis / 1e3 : null);
       setIdentifiedBy("manual");
-      const lrcEntry = turntableLyricsCacheRef.current[String(track.trackId)] || wordsDataRef.current?.[track.trackId];
+      const lrcEntry = turntableLyricsCacheRef.current[String(track.trackId)];
       if (lrcEntry?.lrc_raw) {
         const parsed = parseLRC(lrcEntry.lrc_raw);
         setLyrics(parsed);
@@ -4656,7 +4699,7 @@ Move closer to your speakers and try again.`);
           album: ta.album_name || "",
           artwork: ta.artwork_url || null
         };
-        const trackData = turntableLyricsCacheRef.current?.[String(track.trackId)] || wordsDataRef.current?.[track.trackId];
+        const trackData = turntableLyricsCacheRef.current?.[String(track.trackId)];
         const lrc = trackData?.lrc_raw;
         const lyrics2 = lrc ? parseLRC(lrc) : trackData?.lyrics_plain ? trackData.lyrics_plain.split("\n").filter((l) => l.trim()).map((text, i) => ({ time: i * 4, text })) : [];
         const duration = track.trackTimeMillis ? track.trackTimeMillis / 1e3 : null;
@@ -7816,7 +7859,7 @@ Move closer to your speakers and try again.`);
           marginBottom: "10px",
           marginTop: !turntableAlbum && listenAttempt > MAX_ATTEMPTS ? "20px" : "0"
         }
-      }, turntableAlbum ? IS_IOS ? showTrackList ? "Can't find it automatically" : "Finding your place\u2026" : "Pick a track to start" : listenAttempt > MAX_ATTEMPTS ? "Matching by lyrics\u2026" : "Listening\u2026"),
+      }, turntableAlbum ? IS_IOS ? showTrackList ? "Can't find it automatically" : "Finding your place\u2026" : "Pick a track to start" : "Listening\u2026"),
       /* ── Manual track picker with side grouping ── */
       turntableAlbum && turntableTracksRef.current.length > 0 && (() => {
         const allTracks = turntableTracksRef.current;
