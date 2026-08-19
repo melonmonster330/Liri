@@ -60,6 +60,22 @@ async function researchBug(bug) {
   const trackId = Number(meta.itunes_track_id || 0);
   if (!trackId) return { id: bug.id, status: "skipped", reason: "missing track ID" };
 
+  // track_lyrics is intentionally foreign-keyed to album_tracks. Discogs-only
+  // imports can file reports with synthetic IDs before a canonical track row
+  // exists; those are catalogue blockers and cannot accept lyrics yet.
+  const catalogTrack = await sb(`album_tracks?itunes_track_id=eq.${trackId}&select=itunes_track_id&limit=1`);
+  if (!catalogTrack?.length) {
+    await sb(`bug_reports?id=eq.${bug.id}`, {
+      method: "PATCH",
+      body: {
+        status: "backlog",
+        last_retried_at: new Date().toISOString(),
+        meta: { ...meta, agent_blocker: "missing_catalog_track" },
+      },
+    });
+    return { id: bug.id, trackId, status: "blocked_missing_catalog_track" };
+  }
+
   const existing = await sb(`track_lyrics?itunes_track_id=eq.${trackId}&select=itunes_track_id&limit=1`);
   if (existing?.length) {
     await sb(`bug_reports?id=eq.${bug.id}`, {
@@ -157,8 +173,11 @@ module.exports = async (req, res) => {
   if (!authorized) return res.status(401).json({ error: "Unauthorized" });
 
   try {
+    const url = new URL(req.url || "/", "http://localhost");
+    const includeBacklog = url.searchParams.get("include_backlog") === "1";
+    const statuses = includeBacklog ? "open,backlog" : "open";
     const bugs = await sb(
-      `bug_reports?status=in.(open,backlog)&meta->>category=eq.missing_lyrics&select=id,status,retry_count,meta&order=last_retried_at.asc.nullsfirst&limit=${BATCH_LIMIT}`
+      `bug_reports?status=in.(${statuses})&meta->>category=eq.missing_lyrics&select=id,status,retry_count,meta&order=last_retried_at.asc.nullsfirst&limit=${BATCH_LIMIT}`
     );
     const results = [];
     // Sequential provider research avoids hammering external lyric services.

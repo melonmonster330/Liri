@@ -8,7 +8,7 @@ The editor's catalogue-review checkbox is off by default. When enabled, the
 submission is marked `pending`; the service-role daily worker may inspect it.
 
 `/api/lyrics-agent` runs daily at 12:00 UTC, before the existing lyrics-ready
-email job at 14:00 UTC. For each open/backlogged `missing_lyrics` report it:
+email job at 14:00 UTC. For each open `missing_lyrics` report it:
 
 1. closes stale reports whose canonical row already exists;
 2. searches the existing LRCLIB/Genius provider chain;
@@ -21,6 +21,12 @@ Per-report failures are returned as `status: "error"`, moved to the back of
 the queue, and eventually backlogged. One problematic catalogue row therefore
 cannot abort the rest of the daily batch.
 
+Scheduled and ordinary manual runs process open reports only. Use
+`?include_backlog=1` for an intentional backlog retry. Reports whose track ID
+does not exist in `album_tracks` are classified as
+`blocked_missing_catalog_track`; lyrics cannot be written until that catalogue
+identity is repaired.
+
 The worker contains no model call and never generates, completes, paraphrases,
 or reconstructs lyrics.
 
@@ -32,6 +38,13 @@ Manual authenticated run:
 
 ```sh
 curl -H "x-cron-secret: $CRON_SECRET" https://www.getliri.com/api/lyrics-agent
+```
+
+Manual backlog retry:
+
+```sh
+curl -H "x-cron-secret: $CRON_SECRET" \
+  "https://www.getliri.com/api/lyrics-agent?include_backlog=1"
 ```
 
 The endpoint requires `CRON_SECRET` either in `x-cron-secret` or as a bearer
