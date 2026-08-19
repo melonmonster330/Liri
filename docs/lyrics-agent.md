@@ -17,6 +17,10 @@ email job at 14:00 UTC. For each open/backlogged `missing_lyrics` report it:
 5. leaves a single valid candidate in `needs_review`;
 6. rejects malformed, webpage-like, or duration-invalid candidates.
 
+Per-report failures are returned as `status: "error"`, moved to the back of
+the queue, and eventually backlogged. One problematic catalogue row therefore
+cannot abort the rest of the daily batch.
+
 The worker contains no model call and never generates, completes, paraphrases,
 or reconstructs lyrics.
 

@@ -33,7 +33,10 @@ async function sb(path, { method = "GET", body, prefer } = {}) {
   const raw = await response.text();
   let data = null;
   try { data = raw ? JSON.parse(raw) : null; } catch {}
-  if (!response.ok) throw new Error(`Supabase ${method} ${path}: ${response.status}`);
+  if (!response.ok) {
+    const detail = data?.message || data?.details || data?.code || "request failed";
+    throw new Error(`Supabase ${method} ${path}: ${response.status} ${detail}`);
+  }
   return data;
 }
 
@@ -159,7 +162,31 @@ module.exports = async (req, res) => {
     );
     const results = [];
     // Sequential provider research avoids hammering external lyric services.
-    for (const bug of bugs || []) results.push(await researchBug(bug));
+    for (const bug of bugs || []) {
+      try {
+        results.push(await researchBug(bug));
+      } catch (error) {
+        // One malformed catalogue row must not stop every later report. Move
+        // the failure to the back of the queue and preserve it for inspection.
+        const retryCount = Number(bug.retry_count || 0) + 1;
+        try {
+          await sb(`bug_reports?id=eq.${bug.id}`, {
+            method: "PATCH",
+            body: {
+              retry_count: retryCount,
+              last_retried_at: new Date().toISOString(),
+              ...(retryCount >= 3 ? { status: "backlog" } : {}),
+            },
+          });
+        } catch {}
+        results.push({
+          id: bug.id,
+          trackId: Number(bug.meta?.itunes_track_id || 0) || null,
+          status: "error",
+          error: error.message || "Research failed",
+        });
+      }
+    }
     return res.status(200).json({ processed: results.length, results });
   } catch (error) {
     console.error("[lyrics-agent]", error);
