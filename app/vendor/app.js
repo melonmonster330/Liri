@@ -652,7 +652,6 @@
   // app/base/lib/config.js
   var IS_IOS = window.Capacitor?.getPlatform?.() === "ios";
   var ITUNES_PROXY = IS_IOS ? "https://www.getliri.com/api/itunes-lookup" : "/api/itunes-lookup";
-  var SYNC_PLAYBACK_RATE = 1.028;
 
   // app/base/lib/analytics.js
   async function logListeningEvent(sb2, sessionId, params) {
@@ -781,7 +780,7 @@
           turntableMatchedIdx: turntableMatchedIdxRef.current
         };
         try {
-          const t = syncStartRef.current != null ? initialPosRef.current + (Date.now() - syncStartRef.current) / 1e3 * SYNC_PLAYBACK_RATE : initialPosRef.current;
+          const t = syncStartRef.current != null ? initialPosRef.current + (Date.now() - syncStartRef.current) / 1e3 : initialPosRef.current;
           localStorage.setItem("liri_nowplaying", JSON.stringify({
             ...nowPlayingSnapshotRef.current,
             playbackTime: Math.max(0, t),
@@ -803,7 +802,7 @@
       const onHide = () => {
         const snap = nowPlayingSnapshotRef.current;
         if (!snap || !snap.detectedSong) return;
-        const t = syncStartRef.current != null ? initialPosRef.current + (Date.now() - syncStartRef.current) / 1e3 * SYNC_PLAYBACK_RATE : initialPosRef.current;
+        const t = syncStartRef.current != null ? initialPosRef.current + (Date.now() - syncStartRef.current) / 1e3 : initialPosRef.current;
         const payload = JSON.stringify({ ...snap, playbackTime: Math.max(0, t), savedAt: Date.now() });
         try {
           sessionStorage.setItem("liri_nowplaying", payload);
@@ -1289,6 +1288,29 @@
       { side: "A", tracks: tracks.slice(0, mid).map((t, i) => ({ track: t, idx: i })) },
       { side: "B", tracks: tracks.slice(mid).map((t, i) => ({ track: t, idx: mid + i })) }
     ].filter((g) => g.tracks.length > 0);
+  }
+  function resolveSideLetters(tracks, vinylSides, dbTracks) {
+    const raw = (tracks || []).map((t, i) => {
+      const s = getSideForIndex(i, t, vinylSides, dbTracks);
+      return s ? s.toUpperCase() : null;
+    });
+    let last = null;
+    const filled = raw.map((s) => last = s || last);
+    const first = filled.find(Boolean) || null;
+    return filled.map((s) => s || first);
+  }
+  function getSideEndIndicesFromSides(tracks, vinylSides, dbTracks) {
+    if (!tracks?.length) return null;
+    if (!hasSideData(vinylSides, dbTracks)) return null;
+    const sides = resolveSideLetters(tracks, vinylSides, dbTracks);
+    if (!sides.some(Boolean)) return null;
+    const lastIndexOfSide = /* @__PURE__ */ new Map();
+    sides.forEach((side, i) => {
+      if (side) lastIndexOfSide.set(side, i);
+    });
+    const ends = [...new Set(lastIndexOfSide.values())].sort((a, b) => a - b);
+    if (ends[ends.length - 1] !== tracks.length - 1) ends.push(tracks.length - 1);
+    return ends;
   }
 
   // app/base/lib/vinyl-splits.js
@@ -2796,23 +2818,6 @@
       }
     };
     const normTitle = normText;
-    const getDbSideEndIndices = (itunesTracks, dbTracks) => {
-      const sideGroups = {};
-      dbTracks.forEach((t) => {
-        if (!sideGroups[t.side]) sideGroups[t.side] = [];
-        sideGroups[t.side].push(t);
-      });
-      const sides = Object.keys(sideGroups).sort();
-      const result = [];
-      sides.slice(0, -1).forEach((side) => {
-        const sorted = sideGroups[side].sort((a, b) => a.track_number_on_side - b.track_number_on_side);
-        const lastTitle = normTitle(sorted[sorted.length - 1]?.title);
-        const idx = itunesTracks.findIndex((t) => normTitle(t.trackName) === lastTitle);
-        if (idx >= 0) result.push(idx);
-      });
-      result.push(itunesTracks.length - 1);
-      return result;
-    };
     const playFlipChime = () => {
       if (localStorage.getItem("liri_flip_sound") === "false") return;
       if (IS_IOS) {
@@ -3612,7 +3617,7 @@
       const tIdx = displayedTrackIdx >= 0 ? displayedTrackIdx : turntableMatchedIdxRef.current;
       const trackDuration = tIdx >= 0 ? (tTracks[tIdx]?.trackTimeMillis ?? 0) / 1e3 || null : null;
       const dbRelease = vinylDbReleaseRef.current;
-      const sideEnds = tTracks.length > 0 ? getSideEndsFromSidesMap(tTracks, vinylSidesRef.current) ?? (dbRelease?.vinyl_tracks?.length > 0 ? getDbSideEndIndices(tTracks, dbRelease.vinyl_tracks) : getSideEndIndices(tTracks, albumTpsRef.current > 0 ? albumTpsRef.current : 0)) : [];
+      const sideEnds = tTracks.length > 0 ? getSideEndIndicesFromSides(tTracks, vinylSidesRef.current, dbRelease?.vinyl_tracks) ?? getSideEndIndices(tTracks, albumTpsRef.current > 0 ? albumTpsRef.current : 0) : [];
       const isKnownSideEnd = tIdx >= 0 && sideEnds.includes(tIdx);
       let effectiveDuration = trackDuration ?? songDuration ?? null;
       if (isKnownSideEnd) {
@@ -3624,7 +3629,7 @@
         effectiveDuration = effectiveDuration == null ? lyricOutroLimit : Math.min(effectiveDuration, lyricOutroLimit);
       }
       if (!effectiveDuration) return;
-      const endClockElapsed = !isPaused && endClockStartRef.current != null ? (Date.now() - endClockStartRef.current) / 1e3 * SYNC_PLAYBACK_RATE : 0;
+      const endClockElapsed = !isPaused && endClockStartRef.current != null ? (Date.now() - endClockStartRef.current) / 1e3 : 0;
       const endPlaybackTime = Math.max(0, endClockPosRef.current + endClockElapsed);
       if (endPlaybackTime >= effectiveDuration && !autoAdvanceFiredRef.current) {
         autoAdvanceFiredRef.current = true;
@@ -3946,12 +3951,12 @@ Move closer to your speakers and try again.`);
         } = syncCalcRef.current;
         syncCalcRef.current = null;
         const elapsed = (Date.now() - recStart) / 1e3;
-        initialPosRef.current = Math.max(0, startPos - phraseOffset + elapsed * SYNC_PLAYBACK_RATE);
-        endClockPosRef.current = Math.max(0, startPos - phraseOffset + elapsed * SYNC_PLAYBACK_RATE);
+        initialPosRef.current = Math.max(0, startPos - phraseOffset + elapsed);
+        endClockPosRef.current = Math.max(0, startPos - phraseOffset + elapsed);
       } else if (syncStartRef.current !== null) {
-        initialPosRef.current = initialPosRef.current + (Date.now() - syncStartRef.current) / 1e3 * SYNC_PLAYBACK_RATE;
+        initialPosRef.current = initialPosRef.current + (Date.now() - syncStartRef.current) / 1e3;
         if (endClockStartRef.current != null) {
-          endClockPosRef.current += (Date.now() - endClockStartRef.current) / 1e3 * SYNC_PLAYBACK_RATE;
+          endClockPosRef.current += (Date.now() - endClockStartRef.current) / 1e3;
         }
       } else {
         endClockPosRef.current = initialPosRef.current;
@@ -3979,7 +3984,7 @@ Move closer to your speakers and try again.`);
       setIsPaused(false);
       clearInterval(syncIntervalRef.current);
       syncIntervalRef.current = setInterval(() => {
-        const t = initialPosRef.current + (Date.now() - syncStartRef.current) / 1e3 * SYNC_PLAYBACK_RATE;
+        const t = initialPosRef.current + (Date.now() - syncStartRef.current) / 1e3;
         setPlaybackTime(t < 0 ? 0 : t);
         const lrc = lyricsRef.current;
         if (!lrc.length || lrc[0].time == null) return;
@@ -4025,7 +4030,7 @@ Move closer to your speakers and try again.`);
         endClockStartRef.current = syncStartRef.current;
         clearInterval(syncIntervalRef.current);
         syncIntervalRef.current = setInterval(() => {
-          const t = initialPosRef.current + (Date.now() - syncStartRef.current) / 1e3 * SYNC_PLAYBACK_RATE;
+          const t = initialPosRef.current + (Date.now() - syncStartRef.current) / 1e3;
           setPlaybackTime(t);
           const lrc = lyricsRef.current;
           if (!lrc.length || lrc[0].time == null) return;
@@ -4045,7 +4050,7 @@ Move closer to your speakers and try again.`);
       } else {
         initialPosRef.current = Math.max(0, playbackTime);
         if (endClockStartRef.current != null) {
-          endClockPosRef.current += (Date.now() - endClockStartRef.current) / 1e3 * SYNC_PLAYBACK_RATE;
+          endClockPosRef.current += (Date.now() - endClockStartRef.current) / 1e3;
         }
         clearInterval(syncIntervalRef.current);
         setIsPaused(true);
@@ -4054,7 +4059,7 @@ Move closer to your speakers and try again.`);
     const nudge = (s) => {
       userNudgeRef.current += s;
       const running = !isPaused && syncStartRef.current != null;
-      const elapsedScaled = running ? (Date.now() - syncStartRef.current) / 1e3 * SYNC_PLAYBACK_RATE : 0;
+      const elapsedScaled = running ? (Date.now() - syncStartRef.current) / 1e3 : 0;
       const curPos = initialPosRef.current + elapsedScaled;
       const newPos = curPos < 0 ? curPos + s : Math.max(0, curPos + s);
       initialPosRef.current = newPos - elapsedScaled;
@@ -4277,16 +4282,6 @@ Move closer to your speakers and try again.`);
       }
       return null;
     };
-    const getSideEndsFromSidesMap = (tracks, sidesArr) => {
-      if (!sidesArr.length) return null;
-      const ends = [];
-      for (let i = 0; i < tracks.length; i++) {
-        const thisSide = sidesArr[i]?.side?.toUpperCase();
-        const nextSide = i + 1 < tracks.length ? sidesArr[i + 1]?.side?.toUpperCase() : null;
-        if (thisSide && (nextSide === null || thisSide !== nextSide)) ends.push(i);
-      }
-      return ends.length ? ends : null;
-    };
     const getSideEndIndices = (tracks, tps) => {
       if (tracks.length <= 1) return [];
       if (tps > 0) {
@@ -4360,7 +4355,7 @@ Move closer to your speakers and try again.`);
       const nextIdx = resolvedIdx + 1;
       const dbRelease = vinylDbReleaseRef.current;
       const effectiveTps = albumTpsRef.current > 0 ? albumTpsRef.current : 0;
-      const sideEnds = getSideEndsFromSidesMap(tracks, vinylSidesRef.current) ?? (dbRelease?.vinyl_tracks?.length > 0 ? getDbSideEndIndices(tracks, dbRelease.vinyl_tracks) : getSideEndIndices(tracks, effectiveTps));
+      const sideEnds = getSideEndIndicesFromSides(tracks, vinylSidesRef.current, dbRelease?.vinyl_tracks) ?? getSideEndIndices(tracks, effectiveTps);
       const isLastTrack = resolvedIdx === tracks.length - 1;
       const isSideEnd = sideEnds.includes(resolvedIdx);
       const showSideEndIfStillCurrent = () => {
@@ -4514,7 +4509,7 @@ Move closer to your speakers and try again.`);
       const curIdx = turntableMatchedIdxRef.current >= 0 ? turntableMatchedIdxRef.current : currentTrackIndexRef.current;
       const dbRelease = vinylDbReleaseRef.current;
       const effectiveTps = albumTpsRef.current > 0 ? albumTpsRef.current : 0;
-      const sideEnds = getSideEndsFromSidesMap(tracks, vinylSidesRef.current) ?? (dbRelease?.vinyl_tracks?.length > 0 ? getDbSideEndIndices(tracks, dbRelease.vinyl_tracks) : getSideEndIndices(tracks, effectiveTps));
+      const sideEnds = getSideEndIndicesFromSides(tracks, vinylSidesRef.current, dbRelease?.vinyl_tracks) ?? getSideEndIndices(tracks, effectiveTps);
       for (let s = 0; s < sideEnds.length; s++) {
         if (curIdx <= sideEnds[s]) {
           const nextFirst = sideEnds[s] + 1;
@@ -4551,7 +4546,7 @@ Move closer to your speakers and try again.`);
       const curIdx = turntableMatchedIdxRef.current >= 0 ? turntableMatchedIdxRef.current : currentTrackIndexRef.current;
       const dbRelease = vinylDbReleaseRef.current;
       const effectiveTps = albumTpsRef.current > 0 ? albumTpsRef.current : 0;
-      const sideEnds = getSideEndsFromSidesMap(tracks, vinylSidesRef.current) ?? (dbRelease?.vinyl_tracks?.length > 0 ? getDbSideEndIndices(tracks, dbRelease.vinyl_tracks) : getSideEndIndices(tracks, effectiveTps));
+      const sideEnds = getSideEndIndicesFromSides(tracks, vinylSidesRef.current, dbRelease?.vinyl_tracks) ?? getSideEndIndices(tracks, effectiveTps);
       for (let s = 0; s < sideEnds.length; s++) {
         if (curIdx <= sideEnds[s] && sideEnds[s] + 1 < tracks.length) {
           return "ABCDEFGH"[s + 1] || null;
@@ -4565,7 +4560,7 @@ Move closer to your speakers and try again.`);
       const curIdx = turntableMatchedIdxRef.current >= 0 ? turntableMatchedIdxRef.current : currentTrackIndexRef.current;
       const dbRelease = vinylDbReleaseRef.current;
       const effectiveTps = albumTpsRef.current > 0 ? albumTpsRef.current : 0;
-      const sideEnds = getSideEndsFromSidesMap(tracks, vinylSidesRef.current) ?? (dbRelease?.vinyl_tracks?.length > 0 ? getDbSideEndIndices(tracks, dbRelease.vinyl_tracks) : getSideEndIndices(tracks, effectiveTps));
+      const sideEnds = getSideEndIndicesFromSides(tracks, vinylSidesRef.current, dbRelease?.vinyl_tracks) ?? getSideEndIndices(tracks, effectiveTps);
       for (let s = 0; s < sideEnds.length; s++) {
         if (curIdx <= sideEnds[s] && sideEnds[s] + 1 < tracks.length) {
           const nextSideIndex = s + 1;

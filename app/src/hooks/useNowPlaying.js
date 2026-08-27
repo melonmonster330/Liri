@@ -12,7 +12,6 @@
 // It owns nothing externally visible itself (nowPlayingSnapshotRef is purely
 // internal), so it returns nothing.
 
-import { SYNC_PLAYBACK_RATE } from "../../base/lib/config.js";
 
 const { useRef, useEffect } = React;
 
@@ -42,7 +41,7 @@ export function useNowPlaying({
       // Also persist to localStorage continuously so a page refresh never loses state
       try {
         const t = syncStartRef.current != null
-          ? initialPosRef.current + (Date.now() - syncStartRef.current) / 1000 * SYNC_PLAYBACK_RATE
+          ? initialPosRef.current + (Date.now() - syncStartRef.current) / 1000
           : initialPosRef.current;
         localStorage.setItem("liri_nowplaying", JSON.stringify({
           ...nowPlayingSnapshotRef.current,
@@ -65,7 +64,7 @@ export function useNowPlaying({
       const snap = nowPlayingSnapshotRef.current;
       if (!snap || !snap.detectedSong) return;
       const t = syncStartRef.current != null
-        ? initialPosRef.current + (Date.now() - syncStartRef.current) / 1000 * SYNC_PLAYBACK_RATE
+        ? initialPosRef.current + (Date.now() - syncStartRef.current) / 1000
         : initialPosRef.current;
       const payload = JSON.stringify({ ...snap, playbackTime: Math.max(0, t), savedAt: Date.now() });
       try { sessionStorage.setItem("liri_nowplaying", payload); } catch {}

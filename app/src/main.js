@@ -6,11 +6,11 @@ import {
   logFlipEvent as libLogFlipEvent,
   logButtonEvent as libLogButtonEvent,
 } from "../base/lib/analytics.js";
-import { IS_IOS, ITUNES_PROXY, PLAYBACK_OFFSET_CORRECTION, AUTO_ADVANCE_OFFSET, SYNC_PLAYBACK_RATE } from "../base/lib/config.js";
+import { IS_IOS, ITUNES_PROXY, PLAYBACK_OFFSET_CORRECTION, AUTO_ADVANCE_OFFSET } from "../base/lib/config.js";
 import { useNowPlaying } from "./hooks/useNowPlaying.js";
 import { useLyricScroll } from "./hooks/useLyricScroll.js";
 import { useCast } from "./hooks/useCast.js";
-import { getSideGroups, hasSideData } from "../base/lib/sides.js";
+import { getSideGroups, hasSideData, getSideEndIndicesFromSides } from "../base/lib/sides.js";
 import {
   expandKnownVinylSplitTracks,
   expandKnownVinylSplitLyrics,
@@ -786,27 +786,6 @@ function Liri() {
   // Shared title normaliser: strip punctuation + lowercase so Discogs ↔ iTunes title
   // mismatches (feat., trailing periods, dashes, etc.) don't break side matching.
   const normTitle = normText;
-
-  // Convert our DB track list into side-end indices that advanceToNextTrack can use.
-  // Returns an array of iTunes track indices that are the last track of each side.
-  const getDbSideEndIndices = (itunesTracks, dbTracks) => {
-    const sideGroups = {};
-    dbTracks.forEach(t => {
-      if (!sideGroups[t.side]) sideGroups[t.side] = [];
-      sideGroups[t.side].push(t);
-    });
-    const sides = Object.keys(sideGroups).sort();
-    const result = [];
-    // For every side except the last, find the last track of that side in the iTunes list
-    sides.slice(0, -1).forEach(side => {
-      const sorted = sideGroups[side].sort((a, b) => a.track_number_on_side - b.track_number_on_side);
-      const lastTitle = normTitle(sorted[sorted.length - 1]?.title);
-      const idx = itunesTracks.findIndex(t => normTitle(t.trackName) === lastTitle);
-      if (idx >= 0) result.push(idx);
-    });
-    result.push(itunesTracks.length - 1); // album end
-    return result;
-  };
 
   // ── Flip notifications ──
   const playFlipChime = () => {
@@ -1753,10 +1732,8 @@ function Liri() {
     // Liri enter the next song before the physical groove gap.
     const dbRelease = vinylDbReleaseRef.current;
     const sideEnds = tTracks.length > 0
-      ? (getSideEndsFromSidesMap(tTracks, vinylSidesRef.current)
-        ?? (dbRelease?.vinyl_tracks?.length > 0
-          ? getDbSideEndIndices(tTracks, dbRelease.vinyl_tracks)
-          : getSideEndIndices(tTracks, albumTpsRef.current > 0 ? albumTpsRef.current : 0)))
+      ? (getSideEndIndicesFromSides(tTracks, vinylSidesRef.current, dbRelease?.vinyl_tracks)
+        ?? getSideEndIndices(tTracks, albumTpsRef.current > 0 ? albumTpsRef.current : 0))
       : [];
     const isKnownSideEnd = tIdx >= 0 && sideEnds.includes(tIdx);
     let effectiveDuration = trackDuration ?? songDuration ?? null;
@@ -1781,7 +1758,7 @@ function Liri() {
     // at the measured record rate. Leaving it at 1× made a five-minute song's
     // transition arrive roughly ten seconds after the record had already ended.
     const endClockElapsed = !isPaused && endClockStartRef.current != null
-      ? (Date.now() - endClockStartRef.current) / 1000 * SYNC_PLAYBACK_RATE
+      ? (Date.now() - endClockStartRef.current) / 1000
       : 0;
     const endPlaybackTime = Math.max(0, endClockPosRef.current + endClockElapsed);
     if (endPlaybackTime >= effectiveDuration && !autoAdvanceFiredRef.current) {
@@ -2187,8 +2164,8 @@ const startListeningWithShazam = async (isAutoAdvance = false) => {
       } = syncCalcRef.current;
       syncCalcRef.current = null;
       const elapsed = (Date.now() - recStart) / 1000;
-      initialPosRef.current = Math.max(0, startPos - phraseOffset + elapsed * SYNC_PLAYBACK_RATE);
-      endClockPosRef.current = Math.max(0, startPos - phraseOffset + elapsed * SYNC_PLAYBACK_RATE);
+      initialPosRef.current = Math.max(0, startPos - phraseOffset + elapsed);
+      endClockPosRef.current = Math.max(0, startPos - phraseOffset + elapsed);
     } else if (syncStartRef.current !== null) {
       // Sync is already running and no new timing data is available.
       // This happens when detectedSong is updated for a non-song reason (e.g. artwork
@@ -2198,9 +2175,9 @@ const startListeningWithShazam = async (isAutoAdvance = false) => {
       // NO Math.max(0) here: a negative position is the flip/track-gap park still
       // counting down. Clamping it to 0 was silently cancelling the needle-drop
       // window whenever detectedSong updated (e.g. artwork arriving) mid-park.
-      initialPosRef.current = initialPosRef.current + (Date.now() - syncStartRef.current) / 1000 * SYNC_PLAYBACK_RATE;
+      initialPosRef.current = initialPosRef.current + (Date.now() - syncStartRef.current) / 1000;
       if (endClockStartRef.current != null) {
-        endClockPosRef.current += (Date.now() - endClockStartRef.current) / 1000 * SYNC_PLAYBACK_RATE;
+        endClockPosRef.current += (Date.now() - endClockStartRef.current) / 1000;
       }
     } else {
       endClockPosRef.current = initialPosRef.current;
@@ -2236,7 +2213,7 @@ const startListeningWithShazam = async (isAutoAdvance = false) => {
     setIsPaused(false);
     clearInterval(syncIntervalRef.current);
     syncIntervalRef.current = setInterval(() => {
-      const t = initialPosRef.current + (Date.now() - syncStartRef.current) / 1000 * SYNC_PLAYBACK_RATE;
+      const t = initialPosRef.current + (Date.now() - syncStartRef.current) / 1000;
       // Clamp displayed time to 0 during the manual-flip pause window.
       setPlaybackTime(t < 0 ? 0 : t);
       const lrc = lyricsRef.current;
@@ -2281,7 +2258,7 @@ const startListeningWithShazam = async (isAutoAdvance = false) => {
       endClockStartRef.current = syncStartRef.current;
       clearInterval(syncIntervalRef.current); // never leak a second interval
       syncIntervalRef.current = setInterval(() => {
-        const t = initialPosRef.current + (Date.now() - syncStartRef.current) / 1000 * SYNC_PLAYBACK_RATE;
+        const t = initialPosRef.current + (Date.now() - syncStartRef.current) / 1000;
         setPlaybackTime(t);
         const lrc = lyricsRef.current;
         if (!lrc.length || lrc[0].time == null) return;
@@ -2303,7 +2280,7 @@ const startListeningWithShazam = async (isAutoAdvance = false) => {
       // nudges shift it, and resume restarts the clock from it.
       initialPosRef.current = Math.max(0, playbackTime);
       if (endClockStartRef.current != null) {
-        endClockPosRef.current += (Date.now() - endClockStartRef.current) / 1000 * SYNC_PLAYBACK_RATE;
+        endClockPosRef.current += (Date.now() - endClockStartRef.current) / 1000;
       }
       clearInterval(syncIntervalRef.current);
       setIsPaused(true);
@@ -2318,7 +2295,7 @@ const startListeningWithShazam = async (isAutoAdvance = false) => {
     // instead: it can't go below 0 — except while parked (negative position =
     // needle-drop countdown), where a nudge shifts the countdown itself.
     const running = !isPaused && syncStartRef.current != null;
-    const elapsedScaled = running ? (Date.now() - syncStartRef.current) / 1000 * SYNC_PLAYBACK_RATE : 0;
+    const elapsedScaled = running ? (Date.now() - syncStartRef.current) / 1000 : 0;
     const curPos = initialPosRef.current + elapsedScaled;
     const newPos = curPos < 0 ? curPos + s : Math.max(0, curPos + s);
     initialPosRef.current = newPos - elapsedScaled;
@@ -2577,20 +2554,6 @@ const startListeningWithShazam = async (isAutoAdvance = false) => {
     }
     return null;
   };
-  // Returns side-end indices from vinylSidesRef array (same source as library.html).
-  // A track is a side end when the next track has a different side letter.
-  // Returns null when the array is empty so callers can fall back to heuristic.
-  const getSideEndsFromSidesMap = (tracks, sidesArr) => {
-    if (!sidesArr.length) return null;
-    const ends = [];
-    for (let i = 0; i < tracks.length; i++) {
-      const thisSide = sidesArr[i]?.side?.toUpperCase();
-      const nextSide = i + 1 < tracks.length ? sidesArr[i + 1]?.side?.toUpperCase() : null;
-      if (thisSide && (nextSide === null || thisSide !== nextSide)) ends.push(i);
-    }
-    return ends.length ? ends : null;
-  };
-
   const getSideEndIndices = (tracks, tps) => {
     if (tracks.length <= 1) return [];
     if (tps > 0) {
@@ -2679,11 +2642,14 @@ const startListeningWithShazam = async (isAutoAdvance = false) => {
     }
     const nextIdx = resolvedIdx + 1;
 
-    // Priority: vinyl_sides (same source as library.html) → vinyl_tracks (Discogs title match) → heuristic
+    // Same side resolution the track picker shows (vinyl_sides → Discogs title
+    // match → positional), so a flip prompt can never land on a different track
+    // than the Side A/B/C/D headers the user is looking at. Runtime heuristic
+    // only when the album has no side data at all.
     const dbRelease = vinylDbReleaseRef.current;
     const effectiveTps = albumTpsRef.current > 0 ? albumTpsRef.current : 0;
-    const sideEnds = getSideEndsFromSidesMap(tracks, vinylSidesRef.current)
-      ?? (dbRelease?.vinyl_tracks?.length > 0 ? getDbSideEndIndices(tracks, dbRelease.vinyl_tracks) : getSideEndIndices(tracks, effectiveTps));
+    const sideEnds = getSideEndIndicesFromSides(tracks, vinylSidesRef.current, dbRelease?.vinyl_tracks)
+      ?? getSideEndIndices(tracks, effectiveTps);
     const isLastTrack = resolvedIdx === tracks.length - 1;
     const isSideEnd = sideEnds.includes(resolvedIdx);
     const showSideEndIfStillCurrent = () => {
@@ -2863,8 +2829,8 @@ const startListeningWithShazam = async (isAutoAdvance = false) => {
       : currentTrackIndexRef.current;
     const dbRelease = vinylDbReleaseRef.current;
     const effectiveTps = albumTpsRef.current > 0 ? albumTpsRef.current : 0;
-    const sideEnds = getSideEndsFromSidesMap(tracks, vinylSidesRef.current)
-      ?? (dbRelease?.vinyl_tracks?.length > 0 ? getDbSideEndIndices(tracks, dbRelease.vinyl_tracks) : getSideEndIndices(tracks, effectiveTps));
+    const sideEnds = getSideEndIndicesFromSides(tracks, vinylSidesRef.current, dbRelease?.vinyl_tracks)
+      ?? getSideEndIndices(tracks, effectiveTps);
     for (let s = 0; s < sideEnds.length; s++) {
       if (curIdx <= sideEnds[s]) {
         const nextFirst = sideEnds[s] + 1;
@@ -2911,8 +2877,8 @@ const startListeningWithShazam = async (isAutoAdvance = false) => {
       : currentTrackIndexRef.current;
     const dbRelease = vinylDbReleaseRef.current;
     const effectiveTps = albumTpsRef.current > 0 ? albumTpsRef.current : 0;
-    const sideEnds = getSideEndsFromSidesMap(tracks, vinylSidesRef.current)
-      ?? (dbRelease?.vinyl_tracks?.length > 0 ? getDbSideEndIndices(tracks, dbRelease.vinyl_tracks) : getSideEndIndices(tracks, effectiveTps));
+    const sideEnds = getSideEndIndicesFromSides(tracks, vinylSidesRef.current, dbRelease?.vinyl_tracks)
+      ?? getSideEndIndices(tracks, effectiveTps);
     for (let s = 0; s < sideEnds.length; s++) {
       if (curIdx <= sideEnds[s] && sideEnds[s] + 1 < tracks.length) {
         return "ABCDEFGH"[s + 1] || null;
@@ -2929,8 +2895,8 @@ const startListeningWithShazam = async (isAutoAdvance = false) => {
       : currentTrackIndexRef.current;
     const dbRelease = vinylDbReleaseRef.current;
     const effectiveTps = albumTpsRef.current > 0 ? albumTpsRef.current : 0;
-    const sideEnds = getSideEndsFromSidesMap(tracks, vinylSidesRef.current)
-      ?? (dbRelease?.vinyl_tracks?.length > 0 ? getDbSideEndIndices(tracks, dbRelease.vinyl_tracks) : getSideEndIndices(tracks, effectiveTps));
+    const sideEnds = getSideEndIndicesFromSides(tracks, vinylSidesRef.current, dbRelease?.vinyl_tracks)
+      ?? getSideEndIndices(tracks, effectiveTps);
     for (let s = 0; s < sideEnds.length; s++) {
       if (curIdx <= sideEnds[s] && sideEnds[s] + 1 < tracks.length) {
         const nextSideIndex = s + 1;
