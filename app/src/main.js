@@ -10,6 +10,8 @@ import { IS_IOS, ITUNES_PROXY, PLAYBACK_OFFSET_CORRECTION, AUTO_ADVANCE_OFFSET }
 import { useNowPlaying } from "./hooks/useNowPlaying.js";
 import { useLyricScroll } from "./hooks/useLyricScroll.js";
 import { useCast } from "./hooks/useCast.js";
+import { useTVSession } from "./hooks/useTVSession.js";
+import { useLiriConnect } from "./hooks/useLiriConnect.js";
 import { getSideGroups, hasSideData, getSideEndIndicesFromSides } from "../base/lib/sides.js";
 import {
   expandKnownVinylSplitTracks,
@@ -520,6 +522,11 @@ function Liri() {
   const [isPaused, setIsPaused] = useState(false);
   const [showCast, setShowCast] = useState(false);
   const cast = useCast({ mode, song: detectedSong, lyrics, playbackTime, isPaused });
+  const tv = useTVSession({ client: sb, user, mode, song: detectedSong, lyrics, playbackTime, isPaused });
+  const connect = useLiriConnect({ client: sb, user, mode, song: detectedSong, lyrics, playbackTime, isPaused });
+  const [tvCodeInput, setTVCodeInput] = useState(() => {
+    try { return localStorage.getItem("liri_tv_room") || ""; } catch { return ""; }
+  });
   const [kbToast, setKbToast] = useState(null);
   const kbToastTimerRef = useRef(null);
   const lyricTypeaheadRef = useRef("");
@@ -3783,23 +3790,43 @@ const startListeningWithShazam = async (isAutoAdvance = false) => {
     onClick: e => e.stopPropagation(),
     style: { width: "100%", maxWidth: "420px", padding: "30px", borderRadius: "24px", background: "#0f0f1c", border: "1px solid rgba(255,255,255,0.08)", boxShadow: "0 24px 80px rgba(0,0,0,0.65)", textAlign: "center" }
   }, /*#__PURE__*/React.createElement("div", {
-    style: { display: "flex", justifyContent: "center", marginBottom: "18px", color: cast.connected ? "#d4a846" : "rgba(240,230,211,0.55)" }
-  }, /*#__PURE__*/React.createElement(CastGlyph, { connected: cast.connected })), /*#__PURE__*/React.createElement("div", {
+    style: { display: "flex", justifyContent: "center", marginBottom: "18px", color: cast.connected || tv.connected ? "#d4a846" : "rgba(240,230,211,0.55)" }
+  }, /*#__PURE__*/React.createElement(CastGlyph, { connected: cast.connected || tv.connected })), /*#__PURE__*/React.createElement("div", {
     style: { fontSize: "11px", letterSpacing: "3px", textTransform: "uppercase", color: "#d4a846", marginBottom: "8px" }
-  }, "Cast lyrics"), /*#__PURE__*/React.createElement("div", {
+  }, "Liri on TV"), /*#__PURE__*/React.createElement("div", {
     style: { fontSize: "22px", fontWeight: "700", color: "#f0e6d3", marginBottom: "10px" }
-  }, cast.connected ? `Playing on ${cast.deviceName || "your TV"}` : "Put Liri on the big screen"), /*#__PURE__*/React.createElement("div", {
-    style: { fontSize: "14px", lineHeight: "1.65", color: "rgba(255,255,255,0.38)", marginBottom: "24px" }
-  }, cast.connected ? "The TV follows the same lyric clock. Pauses, nudges, and track changes update automatically." : "Choose a Chromecast or Google TV on this Wi-Fi network. Your record keeps playing normally; only the lyric experience goes to the TV."), cast.error && /*#__PURE__*/React.createElement("div", {
+  }, tv.connected ? `Connected to TV ${tv.roomCode}` : cast.connected ? `Playing on ${cast.deviceName || "your TV"}` : "Put Liri on the big screen"), /*#__PURE__*/React.createElement("div", {
+    style: { fontSize: "14px", lineHeight: "1.65", color: "rgba(255,255,255,0.38)", marginBottom: "20px" }
+  }, tv.connected || cast.connected ? "The TV follows the same lyric clock. Pauses, nudges, and track changes update automatically." : "Enter a six-digit Liri app code to link it to your account, or a four-digit browser code for quick casting."), (connect.activationError || tv.error || cast.error) && /*#__PURE__*/React.createElement("div", {
     style: { padding: "10px 12px", marginBottom: "16px", borderRadius: "10px", background: "rgba(201,128,122,0.1)", color: "#c9807a", fontSize: "12px" }
-  }, cast.error), cast.connected ? /*#__PURE__*/React.createElement("button", {
+  }, connect.activationError || tv.error || cast.error), connect.activatedDevice && /*#__PURE__*/React.createElement("div", {
+    style: { padding: "10px 12px", marginBottom: "16px", borderRadius: "10px", background: "rgba(212,168,70,0.1)", color: "#d4a846", fontSize: "12px" }
+  }, `${connect.activatedDevice.name || "Liri TV"} linked. Select “Move session here” on the TV.`), tv.connected ? /*#__PURE__*/React.createElement("button", {
+    onClick: tv.disconnect,
+    style: { width: "100%", border: "1px solid rgba(201,128,122,0.3)", borderRadius: "14px", padding: "14px", background: "rgba(201,128,122,0.08)", color: "#c9807a", fontSize: "14px", fontWeight: "700", fontFamily: "inherit" }
+  }, "Disconnect TV") : /*#__PURE__*/React.createElement("div", {
+    style: { display: "flex", gap: "10px", marginBottom: cast.supported ? "18px" : "4px" }
+  }, /*#__PURE__*/React.createElement("input", {
+    value: tvCodeInput,
+    onChange: e => setTVCodeInput(e.target.value.replace(/\D/g, "").slice(0, 6)),
+    onKeyDown: e => { if (e.key === "Enter") tvCodeInput.length === 6 ? connect.activateDevice(tvCodeInput) : tv.connect(tvCodeInput); },
+    inputMode: "numeric",
+    autoComplete: "one-time-code",
+    placeholder: "TV code",
+    "aria-label": "TV activation or quick-cast code",
+    style: { minWidth: 0, flex: 1, border: "1px solid rgba(255,255,255,0.12)", borderRadius: "14px", padding: "14px 16px", background: "rgba(255,255,255,0.05)", color: "#f0e6d3", fontSize: "18px", fontWeight: "700", letterSpacing: "5px", textAlign: "center", fontFamily: "inherit", outline: "none" }
+  }), /*#__PURE__*/React.createElement("button", {
+    onClick: () => tvCodeInput.length === 6 ? connect.activateDevice(tvCodeInput) : tv.connect(tvCodeInput),
+    disabled: tv.connecting || connect.activating || (tvCodeInput.length !== 4 && tvCodeInput.length !== 6),
+    style: { border: "none", borderRadius: "14px", padding: "14px 18px", background: tvCodeInput.length === 4 || tvCodeInput.length === 6 ? "linear-gradient(135deg,#d4a846,#c9807a)" : "rgba(255,255,255,0.07)", color: tvCodeInput.length === 4 || tvCodeInput.length === 6 ? "#080810" : "rgba(255,255,255,0.25)", fontSize: "14px", fontWeight: "800", fontFamily: "inherit" }
+  }, tv.connecting || connect.activating ? "Connecting…" : tvCodeInput.length === 6 ? "Link TV" : "Connect")), cast.supported && (cast.connected ? /*#__PURE__*/React.createElement("button", {
     onClick: cast.stopSession,
     style: { width: "100%", border: "1px solid rgba(201,128,122,0.3)", borderRadius: "14px", padding: "14px", background: "rgba(201,128,122,0.08)", color: "#c9807a", fontSize: "14px", fontWeight: "700", fontFamily: "inherit" }
   }, "Stop casting") : /*#__PURE__*/React.createElement("button", {
     onClick: cast.requestSession,
     disabled: !cast.ready,
     style: { width: "100%", border: "none", borderRadius: "14px", padding: "15px", background: cast.ready ? "linear-gradient(135deg,#d4a846,#c9807a)" : "rgba(255,255,255,0.07)", color: cast.ready ? "#080810" : "rgba(255,255,255,0.25)", fontSize: "14px", fontWeight: "800", fontFamily: "inherit", cursor: cast.ready ? "pointer" : "default" }
-  }, cast.ready ? "Choose a TV" : "Looking for Cast devices…"), /*#__PURE__*/React.createElement("button", {
+  }, cast.ready ? "Choose Chromecast instead" : "Looking for Cast devices…")), /*#__PURE__*/React.createElement("button", {
     onClick: () => setShowCast(false),
     style: { marginTop: "12px", border: "none", background: "none", color: "rgba(255,255,255,0.3)", padding: "8px 16px", fontSize: "13px", fontFamily: "inherit" }
   }, "Close"))), showAlbumPicker && /*#__PURE__*/React.createElement("div", {
@@ -4861,12 +4888,12 @@ const startListeningWithShazam = async (isAutoAdvance = false) => {
     renderListeningTitleNav({ fontSize: "13px", artistFontSize: "11px" })
   ),
   (() => { const si = getSideInfo(); return si ? /*#__PURE__*/React.createElement("div", { style: { fontSize: "10px", fontWeight: "700", letterSpacing: "2px", color: "rgba(212,168,70,0.85)", textTransform: "uppercase", flexShrink: 0 } }, si.side ? `Side ${si.side} \xB7 ${si.track}` : `Track ${si.track}`) : null; })(),
-  cast.supported && /*#__PURE__*/React.createElement("button", {
+  /*#__PURE__*/React.createElement("button", {
     onClick: () => setShowCast(true),
-    title: cast.connected ? `Casting to ${cast.deviceName || "TV"}` : "Cast lyrics to TV",
+    title: tv.connected ? `Connected to TV ${tv.roomCode}` : cast.connected ? `Casting to ${cast.deviceName || "TV"}` : "Show lyrics on TV",
     "aria-label": "Cast lyrics to TV",
-    style: { position: "relative", width: "30px", height: "30px", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0, padding: 0, border: "none", background: "none", color: cast.connected ? "#d4a846" : "rgba(255,255,255,0.45)" }
-  }, /*#__PURE__*/React.createElement(CastGlyph, { connected: cast.connected }), cast.connected && /*#__PURE__*/React.createElement("span", {
+    style: { position: "relative", width: "30px", height: "30px", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0, padding: 0, border: "none", background: "none", color: cast.connected || tv.connected ? "#d4a846" : "rgba(255,255,255,0.45)" }
+  }, /*#__PURE__*/React.createElement(CastGlyph, { connected: cast.connected || tv.connected }), (cast.connected || tv.connected) && /*#__PURE__*/React.createElement("span", {
     style: { position: "absolute", top: "2px", right: "1px", width: "5px", height: "5px", borderRadius: "50%", background: "#d4a846", boxShadow: "0 0 7px rgba(212,168,70,0.9)" }
   })),
   /*#__PURE__*/React.createElement("button", {
@@ -4931,12 +4958,12 @@ const startListeningWithShazam = async (isAutoAdvance = false) => {
       marginLeft: "12px",
       flexShrink: 0
     }
-  }, cast.supported && /*#__PURE__*/React.createElement("button", {
+  }, /*#__PURE__*/React.createElement("button", {
     onClick: () => setShowCast(true),
-    title: cast.connected ? `Casting to ${cast.deviceName || "TV"}` : "Cast lyrics to TV",
+    title: tv.connected ? `Connected to TV ${tv.roomCode}` : cast.connected ? `Casting to ${cast.deviceName || "TV"}` : "Show lyrics on TV",
     "aria-label": "Cast lyrics to TV",
-    style: { position: "relative", width: "30px", height: "30px", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0, padding: 0, border: "none", background: "none", color: cast.connected ? "#d4a846" : "rgba(255,255,255,0.45)" }
-  }, /*#__PURE__*/React.createElement(CastGlyph, { connected: cast.connected }), cast.connected && /*#__PURE__*/React.createElement("span", {
+    style: { position: "relative", width: "30px", height: "30px", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0, padding: 0, border: "none", background: "none", color: cast.connected || tv.connected ? "#d4a846" : "rgba(255,255,255,0.45)" }
+  }, /*#__PURE__*/React.createElement(CastGlyph, { connected: cast.connected || tv.connected }), (cast.connected || tv.connected) && /*#__PURE__*/React.createElement("span", {
     style: { position: "absolute", top: "2px", right: "1px", width: "5px", height: "5px", borderRadius: "50%", background: "#d4a846", boxShadow: "0 0 7px rgba(212,168,70,0.9)" }
   })), /*#__PURE__*/React.createElement("button", {
     onClick: () => setShowSettings(!showSettings),

@@ -1,4 +1,23 @@
-# Google Cast setup
+# TV display setup
+
+Liri supports two transports that share the same full-screen lyric receiver:
+
+- Google Cast for Chromecast and Google TV.
+- A four-digit room code for smart-TV browsers and the packaged Samsung app.
+
+## Universal TV-code flow
+
+1. Open `https://getliri.com/tv`, or launch the installed Liri Samsung app.
+2. Open the TV panel in Liri while signed in.
+3. Enter the four-digit code shown on the TV and select **Connect**.
+4. Verify artwork, lyrics, pause/resume, timing nudges, and track changes update.
+5. Select **Disconnect TV** and verify the pairing screen returns.
+
+The sender upserts the authenticated user's row in `cast_sessions`; the TV has
+read-only access and subscribes through Supabase Realtime. Receivers discard
+stale sessions after 15 seconds without a sender update.
+
+## Google Cast setup
 
 Liri uses a Custom Web Receiver. Desktop Chrome is the sender; `tv.html` is the
 receiver rendered by Chromecast or Google TV. No audio is cast and the browser

@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<widget xmlns="http://www.w3.org/ns/widgets"
+        xmlns:tizen="http://tizen.org/ns/widgets"
+        id="https://getliri.com/tv-app"
+        version="1.0.0"
+        viewmodes="maximized">
+  <tizen:application id="LiriTV0001.LiriTV" package="LiriTV0001" required_version="6.5"/>
+  <content src="index.html"/>
+  <feature name="http://tizen.org/feature/screen.size.all"/>
+  <icon src="icon.png"/>
+  <name>Liri</name>
+  <description>Lyrics that follow your record.</description>
+  <tizen:profile name="tv-samsung"/>
+  <tizen:setting screen-orientation="landscape"
+                 context-menu="disable"
+                 background-support="disable"
+                 encryption="disable"
+                 install-location="auto"
+                 hwkey-event="enable"/>
+  <tizen:privilege name="http://tizen.org/privilege/internet"/>
+  <access origin="https://xjdjpaxgymgbvcwmvorc.supabase.co" subdomains="true"/>
+  <!-- Trusted artwork origins used by Liri's music metadata providers. -->
+  <access origin="https://mzstatic.com" subdomains="true"/>
+  <access origin="https://discogs.com" subdomains="true"/>
+  <access origin="https://scdn.co" subdomains="true"/>
+  <access origin="https://coverartarchive.org" subdomains="true"/>
+</widget>

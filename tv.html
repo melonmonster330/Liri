@@ -33,7 +33,7 @@
     html, body { height: 100%; overflow: hidden; background: #050508; color: #f0e6d3; font-family: -apple-system, BlinkMacSystemFont, 'Helvetica Neue', sans-serif; }
 
     #backdrop {
-      position: fixed; inset: -40px; z-index: 0;
+      position: fixed; top: -40px; right: -40px; bottom: -40px; left: -40px; z-index: 0;
       background-size: cover; background-position: center;
       filter: blur(120px) brightness(0.12) saturate(2.5);
       transition: background-image 1.5s ease, opacity 1s ease;
@@ -42,14 +42,14 @@
     #backdrop.visible { opacity: 1; }
 
     #overlay {
-      position: fixed; inset: 0; z-index: 1;
+      position: fixed; top: 0; right: 0; bottom: 0; left: 0; z-index: 1;
       background: linear-gradient(to bottom, rgba(5,5,8,0.7) 0%, rgba(5,5,8,0.2) 40%, rgba(5,5,8,0.8) 100%);
       pointer-events: none;
     }
 
     /* ── WAITING screen ── */
     #waiting {
-      position: fixed; inset: 0; z-index: 10;
+      position: fixed; top: 0; right: 0; bottom: 0; left: 0; z-index: 10;
       display: flex; flex-direction: column; align-items: center; justify-content: center;
       gap: 0; transition: opacity 0.6s ease;
     }
@@ -70,6 +70,50 @@
     #code-hint { font-size: 18px; color: rgba(255,255,255,0.22); text-align: center; line-height: 1.7; margin-top: 8px; }
     #code-hint strong { color: rgba(255,255,255,0.5); font-weight: 600; }
 
+    /* ── Liri Connect home (installed Samsung app) ── */
+    #connect-home { display: none; flex-direction: column; align-items: center; text-align: center; width: min(1080px, 88vw); max-height: 78vh; }
+    #connect-home.show { display: flex; }
+    #connect-eyebrow { font-size: 13px; letter-spacing: 4px; text-transform: uppercase; color: #d4a846; margin-bottom: 18px; }
+    #connect-art { width: 180px; height: 180px; object-fit: cover; border-radius: 22px; display: none; margin-bottom: 26px; box-shadow: 0 20px 70px rgba(0,0,0,0.65); }
+    #connect-art.show { display: block; }
+    #connect-title { font-size: 48px; line-height: 1.15; font-weight: 800; color: #fff; }
+    #connect-artist { font-size: 26px; color: rgba(255,255,255,0.45); margin-top: 10px; }
+    #connect-status { font-size: 18px; color: rgba(255,255,255,0.28); margin-top: 24px; }
+    #move-here {
+      display: none; margin-top: 34px; border: 0; border-radius: 16px; padding: 18px 32px;
+      background: linear-gradient(135deg,#d4a846,#c9807a); color: #080810;
+      font: 800 20px inherit; cursor: pointer;
+    }
+    #move-here.show { display: block; }
+    #tv-library { width: 100%; text-align: left; overflow: hidden; }
+    #tv-library-title { font-size: 42px; color: #fff; margin: 4px 0 22px; }
+    #tv-library-subtitle { font-size: 16px; letter-spacing: 2px; color: rgba(255,255,255,.35); text-transform: uppercase; margin-bottom: 18px; }
+    #tv-list { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 18px; max-height: 56vh; overflow-y: auto; scrollbar-width: none; }
+    .tv-album, .tv-track { border: 2px solid transparent; border-radius: 16px; background: rgba(255,255,255,.055); color: #fff; padding: 14px; min-height: 120px; min-width: 0; }
+    .tv-album.selected, .tv-track.selected { border-color: #d4a846; background: rgba(212,168,70,.18); transform: scale(1.025); }
+    .tv-album-art { position: relative; width: 100%; padding-top: 100%; border-radius: 10px; overflow: hidden; background: rgba(255,255,255,.08); margin-bottom: 10px; }
+    .tv-album-art img { position: absolute; top: 0; left: 0; width: 100%; height: 100%; object-fit: cover; display: block; }
+    .tv-album-name { font-size: 19px; font-weight: 800; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .tv-album-artist { font-size: 15px; color: rgba(255,255,255,.45); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; margin-top: 4px; }
+    #tv-list.tracks { display: flex; flex-direction: column; gap: 8px; max-height: 56vh; overflow-y: auto; scrollbar-width: none; }
+    #tv-list::-webkit-scrollbar { display: none; }
+    .tv-track { min-height: 0; padding: 14px 18px; display:flex; gap:15px; align-items:center; font-size: 20px; }
+    .tv-track-no { width: 34px; color: #d4a846; font-variant-numeric: tabular-nums; }
+    .tv-track-artist { margin-left:auto; color: rgba(255,255,255,.45); font-size: 16px; }
+    #tv-nav-hint { margin-top: 24px; color: rgba(255,255,255,.28); font-size: 15px; letter-spacing: 1px; }
+    #tv-auth-actions { display:flex; flex-direction:column; gap:12px; width:min(440px, 72vw); margin-top:28px; }
+    .tv-auth-action { border:2px solid transparent; border-radius:15px; padding:17px 20px; background:rgba(255,255,255,.06); color:#fff; text-align:left; font:700 19px inherit; }
+    .tv-auth-action small { display:block; margin-top:5px; color:rgba(255,255,255,.42); font-size:14px; font-weight:400; }
+    .tv-auth-action.selected { border-color:#d4a846; background:rgba(212,168,70,.18); }
+
+    #tv-controls {
+      position: fixed; left: 50%; bottom: 54px; z-index: 30; transform: translateX(-50%);
+      display: none; gap: 18px; align-items: center; padding: 12px 20px;
+      border-radius: 18px; background: rgba(8,8,16,0.72); border: 1px solid rgba(255,255,255,0.08);
+    }
+    #tv-controls.show { display: flex; }
+    .tv-control { color: rgba(255,255,255,0.65); font-size: 15px; letter-spacing: 1px; }
+
     /* Cast mode waiting */
     #waiting-cast { display: none; flex-direction: column; align-items: center; gap: 16px; margin-top: 40px; text-align: center; }
     #waiting-cast.show { display: flex; }
@@ -78,7 +122,7 @@
 
     /* ── LYRICS screen ── */
     #lyrics-screen {
-      position: fixed; inset: 0; z-index: 10;
+      position: fixed; top: 0; right: 0; bottom: 0; left: 0; z-index: 10;
       display: flex; flex-direction: column;
       opacity: 0; transition: opacity 0.8s ease; pointer-events: none;
     }
@@ -133,6 +177,16 @@
         Open Liri on your phone → tap <strong>📺</strong> → enter this code
       </div>
     </div>
+
+    <div id="connect-home">
+      <img id="connect-art" alt="" />
+      <div id="connect-eyebrow">Liri Connect</div>
+      <div id="connect-title">Ready for a record</div>
+      <div id="connect-artist"></div>
+      <div id="connect-status">Start listening on another Liri device.</div>
+      <button id="move-here">Move session here</button>
+      <div id="tv-library"></div>
+    </div>
   </div>
 
   <!-- LYRICS screen -->
@@ -149,6 +203,11 @@
     </div>
     <div id="room-badge"></div>
   </div>
+  <div id="tv-controls">
+    <span class="tv-control">◀ −1s</span>
+    <span class="tv-control" id="tv-pause-label">⏸ Play / pause</span>
+    <span class="tv-control">+1s ▶</span>
+  </div>
 
   <script>
     // ── Constants ──────────────────────────────────────────────────────────────
@@ -157,19 +216,33 @@
     const CAST_NS      = "urn:x-cast:com.getliri.lyrics"; // Cast message namespace
 
     let syncInterval   = null;
+    let sessionExpiryTimer = null;
+    let activeAnchorPos = 0;
+    let activeAnchorAt = Date.now();
+    let activePaused = false;
 
     // ── Shared display functions (used by both Cast and browser mode) ──────────
 
     function showSession(data) {
       clearInterval(syncInterval);
+      clearTimeout(sessionExpiryTimer);
+      // Linked-session displays expire if their owner disappears. A track the
+      // viewer opened from the TV's own library stays open until they press Back.
+      if (!data.standalone) sessionExpiryTimer = setTimeout(endSession, 15000);
 
       const sentAt      = Number(data.sentAt) || Date.now();
       const paused      = !!data.paused;
-      const initialPos = data.playbackTime ?? data.initialPos ?? data.initial_position ?? 0;
+      // Postgres `numeric` values arrive through PostgREST as strings. Coerce
+      // before adding elapsed time; otherwise `"42.5" + 0.08` concatenates and
+      // the lyric clock quickly becomes an invalid number.
+      const initialPos = Number(data.playbackTime ?? data.initialPos ?? data.initial_position ?? 0) || 0;
       // Compensate for the sender-to-receiver trip, then let the TV interpolate
       // locally. Periodic STATE anchors correct nudges and timer drift.
       const anchorPos   = initialPos + (paused ? 0 : Math.max(0, Date.now() - sentAt) / 1000);
       const anchorAt    = Date.now();
+      activeAnchorPos = anchorPos;
+      activeAnchorAt = anchorAt;
+      activePaused = paused;
       const lyrics     = data.lyrics ?? data.lyrics_json ?? [];
       const song        = data.song || {};
       const artwork    = song.artwork ?? data.artworkUrl ?? data.artwork_url ?? null;
@@ -250,14 +323,287 @@
       });
     }
 
+    function endSession() {
+      clearInterval(syncInterval);
+      clearTimeout(sessionExpiryTimer);
+      document.getElementById("lyrics-screen").classList.remove("visible");
+      document.getElementById("waiting").classList.remove("hidden");
+      document.getElementById("tv-controls").classList.remove("show");
+    }
+
+    function currentPlaybackTime() {
+      return activeAnchorPos + (activePaused ? 0 : (Date.now() - activeAnchorAt) / 1000);
+    }
+
     // ── MODE DETECTION ─────────────────────────────────────────────────────────
     // The Cast Receiver SDK sets up `cast.framework` on the window.
     // If it's present, we're running inside a Chromecast. Otherwise, browser mode.
 
-    if (typeof cast !== "undefined" && cast.framework) {
+    if (typeof tizen !== "undefined" && tizen.application) {
+      initLiriConnectMode();
+    } else if (typeof cast !== "undefined" && cast.framework) {
       initCastReceiverMode();
     } else {
       initBrowserMode();
+    }
+
+    // ── LIRI CONNECT MODE (installed Samsung app) ─────────────────────────────
+
+    function connectRandomHex(byteCount) {
+      const bytes = new Uint8Array(byteCount);
+      crypto.getRandomValues(bytes);
+      return Array.from(bytes, b => b.toString(16).padStart(2, "0")).join("");
+    }
+
+    function connectUuid() {
+      const h = connectRandomHex(16).split("");
+      h[12] = "4";
+      h[16] = ((parseInt(h[16], 16) & 3) | 8).toString(16);
+      const s = h.join("");
+      return `${s.slice(0,8)}-${s.slice(8,12)}-${s.slice(12,16)}-${s.slice(16,20)}-${s.slice(20)}`;
+    }
+
+    function initLiriConnectMode() {
+      const sb = supabase.createClient(SB_URL, SB_KEY);
+      let deviceId = localStorage.getItem("liri_connect_tv_id");
+      let deviceToken = localStorage.getItem("liri_connect_tv_token");
+      if (!deviceId || !deviceToken) {
+        deviceId = connectUuid();
+        deviceToken = connectRandomHex(32);
+        localStorage.setItem("liri_connect_tv_id", deviceId);
+        localStorage.setItem("liri_connect_tv_token", deviceToken);
+      }
+
+      document.getElementById("waiting-cast").classList.remove("show");
+      document.getElementById("room-badge").textContent = "Liri Connect";
+
+      let activationCode = localStorage.getItem("liri_connect_activation_code");
+      if (!/^\d{6}$/.test(activationCode || "")) {
+        activationCode = String(Math.floor(100000 + Math.random() * 900000));
+        localStorage.setItem("liri_connect_activation_code", activationCode);
+      }
+
+      let connectState = null;
+      let lastRevision = null;
+      let updateInFlight = false;
+      let libraryItems = [];
+      let libraryView = "albums";
+      let selectedIndex = 0;
+      let selectedAlbum = null;
+      let authIndex = 0;
+      let appScreen = "auth";
+
+      const parseStandaloneLyrics = track => {
+        if (track.lrc) {
+          const rows = [];
+          String(track.lrc).split(/\r?\n/).forEach(line => {
+            const match = line.match(/^\[(\d+):(\d+(?:\.\d+)?)\]\s*(.*)$/);
+            if (match && match[3]) rows.push({ time: Number(match[1]) * 60 + Number(match[2]), text: match[3] });
+          });
+          if (rows.length) return rows;
+        }
+        return String(track.plainLyrics || "").split(/\r?\n/).map(text => ({ text })).filter(row => row.text.trim());
+      };
+
+      const renderLibrary = () => {
+        const root = document.getElementById("tv-library");
+        const albumMode = libraryView === "albums";
+        root.innerHTML = `<div id="tv-library-subtitle">${albumMode ? "Your vinyl library" : selectedAlbum.album}</div><div id="tv-library-title">${albumMode ? "Choose a record" : "Choose a track"}</div><div id="tv-list" class="${albumMode ? "" : "tracks"}"></div><div id="tv-nav-hint">◀ ▶ navigate &nbsp; · &nbsp; Select to open &nbsp; · &nbsp; Return to go back</div>`;
+        const list = root.querySelector("#tv-list");
+        libraryItems.forEach((item, index) => {
+          const node = document.createElement("div");
+          node.className = `${albumMode ? "tv-album" : "tv-track"}${index === selectedIndex ? " selected" : ""}`;
+          if (albumMode) node.innerHTML = `<div class="tv-album-art"><img src="${item.artwork || ""}" alt=""></div><div class="tv-album-name">${item.album || "Untitled record"}</div><div class="tv-album-artist">${item.artist || ""}</div>`;
+          else node.innerHTML = `<span class="tv-track-no">${item.number || index + 1}</span><span>${item.title || "Untitled track"}</span><span class="tv-track-artist">${item.artist || ""}</span>`;
+          list.appendChild(node);
+        });
+        const chosen = list.querySelector(".selected");
+        if (chosen) chosen.scrollIntoView({ block: "nearest", inline: "nearest" });
+      };
+
+      const loadLibrary = async () => {
+        const { data, error } = await sb.rpc("get_liri_tv_library", { p_device_id: deviceId, p_token: deviceToken });
+        if (error) { document.getElementById("connect-status").textContent = "Couldn’t load your library yet."; return; }
+        appScreen = "library"; libraryView = "albums"; selectedIndex = 0; libraryItems = data?.albums || [];
+        document.getElementById("code-block").style.display = "none";
+        document.getElementById("connect-home").classList.add("show");
+        document.getElementById("connect-art").classList.remove("show");
+        document.getElementById("connect-eyebrow").textContent = "Liri on this Frame";
+        document.getElementById("connect-title").textContent = "";
+        document.getElementById("connect-artist").textContent = "";
+        document.getElementById("connect-status").textContent = libraryItems.length ? "Your records, right here." : "Your Liri library is empty.";
+        renderLibrary();
+      };
+
+      const openSelected = async () => {
+        if (libraryView === "albums") {
+          selectedAlbum = libraryItems[selectedIndex];
+          if (!selectedAlbum?.collectionId) return;
+          const { data, error } = await sb.rpc("get_liri_tv_album", { p_device_id: deviceId, p_token: deviceToken, p_collection_id: String(selectedAlbum.collectionId) });
+          if (error) return;
+          libraryView = "tracks"; selectedIndex = 0; libraryItems = data?.tracks || []; renderLibrary(); return;
+        }
+        const track = libraryItems[selectedIndex];
+        if (!track) return;
+        document.getElementById("connect-home").classList.remove("show");
+        showSession({ standalone: true, song: { title: track.title, artist: track.artist, artwork: selectedAlbum?.artwork }, lyrics: parseStandaloneLyrics(track), playbackTime: 0, paused: true, sentAt: Date.now() });
+      };
+
+      const showActivation = () => {
+        appScreen = "auth";
+        document.getElementById("code-block").style.display = "none";
+        document.getElementById("connect-home").classList.add("show");
+        document.getElementById("connect-eyebrow").textContent = "Welcome to Liri";
+        document.getElementById("connect-title").textContent = "Your music, on this Frame";
+        document.getElementById("connect-artist").textContent = "";
+        document.getElementById("connect-status").textContent = "Sign in once, then use Liri here independently.";
+        document.getElementById("tv-library").innerHTML = `<div id="tv-auth-actions"><div class="tv-auth-action ${authIndex === 0 ? "selected" : ""}">Link with phone<small>Sign in to your existing Liri account</small></div><div class="tv-auth-action ${authIndex === 1 ? "selected" : ""}">Create a Liri account<small>Make an account on your phone, then link this TV</small></div></div><div id="tv-nav-hint">▲ ▼ choose &nbsp; · &nbsp; Select to continue</div>`;
+        document.getElementById("waiting").classList.remove("hidden");
+      };
+
+      const showPhoneCode = () => {
+        appScreen = "code";
+        document.getElementById("connect-home").classList.remove("show");
+        document.getElementById("code-block").style.display = "flex";
+        document.getElementById("code-label").textContent = "Link this Frame to Liri";
+        document.getElementById("tv-code").textContent = activationCode;
+        document.getElementById("code-hint").innerHTML = authIndex === 1
+          ? "Create your account at <strong>getliri.com/app</strong>, then tap TV and enter this code"
+          : "Open Liri on your phone → tap <strong>TV</strong> → enter this code";
+      };
+
+      const renderConnectHome = state => {
+        document.getElementById("lyrics-screen").classList.remove("visible");
+        document.getElementById("tv-controls").classList.remove("show");
+        document.getElementById("code-block").style.display = "none";
+        document.getElementById("connect-home").classList.add("show");
+        document.getElementById("waiting").classList.remove("hidden");
+        const button = document.getElementById("move-here");
+        const art = document.getElementById("connect-art");
+
+        if (!state.hasSession) {
+          art.classList.remove("show");
+          document.getElementById("connect-title").textContent = "Ready for a record";
+          document.getElementById("connect-artist").textContent = "";
+          document.getElementById("connect-status").textContent = "Start listening on another Liri device.";
+          button.classList.remove("show");
+          return;
+        }
+        if (state.song?.artwork) { art.src = state.song.artwork; art.classList.add("show"); }
+        else art.classList.remove("show");
+        document.getElementById("connect-title").textContent = state.song?.title || "Current session";
+        document.getElementById("connect-artist").textContent = state.song?.artist || "";
+        document.getElementById("connect-status").textContent = `Playing on ${state.ownerDeviceName || "another Liri device"}`;
+        button.classList.add("show");
+      };
+
+      const register = async () => {
+        const { error } = await sb.rpc("register_liri_device", {
+          p_device_id: deviceId,
+          p_token: deviceToken,
+          p_activation_code: activationCode,
+          p_name: "Living Room Frame",
+          p_platform: "samsung-tv",
+        });
+        if (error) {
+          // Most registration failures are activation-code collisions. A fresh
+          // code is safe because device identity and secret do not change.
+          activationCode = String(Math.floor(100000 + Math.random() * 900000));
+          localStorage.setItem("liri_connect_activation_code", activationCode);
+          document.getElementById("tv-code").textContent = activationCode;
+          return false;
+        }
+        return true;
+      };
+
+      const loadState = async () => {
+        const { data, error } = await sb.rpc("get_liri_tv_state", {
+          p_device_id: deviceId,
+          p_token: deviceToken,
+        });
+        if (error) { if (appScreen !== "code") showActivation(); return; }
+        connectState = data;
+        if (!data.activated) { if (appScreen !== "code") showActivation(); return; }
+        // The installed app starts from the account library. A moved session is
+        // optional, never the app's landing experience.
+        loadLibrary();
+      };
+
+      const updateOwnedSession = async (position, paused) => {
+        if (updateInFlight || !connectState?.isOwner) return;
+        updateInFlight = true;
+        await sb.rpc("update_liri_session_from_tv", {
+          p_device_id: deviceId, p_token: deviceToken,
+          p_playback_position: Math.max(0, position), p_paused: paused,
+        });
+        updateInFlight = false;
+      };
+
+      document.getElementById("move-here").addEventListener("click", async () => {
+        const button = document.getElementById("move-here");
+        button.textContent = "Moving…";
+        const { data, error } = await sb.rpc("move_liri_session_to_tv", {
+          p_device_id: deviceId, p_token: deviceToken,
+        });
+        button.textContent = "Move session here";
+        if (!error && data) {
+          connectState = data;
+          lastRevision = data.revision;
+          showSession(data);
+          document.getElementById("connect-home").classList.remove("show");
+          document.getElementById("tv-controls").classList.add("show");
+        }
+      });
+
+      document.addEventListener("keydown", event => {
+        const key = event.keyCode;
+        if (appScreen === "auth") {
+          if (key === 38 || key === 40) { authIndex = authIndex ? 0 : 1; showActivation(); return; }
+          if (key === 13 || key === 10252) { showPhoneCode(); return; }
+          // Do not hand Back to Samsung while the user is still inside Liri's
+          // sign-in screen. It is an app-level navigation boundary.
+          if (key === 10009 || key === 461) { showActivation(); return; }
+          return;
+        }
+        if (document.getElementById("connect-home").classList.contains("show")) {
+          if (key === 13 || key === 10252) { openSelected(); return; }
+          if (key === 10009 || key === 461) {
+            if (libraryView === "tracks") { libraryView = "albums"; selectedIndex = 0; loadLibrary(); }
+            return;
+          }
+          if ([37, 38, 39, 40].includes(key) && libraryItems.length) {
+            const columns = libraryView === "albums" ? 4 : 1;
+            if (key === 37) selectedIndex = Math.max(0, selectedIndex - 1);
+            if (key === 39) selectedIndex = Math.min(libraryItems.length - 1, selectedIndex + 1);
+            if (key === 38) selectedIndex = Math.max(0, selectedIndex - columns);
+            if (key === 40) selectedIndex = Math.min(libraryItems.length - 1, selectedIndex + columns);
+            renderLibrary();
+          }
+          return;
+        }
+        if (key === 10009 || key === 461) {
+          if (document.getElementById("lyrics-screen").classList.contains("visible")) {
+            endSession(); loadLibrary(); return;
+          }
+        }
+        if (!connectState?.isOwner) return;
+        if (event.keyCode === 13 || event.keyCode === 10252) {
+          activeAnchorPos = currentPlaybackTime(); activeAnchorAt = Date.now(); activePaused = !activePaused;
+        } else if (event.keyCode === 37) {
+          activeAnchorPos = Math.max(0, currentPlaybackTime() - 1); activeAnchorAt = Date.now();
+        } else if (event.keyCode === 39) {
+          activeAnchorPos = currentPlaybackTime() + 1; activeAnchorAt = Date.now();
+        } else return;
+        updateOwnedSession(currentPlaybackTime(), activePaused);
+      });
+
+      showActivation();
+      register().then(loadState);
+      setInterval(() => { if (!document.getElementById("connect-home").classList.contains("show")) loadState(); }, 1500);
+      setInterval(() => {
+        if (connectState?.isOwner) updateOwnedSession(currentPlaybackTime(), activePaused);
+      }, 3000);
+      setInterval(() => { if (!connectState?.activated) register(); }, 10 * 60 * 1000);
     }
 
     // ── CAST RECEIVER MODE ─────────────────────────────────────────────────────
@@ -278,9 +624,7 @@
         if (msg.type === "STATE" || msg.type === "SESSION_START" || msg.type === "TRACK_ADVANCE") {
           showSession(msg);
         } else if (msg.type === "SESSION_END") {
-          clearInterval(syncInterval);
-          document.getElementById("lyrics-screen").classList.remove("visible");
-          document.getElementById("waiting").classList.remove("hidden");
+          endSession();
           document.getElementById("cast-status").textContent = "Ready to receive";
         }
       });
@@ -297,6 +641,7 @@
     function initBrowserMode() {
       const sb = supabase.createClient(SB_URL, SB_KEY);
       let realtimeChannel = null;
+      let lastSeenUpdate = null;
 
       // Generate or restore a stable 4-digit code (persists across page refresh via hash)
       let code = location.hash.replace("#", "").toUpperCase();
@@ -315,21 +660,31 @@
           filter: "room_code=eq." + code
         }, payload => {
           if (payload.new?.is_active) showSession(payload.new);
+          else if (payload.new && payload.new.is_active === false) endSession();
         })
-        .subscribe(status => {
-          if (status === "CHANNEL_ERROR" || status === "TIMED_OUT") {
-            document.getElementById("code-hint").textContent = "Connection error — refresh to try again.";
-          }
-        });
+        .subscribe();
 
-      // Also fetch any existing active session immediately (in case phone already connected)
-      sb.from("cast_sessions")
-        .select("*").eq("room_code", code).eq("is_active", true)
-        .order("updated_at", { ascending: false }).limit(1)
+      // Polling is an intentional fallback for older TV firmware and Supabase
+      // projects where Postgres Changes has not yet been enabled for this table.
+      // It also makes the packaged Samsung app work before the realtime channel
+      // finishes negotiating on Chromium 85.
+      const refreshFromDatabase = () => sb.from("cast_sessions")
+        .select("*").eq("room_code", code)
+        .limit(1)
         .then(({ data, error }) => {
-          if (error) { document.getElementById("code-hint").textContent = "Connection error — refresh to try again."; return; }
-          if (data?.[0]) showSession(data[0]);
+          if (error) {
+            document.getElementById("code-hint").textContent = "Connection error — refresh to try again.";
+            return;
+          }
+          const latest = data?.[0];
+          if (!latest || latest.detected_at === lastSeenUpdate) return;
+          lastSeenUpdate = latest.detected_at;
+          const age = latest.detected_at ? Date.now() - new Date(latest.detected_at).getTime() : Infinity;
+          if (latest.is_active && age < 15000) showSession(latest);
+          else endSession();
         });
+      refreshFromDatabase();
+      setInterval(refreshFromDatabase, 1500);
     }
   </script>
 </body>
