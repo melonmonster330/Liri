@@ -9,10 +9,10 @@
       __defProp(target, name, { get: all[name], enumerable: true });
   };
 
-  // node_modules/@capacitor/core/dist/index.js
+  // ../../../node_modules/@capacitor/core/dist/index.js
   var ExceptionCode, CapacitorException, getPlatformId, createCapacitor, initCapacitorGlobal, Capacitor, registerPlugin, WebPlugin, encode, decode, CapacitorCookiesPluginWeb, CapacitorCookies, readBlobAsBase64, normalizeHttpHeaders, buildUrlParams, buildRequestInit, CapacitorHttpPluginWeb, CapacitorHttp, SystemBarsStyle, SystemBarType, SystemBarsPluginWeb, SystemBars;
   var init_dist = __esm({
-    "node_modules/@capacitor/core/dist/index.js"() {
+    "../../../node_modules/@capacitor/core/dist/index.js"() {
       (function(ExceptionCode2) {
         ExceptionCode2["Unimplemented"] = "UNIMPLEMENTED";
         ExceptionCode2["Unavailable"] = "UNAVAILABLE";
@@ -253,7 +253,9 @@
             return;
           }
           const index = listeners.indexOf(listenerFunc);
-          this.listeners[eventName].splice(index, 1);
+          if (index !== -1) {
+            this.listeners[eventName].splice(index, 1);
+          }
           if (!this.listeners[eventName].length) {
             this.removeWindowListener(this.windowListeners[eventName]);
           }
@@ -518,14 +520,14 @@
     }
   });
 
-  // node_modules/@capacitor/app/dist/esm/web.js
+  // ../../../node_modules/@capacitor/app/dist/esm/web.js
   var web_exports = {};
   __export(web_exports, {
     AppWeb: () => AppWeb
   });
   var AppWeb;
   var init_web = __esm({
-    "node_modules/@capacitor/app/dist/esm/web.js"() {
+    "../../../node_modules/@capacitor/app/dist/esm/web.js"() {
       init_dist();
       AppWeb = class extends WebPlugin {
         constructor() {
@@ -570,7 +572,7 @@
     }
   });
 
-  // node_modules/@capacitor/browser/dist/esm/web.js
+  // ../../../node_modules/@capacitor/browser/dist/esm/web.js
   var web_exports2 = {};
   __export(web_exports2, {
     Browser: () => Browser,
@@ -578,7 +580,7 @@
   });
   var BrowserWeb, Browser;
   var init_web2 = __esm({
-    "node_modules/@capacitor/browser/dist/esm/web.js"() {
+    "../../../node_modules/@capacitor/browser/dist/esm/web.js"() {
       init_dist();
       BrowserWeb = class extends WebPlugin {
         constructor() {
@@ -652,6 +654,7 @@
   // app/base/lib/config.js
   var IS_IOS = window.Capacitor?.getPlatform?.() === "ios";
   var ITUNES_PROXY = IS_IOS ? "https://www.getliri.com/api/itunes-lookup" : "/api/itunes-lookup";
+  var SYNC_PLAYBACK_RATE = 1.028;
 
   // app/base/lib/analytics.js
   async function logListeningEvent(sb2, sessionId, params) {
@@ -780,7 +783,7 @@
           turntableMatchedIdx: turntableMatchedIdxRef.current
         };
         try {
-          const t = syncStartRef.current != null ? initialPosRef.current + (Date.now() - syncStartRef.current) / 1e3 : initialPosRef.current;
+          const t = syncStartRef.current != null ? initialPosRef.current + (Date.now() - syncStartRef.current) / 1e3 * SYNC_PLAYBACK_RATE : initialPosRef.current;
           localStorage.setItem("liri_nowplaying", JSON.stringify({
             ...nowPlayingSnapshotRef.current,
             playbackTime: Math.max(0, t),
@@ -802,7 +805,7 @@
       const onHide = () => {
         const snap = nowPlayingSnapshotRef.current;
         if (!snap || !snap.detectedSong) return;
-        const t = syncStartRef.current != null ? initialPosRef.current + (Date.now() - syncStartRef.current) / 1e3 : initialPosRef.current;
+        const t = syncStartRef.current != null ? initialPosRef.current + (Date.now() - syncStartRef.current) / 1e3 * SYNC_PLAYBACK_RATE : initialPosRef.current;
         const payload = JSON.stringify({ ...snap, playbackTime: Math.max(0, t), savedAt: Date.now() });
         try {
           sessionStorage.setItem("liri_nowplaying", payload);
@@ -2251,13 +2254,13 @@
     return window.Capacitor.Plugins?.KeepAwake ?? window.Capacitor.registerPlugin?.("KeepAwake") ?? null;
   }
 
-  // node_modules/@capacitor/app/dist/esm/index.js
+  // ../../../node_modules/@capacitor/app/dist/esm/index.js
   init_dist();
   var App = registerPlugin("App", {
     web: () => Promise.resolve().then(() => (init_web(), web_exports)).then((m) => new m.AppWeb())
   });
 
-  // node_modules/@capacitor/browser/dist/esm/index.js
+  // ../../../node_modules/@capacitor/browser/dist/esm/index.js
   init_dist();
   var Browser2 = registerPlugin("Browser", {
     web: () => Promise.resolve().then(() => (init_web2(), web_exports2)).then((m) => new m.BrowserWeb())
@@ -3823,7 +3826,7 @@
         effectiveDuration = effectiveDuration == null ? lyricOutroLimit : Math.min(effectiveDuration, lyricOutroLimit);
       }
       if (!effectiveDuration) return;
-      const endClockElapsed = !isPaused && endClockStartRef.current != null ? (Date.now() - endClockStartRef.current) / 1e3 : 0;
+      const endClockElapsed = !isPaused && endClockStartRef.current != null ? (Date.now() - endClockStartRef.current) / 1e3 * SYNC_PLAYBACK_RATE : 0;
       const endPlaybackTime = Math.max(0, endClockPosRef.current + endClockElapsed);
       if (endPlaybackTime >= effectiveDuration && !autoAdvanceFiredRef.current) {
         autoAdvanceFiredRef.current = true;
@@ -4145,12 +4148,12 @@ Move closer to your speakers and try again.`);
         } = syncCalcRef.current;
         syncCalcRef.current = null;
         const elapsed = (Date.now() - recStart) / 1e3;
-        initialPosRef.current = Math.max(0, startPos - phraseOffset + elapsed);
-        endClockPosRef.current = Math.max(0, startPos - phraseOffset + elapsed);
+        initialPosRef.current = Math.max(0, startPos - phraseOffset + elapsed * SYNC_PLAYBACK_RATE);
+        endClockPosRef.current = Math.max(0, startPos - phraseOffset + elapsed * SYNC_PLAYBACK_RATE);
       } else if (syncStartRef.current !== null) {
-        initialPosRef.current = initialPosRef.current + (Date.now() - syncStartRef.current) / 1e3;
+        initialPosRef.current = initialPosRef.current + (Date.now() - syncStartRef.current) / 1e3 * SYNC_PLAYBACK_RATE;
         if (endClockStartRef.current != null) {
-          endClockPosRef.current += (Date.now() - endClockStartRef.current) / 1e3;
+          endClockPosRef.current += (Date.now() - endClockStartRef.current) / 1e3 * SYNC_PLAYBACK_RATE;
         }
       } else {
         endClockPosRef.current = initialPosRef.current;
@@ -4178,7 +4181,7 @@ Move closer to your speakers and try again.`);
       setIsPaused(false);
       clearInterval(syncIntervalRef.current);
       syncIntervalRef.current = setInterval(() => {
-        const t = initialPosRef.current + (Date.now() - syncStartRef.current) / 1e3;
+        const t = initialPosRef.current + (Date.now() - syncStartRef.current) / 1e3 * SYNC_PLAYBACK_RATE;
         setPlaybackTime(t < 0 ? 0 : t);
         const lrc = lyricsRef.current;
         if (!lrc.length || lrc[0].time == null) return;
@@ -4224,7 +4227,7 @@ Move closer to your speakers and try again.`);
         endClockStartRef.current = syncStartRef.current;
         clearInterval(syncIntervalRef.current);
         syncIntervalRef.current = setInterval(() => {
-          const t = initialPosRef.current + (Date.now() - syncStartRef.current) / 1e3;
+          const t = initialPosRef.current + (Date.now() - syncStartRef.current) / 1e3 * SYNC_PLAYBACK_RATE;
           setPlaybackTime(t);
           const lrc = lyricsRef.current;
           if (!lrc.length || lrc[0].time == null) return;
@@ -4244,7 +4247,7 @@ Move closer to your speakers and try again.`);
       } else {
         initialPosRef.current = Math.max(0, playbackTime);
         if (endClockStartRef.current != null) {
-          endClockPosRef.current += (Date.now() - endClockStartRef.current) / 1e3;
+          endClockPosRef.current += (Date.now() - endClockStartRef.current) / 1e3 * SYNC_PLAYBACK_RATE;
         }
         clearInterval(syncIntervalRef.current);
         setIsPaused(true);
@@ -4253,7 +4256,7 @@ Move closer to your speakers and try again.`);
     const nudge = (s) => {
       userNudgeRef.current += s;
       const running = !isPaused && syncStartRef.current != null;
-      const elapsedScaled = running ? (Date.now() - syncStartRef.current) / 1e3 : 0;
+      const elapsedScaled = running ? (Date.now() - syncStartRef.current) / 1e3 * SYNC_PLAYBACK_RATE : 0;
       const curPos = initialPosRef.current + elapsedScaled;
       const newPos = curPos < 0 ? curPos + s : Math.max(0, curPos + s);
       initialPosRef.current = newPos - elapsedScaled;
