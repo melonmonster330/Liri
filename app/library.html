@@ -1606,8 +1606,13 @@
               ).then(r => r.json()).catch(() => ({ results: [] })),
             ]);
 
+            // Direct search-term relevance comes first — it's what actually
+            // matches what was typed. The artist's full catalog (when we
+            // found a confident artist match) is just a fallback appended
+            // after, to surface studio LPs a term-only search can miss — not
+            // to bump the whole discography above the album actually typed.
             const seen = new Set();
-            const albums = [...artistAlbums, ...(termRes.results || [])]
+            const albums = [...(termRes.results || []), ...artistAlbums]
               .filter(r => r.collectionType === "Album" || r.wrapperType === "collection")
               .filter(r => !/\s-\sSingle$/i.test(r.collectionName || ""))
               .filter(r => r.collectionId && !seen.has(r.collectionId) && seen.add(r.collectionId))
