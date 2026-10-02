@@ -1583,7 +1583,14 @@
               ).then(r => r.json());
               const artist = (a.results || []).find(r => {
                 const na = norm(r.artistName);
-                return na && (na === nq || na.includes(nq) || nq.includes(na));
+                if (!na) return false;
+                // Exact match, the user is still mid-typing the artist's name,
+                // or they've typed "<album title> <artist name>" in full. Avoid
+                // loose substring matching here — it lets a short/generic
+                // artist name (e.g. "Fearless") hijack an unrelated query like
+                // "fearless taylor swift" and bury the real results under that
+                // artist's entire discography.
+                return na === nq || na.startsWith(nq) || nq.endsWith(` ${na}`);
               });
               if (!artist) return [];
               const lu = await fetch(
