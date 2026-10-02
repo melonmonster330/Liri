@@ -654,7 +654,7 @@
   // app/base/lib/config.js
   var IS_IOS = window.Capacitor?.getPlatform?.() === "ios";
   var ITUNES_PROXY = IS_IOS ? "https://www.getliri.com/api/itunes-lookup" : "/api/itunes-lookup";
-  var SYNC_PLAYBACK_RATE = 1.028;
+  var SYNC_PLAYBACK_RATE = IS_IOS ? 1.028 : 1.057;
 
   // app/base/lib/analytics.js
   async function logListeningEvent(sb2, sessionId, params) {

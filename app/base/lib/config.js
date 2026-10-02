@@ -13,4 +13,6 @@ export const AUTO_ADVANCE_OFFSET = 2.0;
 // Vinyl playback consistently gains on the digital lyric timestamps across
 // tested albums/turntables. Advance the synced lyric clock by a flat 2.8% to
 // prevent cumulative lag. Unsynced lyric auto-scroll has its own user control.
-export const SYNC_PLAYBACK_RATE = 1.028;
+// Web still fell ~5s behind iOS over a 3-min song at 1.028 in side-by-side
+// tests, so the browser gets the 2.8% applied twice. Measured, not derived.
+export const SYNC_PLAYBACK_RATE = IS_IOS ? 1.028 : 1.057;
