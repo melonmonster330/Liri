@@ -9,10 +9,10 @@
       __defProp(target, name, { get: all[name], enumerable: true });
   };
 
-  // ../../../node_modules/@capacitor/core/dist/index.js
+  // node_modules/@capacitor/core/dist/index.js
   var ExceptionCode, CapacitorException, getPlatformId, createCapacitor, initCapacitorGlobal, Capacitor, registerPlugin, WebPlugin, encode, decode, CapacitorCookiesPluginWeb, CapacitorCookies, readBlobAsBase64, normalizeHttpHeaders, buildUrlParams, buildRequestInit, CapacitorHttpPluginWeb, CapacitorHttp, SystemBarsStyle, SystemBarType, SystemBarsPluginWeb, SystemBars;
   var init_dist = __esm({
-    "../../../node_modules/@capacitor/core/dist/index.js"() {
+    "node_modules/@capacitor/core/dist/index.js"() {
       (function(ExceptionCode2) {
         ExceptionCode2["Unimplemented"] = "UNIMPLEMENTED";
         ExceptionCode2["Unavailable"] = "UNAVAILABLE";
@@ -253,9 +253,7 @@
             return;
           }
           const index = listeners.indexOf(listenerFunc);
-          if (index !== -1) {
-            this.listeners[eventName].splice(index, 1);
-          }
+          this.listeners[eventName].splice(index, 1);
           if (!this.listeners[eventName].length) {
             this.removeWindowListener(this.windowListeners[eventName]);
           }
@@ -520,14 +518,14 @@
     }
   });
 
-  // ../../../node_modules/@capacitor/app/dist/esm/web.js
+  // node_modules/@capacitor/app/dist/esm/web.js
   var web_exports = {};
   __export(web_exports, {
     AppWeb: () => AppWeb
   });
   var AppWeb;
   var init_web = __esm({
-    "../../../node_modules/@capacitor/app/dist/esm/web.js"() {
+    "node_modules/@capacitor/app/dist/esm/web.js"() {
       init_dist();
       AppWeb = class extends WebPlugin {
         constructor() {
@@ -572,7 +570,7 @@
     }
   });
 
-  // ../../../node_modules/@capacitor/browser/dist/esm/web.js
+  // node_modules/@capacitor/browser/dist/esm/web.js
   var web_exports2 = {};
   __export(web_exports2, {
     Browser: () => Browser,
@@ -580,7 +578,7 @@
   });
   var BrowserWeb, Browser;
   var init_web2 = __esm({
-    "../../../node_modules/@capacitor/browser/dist/esm/web.js"() {
+    "node_modules/@capacitor/browser/dist/esm/web.js"() {
       init_dist();
       BrowserWeb = class extends WebPlugin {
         constructor() {
@@ -654,7 +652,7 @@
   // app/base/lib/config.js
   var IS_IOS = window.Capacitor?.getPlatform?.() === "ios";
   var ITUNES_PROXY = IS_IOS ? "https://www.getliri.com/api/itunes-lookup" : "/api/itunes-lookup";
-  var SYNC_PLAYBACK_RATE = 1.028;
+  var SYNC_PLAYBACK_RATE = IS_IOS ? 1.028 : 1;
 
   // app/base/lib/analytics.js
   async function logListeningEvent(sb2, sessionId, params) {
@@ -2254,13 +2252,13 @@
     return window.Capacitor.Plugins?.KeepAwake ?? window.Capacitor.registerPlugin?.("KeepAwake") ?? null;
   }
 
-  // ../../../node_modules/@capacitor/app/dist/esm/index.js
+  // node_modules/@capacitor/app/dist/esm/index.js
   init_dist();
   var App = registerPlugin("App", {
     web: () => Promise.resolve().then(() => (init_web(), web_exports)).then((m) => new m.AppWeb())
   });
 
-  // ../../../node_modules/@capacitor/browser/dist/esm/index.js
+  // node_modules/@capacitor/browser/dist/esm/index.js
   init_dist();
   var Browser2 = registerPlugin("Browser", {
     web: () => Promise.resolve().then(() => (init_web2(), web_exports2)).then((m) => new m.BrowserWeb())
