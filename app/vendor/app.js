@@ -2622,6 +2622,7 @@
   var FIRST_LYRIC_PRELIGHT_SECONDS = 2;
   var FIRST_LYRIC_FADE_SECONDS = 0.35;
   var TRACK_GAP_MS = 1e3;
+  var TRACK_TAIL_SECONDS = 1.5;
   var SIDE_END_HANDOFF_MS = 650;
   var FLIP_NEEDLE_DROP_MS = 1e4;
   var NUDGE_STEP_SECS = 1;
@@ -3831,7 +3832,8 @@
       if (!effectiveDuration) return;
       const endClockElapsed = !isPaused && endClockStartRef.current != null ? (Date.now() - endClockStartRef.current) / 1e3 * SYNC_PLAYBACK_RATE : 0;
       const endPlaybackTime = Math.max(0, endClockPosRef.current + endClockElapsed);
-      if (endPlaybackTime >= effectiveDuration && !autoAdvanceFiredRef.current) {
+      const advanceAt = Math.max(effectiveDuration * 0.9, effectiveDuration - TRACK_TAIL_SECONDS);
+      if (endPlaybackTime >= advanceAt && !autoAdvanceFiredRef.current) {
         autoAdvanceFiredRef.current = true;
         setShouldAdvanceTrack(true);
       }

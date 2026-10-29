@@ -301,6 +301,10 @@ const FIRST_LYRIC_FADE_SECONDS = 0.35;
 // Switch the UI to the next track as soon as the current duration ends, then
 // park its lyric clock at 0:00 for the physical inter-track groove.
 const TRACK_GAP_MS = 1000;
+// Digital durations carry ~1.5s of trailing silence the record doesn't play
+// before its groove gap. Without this the next song showed up ~1.5s late and
+// its lyrics stayed that far behind.
+const TRACK_TAIL_SECONDS = 1.5;
 const SIDE_END_HANDOFF_MS = 650;
 // How long the lyric clock parks at 0 after a manual flip / side pick while
 // the user physically flips the record and drops the needle.
@@ -1776,7 +1780,8 @@ function Liri() {
       ? (Date.now() - endClockStartRef.current) / 1000 * SYNC_PLAYBACK_RATE
       : 0;
     const endPlaybackTime = Math.max(0, endClockPosRef.current + endClockElapsed);
-    if (endPlaybackTime >= effectiveDuration && !autoAdvanceFiredRef.current) {
+    const advanceAt = Math.max(effectiveDuration * 0.9, effectiveDuration - TRACK_TAIL_SECONDS);
+    if (endPlaybackTime >= advanceAt && !autoAdvanceFiredRef.current) {
       autoAdvanceFiredRef.current = true;
       setShouldAdvanceTrack(true);
     }
