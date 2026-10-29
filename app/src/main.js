@@ -300,7 +300,7 @@ const FIRST_LYRIC_PRELIGHT_SECONDS = 2;
 const FIRST_LYRIC_FADE_SECONDS = 0.35;
 // Switch the UI to the next track as soon as the current duration ends, then
 // park its lyric clock at 0:00 for the physical inter-track groove.
-const TRACK_GAP_MS = 1000;
+const TRACK_GAP_MS = 1400;
 // Digital durations carry ~1.5s of trailing silence the record doesn't play
 // before its groove gap. Without this the next song showed up ~1.5s late and
 // its lyrics stayed that far behind.
