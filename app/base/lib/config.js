@@ -15,5 +15,5 @@ export const AUTO_ADVANCE_OFFSET = 2.0;
 // prevent cumulative lag. Unsynced lyric auto-scroll has its own user control.
 // Same rate on iOS and web: web-only speed-ups (1.057, 1.045) both ran fast
 // against a real record. Measured, not derived.
-// Web testing 1.021: 1.0 and 1.014 fell behind, 1.028 ran fast. iOS stays at 1.028.
-export const SYNC_PLAYBACK_RATE = IS_IOS ? 1.028 : 1.021;
+// Web testing 1.025: 1.021 was ~0.5s behind at 1:50, 1.028 ran fast. iOS stays at 1.028.
+export const SYNC_PLAYBACK_RATE = IS_IOS ? 1.028 : 1.025;
