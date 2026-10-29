@@ -2776,6 +2776,7 @@
     const turntableAlbumRef = useRef7(turntableAlbum);
     const turntableTracksRef = useRef7([]);
     const turntableMatchedIdxRef = useRef7(-1);
+    const turntableMatchedAlbumIdRef = useRef7(null);
     const turntableLyricsCacheRef = useRef7({});
     const autoRetryCountRef = useRef7(0);
     const [albumTracks, setAlbumTracks] = useState8([]);
@@ -3575,7 +3576,11 @@
     };
     useEffect8(() => {
       turntableAlbumRef.current = turntableAlbum;
-      turntableMatchedIdxRef.current = -1;
+      const albumId = turntableAlbum ? String(turntableAlbum.itunes_collection_id) : null;
+      if (albumId !== turntableMatchedAlbumIdRef.current) {
+        turntableMatchedIdxRef.current = -1;
+        turntableMatchedAlbumIdRef.current = albumId;
+      }
       if (turntableAlbum) {
         localStorage.setItem("liri_turntable", JSON.stringify(turntableAlbum));
         fetchTurntableTracks(turntableAlbum.itunes_collection_id);
@@ -4258,6 +4263,7 @@ Move closer to your speakers and try again.`);
       const curPos = initialPosRef.current + elapsedScaled;
       const newPos = curPos < 0 ? curPos + s : Math.max(0, curPos + s);
       initialPosRef.current = newPos - elapsedScaled;
+      endClockPosRef.current += newPos - curPos;
       setPlaybackTime(Math.max(0, newPos));
       const base = newPos;
       const lrc = lyricsRef.current;
@@ -4543,7 +4549,7 @@ Move closer to your speakers and try again.`);
       const displayedTitle = normText(detectedSong?.title);
       const displayedIdx = displayedTitle ? tracks.findIndex((t) => normText(t.trackName || t.title) === displayedTitle) : -1;
       const resolvedIdx = displayedIdx >= 0 ? displayedIdx : idx;
-      if (resolvedIdx !== idx && tracks === turntableTracksRef.current) {
+      if (tracks === turntableTracksRef.current && (resolvedIdx !== idx || turntableMatchedIdxRef.current !== resolvedIdx)) {
         turntableMatchedIdxRef.current = resolvedIdx;
         setCurrentTrackIndex(resolvedIdx);
       }
@@ -4929,9 +4935,15 @@ Move closer to your speakers and try again.`);
       }
     };
     const getListeningHeaderNav = () => {
-      const hasTurntableTracks = !!turntableAlbum && turntableTracksRef.current.length > 0 && turntableMatchedIdxRef.current >= 0;
-      const tracks = hasTurntableTracks ? turntableTracksRef.current : albumTracks;
-      const index = hasTurntableTracks ? turntableMatchedIdxRef.current : currentTrackIndexRef.current;
+      const tTracks = turntableTracksRef.current;
+      let tIdx = turntableMatchedIdxRef.current;
+      if (tIdx < 0 && tTracks.length > 0 && detectedSong?.title) {
+        const displayedTitle = normText(detectedSong.title);
+        tIdx = tTracks.findIndex((t) => normText(t.trackName || t.title) === displayedTitle);
+      }
+      const hasTurntableTracks = !!turntableAlbum && tTracks.length > 0 && tIdx >= 0;
+      const tracks = hasTurntableTracks ? tTracks : albumTracks;
+      const index = hasTurntableTracks ? tIdx : currentTrackIndexRef.current;
       return {
         hasTurntableTracks,
         tracks,

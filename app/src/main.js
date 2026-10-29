@@ -503,6 +503,7 @@ function Liri() {
   const turntableAlbumRef = useRef(turntableAlbum);
   const turntableTracksRef = useRef([]); // iTunes tracks for selected album (pre-fetched)
   const turntableMatchedIdxRef = useRef(-1); // 0-based index of last vinyl-matched track
+  const turntableMatchedAlbumIdRef = useRef(null); // album the matched index belongs to
   // Raw lyric rows fetched once per selected album. Reset before each album
   // load so stale data from the previous record cannot bleed into playback.
   const turntableLyricsCacheRef = useRef({});
@@ -1445,7 +1446,14 @@ function Liri() {
   };
   useEffect(() => {
     turntableAlbumRef.current = turntableAlbum;
-    turntableMatchedIdxRef.current = -1; // reset stale match when album changes
+    // Reset the stale match only when the album actually changes. This effect
+    // also re-runs when sign-in finishes (user?.id) or the same album object is
+    // re-set; wiping the index mid-song then blocked the side-end flip screen.
+    const albumId = turntableAlbum ? String(turntableAlbum.itunes_collection_id) : null;
+    if (albumId !== turntableMatchedAlbumIdRef.current) {
+      turntableMatchedIdxRef.current = -1;
+      turntableMatchedAlbumIdRef.current = albumId;
+    }
     if (turntableAlbum) {
       localStorage.setItem("liri_turntable", JSON.stringify(turntableAlbum));
       fetchTurntableTracks(turntableAlbum.itunes_collection_id);
@@ -1761,7 +1769,7 @@ function Liri() {
     }
     if (!effectiveDuration) return;
 
-    // Keep transitions isolated from lyric nudges/lead, but advance this clock
+    // Keep transitions isolated from the lyric lead (nudges do move it), but advance this clock
     // at the measured record rate. Leaving it at 1× made a five-minute song's
     // transition arrive roughly ten seconds after the record had already ended.
     const endClockElapsed = !isPaused && endClockStartRef.current != null
@@ -2306,6 +2314,9 @@ const startListeningWithShazam = async (isAutoAdvance = false) => {
     const curPos = initialPosRef.current + elapsedScaled;
     const newPos = curPos < 0 ? curPos + s : Math.max(0, curPos + s);
     initialPosRef.current = newPos - elapsedScaled;
+    // A nudge corrects where the record actually is, so the end-of-song clock
+    // follows it; otherwise the next song / flip card lands early or late.
+    endClockPosRef.current += newPos - curPos;
     // Shift the displayed time immediately (the 80ms tick would also do this
     // while playing, but the interval is stopped while paused).
     setPlaybackTime(Math.max(0, newPos));
@@ -2643,7 +2654,11 @@ const startListeningWithShazam = async (isAutoAdvance = false) => {
       ? tracks.findIndex(t => normText(t.trackName || t.title) === displayedTitle)
       : -1;
     const resolvedIdx = displayedIdx >= 0 ? displayedIdx : idx;
-    if (resolvedIdx !== idx && tracks === turntableTracksRef.current) {
+    // Always write the index back, even when it matched: the side-end handoff
+    // below only shows the flip card if the ref still points at this track,
+    // so a stale -1 here silently swallowed the flip.
+    if (tracks === turntableTracksRef.current
+        && (resolvedIdx !== idx || turntableMatchedIdxRef.current !== resolvedIdx)) {
       turntableMatchedIdxRef.current = resolvedIdx;
       setCurrentTrackIndex(resolvedIdx);
     }
@@ -3092,12 +3107,20 @@ const startListeningWithShazam = async (isAutoAdvance = false) => {
   // to the same jump/advance paths as the expanded sync controls so side-end
   // handling, cached lyrics, history, and playback reset all stay consistent.
   const getListeningHeaderNav = () => {
+    // A restored or re-loaded session can lose the matched index while the
+    // song is still on screen; recover it from the displayed title.
+    const tTracks = turntableTracksRef.current;
+    let tIdx = turntableMatchedIdxRef.current;
+    if (tIdx < 0 && tTracks.length > 0 && detectedSong?.title) {
+      const displayedTitle = normText(detectedSong.title);
+      tIdx = tTracks.findIndex(t => normText(t.trackName || t.title) === displayedTitle);
+    }
     const hasTurntableTracks = !!turntableAlbum
-      && turntableTracksRef.current.length > 0
-      && turntableMatchedIdxRef.current >= 0;
-    const tracks = hasTurntableTracks ? turntableTracksRef.current : albumTracks;
+      && tTracks.length > 0
+      && tIdx >= 0;
+    const tracks = hasTurntableTracks ? tTracks : albumTracks;
     const index = hasTurntableTracks
-      ? turntableMatchedIdxRef.current
+      ? tIdx
       : currentTrackIndexRef.current;
     return {
       hasTurntableTracks,
